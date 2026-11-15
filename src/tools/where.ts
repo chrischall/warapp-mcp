@@ -34,6 +34,7 @@ import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
+import { recordProfile } from './profile-hook.js';
 import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
 
@@ -204,6 +205,7 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
         await writeGameRecord(ctx.dataDir, game);
+        await recordProfile(ctx.dataDir, deps.env, game, me, boards);
       }
 
       const name = namer(map);

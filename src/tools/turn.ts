@@ -95,6 +95,7 @@ import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type L
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
 import { guessSalt } from '../guess-salt.js';
+import { recordProfile } from './profile-hook.js';
 import { mapOf } from './map.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
@@ -1812,6 +1813,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const whatIf = goal !== undefined || enemy_deploy !== undefined;
       if (ctx.dataDir && turn !== null)
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
+      // The opponent profile (docs/PLAN-PROFILES.md A2): the turns these boards show, never on a what-if plan.
+      if (ctx.dataDir && turn !== null && !whatIf)
+        await recordProfile(ctx.dataDir, opts.env, game, me, [...history.boards, { turn, board: seen }]);
       if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       // B2: what each honoured truce freed this turn and what a break would have cost (T6), for "has it

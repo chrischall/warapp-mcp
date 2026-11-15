@@ -46,6 +46,7 @@ import { lookupMeta, mintMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
+import { recordProfile } from './profile-hook.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 import { boardHistory, plannerSettings } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
@@ -478,6 +479,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           if (ctx.dataDir) {
             await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
             await writeGameRecord(ctx.dataDir, game);
+            await recordProfile(ctx.dataDir, env, game, me, boards);
           }
         } catch {
           notes.push(`The live board could not be read: flags come from the cached boards only (turns ${boards.map((b) => b.turn).join(', ') || 'none'}).`);

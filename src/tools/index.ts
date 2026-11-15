@@ -33,6 +33,7 @@ import { registerTurnTools } from './turn.js';
 import { registerUncommitTool } from './uncommit.js';
 import { registerLeaveGameTool } from './leave-game.js';
 import { registerWhereTool } from './where.js';
+import { registerProfileOpponentsTool } from './profile-opponents.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { pushWebSocketLeg } from '../push/websocket.js';
 import { readSession } from '../direct/session.js';
@@ -118,9 +119,11 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerScoutTool(server, live);
   registerTurnTools(server, live, deps.env ? { env: deps.env } : {});
   registerCheckPlanTool(server, live);
-  registerOpponentsTool(server, live);
+  registerOpponentsTool(server, live, deps.env ? { env: deps.env } : {});
   // Reads the map statistics cache only when they are on (WARAPP_STATS=1, never hosted).
   registerWhereTool(server, live, deps.env ? { env: deps.env } : {});
+  // Opponent profiling, read-only: habits counted from the boards seen (on unless WARAPP_PLAYER_PROFILE=off).
+  registerProfileOpponentsTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
   registerChatTools(server, live, deps.env ? { env: deps.env } : {});
   registerChatInboxTool(server, live);

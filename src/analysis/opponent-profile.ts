@@ -1,0 +1,419 @@
+// Opponent profiling, part A (docs/PLAN-PROFILES.md section 8): what one opponent DID on one turn,
+// read off two consecutive boards of my own view and my orders between them, as countable
+// primitives; and the habits those primitives add up to over a game.
+//
+// A habit is events and opportunities (a rate `{ e, n }`) or a running size (`{ n, sum, sq }`):
+// counts, never a story. Pure and deterministic: no I/O, no clock, ids ascending. Territory states
+// go through the planner's visibility rules (`visibleState`, `ownerShown`): a territory not shown on
+// both boards contributes nothing, so a fog reveal is never a change (#69).
+//
+// Profiles INFORM ONLY (owner decision P1): nothing here is read by the planner.
+import type { BoardState, TerritoryState } from '../board.js';
+import { luckFraction, straightKills, armiesToTake, specialUnitStrength, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from './combat.js';
+import { neighborsOf, type MapGraph } from './graph.js';
+import type { MyOrders } from './opponents.js';
+import { ownerShown, visibleState, type PlannerSettings } from './plan/shared.js';
+
+/** What one opponent did on one turn (board T → board T+1), as counts. */
+export interface TurnPrimitives {
+  /** Board T shows a territory of its next to one of mine. */
+  contact: boolean;
+  /** It attacked me this turn; `null` when that cannot be told. */
+  attackedMe: boolean | null;
+  /** I sent a non-transfer move onto a territory board T showed as its. */
+  iAttacked: boolean;
+  /** Attacks of mine that measure whether it reinforced the target (`n`), those where it did (`e`), and the least armies above the board's count that explain them (`extra`, summed). */
+  reinforce: { n: number; e: number; extra: number };
+  /** Where its visible growth went: the largest growth on one territory and the total; `null` with fewer than two territories or no growth. */
+  stack: { top: number; total: number } | null;
+  /** Territories it took from me, ascending. */
+  tookFromMe: number[];
+  /** Territories I took from it, ascending. */
+  lostToMe: number[];
+}
+
+export interface ObserveInput {
+  graph: MapGraph;
+  /** My GameFeed id. */
+  me: number;
+  /** The board of turn T. */
+  previous: BoardState;
+  /** The board of turn T+1. */
+  current: BoardState;
+  /** My orders on turn T, when known. */
+  orders?: MyOrders | undefined;
+  settings: Pick<PlannerSettings, 'offensiveKillRate' | 'defensiveKillRate' | 'luckModifier' | 'roundingMode' | 'oneArmyStandsGuard'>;
+  /** The players observed: my opponents (never me, never a teammate). */
+  opponents: readonly number[];
+}
+
+const byNum = (a: number, b: number) => a - b;
+const ownerOf = (t: TerritoryState | undefined): number | undefined => (t?.owner.kind === 'player' ? t.owner.playerId : undefined);
+/** The owner when the board shows it (visible or owner-only). */
+const shownOwner = (t: TerritoryState | undefined) => ownerOf(ownerShown(t));
+/** The owner and armies when the board shows both. */
+const seen = (t: TerritoryState | undefined): { owner: number | undefined; armies: number } | undefined => {
+  const v = visibleState(t);
+  return v ? { owner: ownerOf(v), armies: v.armies! } : undefined;
+};
+
+/**
+ * Whether combat is exact (0% luck, straight rounding): the only games where an attack's result
+ * says how many defenders it met.
+ */
+export function exactCombat(s: ObserveInput['settings']): boolean {
+  return luckFraction(s.luckModifier) === 0 && s.roundingMode !== 'WeightedRandom';
+}
+
+/** The least defenders, from `from` up, an attack of `armies` fails against (exact combat); `null` past a bound. */
+function leastFailing(armies: number, from: number, off: number, def: number): number {
+  for (let d = Math.max(0, from); d < from + 10_000; d++) {
+    const need = armiesToTake(d, { offensiveKillRate: off, defensiveKillRate: def });
+    if (need === null || armies < need) return d;
+  }
+  return from;
+}
+
+/**
+ * One primitive record per opponent for turn T, keyed by player id (opponents ascending).
+ *
+ * - `attackedMe`: a territory mine on T is its on T+1; or (orders known) a territory mine on both
+ *   boards, next to a visible stack of its and of no other player, holds fewer armies than T's count
+ *   + my deploys − my moves out + my transfers in (a transfer in counts only from a source next to no
+ *   other player's territory, which nobody could have hit first). Without orders only a capture says
+ *   so, else `null`; with orders and no testable territory, `null` too.
+ * - `reinforce`: one opportunity per attack of mine onto X (its, with D armies on T) when combat is
+ *   exact, it is my only move onto X, X carries no special unit, no move of mine leaves X, X shows its
+ *   armies on T+1 (still its, or mine), and my source S is mine on both boards with no transfer in,
+ *   affordable orders out, every other move out of it landed, and exactly the armies my orders leave
+ *   (on a capture), or those plus at most the survivors an attack against D could bring back (on a
+ *   failure). An event when X stood stronger than D: captured with fewer survivors than the exact
+ *   result, or not captured with more defenders left than the exact result against D (which covers an
+ *   attack big enough to take D that failed). `extra` is the least defenders above D explaining it.
+ * - `stack`: over its territories visible on both boards, growth = max(0, now − then).
+ * - `tookFromMe` / `lostToMe`: ownership changes between it and me, owners shown on both boards.
+ */
+export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
+  const { graph, me, previous, current, orders, settings } = input;
+  const was = new Map(previous.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(current.territories.map((t) => [t.territoryId, t]));
+  const off = settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const def = settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
+  const guard = settings.oneArmyStandsGuard === false ? 0 : 1;
+  const exact = exactCombat(settings);
+  const ids = [...new Set(previous.territories.map((t) => t.territoryId))].sort(byNum);
+  const mineWas = (id: number) => shownOwner(was.get(id)) === me;
+  const mineNow = (id: number) => shownOwner(now.get(id)) === me;
+
+  const deploys = new Map<number, number>();
+  for (const d of orders?.deploys ?? []) deploys.set(d.territoryId, (deploys.get(d.territoryId) ?? 0) + d.armies);
+  const moves = orders?.moves ?? [];
+  const transferOnly = new Set((orders?.sent ?? []).filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
+  const outOf = (id: number) => moves.filter((m) => m.from === id);
+  const into = (id: number) => moves.filter((m) => m.to === id);
+  const sum = (ms: readonly { armies: number }[]) => ms.reduce((n, m) => n + Math.max(0, m.armies), 0);
+  /** A player's territory next to `id` on board T, other than me. */
+  const enemiesNext = (id: number) => {
+    const out = new Set<number>();
+    for (const n of neighborsOf(graph, id)) {
+      const o = shownOwner(was.get(n));
+      if (o !== undefined && o !== me) out.add(o);
+    }
+    return out;
+  };
+
+  const result = new Map<number, TurnPrimitives>();
+  for (const p of [...input.opponents].sort(byNum)) {
+    if (p === me) continue;
+    const ownsWas = (id: number) => shownOwner(was.get(id)) === p;
+    const ownsNow = (id: number) => shownOwner(now.get(id)) === p;
+
+    const contact = ids.some((id) => ownsWas(id) && neighborsOf(graph, id).some(mineWas));
+    const tookFromMe = ids.filter((id) => mineWas(id) && ownsNow(id));
+    const lostToMe = ids.filter((id) => ownsWas(id) && mineNow(id));
+    const iAttacked = moves.some((m) => ownsWas(m.to) && m.armies > 0 && !transferOnly.has(`${m.from}:${m.to}`));
+
+    // attackedMe
+    let attackedMe: boolean | null = tookFromMe.length ? true : null;
+    if (attackedMe === null && orders) {
+      let tested = false;
+      for (const id of ids) {
+        const a = seen(was.get(id));
+        const b = seen(now.get(id));
+        if (a?.owner !== me || b?.owner !== me) continue;
+        const stacks = neighborsOf(graph, id).filter((n) => {
+          const s = seen(was.get(n));
+          return s !== undefined && s.owner === p && s.armies > 0;
+        });
+        if (!stacks.length) continue;
+        const others = enemiesNext(id);
+        if (others.size !== 1) continue;
+        const transfersIn = into(id).filter((m) => mineWas(m.from));
+        if (transfersIn.some((m) => enemiesNext(m.from).size > 0)) continue;
+        tested = true;
+        const expected = a.armies + (deploys.get(id) ?? 0) - sum(outOf(id)) + sum(transfersIn);
+        if (b.armies < expected) {
+          attackedMe = true;
+          break;
+        }
+      }
+      if (attackedMe === null && tested) attackedMe = false;
+    }
+
+    // reinforce
+    const reinforce = { n: 0, e: 0, extra: 0 };
+    if (exact && orders) {
+      for (const m of moves) {
+        const x = seen(was.get(m.to));
+        if (!x || x.owner !== p || m.armies <= 0) continue;
+        if (transferOnly.has(`${m.from}:${m.to}`)) continue;
+        if (into(m.to).length !== 1 || outOf(m.to).length) continue;
+        if (specialUnitStrength(visibleState(was.get(m.to))?.specialUnits) > 0) continue;
+        const xNow = seen(now.get(m.to));
+        if (!xNow || (xNow.owner !== p && xNow.owner !== me)) continue;
+        const captured = xNow.owner === me;
+        // The source: mine on both boards, not hit first.
+        const sWas = seen(was.get(m.from));
+        const sNow = seen(now.get(m.from));
+        if (sWas?.owner !== me || sNow?.owner !== me) continue;
+        if (into(m.from).length) continue;
+        const sent = outOf(m.from);
+        const available = sWas.armies + (deploys.get(m.from) ?? 0);
+        if (sum(sent) > available - guard) continue;
+        if (sent.some((o) => o !== m && !mineNow(o.to))) continue;
+        const base = available - sum(sent);
+        const A = m.armies;
+        const D = x.armies;
+        const K = straightKills(A, off);
+        let d: number;
+        if (captured) {
+          if (sNow.armies !== base) continue;
+          const exactSurvivors = A - straightKills(D, def);
+          if (xNow.armies > exactSurvivors) continue; // fewer defenders than shown: not this habit
+          // The least defenders whose kills leave exactly what stands on X.
+          d = D;
+          while (d < D + 10_000 && A - straightKills(d, def) > xNow.armies) d++;
+        } else {
+          const returned = sNow.armies - base;
+          if (returned < 0 || returned > Math.max(0, A - straightKills(D, def))) continue;
+          d = Math.max(leastFailing(A, D, off, def), xNow.armies > 0 ? xNow.armies + K : 0);
+        }
+        reinforce.n++;
+        if (d > D) {
+          reinforce.e++;
+          reinforce.extra += d - D;
+        }
+      }
+    }
+
+    // stack
+    let top = 0;
+    let total = 0;
+    let both = 0;
+    for (const id of ids) {
+      const a = seen(was.get(id));
+      const b = seen(now.get(id));
+      if (a?.owner !== p || b?.owner !== p) continue;
+      both++;
+      const g = Math.max(0, b.armies - a.armies);
+      total += g;
+      top = Math.max(top, g);
+    }
+    const stack = both >= 2 && total >= 1 ? { top, total } : null;
+
+    result.set(p, { contact, attackedMe, iAttacked, reinforce, stack, tookFromMe, lostToMe });
+  }
+  return result;
+}
+
+/** Events out of opportunities. */
+export interface Rate {
+  e: number;
+  n: number;
+}
+/** A running size: how many readings, their sum and their sum of squares. */
+export interface Size {
+  n: number;
+  sum: number;
+  sq: number;
+}
+
+export const HABIT_NAMES = ['reinforce', 'attack', 'firstStrike', 'stacking', 'retaliate', 'retake'] as const;
+export type HabitName = (typeof HABIT_NAMES)[number];
+
+/** One opponent's habits over a game. */
+export interface Habits {
+  reinforce: Rate;
+  /** The armies above the board's count per reinforce event: `n` events, `sum` armies (a mean, no spread). */
+  reinforceExtra: { n: number; sum: number };
+  attack: Rate;
+  firstStrike: Rate;
+  stacking: Size;
+  retaliate: Rate;
+  retake: Rate;
+  /** Turns observed. */
+  turns: number;
+}
+
+/** One observed turn of one opponent. */
+export interface ObservedPrimitives {
+  turn: number;
+  primitives: TurnPrimitives;
+}
+
+/**
+ * The habits of one opponent from its observed turns (any order; each turn once). Habits that span
+ * turns are recomputed from the whole list, so re-deriving never double-counts:
+ * - `reinforce`: Σ events ÷ Σ opportunities;
+ * - `attack`: turns in contact where it attacked me ÷ turns in contact where that could be told;
+ * - `firstStrike`: its first contact with me (the turn before observed without contact, or turn 1)
+ *   that lasted two turns, an event when it attacked me on either; counted only when both turns
+ *   could be told or one says it did;
+ * - `stacking`: the mean of `top ÷ total` over turns with a stack;
+ * - `retaliate`: turns I attacked it, an event when it attacked me on one of the next two turns;
+ *   counted only when both are observed and told, or one says it did;
+ * - `retake`: territories I took from it, an event when it took them back within two turns;
+ *   counted only when both turns are observed, or it did.
+ */
+export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
+  const by = new Map<number, TurnPrimitives>();
+  for (const t of turns) by.set(t.turn, t.primitives);
+  const order = [...by.keys()].sort(byNum);
+  const h: Habits = {
+    reinforce: { e: 0, n: 0 },
+    reinforceExtra: { n: 0, sum: 0 },
+    attack: { e: 0, n: 0 },
+    firstStrike: { e: 0, n: 0 },
+    stacking: { n: 0, sum: 0, sq: 0 },
+    retaliate: { e: 0, n: 0 },
+    retake: { e: 0, n: 0 },
+    turns: order.length,
+  };
+  /** Whether either of the next two turns says yes (`true`), both say no (`false`), or it cannot be told (`null`). */
+  const within2 = (t: number, test: (p: TurnPrimitives) => boolean | null): boolean | null => {
+    const a = by.get(t + 1);
+    const b = by.get(t + 2);
+    const ra = a ? test(a) : null;
+    const rb = b ? test(b) : null;
+    if (ra === true || rb === true) return true;
+    return ra === false && rb === false ? false : null;
+  };
+  const count = (r: Rate, v: boolean | null) => {
+    if (v === null) return;
+    r.n++;
+    if (v) r.e++;
+  };
+  for (const t of order) {
+    const p = by.get(t)!;
+    h.reinforce.e += p.reinforce.e;
+    h.reinforce.n += p.reinforce.n;
+    h.reinforceExtra.n += p.reinforce.e;
+    h.reinforceExtra.sum += p.reinforce.extra;
+    if (p.contact && p.attackedMe !== null) count(h.attack, p.attackedMe);
+    if (p.stack && p.stack.total > 0) {
+      const share = p.stack.top / p.stack.total;
+      h.stacking.n++;
+      h.stacking.sum += share;
+      h.stacking.sq += share * share;
+    }
+    if (p.iAttacked) count(h.retaliate, within2(t, (q) => q.attackedMe));
+    for (const id of p.lostToMe) count(h.retake, within2(t, (q) => q.tookFromMe.includes(id)));
+  }
+  // The first contact: the earliest turn in contact.
+  const first = order.find((t) => by.get(t)!.contact);
+  if (first !== undefined) {
+    const before = by.get(first - 1);
+    const fresh = first <= 1 || (before !== undefined && !before.contact);
+    const next = by.get(first + 1);
+    if (fresh && next?.contact) {
+      const a = by.get(first)!.attackedMe;
+      const b = next.attackedMe;
+      if (a === true || b === true) count(h.firstStrike, true);
+      else if (a === false && b === false) count(h.firstStrike, false);
+    }
+  }
+  return h;
+}
+
+// ---- the estimate (part A: this game against a neutral default; part B pools past games) ----
+
+/** How many opportunities the prior weighs as (docs/PLAN-PROFILES.md B1). */
+export const PROFILE_PRIOR_WEIGHT = 4;
+/** The least confidence at which a habit gives a label. */
+export const PROFILE_MIN_CONFIDENCE = 0.5;
+/** The neutral prior per habit, until part 0's pooled rates replace them. */
+export const HABIT_DEFAULTS: Readonly<Record<HabitName, number>> = {
+  reinforce: 0.5,
+  attack: 0.4,
+  firstStrike: 0.3,
+  stacking: 0.7,
+  retaliate: 0.5,
+  retake: 0.4,
+};
+
+export type HabitBasis = 'this-game' | 'default';
+
+export interface HabitEstimate {
+  /** The estimate: this game's counts shrunk toward the prior. */
+  value: number;
+  /** Opportunities (or readings) behind it. */
+  n: number;
+  /** n ÷ (n + K). */
+  confidence: number;
+  /** What contributed most: this game's counts, or the neutral default. */
+  basis: HabitBasis;
+}
+
+const round2 = (v: number) => Math.round(v * 100) / 100;
+
+/** `(p0 × K + e) ÷ (K + n)`, its confidence and basis. */
+export function estimate(events: number, n: number, p0: number, k = PROFILE_PRIOR_WEIGHT): HabitEstimate {
+  return {
+    value: round2((p0 * k + events) / (k + n)),
+    n,
+    confidence: round2(n / (n + k)),
+    basis: n > k ? 'this-game' : 'default',
+  };
+}
+
+/** Every habit's estimate from a game's counts. */
+export function estimateHabits(h: Habits): Record<HabitName, HabitEstimate> {
+  const rate = (name: HabitName, r: Rate) => estimate(r.e, r.n, HABIT_DEFAULTS[name]);
+  return {
+    reinforce: rate('reinforce', h.reinforce),
+    attack: rate('attack', h.attack),
+    firstStrike: rate('firstStrike', h.firstStrike),
+    stacking: estimate(h.stacking.sum, h.stacking.n, HABIT_DEFAULTS.stacking),
+    retaliate: rate('retaliate', h.retaliate),
+    retake: rate('retake', h.retake),
+  };
+}
+
+export const PROFILE_LABELS = ['reinforcer', 'rarely-reinforces', 'stacker', 'spreader', 'rusher', 'turtle', 'avenger', 'retakes'] as const;
+export type ProfileLabel = (typeof PROFILE_LABELS)[number];
+
+/** One fixed counter-play line per label the plan gives one (docs/PLAN-PROFILES.md B1; `spreader` has none). */
+export const COUNTER_PLAY: Readonly<Partial<Record<ProfileLabel, string>>> = {
+  reinforcer: 'Attack two of its territories in one turn (it deploys on one), or size for its deploy.',
+  'rarely-reinforces': 'Attack at the bare cost; spend the saving elsewhere.',
+  stacker: 'Hold in full where its stack is; expect one push.',
+  rusher: 'Garrison at first contact; no leftover on expansion.',
+  turtle: 'Out-expand it; a quiet border with it tends to stay quiet.',
+  avenger: 'Do not poke; strike only to cripple, and garrison the source.',
+  retakes: 'A capture from it needs a garrison that survives its counter.',
+};
+
+/** The labels the estimates earn, each only at {@link PROFILE_MIN_CONFIDENCE} or more, in a fixed order. */
+export function labelsOf(e: Record<HabitName, HabitEstimate>): ProfileLabel[] {
+  const sure = (x: HabitEstimate) => x.confidence >= PROFILE_MIN_CONFIDENCE;
+  const out: ProfileLabel[] = [];
+  if (sure(e.reinforce) && e.reinforce.value >= 0.6) out.push('reinforcer');
+  if (sure(e.reinforce) && e.reinforce.value <= 0.3) out.push('rarely-reinforces');
+  if (sure(e.stacking) && e.stacking.value >= 0.75) out.push('stacker');
+  if (sure(e.stacking) && e.stacking.value <= 0.45) out.push('spreader');
+  if (sure(e.firstStrike) && sure(e.attack) && e.firstStrike.value >= 0.6 && e.attack.value >= 0.6) out.push('rusher');
+  if (sure(e.attack) && e.attack.value <= 0.2) out.push('turtle');
+  if (sure(e.retaliate) && e.retaliate.value >= 0.6) out.push('avenger');
+  if (sure(e.retake) && e.retake.value >= 0.6) out.push('retakes');
+  return out;
+}

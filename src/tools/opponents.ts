@@ -2,6 +2,7 @@
 // opponent — observed deploys turn by turn, an income estimate, the armies that must be in
 // the fog and the bonuses that could explain an income gap. Read-only on war.app; it caches
 // the board it read, like warapp_plan_turn, so the history grows on either tool.
+import type { EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { INFER_REACH, MAX_LISTED_COMBINATIONS, TRACKED_MIN_TURNS, trackGame, trackOpponents, type ObservedTurn } from '../analysis/index.js';
@@ -13,12 +14,13 @@ import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
+import { recordProfile } from './profile-hook.js';
 import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 
-export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void {
+export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps: { env?: EnvSource } = {}): void {
   server.registerTool(
     'warapp_track_opponents',
     {
@@ -75,6 +77,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext): void
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
         await writeGameRecord(ctx.dataDir, game);
+        await recordProfile(ctx.dataDir, deps.env, game, me, boards);
       }
       const name = namer(map);
       const players = new Map(game.players.map((p) => [p.id, p.name]));

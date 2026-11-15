@@ -15,8 +15,9 @@ Build plans: `docs/PLAN.md` (phase 1, GameFeed), `docs/PLAN-LIVE.md` (phase 2, l
 `docs/PLAN-TURN.md` (phase 3, plan and submit a turn), `docs/PLAN-SCOUT.md` (phase 4, my games
 and opponent scouting), `docs/PLAN-CARDS-PUSH.md` (phase 5, cards, turn notifications,
 threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, from a lost game),
-`docs/PLAN-PICKS.md` (the pick advisor; its heuristics and sources are in `docs/STRATEGY.md`) and
-`docs/PLAN-TEAMS.md` (chat, truces in free-for-alls and team play).
+`docs/PLAN-PICKS.md` (the pick advisor; its heuristics and sources are in `docs/STRATEGY.md`),
+`docs/PLAN-TEAMS.md` (chat, truces in free-for-alls and team play) and `docs/PLAN-PROFILES.md`
+(opponent profiling: reading opponents' habits, and using the read next time).
 
 ## What is true only of this repo
 
@@ -618,6 +619,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   The line leads with its verdict in about a dozen words (#254: confirmed / kept / not confirmed, kept
   as a lower bound), then one short sentence of numbers; every figure is in `income.jump`.
   The figure never changes for it.
+- **Opponent profiles (`docs/PLAN-PROFILES.md`, part A; owner decisions P1–P4 of 2026-11-15).** A habit is
+  counts, never a story: events out of opportunities (`{ e, n }`) or a size (`{ n, sum, sq }`).
+  `src/analysis/opponent-profile.ts` (pure) observes each pair of my consecutive boards with my cached orders
+  (`observeTurn` → `TurnPrimitives` per opponent: contact, `attackedMe` — `null` when it cannot be told —,
+  `iAttacked`, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
+  arithmetic cannot read —, `stack`, `tookFromMe` / `lostToMe`; visibility through `visibleState` / `ownerShown`)
+  and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake) from the
+  whole list, so re-deriving never double-counts. `src/profile-store.ts` keeps every observed turn at
+  `<dataDir>/profiles/games/<gameId>-<myId>.json` (real ids, counts only; a turn observed again is
+  overwritten; newest 200 files), written by `recordProfile` (`src/tools/profile-hook.ts`) right after
+  `writeBoardCache` in warapp_plan_turn (never a what-if plan), warapp_track_opponents,
+  warapp_locate_opponents and warapp_get_relations. `WARAPP_PLAYER_PROFILE=off`: nothing read or written.
+  Teammates are never profiled. Read-only `warapp_profile_opponents` reports each habit shrunk toward a
+  neutral default (`PROFILE_PRIOR_WEIGHT` 4) with `n`, `confidence`, `basis` (`this-game` / `default`),
+  and labels with a counter-play line at confidence 0.5. **Profiles inform only:** the planner reads none
+  of it until part 0's measurement is reported and the owner approves each hook (P1).
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in

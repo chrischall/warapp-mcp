@@ -110,6 +110,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_plan_picks',
       'warapp_plan_route',
       'warapp_plan_turn',
+      'warapp_profile_opponents',
       'warapp_recent_events',
       'warapp_record_agreement',
       'warapp_scout_player',
