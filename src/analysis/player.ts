@@ -104,11 +104,12 @@ export function incomeRules(settings: Pick<GameSettings, 'minimumArmyBonus' | 'b
  * overridden bonus values once read — only unreadable overrides are listed).
  * Cities and per-player income mods have no known settings key, so they are
  * not detected: those games still get the hard deploy-total check. Sanctions is
- * flagged when the card is merely enabled: the live board's active-card list is
- * not decoded, so the model cannot tell whether I am sanctioned this turn
- * (docs/WARAPP-API.md, the trade-off).
+ * flagged when the card is merely enabled: the live board's active-card decoder is
+ * unverified (#163), so the model cannot be sure whether I am sanctioned this turn
+ * (docs/WARAPP-API.md, the trade-off). With `sanctionsApplied` (PLAN-TEAMS D3: the
+ * income already carries the Sanctions read on me) the reason says so instead.
  */
-export function incomeUncertainties(settings: GameSettings | undefined): string[] {
+export function incomeUncertainties(settings: GameSettings | undefined, opts: { sanctionsApplied?: boolean } = {}): string[] {
   const out: string[] = [];
   if (settings?.minimumArmyBonus === undefined)
     out.push(`The game's base income is missing from its settings; the model assumes ${DEFAULT_BASE_INCOME}.`);
@@ -121,7 +122,11 @@ export function incomeUncertainties(settings: GameSettings | undefined): string[
   if (settings?.cards.includes('Sanctions')) {
     const pct = settings.raw?.SanctionsCard;
     const p = isRecord(pct) && typeof pct.Percentage === 'number' ? ` by ${Math.round(pct.Percentage * 100)}%` : '';
-    out.push(`This game has the Sanctions card, which cuts a sanctioned player's income${p}; the model does not apply it.`);
+    out.push(
+      opts.sanctionsApplied
+        ? `the Sanctions on you${p} are applied as read from the board by an unverified decoder (#163).`
+        : `This game has the Sanctions card, which cuts a sanctioned player's income${p}; the model does not apply it.`,
+    );
   }
   return out;
 }
@@ -130,8 +135,8 @@ export function incomeUncertainties(settings: GameSettings | undefined): string[
  * Why warapp_submit_turn's deploy-total check must warn rather than refuse: the income
  * uncertainties plus, while the overrides' shape is unverified, a game's overrides.
  */
-export function deployCheckUncertainties(settings: GameSettings | undefined): string[] {
-  return [...new Set([...incomeUncertainties(settings), ...overrideUncertainties(settings)])];
+export function deployCheckUncertainties(settings: GameSettings | undefined, opts: { sanctionsApplied?: boolean } = {}): string[] {
+  return [...new Set([...incomeUncertainties(settings, opts), ...overrideUncertainties(settings)])];
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

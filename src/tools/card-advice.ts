@@ -115,6 +115,10 @@ export interface CardAdviceInput {
   truceCovered?: ReadonlySet<number>;
   /** The truces in force (active or in notice): Diplomacy goes on a covered partner only when it adds protection. */
   truces?: readonly TruceCover[];
+  /** PLAN-TEAMS D3: players a Diplomacy card in effect makes no foe in the plan (the decoder was sure of it). */
+  enforced?: ReadonlySet<number>;
+  /** PLAN-TEAMS D3: the plan's income already carries the Sanctions on me. */
+  sanctionsApplied?: boolean;
 }
 
 /**
@@ -245,16 +249,21 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
         const hit = plan.moves.filter((m) => m.kind === 'attack' && other !== undefined && owner(m.to) === other);
         warnings.push(
           `Diplomacy is in effect between you and player ${other}${until}: neither can attack the other.` +
-            (hit.length ? ` The plan's attacks on ${hit.map((m) => label(m.to)).join(', ')} would do nothing — drop or redirect them.` : ''),
+            (other !== undefined && input.enforced?.has(other)
+              ? ' The plan honours it (T9): no hold against that player and no attack on it.'
+              : hit.length
+                ? ` The plan's attacks on ${hit.map((m) => label(m.to)).join(', ')} would do nothing — drop or redirect them.`
+                : ''),
         );
       }
       if (a.card === 'Sanctions' && a.target === me.id) {
         const pct = (game.settings?.raw.SanctionsCard as Record<string, unknown> | undefined)?.Percentage;
         const cut = typeof pct === 'number' ? ` by ${Math.round(pct * 100)}%` : '';
-        warnings.push(
-          `Sanctions are on you${until}: your income is cut${cut}, which the modelled income does not apply — deploy what the game shows ` +
-            '(warapp_submit_turn takes a lower total when Sanctions are in the game).',
-        );
+        if (!input.sanctionsApplied)
+          warnings.push(
+            `Sanctions are on you${until}: your income is cut${cut}, which the modelled income does not apply — deploy what the game shows ` +
+              '(warapp_submit_turn takes a lower total when Sanctions are in the game).',
+          );
       }
     }
     warnings.push('Active cards are read from the live board by an unverified decoder (#163): check them in the game.');

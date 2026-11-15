@@ -101,12 +101,11 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   that gold, buying armies and cities are not modelled — **UNVERIFIED**: no commerce game's feed has been
   seen (the bundle's commerce settings are `CommerceArmyCostMultiplier` and `CommerceCityBaseCost`).
 - **Trade-off — Sanctions:** the bundle cuts income only when a Sanctions card is actually
-  *active* against the player, but this repo does not decode the live board's active-card list
-  (its shape in `GetLatestGameInfo` is unverified), so the warning fires whenever the card is
-  merely *enabled* — and the lobby settings enable it in many games. Those games lose the hard
-  deploy-total refusal even when nobody is sanctioned; the check is a preview warning and war.app's
-  error 11 is the backstop. Decoding the active cards would let the warning (and the soft check)
-  apply only when I am sanctioned this turn.
+  *active* against the player. The active-card list is decoded (below) but not verified live, so the
+  warning still fires whenever the card is merely *enabled* — and the lobby settings enable it in many
+  games. Those games lose the hard deploy-total refusal even when nobody is sanctioned; the check is a
+  preview warning and war.app's error 11 is the backstop. Once the decoder is verified live, the soft
+  check could apply only when I am sanctioned this turn.
 - **Active cards (#163) — UNVERIFIED live.** The client bundle's `GameStanding` carries
   `ActiveCards`, a list of `warlight.shared.ActiveCard { Card, ExpiresAfterTurn }` whose `Card` is
   the `GameOrderPlayCard<X>` that started it (read-only, from the bundle's readers: Diplomacy reads
@@ -117,8 +116,24 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `BeginningOfNextTurn` (Spy, Reconnaissance, Surveillance), `ExpiresAfterTurn + 1` for `EndOfTurn`
   (every other built-in card). `warapp_plan_turn` warns of a
   Diplomacy between the user and a player the plan attacks, and of Sanctions on the user. No live
-  board with an active card has been decoded, and whether fogged card plays hide them is unknown;
-  the income model still does not apply a Sanction (submit's soft deploy check stays).
+  board with an active card has been decoded, and whether fogged card plays hide them is unknown.
+- **The cards in effect the planner relies on (PLAN-TEAMS D3) — UNVERIFIED live.** From the bundle
+  (read-only): a card's ActiveCard is created when its play order is applied, with ExpiresAfterTurn =
+  the card's `ActiveOrderDuration` (its settings `Duration` for Diplomacy and Sanctions) + the turn
+  number being processed (the game's `NumberOfTurns`, GameFeed `numberOfTurns`) + 1, and is removed at
+  the end of the turn whose processing reaches it (`EndOfTurn`) — so one still in the current standing
+  binds the whole turn being ordered, and its `untilTurn` is never more than `Duration` turns ahead. A
+  player's income applies, per active Sanctions card on that player, round((1 − `Percentage`) × income)
+  (to the nearest, .5 up), after the army cap and capped at 10000 (a negative percentage raises it);
+  under Local Deployment the cut comes out of the bonus pools in a way not modelled. `cardsInEffect`
+  (`src/analysis/cards-in-effect.ts`) keeps a Diplomacy between the user and an opponent, or Sanctions on
+  the user, only when every check holds (turn known; the card in play with a `Duration`, and a
+  `Percentage` ≤ 1 for Sanctions; `untilTurn` after this turn and within `Duration`; distinct players of
+  the game still playing; no teammate). Then `warapp_plan_turn` plans that opponent as no threat and no
+  target this turn (rule T9; it still counts for next turn's look-ahead when the card is gone by then) and
+  cuts the user's income by the Sanctions; the result's `cardsInEffect` says so with `verified: false`.
+  Sanctions on an opponent are only reported: its observed deploys may already carry the cut. The submit
+  check stays soft.
 - **A team's hand (#163) — UNVERIFIED live.** The wiki says a team shares one hand and one card
   limit. `warapp_plan_turn` and `warapp_submit_turn` read the hand as every card under the user's
   and the teammates' in-game ids (each GUID once); how war.app keys a team's hand has not been

@@ -430,6 +430,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
   teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not
   discarded.
+  **The cards in effect (D3, UNVERIFIED live: `readActiveCards` is not yet checked on a live board).**
+  `src/analysis/cards-in-effect.ts` (pure) keeps a decoded ActiveCard only when sure: turn known, the card
+  in play with a `Duration`, its `untilTurn` after this turn and at most Duration turns ahead (the
+  bundle's ActiveCard: ExpiresAfterTurn = Duration + turn number + 1, worn off at the end of the turn
+  that reaches it), every named player a distinct player still playing. A Diplomacy between me and an
+  opponent (never a teammate) is T9: `planRelationsFrom`'s `diplomacy` marks a ledger truce with it
+  enforced, else adds a relation `card: 'Diplomacy'` covering everything; an enforced relation binds in
+  any format, its player is no foe this turn, and still counts for the two-step look-ahead when the card
+  is gone by next turn (`lookAheadFoes`). Sanctions on me cut `warapp_plan_turn`'s income by the bundle's
+  rule (per card, round((1 − Percentage) × income), .5 up, cap 10000; not under Local Deployment, which
+  warns). Sanctions on others only show (an observed deploy may already carry them). Anything not sure is
+  a warning and changes nothing; the plan reports `cardsInEffect` (`verified: false`), and
+  `warapp_check_plan` counts a card as a truce (`safeIfTruceHolds`; `safe` still tries its player).
+  With no active card every plan is unchanged (golden).
 - **Turn notifications are a socket.io v0.9 client with two transports.** While the active
   transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the
   `AuthToken` cookie (host-locked to war.app), then `wss://war.app/socket.io/1/websocket/<sid>`

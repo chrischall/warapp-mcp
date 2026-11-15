@@ -646,6 +646,11 @@ export interface PlanRelationsInput {
   players: readonly RelationPlayer[];
   /** My income and each opponent's estimate (`null`: unknown), for `outgrowing` and the endgame. */
   incomes: { mine: number | null; opponents: ReadonlyMap<number, number | null> };
+  /**
+   * PLAN-TEAMS D3 (T9): the Diplomacy cards between me and a player that the active-card decoder is
+   * sure of this turn (`cardsInEffect`, src/analysis/cards-in-effect.ts), with the turn each is gone by.
+   */
+  diplomacy?: readonly { player: number; untilTurn: number }[];
 }
 
 /** The flag kinds that make the trust `watch`, as the planner names them. */
@@ -655,10 +660,12 @@ const WATCH_KINDS = ['broken', 'cap-exceeded', 'massing', 'outgrowing'] as const
  * B2: the agreements the planner reads this turn — every one agreed and `active` or in `notice`,
  * with its covered territories on both sides (on `board`), its watch flags, the trust and why,
  * and the border cap; one the partner broke (a `broken` flag, never ambiguous) as `broken` with
- * the evidence (T8: an ordinary opponent at once). `enforced` is never set: the ledger's field
- * is ignored until part D supplies a decoder-backed, turn-bounded source, and an active Diplomacy
- * card is not read in (its decoder is unverified, #163). Also the tacit
- * truces with every neighbour no open agreement names: reported, never planned on.
+ * the evidence (T8: an ordinary opponent at once). `enforced` (T9) comes only from `diplomacy`, the
+ * Diplomacy cards the decoder is sure of (PLAN-TEAMS D3), never from the ledger's own field: an
+ * agreement active or in notice with that player is marked enforced until the card is gone, and a
+ * player with none gets a relation of its own (`card: 'Diplomacy'`, every territory of each side
+ * covered). Also the tacit truces with every neighbour no open agreement names: reported, never
+ * planned on.
  */
 /** One agreement an order list would break (`truceBreaksIn`). */
 export interface TruceBreak {
@@ -740,6 +747,26 @@ export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanR
       ...(broke
         ? { breach: { term: 'took or attacked a covered territory of mine', turn: broke.turn, evidence: broke.evidence, territories: [...broke.territories] } }
         : {}),
+    });
+  }
+  // D3 (T9): the Diplomacy cards in effect. A card is a game rule, not a promise: it binds whatever the ledger says.
+  for (const d of [...(input.diplomacy ?? [])].sort((x, y) => x.player - y.player)) {
+    if (d.player === me || d.untilTurn <= turn) continue;
+    const bound = relations.filter((r) => r.player === d.player && (r.state === 'active' || r.state === 'notice'));
+    for (const r of bound) {
+      r.enforced = true;
+      r.enforcedUntil = d.untilTurn;
+    }
+    if (bound.length) continue;
+    relations.push({
+      player: d.player,
+      coveredMine: [...mine].sort((x, y) => x - y),
+      coveredTheirs: [...holding(d.player)].sort((x, y) => x - y),
+      state: 'active',
+      trust: 'clear',
+      enforced: true,
+      enforcedUntil: d.untilTurn,
+      card: 'Diplomacy',
     });
   }
   const open = new Set(input.agreements.filter((a) => !TERMINAL_STATUSES.has(a.status)).map((a) => a.with));
@@ -910,17 +937,33 @@ export function priceTruce(
   terms: AgreementTerms,
   opts: { without?: TurnPlan; record?: RecordFacts | null; trust?: 'clear' | 'watch'; watch?: readonly TruceWatchReason[]; agreement?: string } = {},
 ): TrucePrice {
-  const others = (input.relations ?? []).filter((r) => r.player !== player);
+  const holding = (p: number) => new Set(input.board.territories.filter((t) => ownedBy(t, p)).map((t) => t.territoryId));
+  // D3: a Diplomacy card in effect with this player binds with or without the deal, so both plans keep it.
+  const enforcing = (input.relations ?? []).find((r) => r.player === player && r.enforced);
+  const card: PlanRelation[] = enforcing
+    ? [
+        {
+          player,
+          coveredMine: [...holding(input.me)].sort(byNum),
+          coveredTheirs: [...holding(player)].sort(byNum),
+          state: 'active',
+          trust: 'clear',
+          enforced: true,
+          ...(enforcing.enforcedUntil !== undefined ? { enforcedUntil: enforcing.enforcedUntil } : {}),
+          card: 'Diplomacy',
+        },
+      ]
+    : [];
+  const others = [...(input.relations ?? []).filter((r) => r.player !== player), ...card];
   const { relations: _given, ...rest } = input;
   const base: PlanInput = others.length ? { ...rest, relations: others } : rest;
-  const reusable = others.length === (input.relations ?? []).length;
+  const reusable = !card.length && others.length === (input.relations ?? []).length;
   const without = (reusable ? opts.without : undefined) ?? planTurn(base);
-  const holding = (p: number) => new Set(input.board.territories.filter((t) => ownedBy(t, p)).map((t) => t.territoryId));
   const coveredMine = coveredTerritories(input.graph, terms.scope, holding(input.me));
   const coveredTheirs = coveredTerritories(input.graph, terms.scope, holding(player));
   // The board's reading of a recorded truce with this player (planRelationsFrom) is kept: words
   // never clear a flag, and a price never trusts more than warapp_plan_turn does (PLAN-TEAMS §4).
-  const standing = (input.relations ?? []).find((r) => r.player === player);
+  const standing = (input.relations ?? []).find((r) => r.player === player && !r.card);
   const watch = [...new Set([...(standing?.watch ?? []), ...(opts.watch ?? [])])];
   const trusted: 'clear' | 'watch' = standing?.trust === 'watch' || opts.trust === 'watch' ? 'watch' : 'clear';
   const state = standing?.state ?? 'active';
@@ -938,7 +981,7 @@ export function priceTruce(
     ...(opts.agreement !== undefined ? { agreement: opts.agreement } : standing?.agreement !== undefined ? { agreement: standing.agreement } : {}),
   };
   const withPlan = planTurn({ ...base, relations: [...others, hypothetical] });
-  const view = withPlan.relations?.find((r) => r.player === player);
+  const view = withPlan.relations?.find((r) => r.player === player && !r.card);
   const theirCovered = new Set(coveredTheirs);
   const attacksForgone = [...new Set(without.moves.filter((m) => m.kind === 'attack' && theirCovered.has(m.to)).map((m) => m.to))].sort(byNum);
   const seen = new Set(without.warnings);

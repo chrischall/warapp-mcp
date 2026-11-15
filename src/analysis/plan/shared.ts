@@ -393,8 +393,10 @@ export type TruceWatchReason = 'broken' | 'cap-exceeded' | 'massing' | 'outgrowi
  * terms cover on each side; `state` `active` or `notice` binds (a notice until `endsTurn`, the first
  * turn it no longer binds), `broken` (T8: broken by them, `breach` saying how) does not. `trust`
  * `watch` (with its reasons) keeps every border's full hold (T3). `enforced` (T9): a Diplomacy card
- * the decoder is sure of — that player cannot attack me, nor I it. `warapp_plan_turn` never sets it
- * yet (the ledger's field is ignored until part D's decoder-backed source).
+ * the decoder is sure of — that player cannot attack me, nor I it, this turn, in any format
+ * (`warapp_plan_turn` sets it from the board's active cards, PLAN-TEAMS D3; the ledger's field is
+ * never read). `enforcedUntil`: the turn the card is gone by — when that is the next turn, the
+ * player still counts for the next turn's look-ahead (#172); absent, the card is taken to last.
  */
 export interface PlanRelation {
   player: number;
@@ -406,6 +408,10 @@ export interface PlanRelation {
   trust: 'clear' | 'watch';
   watch?: readonly TruceWatchReason[];
   enforced?: boolean;
+  /** T9: the turn the enforcing card is gone by (D3). */
+  enforcedUntil?: number;
+  /** D3: a relation that is only a card in effect (no agreement in the ledger). */
+  card?: 'Diplomacy';
   /** The ledger's agreement id, for the report. */
   agreement?: string;
   /** In notice: who gave it. */
@@ -423,6 +429,10 @@ export interface PlanRelationView {
   /** Whether the plan honours it this turn (T1, T2, T4, T5). */
   honoured: boolean;
   enforced: boolean;
+  /** T9 (D3): the turn the Diplomacy card enforcing it is gone by. */
+  enforcedUntil?: number;
+  /** D3: only a card in effect, no agreement. */
+  card?: 'Diplomacy';
   trust: 'clear' | 'watch';
   flags: TruceWatchReason[];
   endsTurn?: number;

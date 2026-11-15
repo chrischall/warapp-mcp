@@ -37,7 +37,8 @@ export const LIVE_BUNDLE = [
   'function Go(){}function Gd(){}function Ga(){}function Gk(){}function Gr(){}function Gx(){}function Ge(){}',
   'W["warlight.shared.GameOrder"]=Go;',
   'Go.Ha=function(a,b,d){var e=a.bc();switch(e){case 1:return Ga.r(a,b,d);case 2:return Gd.r(a,b,d);' +
-    'case 5:return Gr.r(a,b,d);case 9:return Gx.r(a,b,d);case 10:return Gk.r(a,b,d);case 22:return new Ge;' +
+    'case 5:return Gr.r(a,b,d);case 9:return Gx.r(a,b,d);case 10:return Gk.r(a,b,d);case 14:return Gy.r(a,b,d);' +
+    'case 15:return Gz.r(a,b,d);case 22:return new Ge;' +
     'default:throw Y.sa(new Pa("unknown order "+e))}};',
   'Go.base=function(a,b,d){b.o9=P.Ya(a);b.oa=a.Ua()?P.Ya(a):null;b.ob=a.Ua()?P.Sd(a,function(){return P.Ya(a)}):null};',
   'W["warlight.shared.GameOrderDeploy"]=Gd;',
@@ -52,10 +53,21 @@ export const LIVE_BUNDLE = [
   'W["warlight.shared.GameOrderDiscard"]=Gx;',
   'Gx.r=function(a,b,d){b=new Gx;b.o1=P.tL(a);Go.base(a,b,d);return b};',
   'W["warlight.shared.GameOrderEvent"]=Ge;',
+  // PLAN-TEAMS D3: the play orders an ActiveCard carries. Diplomacy reads its two players, Sanctions its
+  // target, then the card GUID and the base (the player who played it).
+  'function Gy(){}function Gz(){}function Ac(){}',
+  'W["warlight.shared.GameOrderPlayCardDiplomacy"]=Gy;',
+  'Gy.r=function(a,b,d){b=new Gy;b.o1=P.Ya(a);b.o2=P.Ya(a);b.o3=P.tL(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderPlayCardSanctions"]=Gz;',
+  'Gz.r=function(a,b,d){b=new Gz;b.o1=P.Ya(a);b.o3=P.tL(a);Go.base(a,b,d);return b};',
+  // ActiveCard: the play order that started it (optional), then ExpiresAfterTurn.
+  'W["warlight.shared.ActiveCard"]=Ac;',
+  'Ac.Ha=function(a,b,d){var e=new Ac;e.x1=a.Ua()?Go.Ha(a,e,d):null;e.x2=P.Ya(a);return e};',
   'W["warlight.shared.GameStanding"]=Gs;',
   'Gs.Ha=function(a,b,d){var e=new Gs;' +
     'e.q1=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return Pc.Ha(a,e,d)}):null;' +
-    'e.q2=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Ts.Ha(a,e,d):null}):null;return e};',
+    'e.q2=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Ts.Ha(a,e,d):null}):null;' +
+    'e.q3=a.Ua()?P.Sd(a,function(){return Ac.Ha(a,e,d)}):null;return e};',
   // Per-player data keyed by in-game id (an unregistered class, as in the client),
   // holding the player's cards: a dict GUID → card instance.
   'Pc.Ha=function(a,b,d){var e=new Pc;e.z1=P.Ya(a);' +
@@ -172,6 +184,14 @@ function writeOrder(w: Writer, o: SyntheticOrder, player: number): void {
   w.int32(player).bool(false).bool(false);
 }
 
+/**
+ * A card in effect (PLAN-TEAMS D3): the play order that started it — Diplomacy between two in-game ids, or
+ * Sanctions on one — played by `by`, and the raw ExpiresAfterTurn.
+ */
+export type SyntheticActiveCard =
+  | { card: 'Diplomacy'; players: [number, number]; by: number; guid: string; expiresAfterTurn: number }
+  | { card: 'Sanctions'; target: number; by: number; guid: string; expiresAfterTurn: number };
+
 /** The result of GetLatestGameInfo (present flag first), as the synthetic bundle reads it. */
 export function writeLatestGameInfo(
   w: Writer,
@@ -179,6 +199,7 @@ export function writeLatestGameInfo(
   playerIds: readonly number[] = [],
   hands: Readonly<Record<number, readonly SyntheticCard[]>> = {},
   teammateOrders?: Readonly<Record<number, SyntheticTeammateOrders | null>>,
+  activeCards?: readonly SyntheticActiveCard[],
 ): void {
   w.bool(true).int32(1);
   if (territories === null) {
@@ -207,6 +228,15 @@ export function writeLatestGameInfo(
       for (const u of units) writeUnit(ww, u);
       ww.int32(t.owner).bool(false);
     });
+    if (activeCards === undefined) w.bool(false);
+    else
+      w.bool(true).list(activeCards, (aw, c) => {
+        aw.bool(true);
+        if (c.card === 'Diplomacy') aw.u8(14).int32(c.players[0]).int32(c.players[1]);
+        else aw.u8(15).int32(c.target);
+        aw.guid(c.guid).int32(c.by).bool(false).bool(false);
+        aw.int32(c.expiresAfterTurn);
+      });
   }
   if (teammateOrders === undefined) w.bool(false);
   else {

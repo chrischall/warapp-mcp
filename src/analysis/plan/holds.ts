@@ -334,7 +334,7 @@ export function twoStepHolds(
 ) {
   const {
     g, board, me, s, opts, income, game: ctx, foe, deployOf, territories: state, label, mineSet, cardArmies, unitsAt,
-    bonusTs, bonusesWith, heldAtStart, myCommanders,
+    bonusTs, bonusesWith, heldAtStart, myCommanders, truce,
   } = pc;
   const { avail, captured } = ps;
   const { pools } = book;
@@ -388,7 +388,12 @@ export function twoStepHolds(
       const teams = new Map<number, number>();
       for (const p of ctx.players ?? []) if (carriesTeam(p.team)) teams.set(p.id, p.team);
       const opponents = [
-        ...new Set(board.territories.flatMap((x) => (x.owner.kind === 'player' && foe(x.owner.playerId) && x.armies !== null ? [x.owner.playerId] : []))),
+        // T9 (D3): a player a Diplomacy card shields me from only this turn is a foe again next turn.
+        ...new Set(
+          board.territories.flatMap((x) =>
+            x.owner.kind === 'player' && (foe(x.owner.playerId) || truce.lookAheadFoes.has(x.owner.playerId)) && x.armies !== null ? [x.owner.playerId] : [],
+          ),
+        ),
       ]
         .sort(byNum)
         .map((id) => ({ id, deploy: deployOf(id) }));

@@ -335,6 +335,16 @@ appear in all of them. Only the current standing's cards are playable: an instan
 only in the previous standing or the turn's receive/play orders was already played, and playing
 it is refused with error 50 `CardInstanceUnavailable`.
 
+**The cards in effect (PLAN-TEAMS D3) — from the client bundle, UNVERIFIED live.** The current
+`GameStanding` also carries `ActiveCards`: a list of `warlight.shared.ActiveCard { Card, ExpiresAfterTurn }`,
+`Card` being the `GameOrderPlayCard<X>` play order that started it (Diplomacy: two int32 player ids;
+Sanctions: the int32 target; then the base's card GUID and player). ExpiresAfterTurn = the card's
+duration + the turn number processed + 1, and an `EndOfTurn` card (Diplomacy, Sanctions) is removed at
+the end of the turn that reaches it, so a card in the current standing binds the whole turn being
+ordered. `readActiveCards` (`src/cards.ts`) reads them; `src/analysis/cards-in-effect.ts` decides which
+the planner may rely on (docs/WARAPP-API.md). No live board with an active card has been decoded yet:
+once one has, compare `cardsInEffect` in `warapp_plan_turn` with the game and mark this verified.
+
 **Teammates' entered orders and picks (C1) — from the client bundle, UNVERIFIED live (V5).** After the
 standings, `LatestGameInfo` carries a dict in-game player id → `warlight.shared.TeammateOrders`
 `{ int32 stamp, list<GameOrder> orders (a turn), list<int32> picks (while distributing) }`, each list

@@ -73,6 +73,8 @@ import {
 } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, type WarappServerError } from '../protocol/rpc.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
+import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from './card-effects.js';
+import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
 import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
@@ -1224,6 +1226,8 @@ export async function truceRelations(
     /** My income this turn, card armies out. */
     myIncome: number;
     tracks: readonly OpponentTrack[] | undefined;
+    /** PLAN-TEAMS D3: the Diplomacy cards with me the decoder is sure of (`boardCardsInEffect`). */
+    diplomacy?: readonly SureDiplomacy[];
   },
 ): Promise<{ relations: PlanRelation[]; tacit: TacitTruce[] } | undefined> {
   const { game, me, turn, graph, tracks } = a;
@@ -1254,6 +1258,7 @@ export async function truceRelations(
           }),
       ),
     },
+    ...(a.diplomacy?.length ? { diplomacy: a.diplomacy } : {}),
   });
 }
 
@@ -1321,7 +1326,11 @@ export async function livePlanSetup(
   const myCards = myHand.filter((c) => isMyCard(c, inGame.me));
   // The board's income, card armies out: what the truces' trust reads (as warapp_check_plan passes it).
   const boardIncome = incomeFor(graph, board, me.id, game.settings);
-  const income = boardIncome + cards.extraArmies;
+  // PLAN-TEAMS D3: the cards in effect the decoder is sure of — Sanctions on me cut this turn's income,
+  // a Diplomacy card with a player makes it no foe this turn (T9).
+  const effect = boardCardsInEffect(game, me, turn, info);
+  const sanction = sanctionMyIncome(boardIncome, effect, { localDeployments: settings.localDeployments === true });
+  const income = sanction.income + cards.extraArmies;
   const trend = history.previous;
   const previousOrders = turn !== null ? history.boards.find((b) => b.turn === turn - 1)?.orders : undefined;
   // The opponents over my board history: one observed over 2+ turns gets its tracked income;
@@ -1380,7 +1389,9 @@ export async function livePlanSetup(
   };
   // B2: the truces in force, from the agreement ledger (warapp_record_agreement) and my board
   // history, and the tacit truces (reported, never planned on).
-  const truces = await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: boardIncome, tracks });
+  const truces = await truceRelations(ctx, {
+    game, me, turn, graph, board: seen, boards: history.boards, myIncome: boardIncome, tracks, diplomacy: effect.diplomacy,
+  });
   const input: PlanInput = {
     graph,
     board,
@@ -1424,6 +1435,7 @@ export async function livePlanSetup(
   return {
     graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
+    effect, sanction,
   };
 }
 
@@ -1623,7 +1635,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         },
       });
       const { graph, seen, award, board, mover, rules, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards, income, trend, previousOrders, tracks } = setup;
-      const { settings, outlookInput, gameContext, truces } = setup;
+      const { settings, outlookInput, gameContext, truces, effect, sanction } = setup;
       let { outlook } = setup;
       const plan = planTurn(setup.input);
       // #228: and the plan's profile standing, so an `even` outlook beside `behind` says why they differ.
@@ -1686,12 +1698,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect; D2: my Diplomacy, Sanctions, Airlift and Gift. Advice only: the orders
       // below are the plan's (and the advised Order Delay).
-      const inForce = (truces?.relations ?? []).filter((r) => r.state === 'active' || r.state === 'notice');
+      // D3: a relation that is only a Diplomacy card is no truce to the card advice (it reads the card itself).
+      const inForce = (truces?.relations ?? []).filter((r) => (r.state === 'active' || r.state === 'notice') && !r.card);
       const advice = rules.inPlay.length
         ? adviseCards({
             game, me, turn, info, hand: myHand, choice: cards, plan, board, graph, settings, label: (id) => `${name(id).name} (#${id})`,
             truceCovered: new Set(inForce.flatMap((r) => r.coveredTheirs)),
             truces: inForce.map((r) => ({ player: r.player, state: r.state as 'active' | 'notice', coveredMine: r.coveredMine, ...(r.endsTurn !== undefined ? { endsTurn: r.endsTurn } : {}) })),
+            ...(effect.diplomacy.length ? { enforced: new Set(effect.diplomacy.map((d) => d.player)) } : {}),
+            ...(sanction.applied ? { sanctionsApplied: true } : {}),
           })
         : { view: {}, warnings: [] };
       // B4: the planner does not read what my chat messages promised (words change no estimate), so a
@@ -1716,7 +1731,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...cards.warnings,
         ...advice.warnings,
         ...(cards.extraArmies > 0 ? [cardIncomeNote(income, cards.extraArmies)] : []),
-        ...deployCheckUncertainties(game.settings).map((r) => `Income ${income} may be off: ${r}`),
+        ...sanction.warnings,
+        ...effect.unsure,
+        ...deployCheckUncertainties(game.settings, { sanctionsApplied: sanction.applied }).map((r) => `Income ${income} may be off: ${r}`),
         ...(tracks ?? []).flatMap((t) => t.warnings),
         ...plan.warnings,
         ...promised,
@@ -1919,6 +1936,19 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             }
           : {}),
         ...(plan.advice ? { advice: plan.advice.map((a) => ({ ...a, player: playerRef(a.player) })) } : {}),
+        // PLAN-TEAMS D3: the cards in effect the plan relied on (an unverified decoder, so `verified: false`).
+        ...(effect.diplomacy.length || sanction.applied
+          ? {
+              cardsInEffect: {
+                ...(effect.diplomacy.length ? { diplomacy: effect.diplomacy.map((d) => ({ player: playerRef(d.player), untilTurn: d.untilTurn })) } : {}),
+                ...(sanction.applied
+                  ? { sanctionsOnMe: effect.sanctionsOnMe.map((x) => ({ percentage: x.percentage, untilTurn: x.untilTurn })), incomeBefore: setup.boardIncome, incomeAfter: sanction.income }
+                  : {}),
+                verified: false,
+                note: CARDS_IN_EFFECT_UNVERIFIED,
+              },
+            }
+          : {}),
         // Where the teams came from (GameFeed, else the game list), in a team game only.
         ...(teamSource !== 'none' ? { teamSource } : {}),
         // PLAN-TEAMS C3.3: the bonuses I share with a teammate, advisory.

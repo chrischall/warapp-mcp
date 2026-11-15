@@ -162,6 +162,15 @@ describe('B3 priceTruce: plan with and without the truce', () => {
     expect(price).toMatchObject({ armiesFreed: 3, capturesGained: [4], bonusesGained: [900], incomeGained: 3 });
   });
 
+  it('a Diplomacy card in effect with the partner binds both plans: the truce adds nothing this turn (D3)', () => {
+    const card: PlanRelation = { player: PARTNER, coveredMine: [1, 3], coveredTheirs: [2], state: 'active', trust: 'clear', enforced: true, enforcedUntil: 10, card: 'Diplomacy' };
+    const price = priceTruce(input({ relations: [card] }), PARTNER, scope12);
+    expect(price).toMatchObject({ armiesFreed: 0, capturesGained: [], bonusesGained: [], incomeGained: 0 });
+    // A ledger truce the card enforces prices the same way.
+    const ledger: PlanRelation = { player: PARTNER, coveredMine: [1], coveredTheirs: [2], state: 'active', trust: 'clear', enforced: true, enforcedUntil: 10, agreement: 'a1' };
+    expect(priceTruce(input({ relations: [ledger] }), PARTNER, scope12)).toMatchObject({ armiesFreed: 0, incomeGained: 0 });
+  });
+
   it('a truce under watch trust (the endgame) relaxes nothing and frees nothing', () => {
     const price = priceTruce(input(), PARTNER, scope12, { trust: 'watch', watch: ['endgame'] });
     expect(price).toMatchObject({ armiesFreed: 0, relaxed: [], incomeGained: 0, fullHold: [{ territory: 1, why: 'watch' }] });
