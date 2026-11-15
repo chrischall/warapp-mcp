@@ -33,6 +33,7 @@ import {
   specialUnitStrength,
   winChance,
   incomeDetail,
+  armyCapPoolsUncertainty,
   deployCheckUncertainties,
   overrideUncertainties,
   neighborsOf,
@@ -1934,6 +1935,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(setup.incomeCap ? { armyCap: setup.incomeCap } : {}),
         }).map((r) => `Income ${income} may be off: ${r}`),
         ...(setup.capUnknown ? [`Income ${income} is not cut by the army cap: an army count of yours is unreadable on the board.`] : []),
+        ...[armyCapPoolsUncertainty(setup.incomeCap, settings.localDeployments)].filter((r): r is string => r !== undefined),
         ...(tracks ?? []).flatMap((t) => t.warnings),
         ...plan.warnings,
         ...promised,
@@ -2568,6 +2570,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           poolsUncertain: [
             ...overrideUncertainties(game.settings),
             ...(overridden ? [`The ${overridden}, so the bonus pools may differ too.`] : []),
+            // J1 review: the cap's cut total is modelled, how war.app takes it out of the pools is not.
+            ...[armyCapPoolsUncertainty(incomeOnBoard.cap, game.settings?.localDeployments)].filter((r): r is string => r !== undefined),
           ],
         });
         if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);

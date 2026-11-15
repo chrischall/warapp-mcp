@@ -103,7 +103,11 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `round` is to the nearest with .5 down; the armies counted are the plain army counts of my
   territories in the current standing (special units such as a commander are not counted); under
   Local Deployment the cut comes out of the free armies and the bonus pools in a way not modelled
-  (`deployPools` takes the cut income, so its anywhere pool absorbs it first). **Reinforcement card
+  (`deployPools` takes the cut income, so its anywhere pool absorbs it first, then the outermost pools are
+  trimmed — a guess). So when the cap cuts under Local Deployment (`armyCapPoolsUncertainty`,
+  `src/analysis/player.ts`) the plan warns that its pool split is a guess and `warapp_submit_turn`'s pool
+  check only warns (the reason joins `poolsUncertain`), as for Sanctions there; with no cut the pool check
+  stays a refusal. **Reinforcement card
   armies are outside the cap**: the bundle adds them after it, and the client's own guide says they
   are not income and always pay in full (unverified live). `incomeDetail` (`src/analysis/plan/shared.ts`)
   computes it, so `warapp_plan_turn` (which reports `incomeCapped`: `uncapped`, `cap`, `armies`, `limit`,
@@ -111,7 +115,9 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   data point the check stays a preview warning that states the arithmetic; `warapp_check_plan` checks the
   deploy total against the cut figure too. The fog prior (`planEnemyEstimates`' `incomeCap`), the standing
   and `warapp_check_plan`'s leader test read my income before the cut: they compare economies, and the cap
-  is mine alone. The plan's `expected.nextIncome` is this turn's cut income plus its gains, not the cap
+  is mine alone. The truces' trust (`truceRelations`' `myIncome`, in both `warapp_plan_turn` and
+  `warapp_check_plan`) reads the cut figure on purpose: it weighs what I can deploy against the partner this
+  turn. The plan's `expected.nextIncome` is this turn's cut income plus its gains, not the cap
   re-run for next turn. My armies a territory of mine does not show (never seen) leave the income uncut,
   with a warning. Another player's cap is not modelled: its fogged armies are unknown, so every other
   player's income (`visibleIncomeFor`: a teammate's `visibleIncome` in `warapp_get_team`, the card

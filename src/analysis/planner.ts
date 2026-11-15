@@ -865,6 +865,8 @@
 //     income, armies left standing cost income next turn, so the same fallback fires in any phase,
 //     and the rationale says so; without `incomeCap` it fires when my armies after deploy exceed
 //     cap × income. The fog prior and the standing read my income before the cut (the cap is mine).
+//     Under Local Deployment the cut income's pools are trimmed outermost first (`deployPools`), a
+//     guess: warapp_plan_turn warns so (`armyCapPoolsUncertainty`) and the submit pool check only warns.
 //     Contact and late phases (#107): a plan with no capture at all falls back too — unless the
 //     caller chose `defend` (a `defend` that adapt picked, rule 0p.3 behind outside a 1v1, still
 //     falls back: its holds come first), or the 1v1 strike stack (rule 0p.3c) spends itself this

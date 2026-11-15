@@ -374,8 +374,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   setting the income model does not compute or rests on one live case (the army cap: war.app pays
   min(income, round(cap × income) − my armies on the board), `incomeDetail`, #253; card armies are
   outside it; plan, submit and `warapp_check_plan` deploy on the cut figure, `warapp_plan_turn` reports `incomeCapped`;
-  the fog prior, the standing and check_plan's leader test read my income before the cut, and another
-  player's income is never cut: its fogged armies are unknown); after an error 11 the caller passes
+  the fog prior, the standing and check_plan's leader test read my income before the cut, the truces'
+  trust reads the cut figure on purpose (what I can deploy this turn), and another
+  player's income is never cut: its fogged armies are unknown; under Local Deployment a cut makes the
+  pool split a guess, `armyCapPoolsUncertainty`: the plan warns and the pool check only warns); after an error 11 the caller passes
   the game's own number as `income`, which replaces the model for the check), and refuses outside a turn phase or when my
   `hasCommittedOrders` is already true (a second `SendOrders` replacing the first is
   unverified; the client uses "Modify orders" = `UnCommit`, which `warapp_uncommit_turn` sends). **Success is read from game state, never

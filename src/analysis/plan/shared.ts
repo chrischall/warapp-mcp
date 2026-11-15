@@ -1853,7 +1853,9 @@ export function visibleIncomeFor(g: MapGraph, board: BoardState, player: number,
 /**
  * {@link incomeFor} with the army cap's arithmetic: `cap` when the game has one and every territory
  * of mine shows its armies (my own always should); `capUnknown` when one does not, and the income is
- * then left uncut.
+ * then left uncut. The cap reads my armies from the start-of-turn standing as war.app showed it:
+ * callers may pass a board with the award or a prior merged in (livePlanSetup's `board`), which must
+ * never change my own territories' armies — a merge that did would move the cap's cut.
  */
 export function incomeDetail(
   g: MapGraph,

@@ -137,6 +137,21 @@ export function armyCapText(c: ArmyCapIncome): string {
   return `${c.cap} × ${c.uncapped} = ${c.limit}, less your ${c.armies} armies on the board, is ${c.limit - c.armies}`;
 }
 
+/**
+ * J1 review: under Local Deployment, why the bonus pools are a guess when the army cap cuts my income.
+ * The cut total is modelled, but how war.app takes it out of the pools is not known: the pool model
+ * (`deployPools`, local-deploy.ts) trims the outermost pools first, an assumption. So the pool check only warns
+ * and the plan says so, as for Sanctions under Local Deployment. `undefined` without a cut.
+ */
+export function armyCapPoolsUncertainty(c: ArmyCapIncome | undefined, localDeployments: boolean | undefined): string | undefined {
+  if (!localDeployments || !c?.cut) return undefined;
+  return (
+    `Local Deployment: the army cap cuts your income from ${c.uncapped} to ${c.received}, and which bonus pools the ` +
+    `${c.uncapped - c.received} come out of is not known (the model takes them from the outermost pools first, a guess): ` +
+    "deploy as the game's deploy panel shows."
+  );
+}
+
 /** Why the army cap's figure is not certain: one live case, and the card armies' place (from the client's guide). */
 export const ARMY_CAP_BASIS =
   'the formula rests on one live case (2026-11-15); Reinforcement card armies are outside it (the client\'s guide: they are not income and always pay in full, unverified live)';

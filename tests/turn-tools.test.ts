@@ -2883,6 +2883,53 @@ describe('Overridden bonus values in the turn tools (#62)', () => {
     expect(textOf(bad)).toMatch(/Local Deployment/);
   });
 
+  // J1 review: the army cap under Local Deployment. Income 21 (2 + 12 + 7), 4 armies of mine, cap 1×:
+  // round(1 × 21) − 4 = 17 is paid. How war.app takes the 4 cut from the pools is not known, so the
+  // model's trim (12 + 5, 0 anywhere) is a guess: the pool check warns, never refuses, and the plan says so.
+  const cappedSettings = () => ({ ...overrideSettings(LIVE), ArmyCap: 1 });
+
+  it('the army cap under Local Deployment: the plan warns that the pools are a guess', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: cappedSettings() })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.income).toBe(17);
+    expect(p.warnings.join('\n')).toMatch(
+      /Local Deployment: the army cap cuts your income from 21 to 17, and which bonus pools the 4 come out of is not known/,
+    );
+  });
+
+  it('the army cap under Local Deployment: a split the trimmed pools reject warns instead of refusing', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: cappedSettings() })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const res = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 9090, armies: 14 },
+        { kind: 'deploy', territory: 3241, armies: 3 },
+      ],
+    });
+    expect(res.isError).toBeFalsy();
+    const text = textOf(res);
+    expect(text).toMatch(/outside the held bonuses' own pools/);
+    expect(text).toMatch(/modelled pools may be off.*army cap cuts your income from 21 to 17/);
+  });
+
+  it('the army cap with no cut under Local Deployment keeps the hard pool check', async () => {
+    h = await liveHarness({
+      feed: [game('Playing', { settings: { ...overrideSettings(LIVE), ArmyCap: 8 } })],
+      pages: ME_PAGE,
+      warapp: routes({ [Method.GetLatestGameInfo]: board(OVERRIDE_BOARD) }),
+    });
+    const bad = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 9090, armies: 21 }] });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toMatch(/Local Deployment/);
+  });
+
   it('an unreadable OverriddenBonuses: map values, a warning, and soft checks for the panel’s 21', async () => {
     h = await liveHarness({
       feed: [game('Playing', { settings: overrideSettings('Eastvale=12') })],
