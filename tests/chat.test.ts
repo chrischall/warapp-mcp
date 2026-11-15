@@ -81,6 +81,15 @@ describe('readSendChatReply', () => {
 });
 
 describe('feedChatLines (GameFeed)', () => {
+  it('reads a zone-less feed date as UTC, as every other feed time is, never as local time', () => {
+    const [us, iso] = feedChatLines([
+      { playerID: ANN, message: 'a', date: '11/14/2026 16:52:00' },
+      { playerID: ANN, message: 'b', date: '2026-11-14 16:52:00' },
+    ])!;
+    expect(us!.timeMs).toBe(Date.UTC(2026, 10, 14, 16, 52));
+    expect(iso!.timeMs).toBe(Date.UTC(2026, 10, 14, 16, 52));
+  });
+
   it('a message with no channel field is unknown; turn and time are kept', () => {
     expect(
       feedChatLines([

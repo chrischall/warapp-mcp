@@ -15,6 +15,7 @@
 import type { ClassReader } from './live.js';
 import type { Reader } from './protocol/codec.js';
 import { fields, isObj } from './protocol/decoded.js';
+import { parseFeedTime } from './normalize.js';
 import { asInt } from './scalars.js';
 
 export const GAME_DETAILS_AND_CHAT = 'warlight.shared.GameDetailsAndChat';
@@ -184,7 +185,8 @@ export function feedChatLines(raw: unknown): ChatLine[] | undefined {
     const time = pick(item, TIME_KEYS);
     if (typeof time === 'string' || typeof time === 'number') {
       line.time = String(time);
-      const ms = typeof time === 'string' ? Date.parse(time) : Number.NaN;
+      // A feed time with no zone is UTC, as every other GameFeed time (parseFeedTime); Date.parse would read it as local time.
+      const ms = typeof time === 'string' ? (parseFeedTime(time) ?? Date.parse(time)) : Number.NaN;
       if (Number.isFinite(ms)) line.timeMs = ms;
     }
     const to = asInt(pick(item, RECIPIENT_KEYS));
