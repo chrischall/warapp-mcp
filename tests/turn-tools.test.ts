@@ -1278,6 +1278,8 @@ describe('warapp_submit_turn', () => {
               { from: 161, to: 157 },
               { from: 159, to: 158 },
             ],
+            // Profiles A1: the card plays sent (none), so a turn without one is told from an unrecorded one.
+            cards: [],
           },
         ],
       ]),

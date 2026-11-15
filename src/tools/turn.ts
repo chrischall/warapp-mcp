@@ -1186,6 +1186,19 @@ export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
     sent: orders.flatMap((o) =>
       o.kind === 'move' ? [{ from: o.from, to: o.to, ...(o.mode === AttackTransferMode.Transfer ? { transferOnly: true as const } : {}) }] : [],
     ),
+    // Profiles A1: an Airlift or a Gift changes what my territories hold or who holds them.
+    cards: orders.flatMap((o) =>
+      o.kind === 'card'
+        ? [
+            {
+              card: o.card,
+              ...(o.from !== undefined ? { from: o.from } : {}),
+              ...(o.to !== undefined ? { to: o.to } : {}),
+              ...(o.target !== undefined ? { target: o.target } : {}),
+            },
+          ]
+        : [],
+    ),
   };
 }
 
@@ -1238,7 +1251,7 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
     .sort(([a], [b]) => a - b)
     .map(([t, b]): TurnBoard => {
       const o = orders.get(t);
-      return { turn: t, board: b.board, ...(o ? { orders: o } : {}) };
+      return { turn: t, board: b.board, ...(o ? { orders: o } : {}), ...(b.source === 'history' ? { source: 'history' as const } : {}) };
     });
   const previous = byTurn.get(turn - 1);
   return { boards, ...(previous ? { previous } : {}) };

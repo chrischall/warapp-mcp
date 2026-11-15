@@ -433,4 +433,16 @@ describe('myOrdersOf: what opponent tracking reads of my sent turn (#165)', () =
       { from: 1, to: 5 },
     ]);
   });
+
+  it('keeps every card play with the territories it touches, and none as an empty list (profiles A1)', () => {
+    const r = myOrdersOf([
+      { kind: 'card', card: 'Airlift', cardId: 'a', from: 1, to: 3, armies: 4 },
+      { kind: 'card', card: 'Gift', cardId: 'b', target: 2, player: 7 },
+      { kind: 'card', card: 'Reinforcement', cardId: 'c' },
+      { kind: 'discard', cardId: 'd' },
+      { kind: 'deploy', territoryId: 1, armies: 3 },
+    ]);
+    expect(r.cards).toEqual([{ card: 'Airlift', from: 1, to: 3 }, { card: 'Gift', target: 2 }, { card: 'Reinforcement' }]);
+    expect(myOrdersOf([{ kind: 'deploy', territoryId: 1, armies: 3 }]).cards).toEqual([]);
+  });
 });

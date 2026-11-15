@@ -23,6 +23,11 @@ export function observeSettings(game: Game): ObserveInput['settings'] {
   };
 }
 
+/** The cards in play, when the game's settings were read (else any card may be: unstated). */
+export function cardsInPlay(game: Game): { cards?: readonly string[] } {
+  return game.settings ? { cards: game.settings.cards } : {};
+}
+
 /** My opponents in `game`: every other player but my teammates (teammates are never profiled). */
 export function profiledOpponents(game: Game, me: Player): number[] {
   const friends = new Set(teammatesOf(game.players, me).map((p) => p.id));
@@ -53,6 +58,7 @@ export async function recordProfile(
         me: me.id,
         graph: graphOf(mapOf(game)),
         settings: observeSettings(game),
+        ...cardsInPlay(game),
         opponents: profiledOpponents(game, me),
         boards,
       },

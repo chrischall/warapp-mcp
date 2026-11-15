@@ -45,6 +45,12 @@ export interface ObserveInput {
   settings: Pick<PlannerSettings, 'offensiveKillRate' | 'defensiveKillRate' | 'luckModifier' | 'roundingMode' | 'oneArmyStandsGuard'>;
   /** The players observed: my opponents (never me, never a teammate). */
   opponents: readonly number[];
+  /**
+   * The cards in play (GameFeed settings, by name); absent when the settings were not read, where any
+   * card may be. Decides whether a card play my orders do not record (`orders.cards` absent) could
+   * have moved my armies (Airlift) or given a territory away (Gift).
+   */
+  cards?: readonly string[] | undefined;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -92,6 +98,16 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  *   attack big enough to take D that failed). `extra` is the least defenders above D explaining it.
  * - `stack`: over its territories visible on both boards, growth = max(0, now − then).
  * - `tookFromMe` / `lostToMe`: ownership changes between it and me, owners shown on both boards.
+ *
+ * My orders as cached (`MyOrders`): `moves` holds only plain orders; a percentage, Attack Only or
+ * Transfer Only order is in `sent` alone, and card plays in `cards`. A territory such an order leaves
+ * or enters, or one of my Airlifts touches, is never tested for `attackedMe` and gives no `reinforce`
+ * reading (its armies are not known); `iAttacked` counts every non-transfer order of `sent`. When the
+ * orders do not record card plays (`cards` absent: a cache written before they were) and the game may
+ * have Airlift, nothing is tested from armies at all, and when it may have Gift — orders unknown
+ * included — a territory of mine that became its is no capture (it may have been my gift), so a game
+ * with Gift and no orders of mine never reads one. A territory recorded as my Gift is no capture
+ * either. Not filtered: its own Gift of a territory to me reads as `lostToMe` (my orders cannot say).
  */
 export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
   const { graph, me, previous, current, orders, settings } = input;
@@ -108,7 +124,27 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
   const deploys = new Map<number, number>();
   for (const d of orders?.deploys ?? []) deploys.set(d.territoryId, (deploys.get(d.territoryId) ?? 0) + d.armies);
   const moves = orders?.moves ?? [];
-  const transferOnly = new Set((orders?.sent ?? []).filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
+  const sent = orders?.sent ?? [];
+  const transferOnly = new Set(sent.filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
+  // Card plays my orders may not record (A1): absent from the cache, in a game that may have the card.
+  const mayHave = (card: string) => input.cards === undefined || input.cards.includes(card);
+  const cardsUnknown = orders?.cards === undefined;
+  const airliftUnknown = cardsUnknown && mayHave('Airlift');
+  const giftUnknown = cardsUnknown && mayHave('Gift');
+  const gifted = new Set((orders?.cards ?? []).flatMap((c) => (c.card === 'Gift' && c.target !== undefined ? [c.target] : [])));
+  // Territories whose armies my plain moves do not account for: an order only `sent` holds, or an Airlift.
+  const untested = new Set<number>();
+  const plain = (a: { from: number; to: number }) => moves.filter((m) => m.from === a.from && m.to === a.to).length;
+  const sentCount = (a: { from: number; to: number }) => sent.filter((m) => m.from === a.from && m.to === a.to).length;
+  for (const m of sent)
+    if (sentCount(m) > plain(m)) {
+      untested.add(m.from);
+      untested.add(m.to);
+    }
+  for (const c of orders?.cards ?? [])
+    if (c.card === 'Airlift') for (const t of [c.from, c.to]) if (t !== undefined) untested.add(t);
+  /** Every neighbour of `id` has its owner shown on board T (no hidden player could have hit it). */
+  const allShown = (id: number) => neighborsOf(graph, id).every((n) => ownerShown(was.get(n)) !== undefined);
   const outOf = (id: number) => moves.filter((m) => m.from === id);
   const into = (id: number) => moves.filter((m) => m.to === id);
   const sum = (ms: readonly { armies: number }[]) => ms.reduce((n, m) => n + Math.max(0, m.armies), 0);
@@ -129,15 +165,18 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
     const ownsNow = (id: number) => shownOwner(now.get(id)) === p;
 
     const contact = ids.some((id) => ownsWas(id) && neighborsOf(graph, id).some(mineWas));
-    const tookFromMe = ids.filter((id) => mineWas(id) && ownsNow(id));
+    const tookFromMe = giftUnknown ? [] : ids.filter((id) => mineWas(id) && ownsNow(id) && !gifted.has(id));
     const lostToMe = ids.filter((id) => ownsWas(id) && mineNow(id));
-    const iAttacked = moves.some((m) => ownsWas(m.to) && m.armies > 0 && !transferOnly.has(`${m.from}:${m.to}`));
+    const iAttacked =
+      moves.some((m) => ownsWas(m.to) && m.armies > 0 && !transferOnly.has(`${m.from}:${m.to}`)) ||
+      sent.some((m) => ownsWas(m.to) && !m.transferOnly && sentCount(m) > plain(m));
 
     // attackedMe
     let attackedMe: boolean | null = tookFromMe.length ? true : null;
-    if (attackedMe === null && orders) {
+    if (attackedMe === null && orders && !airliftUnknown) {
       let tested = false;
       for (const id of ids) {
+        if (untested.has(id)) continue;
         const a = seen(was.get(id));
         const b = seen(now.get(id));
         if (a?.owner !== me || b?.owner !== me) continue;
@@ -147,9 +186,9 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         });
         if (!stacks.length) continue;
         const others = enemiesNext(id);
-        if (others.size !== 1) continue;
+        if (others.size !== 1 || !allShown(id)) continue;
         const transfersIn = into(id).filter((m) => mineWas(m.from));
-        if (transfersIn.some((m) => enemiesNext(m.from).size > 0)) continue;
+        if (transfersIn.some((m) => enemiesNext(m.from).size > 0 || !allShown(m.from))) continue;
         tested = true;
         const expected = a.armies + (deploys.get(id) ?? 0) - sum(outOf(id)) + sum(transfersIn);
         if (b.armies < expected) {
@@ -162,10 +201,11 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
 
     // reinforce
     const reinforce = { n: 0, e: 0, extra: 0 };
-    if (exact && orders) {
+    if (exact && orders && !airliftUnknown) {
       for (const m of moves) {
         const x = seen(was.get(m.to));
         if (!x || x.owner !== p || m.armies <= 0) continue;
+        if (untested.has(m.from) || untested.has(m.to)) continue;
         if (transferOnly.has(`${m.from}:${m.to}`)) continue;
         if (into(m.to).length !== 1 || outOf(m.to).length) continue;
         if (specialUnitStrength(visibleState(was.get(m.to))?.specialUnits) > 0) continue;

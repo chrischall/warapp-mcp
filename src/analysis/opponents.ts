@@ -122,6 +122,8 @@ export interface TurnBoard {
    * ({@link measureOrders}). Unknown orders change nothing.
    */
   orders?: MyOrders;
+  /** Profiles A1: `history` for a board read from GameFeed's unverified `GetHistory`; absent for a cached live board. */
+  source?: 'history';
 }
 
 /** My orders on one turn (#119): my deploys and the moves I sent (attacks and transfers alike). */
@@ -134,6 +136,20 @@ export interface MyOrders {
    * Absent in caches written before it. Never read by opponent tracking.
    */
   sent?: readonly { from: number; to: number; transferOnly?: true }[];
+  /**
+   * Profiles A1: every card play sent, by card name, with the territories it touches (an Airlift's
+   * `from` and `to`, a Gift's or Blockade's `target`). Empty when none was played; absent in caches
+   * written before it, where a card play is unknown. Never read by opponent tracking.
+   */
+  cards?: readonly MyCardPlay[];
+}
+
+/** One card play of mine and the territories it touches (profiles A1). */
+export interface MyCardPlay {
+  card: string;
+  from?: number;
+  to?: number;
+  target?: number;
 }
 
 /** Observed turns (the latest) feeding the income estimate (#99: {@link trackedIncome}). */

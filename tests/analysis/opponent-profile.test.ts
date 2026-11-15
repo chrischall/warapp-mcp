@@ -14,7 +14,7 @@ import {
   type TurnPrimitives,
 } from '../../src/analysis/opponent-profile.js';
 import type { BoardState } from '../../src/board.js';
-import { board, fogged, mine, tinyMap } from './helpers.js';
+import { board, fogged, mine, neutral, tinyMap } from './helpers.js';
 
 const ME = 10;
 const OPP = 20;
@@ -24,9 +24,19 @@ const its = (id: number, armies: number) => mine(id, armies, OPP);
 const other = (id: number, armies: number) => mine(id, armies, OTHER);
 const attack = (from: number, to: number, armies: number, deploys: MyOrders['deploys'] = []): MyOrders => ({ deploys, moves: [{ from, to, armies }] });
 
-function observe(previous: BoardState, current: BoardState, orders?: MyOrders, settings: ObserveInput['settings'] = {}, opponents = [OPP]) {
-  return observeTurn({ graph: g, me: ME, previous, current, orders, settings, opponents });
+/** The cards in play default to none; `'unknown'` leaves them unstated (settings not read). */
+function observe(
+  previous: BoardState,
+  current: BoardState,
+  orders?: MyOrders,
+  settings: ObserveInput['settings'] = {},
+  opponents = [OPP],
+  cards: readonly string[] | 'unknown' = [],
+) {
+  return observeTurn({ graph: g, me: ME, previous, current, orders, settings, opponents, ...(cards === 'unknown' ? {} : { cards }) });
 }
+/** Territories 1 and 2 (3's other neighbours) shown as neutrals, so a test of 3 sees every neighbour. */
+const shown = [neutral(1, 2), neutral(2, 2)];
 const of = (m: Map<number, TurnPrimitives>, p = OPP) => m.get(p)!;
 
 describe('observeTurn: reinforce', () => {
@@ -99,15 +109,84 @@ describe('observeTurn: attackedMe, contact, captures', () => {
 
   it('with my orders, fewer armies than they leave on a border it stands beside is an attack; as many is not', () => {
     const orders: MyOrders = { deploys: [{ territoryId: 3, armies: 2 }], moves: [] };
-    const prev = board([mine(3, 5), its(4, 9)]);
-    expect(of(observe(prev, board([mine(3, 4), its(4, 6)]), orders)).attackedMe).toBe(true);
-    expect(of(observe(prev, board([mine(3, 7), its(4, 9)]), orders)).attackedMe).toBe(false);
+    const prev = board([...shown, mine(3, 5), its(4, 9)]);
+    expect(of(observe(prev, board([...shown, mine(3, 4), its(4, 6)]), orders)).attackedMe).toBe(true);
+    expect(of(observe(prev, board([...shown, mine(3, 7), its(4, 9)]), orders)).attackedMe).toBe(false);
+  });
+
+  it('a neighbour whose owner the earlier board hides may hold the attacker: no reading', () => {
+    const orders: MyOrders = { deploys: [], moves: [] };
+    // 2 is fogged: another player may stand there and have hit 3.
+    expect(of(observe(board([neutral(1, 2), fogged(2), mine(3, 5), its(4, 9)]), board([neutral(1, 2), fogged(2), mine(3, 2), its(4, 9)]), orders)).attackedMe).toBeNull();
+    // 1 is not on the board at all: the same.
+    expect(of(observe(board([neutral(2, 2), mine(3, 5), its(4, 9)]), board([neutral(2, 2), mine(3, 2), its(4, 9)]), orders)).attackedMe).toBeNull();
+  });
+
+  it('a Transfer Only, percentage or Attack Only order out of or into a border leaves it untested (only `sent` holds them)', () => {
+    // I hold 2 and 3; 3 sends armies to 2 by an order `moves` leaves out: 3 drops from 5 to 2.
+    const prev = board([neutral(1, 2), mine(2, 5), mine(3, 5), its(4, 9)]);
+    const now = board([neutral(1, 2), mine(2, 8), mine(3, 2), its(4, 9)]);
+    const transferOnly: MyOrders = { deploys: [], moves: [], sent: [{ from: 3, to: 2, transferOnly: true }] };
+    expect(of(observe(prev, now, transferOnly)).attackedMe).toBeNull();
+    const percentage: MyOrders = { deploys: [], moves: [], sent: [{ from: 3, to: 2 }] };
+    expect(of(observe(prev, now, percentage)).attackedMe).toBeNull();
+    // Into it: 2 sends to 3 by percentage; 3 is not tested either way.
+    const inward: MyOrders = { deploys: [], moves: [], sent: [{ from: 2, to: 3 }] };
+    expect(of(observe(prev, board([neutral(1, 2), mine(2, 2), mine(3, 8), its(4, 9)]), inward)).attackedMe).toBeNull();
+    // The same drop with the move in `moves` too is no attack: the order is measured.
+    const plain: MyOrders = { deploys: [], moves: [{ from: 3, to: 2, armies: 3 }], sent: [{ from: 3, to: 2 }] };
+    expect(of(observe(prev, now, plain)).attackedMe).toBe(false);
+  });
+
+  it('an Attack Only order onto its territory counts as my attack, a Transfer Only one does not', () => {
+    const prev = board([...shown, mine(3, 10), its(4, 2)]);
+    const now = board([...shown, mine(3, 6), its(4, 2)]);
+    expect(of(observe(prev, now, { deploys: [], moves: [], sent: [{ from: 3, to: 4 }] })).iAttacked).toBe(true);
+    expect(of(observe(prev, now, { deploys: [], moves: [], sent: [{ from: 3, to: 4, transferOnly: true }] })).iAttacked).toBe(false);
+  });
+
+  it('an Airlift of mine out of or into a border leaves it untested, and an unrecorded one may have', () => {
+    const prev = board([...shown, mine(3, 5), its(4, 9)]);
+    const now = board([...shown, mine(3, 2), its(4, 9)]);
+    const airlift: MyOrders = { deploys: [], moves: [], cards: [{ card: 'Airlift', from: 3, to: 1 }] };
+    expect(of(observe(prev, now, airlift, {}, [OPP], ['Airlift'])).attackedMe).toBeNull();
+    // Orders cached without their card plays: an Airlift may have run when the game has the card, or its cards are unknown.
+    const unrecorded: MyOrders = { deploys: [], moves: [] };
+    expect(of(observe(prev, now, unrecorded, {}, [OPP], ['Airlift'])).attackedMe).toBeNull();
+    expect(of(observe(prev, now, unrecorded, {}, [OPP], 'unknown')).attackedMe).toBeNull();
+    // Recorded as none, or the card not in play: the drop is an attack.
+    expect(of(observe(prev, now, { ...unrecorded, cards: [] }, {}, [OPP], ['Airlift'])).attackedMe).toBe(true);
+    expect(of(observe(prev, now, unrecorded, {}, [OPP], ['Reinforcement'])).attackedMe).toBe(true);
+  });
+
+  it('an Airlift touching an attack, or one that may have run unrecorded, gives no reinforce reading', () => {
+    const before = board([mine(3, 10), its(4, 2)]);
+    const failed = board([mine(3, 6), its(4, 2)]);
+    const o = attack(3, 4, 5);
+    expect(of(observe(before, failed, { ...o, cards: [{ card: 'Airlift', from: 7, to: 3 }] }, {}, [OPP], ['Airlift'])).reinforce.n).toBe(0);
+    expect(of(observe(before, failed, o, {}, [OPP], ['Airlift'])).reinforce.n).toBe(0);
+    expect(of(observe(before, failed, { ...o, cards: [] }, {}, [OPP], ['Airlift'])).reinforce.n).toBe(1);
+    // A second order onto the target that only `sent` holds (Attack Only): two moves onto it.
+    expect(of(observe(before, failed, { ...o, sent: [{ from: 3, to: 4 }, { from: 5, to: 4 }] })).reinforce.n).toBe(0);
+  });
+
+  it('a territory I gave it with a Gift card is no capture; one I may have given unrecorded is not counted', () => {
+    const prev = board([mine(3, 2), its(4, 9)]);
+    const now = board([its(3, 2), its(4, 9)]);
+    const gift: MyOrders = { deploys: [], moves: [], cards: [{ card: 'Gift', target: 3 }] };
+    expect(of(observe(prev, now, gift, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: [], attackedMe: null });
+    // No orders known in a game with Gift (or cards unknown): the change may be a gift.
+    expect(of(observe(prev, now, undefined, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: [], attackedMe: null });
+    expect(of(observe(prev, now, undefined, {}, [OPP], 'unknown'))).toMatchObject({ tookFromMe: [], attackedMe: null });
+    // Without the card in play, or with my card plays recorded as none, it is a capture.
+    expect(of(observe(prev, now, undefined, {}, [OPP], ['Airlift']))).toMatchObject({ tookFromMe: [3], attackedMe: true });
+    expect(of(observe(prev, now, { deploys: [], moves: [], cards: [] }, {}, [OPP], ['Gift']))).toMatchObject({ tookFromMe: [3], attackedMe: true });
   });
 
   it('a border two players stand beside cannot say which attacked', () => {
     const orders: MyOrders = { deploys: [], moves: [] };
     // 3 borders 4 (its) and 2 (another player's).
-    const p = observe(board([mine(3, 5), its(4, 9), other(2, 9)]), board([mine(3, 2), its(4, 9), other(2, 9)]), orders, {}, [OPP, OTHER]);
+    const p = observe(board([neutral(1, 2), mine(3, 5), its(4, 9), other(2, 9)]), board([neutral(1, 2), mine(3, 2), its(4, 9), other(2, 9)]), orders, {}, [OPP, OTHER]);
     expect(of(p).attackedMe).toBeNull();
     expect(of(p, OTHER).attackedMe).toBeNull();
   });

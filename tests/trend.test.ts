@@ -243,6 +243,21 @@ describe('orders cache (#119: my own orders as measurements)', () => {
     expect((await readCachedOrders(dir, 42, ANN.id)).get(3)).toEqual({ ...orders(3), sent: [{ from: 1, to: 2 }] });
   });
 
+  it('keeps the card plays sent with the territories they touch, and reads them loosely (profiles A1)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    const cards = [{ card: 'Airlift', from: 1, to: 2 }, { card: 'Gift', target: 3 }, { card: 'Reinforcement' }];
+    await writeOrdersCache(dir, 42, ANN.id, 3, { ...orders(3), cards });
+    expect((await readCachedOrders(dir, 42, ANN.id)).get(3)).toEqual({ ...orders(3), cards });
+    // None played is kept as none, not as unknown.
+    await writeOrdersCache(dir, 42, ANN.id, 4, { ...orders(4), cards: [] });
+    expect((await readCachedOrders(dir, 42, ANN.id)).get(4)).toEqual({ ...orders(4), cards: [] });
+    writeFileSync(
+      boardCachePath(dir, 42),
+      JSON.stringify({ gameId: 42, playerId: ANN.id, turns: {}, orders: { '3': { ...orders(3), cards: [{ card: 'Gift', target: 'x' }, { card: 7 }, null, { card: 'Airlift', from: 1, to: 2 }] } } }),
+    );
+    expect((await readCachedOrders(dir, 42, ANN.id)).get(3)).toEqual({ ...orders(3), cards: [{ card: 'Gift' }, { card: 'Airlift', from: 1, to: 2 }] });
+  });
+
   it('drops one turn\'s orders (an uncommit), keeping the other turns and the boards', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
     await writeBoardCache(dir, 42, ANN.id, 4, board);

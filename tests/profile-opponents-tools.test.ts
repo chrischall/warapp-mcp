@@ -63,6 +63,8 @@ const orders = (): MyOrders => ({
     { from: 161, to: 158, armies: 5 },
     { from: 159, to: 135, armies: 2 },
   ],
+  // As warapp_submit_turn caches them: no card played (absent, an Airlift in play could have moved armies).
+  cards: [],
 });
 function live(turn: number): SyntheticTerritory[] {
   const a = at(turn);

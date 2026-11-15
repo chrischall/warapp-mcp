@@ -15,7 +15,8 @@ import {
   recordBehaviour,
   type BehaviourInput,
 } from '../src/profile-store.js';
-import { board, mine, tinyMap } from './analysis/helpers.js';
+import { BOARD_CACHE_MAX_AGE_MS } from '../src/trend.js';
+import { board, mine, neutral, tinyMap } from './analysis/helpers.js';
 
 const ME = 10;
 const OPP = 20;
@@ -23,14 +24,14 @@ const GAME = 4242;
 const tmp = () => mkdtempSync(join(tmpdir(), 'warapp-mcp-profile-'));
 const g = buildGraph(tinyMap());
 
-/** Turns `from`..`to`: I hold 3, it holds 4 and grows by one a turn; my orders attack nothing. */
+/** Turns `from`..`to`: I hold 3 (its other neighbours neutral), it holds 4 and grows by one a turn; my orders attack nothing. */
 function boards(from: number, to: number): TurnBoard[] {
   const out: TurnBoard[] = [];
   for (let t = from; t <= to; t++)
-    out.push({ turn: t, board: board([mine(3, 5), mine(4, 2 + t, OPP), mine(5, 2, OPP)]), orders: { deploys: [], moves: [] } });
+    out.push({ turn: t, board: board([neutral(1, 2), neutral(2, 2), mine(3, 5), mine(4, 2 + t, OPP), mine(5, 2, OPP)]), orders: { deploys: [], moves: [] } });
   return out;
 }
-const input = (b: TurnBoard[]): BehaviourInput => ({ gameId: GAME, me: ME, graph: g, settings: {}, opponents: [OPP], boards: b });
+const input = (b: TurnBoard[]): BehaviourInput => ({ gameId: GAME, me: ME, graph: g, settings: {}, opponents: [OPP], cards: [], boards: b });
 
 describe('profileEnabled', () => {
   it('is on unless WARAPP_PLAYER_PROFILE says off', () => {
@@ -58,6 +59,24 @@ describe('recordBehaviour', () => {
     const noOrders = boards(12, 13).map(({ orders: _o, ...b }) => b);
     await recordBehaviour(dir, input(noOrders), {});
     expect((await readProfileTurns(dir, GAME, ME, {})).get(OPP)!.at(-1)).toMatchObject({ turn: 12, primitives: { attackedMe: null } });
+  });
+
+  it('observes no pair with a board read from GameFeed history (unverified for a game in progress)', async () => {
+    const dir = tmp();
+    const b = boards(1, 4).map((x) => (x.turn === 2 ? { ...x, source: 'history' as const } : x));
+    await recordBehaviour(dir, input(b), {});
+    expect((await readProfileTurns(dir, GAME, ME, {})).get(OPP)!.map((t) => t.turn)).toEqual([3]);
+  });
+
+  it('passes the cards in play: orders without card plays in a game that may have Airlift read no attack from armies', async () => {
+    const dir = tmp();
+    const { cards: _c, ...unknown } = input(boards(1, 2));
+    await recordBehaviour(dir, unknown, {});
+    expect((await readProfileTurns(dir, GAME, ME, {})).get(OPP)![0]!.primitives.attackedMe).toBeNull();
+    await recordBehaviour(dir, { ...input(boards(1, 2)), cards: ['Airlift'] }, {});
+    expect((await readProfileTurns(dir, GAME, ME, {})).get(OPP)![0]!.primitives.attackedMe).toBeNull();
+    await recordBehaviour(dir, { ...input(boards(1, 2)), cards: ['Reinforcement'] }, {});
+    expect((await readProfileTurns(dir, GAME, ME, {})).get(OPP)![0]!.primitives.attackedMe).toBe(false);
   });
 
   it('skips pairs that are not consecutive turns, and writes nothing with nothing to observe', async () => {
@@ -124,5 +143,18 @@ describe('recordBehaviour', () => {
     expect(names).toHaveLength(MAX_PROFILE_GAME_FILES);
     expect(names).toContain(`${GAME}-${ME}.json`);
     expect(names).not.toContain(`1000-${ME}.json`);
+  });
+
+  it('deletes a game file not written for as long as the board cache keeps a game (B2: no id-bearing file outlives it)', async () => {
+    const dir = tmp();
+    mkdirSync(profileGamesDir(dir), { recursive: true });
+    const stale = profileGamePath(dir, 1000, ME);
+    const recent = profileGamePath(dir, 1001, ME);
+    for (const p of [stale, recent]) writeFileSync(p, '{}');
+    const now = Date.now() / 1000;
+    utimesSync(stale, now - BOARD_CACHE_MAX_AGE_MS / 1000 - 86_400, now - BOARD_CACHE_MAX_AGE_MS / 1000 - 86_400);
+    utimesSync(recent, now - BOARD_CACHE_MAX_AGE_MS / 1000 + 86_400, now - BOARD_CACHE_MAX_AGE_MS / 1000 + 86_400);
+    await recordBehaviour(dir, input(boards(1, 2)), {});
+    expect(readdirSync(profileGamesDir(dir)).sort()).toEqual([`1001-${ME}.json`, `${GAME}-${ME}.json`]);
   });
 });

@@ -9,8 +9,9 @@
 //
 // Same guarantees as the board cache: 0600 files in a 0700 folder, atomic writes (under the
 // in-process path lock), best effort, never throws; an unusable file reads as empty; only the newest
-// `MAX_PROFILE_GAME_FILES` game files are kept. `WARAPP_PLAYER_PROFILE=off` (or `0` / `false` / `no`):
-// nothing here reads or writes.
+// `MAX_PROFILE_GAME_FILES` game files are kept, and none unwritten for the board cache's age limit
+// (`BOARD_CACHE_MAX_AGE_MS`). `WARAPP_PLAYER_PROFILE=off` (or `0` / `false` / `no`): nothing here
+// reads or writes.
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
@@ -18,6 +19,7 @@ import type { MapGraph } from './analysis/graph.js';
 import { observeTurn, type ObserveInput, type ObservedPrimitives, type TurnPrimitives } from './analysis/opponent-profile.js';
 import type { TurnBoard } from './analysis/opponents.js';
 import { withPathLock } from './path-lock.js';
+import { BOARD_CACHE_MAX_AGE_MS } from './trend.js';
 
 export const PROFILE_ENV = 'WARAPP_PLAYER_PROFILE';
 /** Game files kept: the newest by last write. */
@@ -116,6 +118,8 @@ export interface BehaviourInput {
   me: number;
   graph: MapGraph;
   settings: ObserveInput['settings'];
+  /** The cards in play by name; absent when the game's settings were not read (any card may be). */
+  cards?: readonly string[] | undefined;
   /** My opponents (never me, never a teammate). */
   opponents: readonly number[];
   /** My boards of the game, each with my orders on that turn when known (`boardHistory` plus the live board). */
@@ -124,7 +128,9 @@ export interface BehaviourInput {
 
 /**
  * The turns `input.boards` lets me observe: one entry per pair of boards of consecutive turns T and
- * T+1, the turn T, by opponent. Pure.
+ * T+1, the turn T, by opponent. A pair with a board read from GameFeed's `GetHistory` (`source:
+ * 'history'`, unverified for a game in progress) is not observed: stored primitives come from the
+ * live boards this server cached only (principle 6). Pure.
  */
 export function observeBoards(input: BehaviourInput): Map<number, Map<number, TurnPrimitives>> {
   const sorted = [...input.boards].sort((a, b) => a.turn - b.turn);
@@ -132,7 +138,7 @@ export function observeBoards(input: BehaviourInput): Map<number, Map<number, Tu
   for (let i = 0; i + 1 < sorted.length; i++) {
     const was = sorted[i]!;
     const now = sorted[i + 1]!;
-    if (now.turn !== was.turn + 1) continue;
+    if (now.turn !== was.turn + 1 || was.source === 'history' || now.source === 'history') continue;
     out.set(
       was.turn,
       observeTurn({
@@ -143,13 +149,18 @@ export function observeBoards(input: BehaviourInput): Map<number, Map<number, Tu
         orders: was.orders,
         settings: input.settings,
         opponents: input.opponents,
+        ...(input.cards !== undefined ? { cards: input.cards } : {}),
       }),
     );
   }
   return out;
 }
 
-/** Keep only the newest {@link MAX_PROFILE_GAME_FILES} game files. Best effort. */
+/**
+ * Keep only the newest {@link MAX_PROFILE_GAME_FILES} game files, and none not written for
+ * {@link BOARD_CACHE_MAX_AGE_MS} (the board cache's own age rule: no id-bearing file outlives it,
+ * B2). Best effort.
+ */
 async function prune(dir: string): Promise<void> {
   try {
     const folder = profileGamesDir(dir);
@@ -164,7 +175,9 @@ async function prune(dir: string): Promise<void> {
       }
     }
     files.sort((a, b) => b.mtime - a.mtime || a.path.localeCompare(b.path));
-    for (const f of files.slice(MAX_PROFILE_GAME_FILES)) await unlink(f.path).catch(() => undefined);
+    const cutoff = Date.now() - BOARD_CACHE_MAX_AGE_MS;
+    for (const [i, f] of files.entries())
+      if (i >= MAX_PROFILE_GAME_FILES || f.mtime < cutoff) await unlink(f.path).catch(() => undefined);
   } catch {
     // No folder yet.
   }

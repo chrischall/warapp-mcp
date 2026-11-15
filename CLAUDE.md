@@ -626,9 +626,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `iAttacked`, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
   arithmetic cannot read —, `stack`, `tookFromMe` / `lostToMe`; visibility through `visibleState` / `ownerShown`)
   and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake) from the
-  whole list, so re-deriving never double-counts. `src/profile-store.ts` keeps every observed turn at
+  whole list, so re-deriving never double-counts. A territory an order only `sent` holds (percentage, Attack
+  Only, Transfer Only) or my Airlift touches is never read from armies; orders cached without their card plays
+  (`MyOrders.cards`, cached since A1) read nothing from armies when the game may have Airlift, and no capture
+  from me when it may have Gift (a gift of mine is no capture); a border with a neighbour whose owner is hidden
+  is not tested; boards from GameFeed history (`TurnBoard.source: 'history'`) are never observed.
+  `src/profile-store.ts` keeps every observed turn at
   `<dataDir>/profiles/games/<gameId>-<myId>.json` (real ids, counts only; a turn observed again is
-  overwritten; newest 200 files), written by `recordProfile` (`src/tools/profile-hook.ts`) right after
+  overwritten; newest 200 files, none unwritten past the board cache's 60 days), written by `recordProfile` (`src/tools/profile-hook.ts`) right after
   `writeBoardCache` in warapp_plan_turn (never a what-if plan), warapp_track_opponents,
   warapp_locate_opponents and warapp_get_relations. `WARAPP_PLAYER_PROFILE=off`: nothing read or written.
   Teammates are never profiled. Read-only `warapp_profile_opponents` reports each habit shrunk toward a

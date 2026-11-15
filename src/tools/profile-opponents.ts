@@ -28,7 +28,7 @@ import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
-import { observeSettings, profiledOpponents, recordProfile } from './profile-hook.js';
+import { cardsInPlay, observeSettings, profiledOpponents, recordProfile } from './profile-hook.js';
 import { resolveTeamsFor } from './team-source.js';
 import { boardHistory, currentTurn, requireTurnPhase } from './turn.js';
 
@@ -82,7 +82,7 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
       const opponents = profiledOpponents(game, me);
       // The stored turns when kept (every turn ever observed), else only those the boards read now show.
       const stored = on && ctx.dataDir ? await readProfileTurns(ctx.dataDir, game.id, me.id, env) : new Map<number, ObservedPrimitives[]>();
-      const fresh = observeBoards({ gameId: game.id, me: me.id, graph: graphOf(mapOf(game)), settings: observeSettings(game), opponents, boards });
+      const fresh = observeBoards({ gameId: game.id, me: me.id, graph: graphOf(mapOf(game)), settings: observeSettings(game), ...cardsInPlay(game), opponents, boards });
       const turnsOf = (o: number): ObservedPrimitives[] => {
         const byTurn = new Map<number, ObservedPrimitives>();
         for (const t of stored.get(o) ?? []) byTurn.set(t.turn, t);
