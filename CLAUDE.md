@@ -796,7 +796,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       more of my start-of-turn stacks in a fixed order (the first attacks only wear it down),
       with exact arithmetic — only at 0% luck under straight rounding (else skipped with a
       warning), and only for a target the passes already chose. `warapp_plan_turn` lists them
-      in `multiSourceCaptures`.
+      in `multiSourceCaptures`. `warapp_submit_turn`'s preview (`attackSizes`, #250) judges
+      attacks on one target the same way, in the order listed, each against what the earlier
+      ones leave (`facing`, `softener`; at the expectation with luck), and warns "cannot capture"
+      only when the whole sequence falls short — never sized as one stack, which rounds once.
     - **Frontier cost (#71, rule 4d).** Every capture's score pays for the frontier it adds:
       `NEUTRAL_BORDER_COST` per border it opens (minus per border it closes), plus, under
       `balanced`/`defend`, what a new enemy-facing border needs next turn to hold (R3's

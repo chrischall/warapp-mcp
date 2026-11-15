@@ -58,7 +58,7 @@ import {
   type PlanInput,
 } from '../analysis/index.js';
 import { parseGameId } from '../client.js';
-import { COMMANDER_STRENGTH } from '../analysis/combat.js';
+import { COMMANDER_STRENGTH, type CombatSettings, luckFraction, straightKills } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
@@ -773,12 +773,19 @@ interface AttackSize {
   expectedKills: number;
   /**
    * The exact chance of capturing them (kill rates, luck, rounding); deploys there this turn are not
-   * counted. With {@link combined}, the chance of the attacks' armies taken as one stack — an
-   * optimistic estimate, since separate attacks each face the defenders' kills.
+   * counted. With {@link combined}, the chance that the attacks capture run in the order listed,
+   * each against what the earlier ones leave (#250): exact at 0% luck under straight rounding, else
+   * at the expectation (each failed attack kills its expected share; the attacks' own chances
+   * taken as independent).
    */
   winChance: number;
   /** Set when several moves attack this target this turn: how many, and their armies together. */
   combined?: { attacks: number; armies: number };
+  /** With {@link combined}: the defenders this attack meets once the earlier attacks on the target have run (#250). */
+  facing?: number;
+  /** With {@link combined}: an attack before the one that captures, which only wears the target down (#250). */
+  softener?: true;
+  /** The attack, or with {@link combined} the attacks in the order listed, cannot capture. */
   cannotCapture?: true;
   /** A percentage order (#165): its percentage; `armies` is then what it would send on the board as it stands. */
   percent?: number;
@@ -801,9 +808,12 @@ interface SizedMove {
 
 /**
  * Each move into a territory that is not mine and is visible, sized against what stands there
- * now: a transfer (to my own or a teammate's territory) and a fogged target are left out. Several moves into one target (a
- * multi-source capture) are sized together, so a leg too small on its own is not flagged when
- * the legs capture together.
+ * now: a transfer (to my own or a teammate's territory) and a fogged target are left out. Several
+ * moves into one target (a multi-source capture, #17) are judged in the order listed, each against
+ * what the earlier ones leave (#250), as the planner's `multiSourceCaptures` are built: a softener
+ * that fails by design is not flagged when a later leg captures. Taken as one stack they could
+ * read wrong either way: 6, 8 and 18 into 7 at 20% kill 1 + 2 + 4 = 7 in turn, but round(6.4) = 6
+ * together.
  */
 export function attackSizes(
   board: readonly LiveTerritory[],
@@ -834,17 +844,36 @@ export function attackSizes(
     g.armies += power(m);
     together.set(m.to.id, g);
   }
+  const combat = {
+    ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
+    ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
+    ...(settings.luckModifier !== undefined ? { luck: settings.luckModifier } : {}),
+    ...(settings.roundingMode !== undefined ? { rounding: settings.roundingMode } : {}),
+  };
+  const sequences = new Map<number, Sequence>();
+  for (const id of together.keys()) {
+    if (together.get(id)!.attacks < 2) continue;
+    const t = standing.get(id)!;
+    sequences.set(
+      id,
+      attackSequence(
+        t.armies ?? 0,
+        specialUnitStrength(t.specialUnits),
+        attacks.filter((m) => m.to.id === id).map(power),
+        combat,
+      ),
+    );
+  }
+  const seen = new Map<number, number>();
   return attacks.map((m) => {
     const t = standing.get(m.to.id)!;
     const group = together.get(m.to.id)!;
     const armies = group.attacks > 1 ? group.armies : power(m);
     const defenders = (t.armies ?? 0) + specialUnitStrength(t.specialUnits);
-    const chance = winChance(armies, defenders, {
-      ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
-      ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
-      ...(settings.luckModifier !== undefined ? { luck: settings.luckModifier } : {}),
-      ...(settings.roundingMode !== undefined ? { rounding: settings.roundingMode } : {}),
-    });
+    const sequence = sequences.get(m.to.id);
+    const at = seen.get(m.to.id) ?? 0;
+    seen.set(m.to.id, at + 1);
+    const chance = sequence ? sequence.chance : winChance(armies, defenders, combat);
     return {
       from: m.from,
       to: m.to,
@@ -855,9 +884,93 @@ export function attackSizes(
       expectedKills: Math.round(expectedKills(armies, off) * 10) / 10,
       winChance: Math.round(chance * 1000) / 1000,
       ...(group.attacks > 1 ? { combined: { ...group } } : {}),
+      ...(sequence ? { facing: sequence.facing[at]! } : {}),
+      ...(sequence && sequence.captor !== undefined && at < sequence.captor ? { softener: true as const } : {}),
       ...(chance === 0 ? { cannotCapture: true as const } : {}),
     };
   });
+}
+
+/**
+ * The submit preview's warning for attacks that cannot capture, or `undefined` when none: a lone
+ * attack as before, and attacks on one target together, run in the order listed (#250) — only
+ * when even the last of them fails against what the earlier ones leave.
+ */
+export function hopelessAttackWarning(
+  attacks: readonly AttackSize[],
+  label: (place: { id: number; name: string }) => string,
+): string | undefined {
+  const hopeless = attacks.filter((a) => a.cannotCapture);
+  if (!hopeless.length) return undefined;
+  const lone = hopeless.filter((a) => !a.combined);
+  const parts: string[] = [];
+  if (lone.length)
+    parts.push(
+      `${lone.map((a) => `${label(a.from)} → ${label(a.to)}`).join(', ')}: ${lone.length === 1 ? 'this attack' : 'these attacks'} ` +
+        "cannot capture against the armies there now at this game's kill rates (see `attacks`).",
+    );
+  const targets = [...new Set(hopeless.filter((a) => a.combined).map((a) => a.to.id))];
+  for (const id of targets) {
+    const legs = hopeless.filter((a) => a.combined && a.to.id === id);
+    const to = legs[0]!.to;
+    parts.push(
+      `${legs.map((a) => `${label(a.from)} (${a.armies})`).join(', then ')} → ${label(to)}: run in the order listed, each ` +
+        `against what the earlier ones leave (the first ones only wear it down), these ${legs.length} attacks ` +
+        `cannot capture the ${legs[0]!.defenders} there now at this game's kill rates (see \`attacks\`: \`facing\`).`,
+    );
+  }
+  return parts.join(' ');
+}
+
+/** Attacks on one target run in the order listed (#250). */
+interface Sequence {
+  /** The chance that one of them captures. */
+  chance: number;
+  /** The defenders each attack meets (rounded at the expectation). */
+  facing: number[];
+  /** The first attack expected to capture (exact: the one that does); absent when none is. */
+  captor?: number;
+}
+
+/**
+ * Attacks of `powers` armies into `armies` defenders (plus special units fighting as `units`)
+ * run one after another: a failed attack kills its share — every defender's army before a
+ * commander's strength, which falls only whole — and an attack that wipes out both sides leaves
+ * one defender (`turn-sim`'s rule). Exact at 0% luck under straight rounding, as the planner's
+ * combined captures (rule 3a) are; otherwise each failed attack kills its expected share and the
+ * chance is 1 − Π(1 − each attack's chance against what it meets), an estimate.
+ */
+function attackSequence(armies: number, units: number, powers: readonly number[], combat: CombatSettings): Sequence {
+  const off = combat.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
+  const exact = luckFraction(combat.luck) === 0 && combat.rounding !== 'WeightedRandom';
+  let left = armies;
+  let strength = units;
+  let miss = 1;
+  let captor: number | undefined;
+  const facing: number[] = [];
+  for (const [i, a] of powers.entries()) {
+    const meets = Math.round(left) + strength;
+    facing.push(meets);
+    if (captor !== undefined) continue;
+    const chance = winChance(a, meets, combat);
+    miss *= 1 - chance;
+    if (exact ? chance === 1 : chance >= 0.5) {
+      captor = i;
+      if (exact) break;
+      continue;
+    }
+    const kills = exact ? straightKills(a, off) : expectedKills(a, off);
+    if (kills >= left + strength) {
+      // It killed them all yet failed, so both sides were wiped out: one defender stands again.
+      left = 1;
+      strength = 0;
+    } else if (kills >= left) left = 0;
+    else left -= kills;
+  }
+  // After the captor in an exact run the target is mine: the later moves are transfers.
+  while (facing.length < powers.length) facing.push(0);
+  const chance = exact ? (captor !== undefined ? 1 : 0) : 1 - miss;
+  return { chance, facing, ...(captor !== undefined ? { captor } : {}) };
 }
 
 /** The card types warapp_submit_turn can play, by the encoder's name. */
@@ -2101,7 +2214,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         '`attack_teammates` (team games); these are encoded as the client does but not yet verified live. ' +
         'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
         'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
-        'several attacks on one target together) ' +
+        'several attacks on one target in the order listed, each against what the earlier ones leave) ' +
         'and warns about one that cannot capture. An order that attacks a territory an active or in-notice truce ' +
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
         'and, once the orders are committed, the ledger records it broken-by-me. Always sent as ' +
@@ -2381,13 +2494,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           plannerSettings(game.settings),
           teammates,
         );
-        const hopeless = attacks.filter((a) => a.cannotCapture);
-        if (hopeless.length) {
-          warnings.push(
-            `${hopeless.map((a) => `${label(a.from)} → ${label(a.to)}`).join(', ')}: ${hopeless.length === 1 ? 'this attack' : 'these attacks'} ` +
-              'cannot capture against the armies there now at this game\'s kill rates (see `attacks`).',
-          );
-        }
+        const hopeless = hopelessAttackWarning(attacks, label);
+        if (hopeless) warnings.push(hopeless);
         // Deploys first (as the client sends them), merged per territory.
         const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
         for (const d of deploys) {

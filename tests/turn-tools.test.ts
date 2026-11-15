@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { attackSizes, commerceWarning, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { attackSizes, commerceWarning, hopelessAttackWarning, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { untrustedText } from '../src/tools/common.js';
 import { normalizeMap } from '../src/normalize.js';
 import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
@@ -2780,6 +2780,33 @@ describe('the submit preview sizes each attack (#130)', () => {
     expect(preview.preview.warnings?.join('\n')).toMatch(/cannot capture/);
   });
 
+  it('does not call a combined capture whose softener fails by design impossible (#250)', async () => {
+    // 2 then 7 into 3 at 25%: round(0.5) + round(1.75) = 1 + 2 = 3 in turn; together round(2.25) = 2.
+    const settings = { ...modelledSettings(), OffensiveKillRate: 25, DefensiveKillRate: 80, LuckModifier: 0, RoundingMode: 'StraightRound' };
+    // 158 is mine here, so 157 has two sources of mine beside it.
+    const three = BOARD.map((t) =>
+      t.id === 157 ? { ...t, armies: 3 } : t.id === 158 ? { ...t, owner: ANN.inGame, armies: 6 } : t.id === 159 ? { ...t, owner: BOB.inGame } : t,
+    );
+    const orders = (finisher: number) => [
+      { kind: 'deploy', territory: 161, armies: 5 },
+      { kind: 'move', from: 158, to: 157, armies: 2 },
+      { kind: 'move', from: 161, to: 157, armies: finisher },
+    ];
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(three) }) });
+    const ok = payload<{ preview: { attacks?: Array<Record<string, unknown>>; warnings?: string[] } }>(
+      await h.call('warapp_submit_turn', { game_id: GAME, orders: orders(7) }),
+    );
+    expect(ok.preview.attacks?.map((a) => [a.facing, a.softener, a.winChance])).toEqual([
+      [3, true, 1],
+      [2, undefined, 1],
+    ]);
+    expect(JSON.stringify(ok)).not.toMatch(/cannot capture/);
+    await h.harness.close();
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(three) }) });
+    const short = payload<{ preview: { warnings?: string[] } }>(await h.call('warapp_submit_turn', { game_id: GAME, orders: orders(5) }));
+    expect(short.preview.warnings?.join('\n')).toMatch(/these 2 attacks cannot capture the 3 there now/);
+  });
+
   it('in a team game a transfer to a teammate is not listed as an attack, nor warned as one that cannot capture', async () => {
     const players = (game('Playing').players as Array<Record<string, string>>).map((p, i) => (i < 2 ? { ...p, team: '0' } : p));
     h = await liveHarness({
@@ -2895,6 +2922,88 @@ describe('attackSizes: several attacks on one target are sized together (#130)',
   it('a single attack carries no combined field', () => {
     const [a] = attackSizes(live, ANN.inGame, [{ from: T(161), to: T(157), armies: 7 }], {});
     expect(a).not.toHaveProperty('combined');
+    expect(a).not.toHaveProperty('softener');
+    expect(a).not.toHaveProperty('facing');
+  });
+
+  // #250: the planner's combined capture (#17) of a 7-army neutral at 20/80 — 6, 8 and 18 kill
+  // 1 + 2 + 4 = 7 in sequence, while their 32 armies as one stack kill round(6.4) = 6.
+  const sevenOn157 = live.map((t) => (t.territoryId === 157 ? { ...t, armies: 7 } : t));
+  const twentyEighty = { offensiveKillRate: 20, defensiveKillRate: 80, luckModifier: 0, roundingMode: 'StraightRound' };
+
+  it('judges attacks on one target in list order, each against what the earlier ones leave (#250)', () => {
+    const attacks = attackSizes(
+      sevenOn157,
+      ANN.inGame,
+      [
+        { from: T(161), to: T(157), armies: 6 },
+        { from: T(159), to: T(157), armies: 8 },
+        { from: T(158), to: T(157), armies: 18 },
+      ],
+      twentyEighty,
+    );
+    expect(attacks.map((a) => a.cannotCapture)).toEqual([undefined, undefined, undefined]);
+    expect(attacks.map((a) => a.winChance)).toEqual([1, 1, 1]);
+    expect(attacks.map((a) => a.facing)).toEqual([7, 6, 4]);
+    expect(attacks.map((a) => a.softener)).toEqual([true, true, undefined]);
+    expect(hopelessAttackWarning(attacks, (p) => p.name)).toBeUndefined();
+  });
+
+  it('a sequence that truly falls short still warns, and says the softeners wear the target down (#250)', () => {
+    const attacks = attackSizes(
+      sevenOn157,
+      ANN.inGame,
+      [
+        { from: T(161), to: T(157), armies: 6 },
+        { from: T(159), to: T(157), armies: 8 },
+        { from: T(158), to: T(157), armies: 12 },
+      ],
+      twentyEighty,
+    );
+    // 1 + 2 kills leave 4; 12 kill round(2.4) = 2.
+    expect(attacks.every((a) => a.cannotCapture === true)).toBe(true);
+    expect(attacks.map((a) => a.facing)).toEqual([7, 6, 4]);
+    const warning = hopelessAttackWarning(attacks, (p) => p.name);
+    expect(warning).toMatch(/cannot capture/);
+    expect(warning).toMatch(/in the order listed/);
+    expect(warning).toMatch(/wear/);
+  });
+
+  it('a later attack after the target falls is not a softener and does not undo the capture (#250)', () => {
+    const attacks = attackSizes(
+      sevenOn157,
+      ANN.inGame,
+      [
+        { from: T(161), to: T(157), armies: 40 },
+        { from: T(159), to: T(157), armies: 1 },
+      ],
+      twentyEighty,
+    );
+    expect(attacks.map((a) => a.cannotCapture)).toEqual([undefined, undefined]);
+    expect(attacks.map((a) => a.softener)).toEqual([undefined, undefined]);
+  });
+
+  it('a single attack that cannot capture still warns with the old wording (#250)', () => {
+    const attacks = attackSizes(sevenOn157, ANN.inGame, [{ from: T(161), to: T(157), armies: 18 }], twentyEighty);
+    expect(attacks[0]!.cannotCapture).toBe(true);
+    const warning = hopelessAttackWarning(attacks, (p) => p.name);
+    expect(warning).toMatch(/this attack cannot capture against the armies there now/);
+    expect(warning).not.toMatch(/wear/);
+  });
+
+  it('with luck the sequence is judged at the expectation, and a capturing sequence is not flagged (#250)', () => {
+    const attacks = attackSizes(
+      sevenOn157,
+      ANN.inGame,
+      [
+        { from: T(161), to: T(157), armies: 6 },
+        { from: T(159), to: T(157), armies: 8 },
+        { from: T(158), to: T(157), armies: 18 },
+      ],
+      { ...twentyEighty, luckModifier: 0.16 },
+    );
+    expect(attacks.every((a) => a.cannotCapture === undefined)).toBe(true);
+    expect(attacks[0]!.winChance).toBeGreaterThan(0);
   });
 });
 
