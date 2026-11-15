@@ -387,6 +387,11 @@ export interface PlanInput {
    * two players they are ignored with a warning. Absent or empty, the plan is what it was without.
    */
   relations?: readonly PlanRelation[];
+  /**
+   * G2 (PLAN-TEAMS D3): the Sanctions on other players the decoder is sure of (`cardsInEffect`'s
+   * `sanctionsOnOthers`): a figure read off the board is cut by them ({@link EnemyDeployEstimate.sanctioned}).
+   */
+  sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
 }
 
 /** Why a truce's trust is `watch` ({@link PlanRelation.watch}). */
@@ -943,6 +948,14 @@ export interface EnemyDeployEstimate {
   card: { armies: number; due: number } | null;
   /** #164: the latest turn a deployment above its income was seen (a Reinforcement card played); else `null`. */
   cardPlayed: number | null;
+  /**
+   * G2 (PLAN-TEAMS D3): the Sanctions in effect on it that the decoder is sure of. `applied`: the
+   * estimate's income (`before`, card left out) was cut by them to `estimate` less its card — only
+   * when the figure comes from the board (`visible`, `exact`); an observed, tracked or prior figure
+   * may already carry the cut, or stands for an income guessed apart from it, so it is left whole
+   * and a warning says so. Absent with no Sanctions on it.
+   */
+  sanctioned?: { percentages: number[]; untilTurn: number; before: number; applied: boolean };
 }
 
 /**

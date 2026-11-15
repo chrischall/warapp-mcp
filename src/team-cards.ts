@@ -100,3 +100,37 @@ export function teamCardRoles(
     };
   });
 }
+
+/** A card my own orders play or discard that a teammate has already entered (G3). */
+export interface ClaimedCardUse {
+  card: Card;
+  mine: 'play' | 'discard';
+  /** The teammate whose entered orders use it. */
+  player: number;
+  theirs: 'play' | 'discard';
+}
+
+/** Each card of `uses` (my orders' plays and discards) a teammate has claimed, in the order given. */
+export function claimedCardUses(uses: readonly { card: Card; kind: 'play' | 'discard' }[], claimed: readonly ClaimedCard[]): ClaimedCardUse[] {
+  const by = new Map(claimed.map((c) => [c.card.id, c]));
+  return uses.flatMap((u) => {
+    const c = by.get(u.card.id);
+    return c ? [{ card: u.card, mine: u.kind, player: c.player, theirs: c.kind }] : [];
+  });
+}
+
+/** The warning for {@link claimedCardUses} (card ids and player ids only), or undefined when there is none. */
+export function claimedCardWarning(uses: readonly ClaimedCardUse[]): string | undefined {
+  if (!uses.length) return undefined;
+  const each = uses.map((u) => `${u.mine === 'play' ? 'plays' : 'discards'} the ${u.card.name} card ${u.card.id}, which player ${u.player} has already entered a ${u.theirs} of`);
+  return (
+    `These orders ${each.join('; ')}. A team shares one hand and must not use one card twice: leave it to them, or agree in ` +
+    'team chat who uses it before committing. Their entered orders are read from the live board (UNVERIFIED live, V5).'
+  );
+}
+
+/** The hand with the cards my teammates have claimed moved last (order otherwise kept): a card named by type is then an unclaimed one when there is one. */
+export function unclaimedFirst(hand: readonly Card[], claimed: readonly ClaimedCard[]): Card[] {
+  const ids = new Set(claimed.map((c) => c.card.id));
+  return [...hand.filter((c) => !ids.has(c.id)), ...hand.filter((c) => ids.has(c.id))];
+}

@@ -383,19 +383,19 @@ describe('end-game notes: the data', () => {
   it('a note that tells of something this server cannot send says to do it in the game client', () => {
     // warapp_submit_turn sends deploys, attack/transfer orders (with a commander, Transfer Only, Attack
     // Only, by percentage or attacking teammates, #185) and Reinforcement, Order Priority, Order Delay and
-    // Blockade cards, and (PLAN-TEAMS part D, unverified live) Diplomacy, Sanctions and the other targeted
-    // cards; it never plays Bomb, accepts a surrender, boots a player or votes to end.
+    // Blockade cards, and (PLAN-TEAMS part D, unverified live) Diplomacy, Sanctions, Bomb and the other
+    // targeted cards; it never accepts a surrender, boots a player or votes to end.
     for (const id of [
-      'cards-bomb-standoff-size',
       'ffa-surrender-veto',
       'ffa-boot-clock',
       'fighting-vote-to-end',
     ]) {
       expect(note(id).text, id).toMatch(/game client/);
     }
-    // Diplomacy and Sanctions are sent by warapp_submit_turn, its encoding not yet verified live.
-    for (const id of ['cards-diplomacy-three-sides', 'cards-sanctions-on-leader']) {
+    // Diplomacy, Sanctions and Bomb are sent by warapp_submit_turn, its encoding not yet verified live.
+    for (const id of ['cards-diplomacy-three-sides', 'cards-sanctions-on-leader', 'cards-bomb-standoff-size']) {
       expect(note(id).text, id).toMatch(/warapp_submit_turn plays it \(unverified live\)/);
+      expect(note(id).text, id).not.toMatch(/game client/);
     }
     // Moving the commander is sent with the move's `commander` option, not yet verified live.
     expect(note('settings-commander-keep-back').text).toMatch(/`commander` on a move in warapp_submit_turn \(not yet verified live\)/);

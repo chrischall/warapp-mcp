@@ -51,6 +51,7 @@ import {
 import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type ProfilePlayer } from '../profile.js';
 import type { BoardCtx, CombatCtx, OpponentsCtx, PlanCtx, PlanState, StandingCtx } from './state.js';
 import { byNum } from './util.js';
+import { sanctionedIncome } from '../cards-in-effect.js';
 import { truceOf } from './relations.js';
 import { teamFocusOf } from './team.js';
 
@@ -117,6 +118,8 @@ export function planEnemyEstimates(input: {
   tracks?: readonly OpponentTrack[];
   game?: PlanGameContext;
   turn?: number | null;
+  /** G2: the Sanctions on other players the decoder is sure of ({@link applySanctions}). */
+  sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
 }): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
   const ctx = input.game ?? {};
   const { prior, skipped } = fogPrior(input.board, input.me, ctx, input.income);
@@ -127,7 +130,34 @@ export function planEnemyEstimates(input: {
     reinforcement: ctx.reinforcement,
     ...(input.previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
-  return { estimates, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
+  return { estimates: applySanctions(estimates, input.sanctions ?? []), prior, ...(skipped ? { priorSkipped: skipped } : {}) };
+}
+
+/**
+ * G2 (PLAN-TEAMS D3): each estimate under the Sanctions on its player. A figure read off the board
+ * (`visible`, `exact`) is income before any cut, so its income (the Reinforcement card left out) is
+ * cut by the client's rule ({@link sanctionedIncome}); an observed, tracked or prior figure is left
+ * whole — an observed deploy may already carry the cut — and marked not applied. Unchanged without.
+ */
+export function applySanctions(
+  estimates: EnemyDeployEstimate[],
+  sanctions: readonly { player: number; percentage: number; untilTurn: number }[],
+): EnemyDeployEstimate[] {
+  if (!sanctions.length) return estimates;
+  return estimates.map((e) => {
+    const on = sanctions.filter((x) => x.player === e.playerId);
+    if (!on.length) return e;
+    const percentages = on.map((x) => x.percentage);
+    const card = e.card?.armies ?? 0;
+    const before = e.estimate - card;
+    const applied = e.source === 'visible' || e.source === 'exact';
+    const untilTurn = Math.max(...on.map((x) => x.untilTurn));
+    return {
+      ...e,
+      ...(applied ? { estimate: sanctionedIncome(before, percentages) + card } : {}),
+      sanctioned: { percentages, untilTurn, before, applied },
+    };
+  });
 }
 
 /** The opponents' estimates, the game profile and the goal it picks (rule 0p). */
@@ -155,6 +185,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     ...(input.tracks ? { tracks: input.tracks } : {}),
     game: ctx,
     turn: turnNow,
+    ...(input.sanctions?.length ? { sanctions: input.sanctions } : {}),
   });
   const estimateList = allEstimates.filter((e) => notAlly(e.playerId));
   /** An opponent's income: its deploy estimate less the Reinforcement card the clock adds (#164). */

@@ -16,7 +16,13 @@ import { boardIncome } from '../src/analysis/player.js';
 import { readCachedOrders } from '../src/trend.js';
 import { writeAward, writePickList } from '../src/pick-list.js';
 import { writeFirstMover } from '../src/move-order.js';
-import { writeLatestGameInfo, type SyntheticActiveCard, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
+import {
+  writeLatestGameInfo,
+  type SyntheticActiveCard,
+  type SyntheticCard,
+  type SyntheticTeammateOrders,
+  type SyntheticTerritory,
+} from './protocol/live-bundle.js';
 import { CHAT_SUMMARY_NOTE } from '../src/tools/chat.js';
 import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
 
@@ -2350,7 +2356,7 @@ describe('cards in the turn tools', () => {
     ['a card type not held', [{ id: OP, type: 4 }], [{ kind: 'card', card: 'Order Delay' }, { kind: 'deploy', territory: 159, armies: 5 }], /hold no Order Delay card/],
     ['an unknown card name', [], [{ kind: 'card', card: 'Joker' }, { kind: 'deploy', territory: 159, armies: 5 }], /No card type matches "Joker"/],
     ['the same card twice', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP }, { kind: 'card', card: OP }, { kind: 'deploy', territory: 159, armies: 5 }], /played twice/],
-    ['an unsupported card', [{ id: AL, type: 13 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /Bomb.*not supported/],
+    ['an unsupported card (a type this server does not know)', [{ id: AL, type: 14 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /Card 14 card is not supported/],
     ['an Airlift missing its fields', [{ id: AL, type: 6 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /An Airlift card needs `from` and `to` and `armies`/],
     ['a Blockade without a target', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL }, { kind: 'deploy', territory: 159, armies: 5 }], /Blockade needs a `target`/],
     ['a Blockade on a territory not mine', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL, target: 158 }, { kind: 'deploy', territory: 159, armies: 5 }], /not yours/],
@@ -2389,11 +2395,14 @@ describe('cards in the turn tools', () => {
 
   describe('submit_turn in a team game (#163): the hard refusal counts only my cards', () => {
     const teams = () => (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
-    function teamServer(mine: SyntheticCard[], mate: SyntheticCard[]) {
+    function teamServer(mine: SyntheticCard[], mate: SyntheticCard[], entered?: SyntheticTeammateOrders) {
       const sent: Uint8Array[] = [];
       const warapp = routes({
         [Method.GetLatestGameInfo]: () =>
-          ({ body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], { [ANN.inGame]: mine, [BOB.inGame]: mate }) }) satisfies Partial<ReplyFrame>,
+          ({
+            body: (w) =>
+              writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], { [ANN.inGame]: mine, [BOB.inGame]: mate }, entered ? { [BOB.inGame]: entered } : undefined),
+          }) satisfies Partial<ReplyFrame>,
         [Method.SendOrders]: (req) => {
           sent.push(req.body.raw(req.body.remaining));
           return { body: (w) => w.bool(true).bool(false) };
@@ -2436,6 +2445,69 @@ describe('cards in the turn tools', () => {
       expect(preview.isError).toBeFalsy();
       const w = payload<{ preview: { warnings?: string[] } }>(preview).preview.warnings?.join('\n');
       expect(w).toMatch(/Spy [0-9a-f]{32} was read under a teammate, not under you/);
+    });
+
+    it('warns when my orders play or discard a card my teammate has already entered (G3, V5)', async () => {
+      // Bob has entered a play of my Order Priority and a discard of my Order Delay.
+      const s = teamServer([{ id: OP, type: 4 }, { id: OD, type: 5 }], [], {
+        orders: [
+          { kind: 'card', tag: 10, card: OP },
+          { kind: 'discard', card: OD },
+        ],
+      });
+      const feed = { players: teams(), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const preview = await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [{ kind: 'card', card: OP }, { kind: 'discard', card: OD }, { kind: 'deploy', territory: 159, armies: 5 }],
+      });
+      expect(preview.isError).toBeFalsy();
+      const w = payload<{ preview: { warnings?: string[] } }>(preview).preview.warnings?.join('\n') ?? '';
+      expect(w).toMatch(
+        new RegExp(
+          `plays the Order Priority card ${OP}, which player ${BOB.feed} has already entered a play of; discards the Order Delay card ${OD}, which player ${BOB.feed} has already entered a discard of`,
+        ),
+      );
+      expect(s.sent).toEqual([]);
+    });
+
+    it("a card named by its type is one my teammate has not entered, when there is one (G3)", async () => {
+      const OP2 = 'fedcba9876543210fedcba9876543211';
+      const s = teamServer([{ id: OP, type: 4 }, { id: OP2, type: 4 }], [], { orders: [{ kind: 'card', tag: 10, card: OP }] });
+      const feed = { players: teams(), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const preview = await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [{ kind: 'card', card: 'Order Priority' }, { kind: 'deploy', territory: 159, armies: 5 }],
+      });
+      expect(preview.isError).toBeFalsy();
+      const body = payload<{ preview: { warnings?: string[] } }>(preview);
+      expect(JSON.stringify(body)).toContain(OP2);
+      expect(body.preview.warnings?.join('\n') ?? '').not.toMatch(/has already entered/);
+    });
+
+    describe('warapp_check_plan with a card my teammate has entered (G3, V5)', () => {
+      const OP2 = 'fedcba9876543210fedcba9876543211';
+      const deploy = { kind: 'deploy', territory: 159, armies: 5 };
+      async function check(orders: unknown[]): Promise<string> {
+        const s = teamServer([{ id: OP, type: 4 }, { id: OP2, type: 4 }, { id: OD, type: 5 }], [], {
+          orders: [
+            { kind: 'card', tag: 10, card: OP },
+            { kind: 'discard', card: OD },
+          ],
+        });
+        const feed = { players: teams(), settings: modelledSettings() };
+        h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+        return payload<{ warnings: string[] }>(await h.call('warapp_check_plan', { game_id: GAME, orders })).warnings.join('\n');
+      }
+      it('warns as warapp_submit_turn does', async () => {
+        expect(await check([{ kind: 'card', card: OP }, { kind: 'discard', card: 'Order Delay' }, deploy])).toMatch(
+          new RegExp(`plays the Order Priority card ${OP}, which player ${BOB.feed} has already entered a play of; discards the Order Delay card ${OD}`),
+        );
+      });
+      it('by type, takes a card nobody entered when there is one', async () => {
+        expect(await check([{ kind: 'card', card: 'Order Priority' }, deploy])).not.toMatch(/has already entered/);
+      });
     });
 
     it('still refuses when my own cards are over the limit', async () => {
@@ -2512,6 +2584,19 @@ describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)'
     expect(w).toMatch(/Sanctions are on you \(60%, until turn 4\): the plan's income is 2, not 5/);
     expect(w).toMatch(/Income 2 may be off: the Sanctions on you by 60% are applied as read from the board by an unverified decoder/);
     expect(w).not.toMatch(/the modelled income does not apply/);
+  });
+
+  it('G2: Sanctions on an opponent show in cardsInEffect and cut its estimate read off the board', async () => {
+    const onBob: SyntheticActiveCard = { card: 'Sanctions', target: BOB.inGame, by: ANN.inGame, guid: G2, expiresAfterTurn: 3 };
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([onBob]) }) });
+    const p = payload<EffectPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.cardsInEffect).toMatchObject({
+      sanctionsOnOthers: [{ player: expect.objectContaining({ id: Number(BOB.feed) }), percentage: 0.6, untilTurn: 4, estimateCut: true }],
+      verified: false,
+    });
+    expect(p.cardsInEffect).not.toHaveProperty('sanctionsOnMe');
+    expect(p.income).toBe(5);
+    expect(p.warnings.join('\n')).toMatch(/Player 7176543229 is under Sanctions \(60%, until turn 4, .*\): its estimate is cut from ~5 to ~2/);
   });
 
   it('with no card in effect the plan is the one made without the decoder', async () => {

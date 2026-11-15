@@ -390,9 +390,11 @@ export function writeAttackTransferOrder(w: Writer, o: AttackTransferOrder): voi
  * and Blockade follow the same layout with the fields read from the client. The targeted cards
  * (Spy 6, Airlift 12, Gift 13, Diplomacy 14, Sanctions 15, Reconnaissance 16, Surveillance 17;
  * PLAN-TEAMS part D) are read from the bundle's `GameOrderPlayCard<X>` writers and golden-pinned,
- * but UNVERIFIED live (V9): no commit carrying one has been sent.
+ * but UNVERIFIED live (V9): no commit carrying one has been sent. Bomb (20, `GameOrderPlayCardBomb`)
+ * and Emergency Blockade (8, `GameOrderPlayCardAbandon`) likewise: each writes one int32 territory.
  */
 const CardPlayTag = {
+  EmergencyBlockade: 8,
   Reinforcement: 5,
   Spy: 6,
   OrderPriority: 10,
@@ -404,6 +406,7 @@ const CardPlayTag = {
   Reconnaissance: 16,
   Surveillance: 17,
   Blockade: 18,
+  Bomb: 20,
 } as const;
 export type CardPlayKind = keyof typeof CardPlayTag;
 
@@ -416,11 +419,13 @@ export const UNVERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set([
   'Sanctions',
   'Reconnaissance',
   'Surveillance',
+  'Bomb',
+  'EmergencyBlockade',
 ]);
 
 /** A card play's own fields (what each card needs is checked by {@link writeCardPlayOrder}). */
 export interface CardPlayFields {
-  /** Blockade, Reconnaissance and Gift: the territory. */
+  /** Blockade, Emergency Blockade, Bomb, Reconnaissance and Gift: the territory. */
   target?: number;
   /** Spy, Sanctions: the target player; Gift: the recipient (in-game ids). */
   player?: number;
@@ -451,7 +456,7 @@ function need<T>(v: T | undefined, card: CardPlayKind, what: string): T {
 /**
  * Encode a play-card order: the tag, the card's own fields in the order the bundle's writer puts
  * them, the card instance GUID in .NET byte order, then the player id and two false bools.
- * Blockade, Reconnaissance: the territory. Spy, Sanctions: the player. Surveillance: the bonus.
+ * Blockade, Emergency Blockade, Bomb, Reconnaissance: the territory. Spy, Sanctions: the player. Surveillance: the bonus.
  * Gift: the recipient, then the territory. Diplomacy: the two players. Airlift: a present
  * `Armies` (not fogged, the count, the special units: none, or my commander — as an AttackTransfer
  * writes it), the from
@@ -462,6 +467,8 @@ export function writeCardPlayOrder(w: Writer, o: CardPlayOrder): void {
   w.u8(CardPlayTag[o.card]);
   switch (o.card) {
     case 'Blockade':
+    case 'EmergencyBlockade':
+    case 'Bomb':
     case 'Reconnaissance':
       w.int32(need(o.target, o.card, 'a target territory'));
       break;
@@ -559,6 +566,10 @@ export const TurnPhase = {
   SpyingCards: 15,
   ReinforcementCards: 20,
   Deploys: 25,
+  /** Bundle (`GameOrderPlayCardBomb`), UNVERIFIED live: after the deploys, before every move. */
+  BombCards: 30,
+  /** Bundle (`GameOrderPlayCardAbandon`), UNVERIFIED live: the Emergency Blockade, before Airlift and the attacks. */
+  EmergencyBlockadeCards: 37,
   /** Bundle, UNVERIFIED live: after the deploys, before the attacks. */
   AirliftCards: 43,
   /** Bundle, UNVERIFIED live. */
@@ -576,6 +587,8 @@ const CARD_PHASE: Readonly<Record<CardPlayKind, number>> = {
   OrderDelay: TurnPhase.Attacks,
   Reinforcement: TurnPhase.ReinforcementCards,
   Blockade: TurnPhase.BlockadeCards,
+  Bomb: TurnPhase.BombCards,
+  EmergencyBlockade: TurnPhase.EmergencyBlockadeCards,
   Spy: TurnPhase.SpyingCards,
   Reconnaissance: TurnPhase.SpyingCards,
   Surveillance: TurnPhase.SpyingCards,
@@ -647,8 +660,8 @@ function sendOrderSequence(orders: readonly TurnOrder[]): TurnOrder[] {
  * the moves (AttackTransfers, mode 3 unless the move sets another) followed by any Order Delay
  * plays (or one written above a chosen move, `beforeMove`, UNVERIFIED live: {@link sendOrderSequence}),
  * then any Blockade plays. The targeted cards (UNVERIFIED live, V9) take the bundle's phases: Spy,
- * Reconnaissance and Surveillance with the early cards (15), Airlift (43) and Gift (47) between the
- * deploys and the moves, Diplomacy (75) and Sanctions (80) last.
+ * Reconnaissance and Surveillance with the early cards (15), Bomb (30), Emergency Blockade (37), Airlift
+ * (43) and Gift (47) between the deploys and the moves, Diplomacy (75) and Sanctions (80) last.
  */
 export function writeSendOrdersParams(
   w: Writer,

@@ -55,13 +55,14 @@ export function opponentIncomes(estimates: readonly EnemyDeployEstimate[], foes:
  * Where my plan and a teammate's entered orders collide:
  * - `same-target`: we both attack it; whichever lands second moves onto a teammate's territory (V7) — unless
  *   it is a joint capture the plan reports (`joint`), where both are meant;
- * - `bonus`: their attack takes a member of a bonus my plan completes this turn (a bonus pays one holder);
+ * - `bonus`: their attack takes a member of a bonus my plan completes this turn (`completes`) or advances — a
+ *   capture of mine into one of its own members (G3) — while mine takes another (a bonus pays one holder);
  * - `attacks-me`: their order attacks a territory of mine (`attack_teammates`);
  * - `onto-mine`: their plain order moves onto a territory of mine (what it does is V7).
  */
 export type BriefConflict =
   | { kind: 'same-target'; territory: number; teammate: number; mine: number; theirs: number; joint: boolean }
-  | { kind: 'bonus'; bonus: number; territory: number; teammate: number }
+  | { kind: 'bonus'; bonus: number; territory: number; teammate: number; completes: boolean }
   | { kind: 'attacks-me'; from: number; to: number; teammate: number; armies: number }
   | { kind: 'onto-mine'; from: number; to: number; teammate: number; armies: number };
 
@@ -93,8 +94,15 @@ export function briefConflicts(input: {
   };
   const myAttacks = new Map<number, number>();
   for (const m of moves) if (m.kind === 'attack') myAttacks.set(m.to, (myAttacks.get(m.to) ?? 0) + m.armies);
-  const completing = new Map<number, number>();
-  for (const b of [...bonusesCompleted].sort(byNum)) for (const t of bonusTerritories(g, b)) if (!completing.has(t)) completing.set(t, b);
+  // The bonus my plan works toward at each territory: one it completes first (superbonuses flattened), else a
+  // positive bonus with one of my attack targets among its own members (G3: not only completions).
+  const working = new Map<number, { bonus: number; completes: boolean }>();
+  const completed = [...bonusesCompleted].sort(byNum);
+  for (const b of completed) for (const t of bonusTerritories(g, b)) if (!working.has(t)) working.set(t, { bonus: b, completes: true });
+  for (const b of [...g.bonusById.values()].sort((x, y) => x.id - y.id)) {
+    if (b.value <= 0 || completed.includes(b.id) || !b.territoryIds.some((t) => myAttacks.has(t))) continue;
+    for (const t of b.territoryIds) if (!working.has(t)) working.set(t, { bonus: b.id, completes: false });
+  }
   const out: BriefConflict[] = [];
   for (const e of mateEntries(board, allies)) {
     const theirAttacks = new Map<number, number>();
@@ -111,8 +119,8 @@ export function briefConflicts(input: {
       const o = owner.get(m.to);
       if (o?.kind === 'player' && allies.has(o.playerId)) continue;
       theirAttacks.set(m.to, (theirAttacks.get(m.to) ?? 0) + m.armies);
-      const bonus = completing.get(m.to);
-      if (bonus !== undefined && !myAttacks.has(m.to)) out.push({ kind: 'bonus', bonus, territory: m.to, teammate: e.playerId });
+      const w = working.get(m.to);
+      if (w !== undefined && !myAttacks.has(m.to)) out.push({ kind: 'bonus', bonus: w.bonus, territory: m.to, teammate: e.playerId, completes: w.completes });
     }
     for (const [territory, theirs] of [...theirAttacks].sort((a, b) => a[0] - b[0])) {
       const mineSent = myAttacks.get(territory);

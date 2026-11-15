@@ -2,7 +2,7 @@
 // plan (src/analysis/card-support.ts). Advice only, never auto-played: each carries the `order` to pass to
 // warapp_submit_turn as is, whose encodings are UNVERIFIED live (V9). Players and territories by id only.
 
-import { airliftAdvice, diplomacyAdvice, giftAdvice, sanctionsAdvice, type Strength, type TruceCover } from '../analysis/card-support.js';
+import { airliftAdvice, diplomacyAdvice, giftAdvice, intelAdvice, sanctionsAdvice, type IntelCard, type Strength, type TruceCover } from '../analysis/card-support.js';
 import type { CardBoard } from '../analysis/card-threats.js';
 import { incomeFor } from '../analysis/plan/shared.js';
 import type { TurnPlan } from '../analysis/planner.js';
@@ -10,6 +10,14 @@ import { STRENGTH_INCOME_TURNS } from '../analysis/profile.js';
 import type { Card } from '../cards.js';
 import type { Game, Player } from '../normalize.js';
 
+const CARD_SPY = 2;
+const CARD_RECONNAISSANCE = 10;
+const CARD_SURVEILLANCE = 11;
+const INTEL: ReadonlyArray<[number, IntelCard]> = [
+  [CARD_SPY, 'Spy'],
+  [CARD_RECONNAISSANCE, 'Reconnaissance'],
+  [CARD_SURVEILLANCE, 'Surveillance'],
+];
 const CARD_AIRLIFT = 6;
 const CARD_GIFT = 7;
 const CARD_DIPLOMACY = 8;
@@ -19,9 +27,13 @@ type CardOrder = { kind: 'card'; card: string } & Record<string, unknown>;
 
 export interface SupportView {
   diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; order: CardOrder };
-  sanctions?: { player: number; order: CardOrder };
+  sanctions?: { player: number; skipped?: string[]; order: CardOrder };
   airlift?: { from: number; to: number; armies: number; teammate?: number; order: CardOrder };
   gift?: { player: number; bonus: number; territories: number[]; orders: CardOrder[] };
+  /** G2: the information cards, only where they reveal what the plan needs (never with fog off). */
+  spy?: { player: number; order: CardOrder };
+  reconnaissance?: { target: number; order: CardOrder };
+  surveillance?: { bonus: number; order: CardOrder };
 }
 
 const PLAY_IT =
@@ -98,11 +110,17 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
 
   const san = first(CARD_SANCTIONS);
   if (san) {
-    const s = sanctionsAdvice({ me: me.id, players: strengths(input), ...(percentage(input.game) !== undefined ? { percentage: percentage(input.game)! } : {}) });
-    if (s) {
-      view.sanctions = { player: s.player, order: { kind: 'card', card: san.id, player: s.player } };
+    // G2: a truce partner and a player a Diplomacy card keeps at peace with me are passed over, the reason stated.
+    const pass = new Map<number, string>();
+    for (const t of input.truces)
+      pass.set(t.player, `your truce with it is ${t.state === 'notice' ? 'in notice' : 'in force'} — a sanction on a partner invites a break`);
+    for (const p of input.atPeace) pass.set(p, 'a Diplomacy card between you is in force — it cannot attack you, so sanction a player who can');
+    const pct = percentage(input.game);
+    const s = sanctionsAdvice({ me: me.id, players: strengths(input), ...(pct !== undefined ? { percentage: pct } : {}), ...(pass.size ? { pass } : {}) });
+    if (s?.player !== undefined) {
+      view.sanctions = { player: s.player, ...(s.skipped?.length ? { skipped: s.skipped } : {}), order: { kind: 'card', card: san.id, player: s.player } };
       warnings.push(`${s.why} ${PLAY_IT}`);
-    }
+    } else if (s) warnings.push(s.why);
   }
 
   const air = first(CARD_AIRLIFT);
@@ -118,6 +136,25 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
       };
       warnings.push(`${a.why} ${PLAY_IT}`);
     }
+  }
+
+  // G2: Spy, Reconnaissance and Surveillance, only where the fog hides what the plan needs.
+  const intelCards = new Map(INTEL.flatMap(([type, name]) => (first(type) ? [[name, first(type)!] as const] : [])));
+  if (intelCards.size) {
+    const opponents = input.game.players
+      .filter((p) => p.id !== me.id && !cb.friends?.has(p.id) && (p.state ?? 'Playing') === 'Playing')
+      .map((p) => p.id);
+    const fog = input.game.settings?.fog;
+    const intel = intelAdvice(cb, { ...(fog !== undefined ? { fog } : {}), opponents, held: new Set(intelCards.keys()) });
+    for (const a of intel.advice) {
+      const id = intelCards.get(a.card)!.id;
+      if (a.card === 'Spy' && a.player !== undefined) view.spy = { player: a.player, order: { kind: 'card', card: id, player: a.player } };
+      if (a.card === 'Reconnaissance' && a.target !== undefined)
+        view.reconnaissance = { target: a.target, order: { kind: 'card', card: id, target: a.target } };
+      if (a.card === 'Surveillance' && a.bonus !== undefined) view.surveillance = { bonus: a.bonus, order: { kind: 'card', card: id, bonus: a.bonus } };
+      warnings.push(`${a.why} ${PLAY_IT}`);
+    }
+    warnings.push(...intel.hold);
   }
 
   const gifts = cards.filter((c) => c.type === CARD_GIFT);

@@ -3,7 +3,7 @@
 // opponents' Bomb and Emergency Blockade when they can hold one, the cards in effect
 // (Diplomacy, Sanctions), and (PLAN-TEAMS D2) where to play my Diplomacy, Sanctions, Airlift and
 // Gift. Read-only; everything here is advice — of these only the advised Order Delay is added to the
-// orders; the D2 cards carry an `order` to pass to warapp_submit_turn.
+// orders; my Bomb and Emergency Blockade and the D2 cards carry an `order` to pass to warapp_submit_turn.
 
 import { adviseOrderDelay, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
@@ -93,8 +93,17 @@ interface CardAdviceView extends SupportView {
     order: { kind: 'card'; card: string; before: number };
     insteadOfDiscard?: true;
   };
-  bomb?: { target: number | null; kind: string | null; why: string };
-  emergencyBlockade?: { territory: number; givesUp: number; wall: number; player: number; reach: number; kills: number };
+  /** `order`, only with a target: the card order to pass to warapp_submit_turn (encoding UNVERIFIED live, V9). */
+  bomb?: { target: number | null; kind: string | null; why: string; order?: { kind: 'card'; card: string; target: number } };
+  emergencyBlockade?: {
+    territory: number;
+    givesUp: number;
+    wall: number;
+    player: number;
+    reach: number;
+    kills: number;
+    order: { kind: 'card'; card: string; target: number };
+  };
   active?: Array<{ card: string; players?: number[]; target?: number; playedBy?: number; expiresAfterTurn?: number; untilTurn?: number }>;
 }
 
@@ -132,7 +141,7 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
   // V8: in a team game a card read under a teammate's id is theirs to play (unverified), never advised to me.
   const own = hand.filter((c) => isMyCard(c, cardGame(game, me).me));
   const gone = new Set([...choice.plays, ...choice.discards].map((c) => c.id));
-  const holds = (type: number) => own.some((c) => c.type === type && !gone.has(c.id));
+  const held = (type: number) => own.find((c) => c.type === type && !gone.has(c.id));
   const friends = new Set(teammatesOf(game, me).map((p) => p.id));
   const cb: CardBoard = {
     graph: input.graph,
@@ -175,10 +184,20 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
 
   const cards = game.settings?.cards ?? [];
   // My Bomb: a target where halving the stack changes the turn, else hold it.
-  if (holds(CARD_BOMB)) {
+  const bombCard = held(CARD_BOMB);
+  if (bombCard) {
     const a = bombAdvice(cb);
-    view.bomb = { target: a.target ?? null, kind: a.kind ?? null, why: a.why };
-    warnings.push(`${a.target !== undefined ? a.why.replace(/^Bomb (\d+):/, (_, t) => `Bomb ${label(Number(t))}:`) : a.why} Bomb is played in the game client (warapp_submit_turn does not play it).`);
+    view.bomb = {
+      target: a.target ?? null,
+      kind: a.kind ?? null,
+      why: a.why,
+      ...(a.target !== undefined ? { order: { kind: 'card' as const, card: bombCard.id, target: a.target } } : {}),
+    };
+    warnings.push(
+      a.target !== undefined
+        ? `${a.why.replace(/^Bomb (\d+):/, (_, t) => `Bomb ${label(Number(t))}:`)} Advice only, not in the orders: pass \`cards.advice.bomb.order\` to warapp_submit_turn to play it (the encoding is read from the client, not yet verified live).`
+        : a.why,
+    );
   }
   // An opponent's Bomb: the borders that hold only while unbombed.
   if (cards.includes('Bomb') && opponentCanHold(game.settings, 'Bomb', turn)) {
@@ -204,14 +223,16 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
       }
     }
     // My Emergency Blockade: a conceded border where the wall kills more than I give up.
-    if (holds(CARD_EMERGENCY_BLOCKADE)) {
+    const wallCard = held(CARD_EMERGENCY_BLOCKADE);
+    if (wallCard) {
       const offer = ebMultiplier !== undefined ? wallOffer(cb, ebMultiplier, plan.conceded) : undefined;
       if (offer) {
-        view.emergencyBlockade = offer;
+        view.emergencyBlockade = { ...offer, order: { kind: 'card', card: wallCard.id, target: offer.territory } };
         warnings.push(
           `Consider an Emergency Blockade on ${label(offer.territory)}: the plan concedes it, and its ${offer.givesUp} armies × ${ebMultiplier} make a ` +
             `wall of ${offer.wall} that player ${offer.player}'s ~${offer.reach} would lose ~${offer.kills} attacking — if it attacks; if not, ` +
-            'the territory and its armies are given away. Play it in the game client (warapp_submit_turn does not play it).',
+            'the territory and its armies are given away. Advice only, not in the orders: pass `cards.advice.emergencyBlockade.order` ' +
+            'to warapp_submit_turn to play it (the encoding is read from the client, not yet verified live).',
         );
       } else if (ebMultiplier === undefined) {
         warnings.push('You hold an Emergency Blockade, but the game does not say its multiplier, so no wall is sized for it.');

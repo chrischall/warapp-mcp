@@ -695,6 +695,10 @@ describe('targeted card play orders (bundle writers, UNVERIFIED live)', () => {
     );
   });
 
+  it('Spy on the neutral writes target 0 (GameOrderPlayCardSpy; CardGameSpy.CanSpyOnNeutral, UNVERIFIED live)', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Spy', cardId: card, playerId: 777, player: 0 }))).toBe('06' + '00000000' + guid + base);
+  });
+
   it('Reconnaissance (16) writes the target territory', () => {
     expect(hex((w) => writeCardPlayOrder(w, { card: 'Reconnaissance', cardId: card, playerId: 777, target: 42 }))).toBe(
       '10' + '2A000000' + guid + base,
@@ -722,6 +726,18 @@ describe('targeted card play orders (bundle writers, UNVERIFIED live)', () => {
   it('Sanctions (15) writes the sanctioned player', () => {
     expect(hex((w) => writeCardPlayOrder(w, { card: 'Sanctions', cardId: card, playerId: 777, player: 1234 }))).toBe(
       '0F' + 'D2040000' + guid + base,
+    );
+  });
+
+  it('Bomb (20) writes the target territory (GameOrderPlayCardBomb, UNVERIFIED live)', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'Bomb', cardId: card, playerId: 777, target: 42 }))).toBe(
+      '14' + '2A000000' + guid + base,
+    );
+  });
+
+  it('Emergency Blockade (8) writes the target territory (GameOrderPlayCardAbandon, UNVERIFIED live)', () => {
+    expect(hex((w) => writeCardPlayOrder(w, { card: 'EmergencyBlockade', cardId: card, playerId: 777, target: 42 }))).toBe(
+      '08' + '2A000000' + guid + base,
     );
   });
 
@@ -759,6 +775,8 @@ describe('targeted card play orders (bundle writers, UNVERIFIED live)', () => {
     expect(() => play({ card: 'Gift', target: 42 })).toThrow(/Gift.*player/);
     expect(() => play({ card: 'Gift', player: 1234 })).toThrow(/Gift.*territory/);
     expect(() => play({ card: 'Reconnaissance' })).toThrow(/Reconnaissance.*territory/);
+    expect(() => play({ card: 'Bomb' })).toThrow(/Bomb.*territory/);
+    expect(() => play({ card: 'EmergencyBlockade' })).toThrow(/EmergencyBlockade.*territory/);
     expect(() => play({ card: 'Surveillance' })).toThrow(/Surveillance.*bonus/);
     expect(() => play({ card: 'Diplomacy' })).toThrow(/Diplomacy.*two players/);
     expect(() => play({ card: 'Airlift', from: 6, to: 4 })).toThrow(/Airlift.*from, to and armies/);
@@ -771,6 +789,36 @@ describe('targeted card play orders (bundle writers, UNVERIFIED live)', () => {
     expect(phase('Gift')).toBe(47);
     expect(phase('Diplomacy')).toBe(75);
     expect(phase('Sanctions')).toBe(80);
+  });
+
+  it('run Bomb in phase 30 and Emergency Blockade in phase 37: after the deploys, before Airlift and the attacks', () => {
+    const phase = (c: Parameters<typeof writeCardPlayOrder>[1]['card']) => turnPhaseOf({ kind: 'card', card: c, cardId: card });
+    expect(phase('Bomb')).toBe(30);
+    expect(phase('EmergencyBlockade')).toBe(37);
+    const c = (n: number) => `${n.toString(16).padStart(2, '0')}112233445566778899aabbccddeeff`;
+    const g = (n: number) => `332211${n.toString(16).padStart(2, '0').toUpperCase()}554477668899AABBCCDDEEFF`;
+    const deploy = '0209000000000500000009030000' + '0000';
+    const move = '010003000600000000010000000004000000090300000000';
+    const airlift = '0C' + '01' + '00' + '09000000' + '00' + '06000000' + '00000000' + '04000000' + g(1) + base;
+    const wall = '08' + '09000000' + g(2) + base;
+    const bomb = '14' + '2A000000' + g(3) + base;
+    expect(
+      hex((w) =>
+        writeSendOrdersParams(
+          w,
+          12345,
+          777,
+          [
+            { kind: 'move', from: 6, to: 4, armies: 1 },
+            { kind: 'card', card: 'Airlift', cardId: c(1), from: 6, to: 4, armies: 9 },
+            { kind: 'card', card: 'EmergencyBlockade', cardId: c(2), target: 9 },
+            { kind: 'card', card: 'Bomb', cardId: c(3), target: 42 },
+            { kind: 'deploy', territoryId: 9, armies: 5 },
+          ],
+          2,
+        ),
+      ),
+    ).toBe('39300000' + '01' + '05000000' + [deploy, bomb, wall, airlift, move].map((o) => '01' + o).join('') + '02000000' + '0000');
   });
 
   it('writeSendOrdersParams orders them by phase among the other orders', () => {

@@ -674,12 +674,14 @@ export interface TruceBreak {
   state: 'active' | 'notice';
   /** The orders (index in the list given) that attack a territory of the partner the agreement covers. */
   moves: { index: number; from: number; to: number }[];
+  /** The Bombs (index in the `bombs` list given) on a territory of the partner the agreement covers; absent when none. */
+  bombs?: { index: number; target: number }[];
 }
 
 /**
  * B2 (warapp_submit_turn): the active or in-notice agreements that `moves` would break — an order that
  * attacks a territory the partner holds on `board` and the terms cover (a transfer-only order attacks
- * nothing). By agreement id; empty when nothing binds. Pure; reads only the ledger's own agreements and
+ * nothing), or a Bomb (`bombs`, the targets) on such a territory. By agreement id; empty when nothing binds. Pure; reads only the ledger's own agreements and
  * the board (the breach watch is not consulted: a break by them is recorded as broken-by-them first).
  */
 export function truceBreaksIn(input: {
@@ -690,6 +692,7 @@ export function truceBreaksIn(input: {
   turn: number;
   players: readonly RelationPlayer[];
   moves: readonly { from: number; to: number; mode?: string }[];
+  bombs?: readonly number[];
 }): TruceBreak[] {
   const out: TruceBreak[] = [];
   for (const a of [...input.agreements].sort((x, y) => x.id.localeCompare(y.id))) {
@@ -699,7 +702,8 @@ export function truceBreaksIn(input: {
     const held = new Set(input.board.territories.filter((t) => ownerShown(t) && ownerOn(t) === a.with).map((t) => t.territoryId));
     const covered = new Set(coveredTerritories(input.graph, a.terms.scope, held));
     const moves = input.moves.flatMap((m, index) => (m.mode !== 'transfer-only' && covered.has(m.to) ? [{ index, from: m.from, to: m.to }] : []));
-    if (moves.length) out.push({ agreement: a.id, with: a.with, state: state.phase, moves });
+    const bombs = (input.bombs ?? []).flatMap((target, index) => (covered.has(target) ? [{ index, target }] : []));
+    if (moves.length || bombs.length) out.push({ agreement: a.id, with: a.with, state: state.phase, moves, ...(bombs.length ? { bombs } : {}) });
   }
   return out;
 }

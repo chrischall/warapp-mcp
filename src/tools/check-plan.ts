@@ -11,7 +11,8 @@ import { stressPlan, type StressDodge, type StressExposure, type StressJoint, ty
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners, opponentReinforcement } from './card-advice.js';
 import { boardCardsInEffect, sanctionMyIncome } from './card-effects.js';
-import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
+import { cardTypeByName, cardTypeName, normalizeGuid, readHand, type Card } from '../cards.js';
+import { claimedCardUses, claimedCardWarning, teamCardClaims, teamHandLeft, unclaimedFirst } from '../team-cards.js';
 import { boardStateFromLive } from '../live.js';
 import { withTeammateOrders } from '../team-orders.js';
 import { carriesTeam } from '../teams.js';
@@ -43,6 +44,11 @@ const COMPACT_OTHERS = 2;
 /** The most territories or bonuses any one list names; the rest are a count. */
 const LIST_MAX = 10;
 const ORDER_PRIORITY = cardTypeByName('Order Priority');
+/** Card plays that change the board this test does not simulate, each with what the test does instead. */
+const UNSIMULATED_CARDS = new Map<number | undefined, (on: string) => string>([
+  [cardTypeByName('Bomb'), (on) => `The Bomb${on} is not simulated: the test fights at its armies before the Bomb halves them.`],
+  [cardTypeByName('Emergency Blockade'), (on) => `The Emergency Blockade${on} is not simulated: the test keeps it yours, armies unchanged.`],
+]);
 
 /** What the stress test does not try, said with every answer so "safe" is never read as more. */
 export const CHECK_PLAN_NOT_COVERED = [
@@ -102,7 +108,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orders: turnOrdersArg.describe(
           'The orders to test, in the order you would submit them: deploys and moves by territory id or name (the ' +
             '`orders` array warapp_plan_turn returns). An Order Priority card play makes your first order run before ' +
-            "everyone's; other card plays and discards are ignored. A move's options (mode, percent, commander, " +
+            "everyone's; other card plays and discards are ignored by the test (a Bomb or Emergency Blockade is named " +
+            'in `warnings` as not simulated; in a team game, a card your teammate has ' +
+            "already entered is warned of). A move's options (mode, percent, commander, " +
             'attack_teammates) are carried out as war.app would.',
         ),
         enemy_deploy: z.coerce
@@ -157,8 +165,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const s = game.settings;
       // A team shares one hand (#163): mine and my teammates' cards.
       const hand = readHand(info, handOwners(game, me));
+      // G3: the cards my teammates' entered orders already play or discard (V5, unverified live), warned of as
+      // warapp_submit_turn does; a card named by its type is taken as one nobody entered when there is one.
+      const { claimed } = teamHandLeft(hand, teamCardClaims(seen.teammateOrders, friendsOf(game.players, me)));
+      const uses: { card: Card; kind: 'play' | 'discard' }[] = [];
+      const useCard = (ref: string, kind: 'play' | 'discard') => {
+        const guid = normalizeGuid(ref.trim());
+        const type = guid === undefined ? cardTypeByName(ref) : undefined;
+        const card = unclaimedFirst(hand, claimed).find(
+          (c) => (guid !== undefined ? c.id === guid : c.type === type) && !uses.some((u) => u.card.id === c.id),
+        );
+        if (card) uses.push({ card, kind });
+      };
       let orderPriority = false;
       const ignored: string[] = [];
+      const unsimulatedCards: string[] = [];
       const friends = friendsOf(game.players, me);
       const mine = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId === me.id ? [t.territoryId] : [])));
       for (const o of orders) {
@@ -192,10 +213,23 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           if (o.mode === 'attack-only' && s?.allowAttackOnly !== true) refused.add('Attack Only (AllowAttackOnly is off)');
           if (o.percent && s?.allowPercentageAttacks !== true) refused.add('a percentage order (AllowPercentageAttacks is off)');
           if (o.commander && s?.commanders !== true) refused.add('a commander move (this game has no commanders)');
+        } else if (o.kind === 'discard') {
+          useCard(o.card, 'discard');
         } else if (o.kind === 'card') {
+          useCard(o.card, 'play');
           // By GUID it is looked up in my hand; by type name the name is enough (this is a what-if).
           const guid = normalizeGuid(o.card.trim());
           const type = guid !== undefined ? hand.find((c) => c.id === guid)?.type : cardTypeByName(o.card);
+          const unsimulated = type !== undefined ? UNSIMULATED_CARDS.get(type) : undefined;
+          if (unsimulated) {
+            let on = '';
+            try {
+              if (o.target !== undefined) on = ` on ${resolveTerritory(map, o.target).id}`;
+            } catch {
+              // A target not on the map: warapp_submit_turn refuses it; the warning names no territory.
+            }
+            unsimulatedCards.push(unsimulated(on));
+          }
           if (type !== undefined && type === ORDER_PRIORITY) orderPriority = true;
           else if (type === undefined || cardTypeName(type) !== 'Reinforcement') ignored.push('a card play other than Order Priority or Reinforcement');
         }
@@ -207,6 +241,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
       const income = incomeFor(graph, board, me.id, game.settings);
+      // PLAN-TEAMS D3: the cards in effect the decoder is sure of (G2: Sanctions on another player cut
+      // its estimate read off the board, as warapp_plan_turn does).
+      const effect = boardCardsInEffect(game, me, turn, info);
       const { estimates } = planEnemyEstimates({
         graph,
         board,
@@ -237,6 +274,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
         },
         turn,
+        ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
       });
       const myTeam = carriesTeam(me.team) ? me.team : undefined;
       const teamOf = new Map(game.players.map((p) => [p.id, p.team]));
@@ -271,7 +309,6 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // `income` is the board's, card armies out — the same figure warapp_plan_turn passes.
       // PLAN-TEAMS D3: a Diplomacy card in effect that the decoder is sure of is a truce here in any format
       // (T9: the game enforces it). Its player stays among the opponents too: the decoder is unverified.
-      const effect = boardCardsInEffect(game, me, turn, info);
       const truces =
         (await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks, diplomacy: effect.diplomacy }))
           ?.relations ?? [];
@@ -507,6 +544,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           : []),
         ...sanction.warnings,
         ...effect.unsure,
+        ...[claimedCardWarning(claimedCardUses(uses, claimed))].filter((w): w is string => w !== undefined),
+        ...unsimulatedCards,
         ...(deployed !== sanction.income
           ? [
               `The orders deploy ${deployed} and your income is ${sanction.income}: the test used the orders as given (a Reinforcement card adds to the income; otherwise war.app refuses a wrong total).`,

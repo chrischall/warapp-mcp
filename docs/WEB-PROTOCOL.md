@@ -299,27 +299,39 @@ phase method gives the phase. No commit carrying one has been sent; golden tests
 
 | Card (class) | Tag | Fields after the tag, in write order | Phase |
 |---|---|---|---|
-| Spy (`…Spy`) | 6 | int32 target player (in-game id) | 15 |
+| Spy (`…Spy`) | 6 | int32 target player (in-game id; 0 the neutral) | 15 |
 | Reconnaissance (`…Reconnaissance`) | 16 | int32 target territory | 15 |
 | Surveillance (`…Surveillance`) | 17 | int32 target bonus | 15 |
 | Airlift (`…Airlift`) | 12 | bool present + `Armies` (bool fogged, int32 count, byte special-unit count, units — as in an AttackTransfer), int32 from, int32 a legacy count the client leaves 0, int32 to | 43 |
 | Gift (`…Gift`) | 13 | int32 recipient player, int32 territory | 47 |
 | Diplomacy (`…Diplomacy`) | 14 | int32 player one, int32 player two | 75 |
 | Sanctions (`…Sanctions`) | 15 | int32 sanctioned player | 80 |
+| Bomb (`…Bomb`) | 20 | int32 target territory | 30 |
+| Emergency Blockade (`…Abandon`) | 8 | int32 target territory | 37 |
 
 The bundle's `GameValidateOrders` refuses, and `warapp_submit_turn` refuses up front: Spy on myself or a
-teammate (80) or a player not playing (79; a neutral target, 225, is not offered); a Gift of a territory
+teammate (80), a player not playing (79), or the neutral (target 0) unless the game's Spy card has
+`CanSpyOnNeutral` (`CardGameSpy`, GameFeed `SpyCard.CanSpyOnNeutral`; 225 otherwise; -1 and -2 are 81); a Gift of a territory
 not mine (212), to myself (211), of one territory twice (213), to a player not playing (210), or of a
 territory carrying a commander or other special unit (536 — a special unit's "can be gifted" is false for
 a commander and the bosses); an Airlift to its own source (184), from a territory not mine (182), to one
-neither mine nor a teammate's (183), or carrying a commander or boss to a teammate's territory (537); a
-Diplomacy naming one player twice or two teammates (214) or a player not playing (381); Sanctions on a
+neither mine nor a teammate's (183), or carrying a commander or boss to a teammate's territory (537) — the
+validator does not check the army count, so an Airlift of the commander alone sends 0 armies (`armies: 0`
+with `commander`; 0 without it is ours to refuse); a Diplomacy naming one player twice or two teammates
+(214) or a player not playing (381, checked for the first named player and then the second, so either one
+out is refused); Sanctions on a
 player not playing (219); Surveillance on a bonus worth 0 (224); Reconnaissance on a territory not on the
-map (41). Ours, not the validator's: Sanctions on myself or a teammate (on an opponent instead when the
+map (41); a Bomb on a territory whose owner is me or a teammate (526 `CannotBombTeammates`) or none of
+whose neighbours (the map's list for the target) is mine (527 `CannotBombNonAdjacent`) — a neutral target
+passes; an Emergency Blockade on a territory not mine (95 `AbandonCardMustTargetYourTerritory`) or on one
+territory twice (96). Ours, not the validator's: an Emergency Blockade on my commander's territory (it
+would be lost with it), or on a territory an Airlift of the same orders leaves or lands on (the wall, phase
+37, comes first); Sanctions on myself or a teammate (on an opponent instead when the
 game's `SanctionsCard.Percentage` is negative, a boost), more armies airlifted than stand on the source
 after the deploys, and a card the game's settings do not put in play. The executor runs an Airlift after
 the deploys, so `warapp_submit_turn` takes what it sends off its source's later moves (the armies it lands cannot move again that turn, per the wiki); a Gift runs before
-the moves, so a move from the gifted territory does not run (a preview warning). The preview warns that
+the moves, so a move from the gifted territory does not run (a preview warning); a Gift to an opponent
+(not me, not a teammate) gets its own preview line naming the recipient by id as an opponent. The preview warns that
 the encoding is unverified, and the result carries `cardPlayCheck`: after the first live commit of each,
 read back that the card left the hand and did what it should, then mark it verified here.
 

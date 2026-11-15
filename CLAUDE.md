@@ -214,17 +214,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   is a tie-break only: a capture of a player a teammate attacks ranks above an otherwise equal one (balanced greedy
   after the score; rule 4e before its last keys), with a "Team focus" rationale line. `team.support` (a teammate's
   border that falls given their entered deploys and orders out, where my idle armies beside it — `avail` beyond
-  `keepFor`/two-step/cover keeps — make it hold) and `team.jointCaptures` (neither takes it alone; the turn
+  `keepFor`/two-step/cover keeps — make it hold; each idle army allotted once, fewest-needed border first, G3) and `team.jointCaptures` (neither takes it alone; the turn
   simulator with only those attacks, both orders, also against the owner's deploy; `mustGoFirst` under a cyclic
   `game.moveOrder`) are advisory: a move onto a teammate is V7, so neither is ever in `orders`. Cards
   (`src/team-cards.ts`): a card a teammate entered a play or discard of leaves my hand before `chooseCardPlays`, and
-  plan_turn's `cards.team.roles` says who plays each card (V5, V8 unverified).
+  plan_turn's `cards.team.roles` says who plays each card (V5, V8 unverified); `warapp_submit_turn` and
+  `warapp_check_plan` warn when my orders use such a card (`claimedCardUses`), and a card named by type resolves to
+  an unclaimed one first (`unclaimedFirst`).
 - **The team brief (C4) is `warapp_team_brief`, read-only: data for a team-chat message, never sent.** It plans
   as plan_turn does (`livePlanSetup`, `award: false`) and writes nothing (no board cache, award or outlook); the
   pure parts are `src/analysis/team-brief.ts` (`opponentIncomes`/`incomeBasis`, `briefConflicts`, `briefAsks`,
   `pickOverlap`, `picksLost`). Stages: picking (my list, teammates' lists, overlap, shared bonuses), turn 1 (the
   picks my kept list lost, `readAward` computed without writing), each turn (incomes and basis, deploys and
-  attacks, asks, offers = `team.support`, cards, conflicts; `conflicts.read: null` = no teammate orders read).
+  attacks, asks, offers = `team.support`, cards, conflicts; `conflicts.read: null` = no teammate orders read; a
+  `bonus` conflict is their attack into a bonus my plan completes, or captures into a direct member of: `completes`).
   `warapp_join_game` takes `team`: refused outside a team game, with random teams, or when full or not offered;
   it is the int32 AcceptOpenSeat already sends (the client's team picker passes the chosen team: bundle, UNVERIFIED
   live). The preview lists that team's seats by in-game id, human or AI (`GameInfoPlayer` field 4 is IsAI).
@@ -425,9 +428,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (phase 15), Airlift (43), Gift (47), Diplomacy (75), Sanctions (80), tags and fields from each
   `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). `warapp_submit_turn` takes their targets
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
-  never gifted or airlifted to a teammate; no Spy on me or a teammate; no Diplomacy between teammates)
-  plus Sanctions on my own side (an opponent instead when the percentage is negative); what an Airlift
-  sends leaves its source's later moves (armies it lands cannot move that turn). The preview warns the encoding is unverified and the result
+  never gifted or airlifted to a teammate; no Spy on me or a teammate, nor on the neutral — target 0 — unless
+  the game's `SpyCard.CanSpyOnNeutral`; no Diplomacy between teammates, nor naming a player out — the
+  validator checks both named players for 381) plus Sanctions on my own side (an opponent instead when the
+  percentage is negative); an Airlift of the commander alone sends 0 armies (the validator does not check
+  the count); what an Airlift sends leaves its source's later moves (armies it lands cannot move that
+  turn); a Gift to an opponent gets its own preview line naming the recipient by id as an opponent. **Bomb** (tag 20, phase 30,
+  `GameOrderPlayCardBomb`) and **Emergency Blockade** (tag 8, phase 37, `GameOrderPlayCardAbandon`) each write one
+  int32 territory, UNVERIFIED live too: a Bomb is refused on my own or a teammate's territory (526) or one next to
+  none of mine (527); an Emergency Blockade on a territory not mine (95), twice on one (96), on my commander's
+  (ours), or under an Airlift that runs after it; the preview warns when it breaks a bonus I hold or strands
+  moves. The preview warns the encoding is unverified and the result
   carries `cardPlayCheck`. The planner never plays them; `warapp_plan_turn`'s `cards.advice` (D2,
   `src/analysis/card-support.ts`, pure) says where they pay, each with an `order`, never added to the
   orders: Diplomacy on the opponent whose stacks tie down the most of my border armies, only with two or
@@ -435,7 +446,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   or leaves a border it presses uncovered; one a Diplomacy card in force covers is passed over), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
   percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
-  Gift of the members that complete a teammate's nearer bonus. **A team hand's cards carry `owner`**
+  Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only
+  where the fog hides what the plan needs, never with fog off: Spy on an opponent out of view (else the
+  owner shown beside my most hidden stacks), Surveillance on a bonus I hold half or more of with a fogged
+  member (else the most valuable with a hidden border of mine), Reconnaissance on the hidden territory
+  beside the most of mine. **A team hand's cards carry `owner`**
   (the in-game id read under, mine when under me at all; V8 unverified): the planner plays, discards and
   advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
   teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not
@@ -447,10 +462,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   that reaches it), every named player a distinct player still playing. A Diplomacy between me and an
   opponent (never a teammate) is T9: `planRelationsFrom`'s `diplomacy` marks a ledger truce with it
   enforced, else adds a relation `card: 'Diplomacy'` covering everything; an enforced relation binds in
-  any format, its player is no foe this turn, and still counts for the two-step look-ahead when the card
-  is gone by next turn (`lookAheadFoes`). Sanctions on me cut `warapp_plan_turn`'s income by the bundle's
+  any format, its player is no foe this turn, and when the card is gone by next turn (`lookAheadFoes`) still
+  counts for every next-turn judgement: the two-step hold (#172), the frontier's hold cost (rule 4d) and a
+  completion's defensibility (R3) — `nextTurnAt` in `plan/threats.ts` (G2). `warapp_check_plan` keeps the
+  player among the opponents, so `exposedNextTurn` counts it anyway. Sanctions on me cut `warapp_plan_turn`'s income by the bundle's
   rule (per card, round((1 − Percentage) × income), .5 up, cap 10000; not under Local Deployment, which
-  warns). Sanctions on others only show (an observed deploy may already carry them). Anything not sure is
+  warns). Sanctions on others (G2) show in `cardsInEffect.sanctionsOnOthers` and cut that opponent's
+  estimate when it is read off the board (`visible`/`exact`; `applySanctions` in `plan/estimates.ts`); an
+  observed, tracked or prior figure stays whole with a warning (it may already carry the cut). The
+  `SanctionsCard.Percentage` scale (a fraction) is UNVERIFIED for GameFeed. The Sanctions advice passes
+  over a truce partner and a player a Diplomacy card keeps at peace with me, saying why. Anything not sure is
   a warning and changes nothing; the plan reports `cardsInEffect` (`verified: false`), and
   `warapp_check_plan` counts a card as a truce (`safeIfTruceHolds`; `safe` still tries its player).
   With no active card every plan is unchanged (golden).

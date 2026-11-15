@@ -1,7 +1,7 @@
 // PLAN-TEAMS C3.7: the team hand against my teammates' entered card plays (synthetic GUIDs and ids).
 import { describe, expect, it } from 'vitest';
 import type { Card } from '../src/cards.js';
-import { teamCardClaims, teamCardRoles, teamHandLeft } from '../src/team-cards.js';
+import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../src/team-cards.js';
 import type { TeamCardPlay, TeammateOrders } from '../src/team-orders.js';
 
 const G = (n: number) => n.toString(16).padStart(32, '0');
@@ -55,5 +55,38 @@ describe('teamCardRoles', () => {
       [OD.id, 'me', 'discard'],
     ]);
     expect(roles[0]!.why).toMatch(/player 11 has already entered a play of it/);
+  });
+});
+
+describe('claimedCardUses (G3): my orders against what my teammates entered', () => {
+  const claimed = [
+    { card: R1, player: 11, kind: 'play' as const },
+    { card: OD, player: 12, kind: 'discard' as const },
+  ];
+  it('names each card my orders play or discard that a teammate has entered', () => {
+    const out = claimedCardUses(
+      [
+        { card: R1, kind: 'play' },
+        { card: OP, kind: 'play' },
+        { card: OD, kind: 'discard' },
+      ],
+      claimed,
+    );
+    expect(out).toEqual([
+      { card: R1, mine: 'play', player: 11, theirs: 'play' },
+      { card: OD, mine: 'discard', player: 12, theirs: 'discard' },
+    ]);
+    expect(claimedCardUses([{ card: OP, kind: 'play' }], claimed)).toEqual([]);
+  });
+  it('words one warning, ids only', () => {
+    const w = claimedCardWarning(claimedCardUses([{ card: R1, kind: 'play' }], claimed));
+    expect(w).toMatch(new RegExp(`plays the Reinforcement card ${R1.id}, which player 11 has already entered a play of`));
+    expect(w).toMatch(/one card twice/);
+    expect(w).toMatch(/UNVERIFIED live/);
+    expect(claimedCardWarning([])).toBeUndefined();
+  });
+  it('puts the unclaimed cards first, so a card named by its type is one nobody entered', () => {
+    expect(unclaimedFirst([R1, R2, OP, OD], claimed)).toEqual([R2, OP, R1, OD]);
+    expect(unclaimedFirst([R1, R2], [])).toEqual([R1, R2]);
   });
 });

@@ -128,7 +128,7 @@ import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
 import { withTeammateOrders } from '../team-orders.js';
-import { teamCardClaims, teamCardRoles, teamHandLeft } from '../team-cards.js';
+import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../team-cards.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
@@ -222,11 +222,15 @@ const turnOrderArg = z.discriminatedUnion('kind', [
     target: territoryRef
       .optional()
       .describe(
-        'Blockade: your territory to blockade. Gift: your territory to give away. Reconnaissance: the territory to see. Id or name.',
+        'Blockade, Emergency Blockade: your territory to blockade. Bomb: a territory next to yours, not yours or a ' +
+          "teammate's. Gift: your territory to give away. Reconnaissance: the territory to see. Id or name.",
       ),
     player: playerRef
       .optional()
-      .describe('Spy: the opponent to see. Sanctions: the player whose income it cuts. Gift: who receives `target`. Id or name.'),
+      .describe(
+        "Spy: the opponent to see (0 or \"neutral\": the neutral, when the game's Spy card allows it). Sanctions: the player whose " +
+          'income it cuts. Gift: who receives `target`. Id or name.',
+      ),
     players: z
       .array(playerRef)
       .length(2)
@@ -235,7 +239,12 @@ const turnOrderArg = z.discriminatedUnion('kind', [
     bonus: territoryRef.optional().describe('Surveillance: the bonus to see (id or name).'),
     from: territoryRef.optional().describe('Airlift: your territory the armies leave (id or name).'),
     to: territoryRef.optional().describe("Airlift: your or a teammate's territory they land on (id or name), anywhere on the map."),
-    armies: armiesArg.optional().describe('Airlift: armies to send (at most what stands on `from` after the deploys).'),
+    armies: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Airlift: armies to send (at most what stands on `from` after the deploys; 0 only with `commander`: the commander alone).'),
     commander: z
       .boolean()
       .optional()
@@ -990,6 +999,9 @@ const PLAYABLE: Readonly<Record<number, CardPlayKind>> = {
   9: 'Sanctions',
   10: 'Reconnaissance',
   11: 'Surveillance',
+  // Bomb (GameOrderPlayCardBomb) and Emergency Blockade (GameOrderPlayCardAbandon): bundle writers, UNVERIFIED live (V9).
+  13: 'Bomb',
+  3: 'EmergencyBlockade',
 };
 
 /** A card order as the tool takes it: the card and its targets (`card-plays.ts`). */
@@ -1084,7 +1096,7 @@ function resolveCardPlays(
     const kind = PLAYABLE[card.type];
     if (!kind) {
       throw new McpToolError(`Playing a ${card.name} card is not supported here yet.`, {
-        hint: 'Play it in the game itself; this tool plays every card but Emergency Blockade and Bomb.',
+        hint: 'Play it in the game itself; this tool plays only the built-in cards.',
       });
     }
     const { card: _card, before: _before, ...targets } = input;
@@ -1289,11 +1301,21 @@ function sinceLastView(
   };
 }
 
-/** The agreements `breaks` names and the orders that break each, in a sentence (ids only). */
-function breaksText(breaks: readonly TruceBreak[], moves: readonly { from: { id: number }; to: { id: number } }[]): string {
+/**
+ * The agreements `breaks` names and the orders that break each, in a sentence (ids only). A Bomb is named
+ * by its place among the card plays (`bombPlays`: the index of each Bomb in that list).
+ */
+function breaksText(
+  breaks: readonly TruceBreak[],
+  moves: readonly { from: { id: number }; to: { id: number } }[],
+  bombPlays: readonly number[] = [],
+): string {
   const one = (b: TruceBreak) =>
     `agreement ${b.agreement} with player ${b.with} (${b.state === 'notice' ? 'in notice, still binding' : 'active'}): ` +
-    b.moves.map((m) => `move ${m.index + 1} (${moves[m.index]!.from.id} → ${m.to}) attacks a territory it covers`).join(', ');
+    [
+      ...b.moves.map((m) => `move ${m.index + 1} (${moves[m.index]!.from.id} → ${m.to}) attacks a territory it covers`),
+      ...(b.bombs ?? []).map((x) => `the Bomb (card play ${(bombPlays[x.index] ?? x.index) + 1}) on ${x.target} attacks a territory it covers`),
+    ].join(', ');
   return `These orders break ${breaks.length === 1 ? 'a truce' : `${breaks.length} truces`} — ${breaks.map(one).join('; ')}`;
 }
 
@@ -1523,6 +1545,8 @@ export async function livePlanSetup(
     ...(turn !== null ? { turn } : {}),
     game: gameContext,
     ...(tracks ? { tracks } : {}),
+    // G2 (D3): Sanctions on another player the decoder is sure of cut its estimate read off the board.
+    ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
     options: {
       // No goal: the game profile picks it and tunes the plan (an explicit goal overrides it).
       adapt: true,
@@ -1614,7 +1638,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'least in this game leave first; the timing cards are kept longest); never Blockade, Order Delay, Bomb or Emergency ' +
           'Blockade — `cards.advice` says where those pay (Order Delay above the calm orders, a Bomb target or hold it, an ' +
           "Emergency Blockade wall; Diplomacy on the opponent pressing you hardest when two or more do, Sanctions on the leader, an Airlift onto a " +
-          "border of yours or a teammate's that falls without it, a Gift that completes a teammate's bonus — each with an `order` to pass to " +
+          "border of yours or a teammate's that falls without it, a Gift that completes a teammate's bonus, Spy, Reconnaissance or Surveillance " +
+          'where the fog hides what the plan needs (never with fog off) — each with an `order` to pass to ' +
           "warapp_submit_turn, never added to the orders), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
           "order to send them (both players' orders interleave). The full rule list is in the planner's header and the warapp-mcp skill. " +
           'When this server kept your pick list (warapp_submit_picks or warapp_get_my_picks during distribution), ' +
@@ -1886,6 +1911,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(tracks ? { tracks } : {}),
         game: gameContext,
         turn,
+        ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
       });
       const guessed = borderGuess({
         graph,
@@ -2053,10 +2079,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           : {}),
         ...(plan.advice ? { advice: plan.advice.map((a) => ({ ...a, player: playerRef(a.player) })) } : {}),
         // PLAN-TEAMS D3: the cards in effect the plan relied on (an unverified decoder, so `verified: false`).
-        ...(effect.diplomacy.length || sanction.applied
+        ...(effect.diplomacy.length || sanction.applied || effect.sanctionsOnOthers.length
           ? {
               cardsInEffect: {
                 ...(effect.diplomacy.length ? { diplomacy: effect.diplomacy.map((d) => ({ player: playerRef(d.player), untilTurn: d.untilTurn })) } : {}),
+                // G2: Sanctions on other players; `estimateCut` says whether the plan cut its estimate
+                // (only a figure read off the board: an observed deploy may already carry the cut).
+                ...(effect.sanctionsOnOthers.length
+                  ? {
+                      sanctionsOnOthers: effect.sanctionsOnOthers.map((x) => ({
+                        player: playerRef(x.player),
+                        percentage: x.percentage,
+                        untilTurn: x.untilTurn,
+                        estimateCut: estimates.find((e) => e.playerId === x.player)?.sanctioned?.applied === true,
+                      })),
+                    }
+                  : {}),
                 ...(sanction.applied
                   ? { sanctionsOnMe: effect.sanctionsOnMe.map((x) => ({ percentage: x.percentage, untilTurn: x.untilTurn })), incomeBefore: setup.boardIncome, incomeAfter: sanction.income }
                   : {}),
@@ -2181,7 +2219,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       .boolean()
       .optional()
       .describe(
-        'Only when an order attacks a territory an active or in-notice truce covers (warapp_get_relations): true breaks ' +
+        'Only when an order attacks (or a Bomb hits) a territory an active or in-notice truce covers (warapp_get_relations): true breaks ' +
           'it on purpose — the preview names the agreement, and once the orders are committed the ledger records it ' +
           'broken-by-me (the partner\'s player record too). Without it such orders are refused. Ask the owner first.',
       ),
@@ -2202,11 +2240,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         '(with a `target` of yours; an Order Delay goes after every move unless it has `before`: a move number to ' +
         'place it above, unverified live) from your hand, and the targeted cards — Spy (`player`), Reconnaissance ' +
         '(`target`), Surveillance (`bonus`), Airlift (`from` yours, `to` yours or a teammate\'s, `armies`, optional ' +
-        '`commander`), Gift (`target` yours, `player`) and Diplomacy (`players`: two) and Sanctions (`player`), encoded ' +
+        '`commander`), Gift (`target` yours, `player`), Diplomacy (`players`: two), Sanctions (`player`), Bomb (`target` ' +
+        "next to yours, not yours or a teammate's) and Emergency Blockade (`target` yours, never your commander's), encoded " +
         'as the client does but not yet verified live, each refused where war.app would refuse it (a commander is never ' +
         'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
-        'when your hand is over the hold limit and the orders do not play or discard enough cards. The ' +
+        'when your hand is over the hold limit and the orders do not play or discard enough cards; in a team game warns ' +
+        'when they play or discard a card your teammate has already entered (a card named by type is one nobody ' +
+        'entered when there is one). The ' +
         'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
         'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
@@ -2222,7 +2263,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
         'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
         'several attacks on one target in the order listed, each against what the earlier ones leave) ' +
-        'and warns about one that cannot capture. An order that attacks a territory an active or in-notice truce ' +
+        'and warns about one that cannot capture. An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
         'and, once the orders are committed, the ledger records it broken-by-me. Always sent as ' +
         'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
@@ -2304,7 +2345,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const myHand = readHand(info, playerId);
         const hand = owners.length > 1 ? readHand(info, owners) : myHand;
         const handUnknown = rules.inPlay.length > 0 && !handReadable(info, playerId);
-        const plays = resolveCardPlays(map, hand, rules, cardInputs);
+        // G3: the cards my teammates' entered orders already play or discard (V5, unverified live). A card named
+        // by its type resolves to one nobody entered when there is one; one named by id that they entered is warned of.
+        const { claimed } = teamHandLeft(hand, teamCardClaims(board.teammateOrders, new Set(teammatesOf(game.players, me).map((p) => p.id))));
+        const pickFrom = unclaimedFirst(hand, claimed);
+        const plays = resolveCardPlays(map, pickFrom, rules, cardInputs);
         // #186: an Order Delay's `before` names a move of this list (1-based); one past the last is the default.
         for (const p of plays) {
           if (p.before !== undefined && p.before > moves.length + 1) {
@@ -2316,7 +2361,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         }
         /** The move (1-based) an Order Delay is placed above, when it is placed among the moves. */
         const placedAt = (p: ResolvedCardPlay) => (p.before !== undefined && p.before <= moves.length ? p.before : undefined);
-        const discards = resolveDiscards(hand, plays, discardInputs);
+        const discards = resolveDiscards(pickFrom, plays, discardInputs);
         // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
         // than MaxCardsHold remain (verified, #20).
         const used = plays.length + discards.length;
@@ -2359,6 +2404,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         for (const p of plays) {
           if (UNVERIFIED_CARD_PLAYS.has(p.kind)) p.targets = resolveCardTargets(p.kind, p.card.name, p.input, cardContext);
         }
+        // An Emergency Blockade (phase 37) turns its territory neutral before an Airlift (phase 43) runs.
+        for (const p of plays) {
+          const a = p.kind === 'Airlift' ? p.targets : undefined;
+          const hit = a && [a.from, a.to].find((t) => t && cardContext.seen.blockaded.has(t.id));
+          if (hit) {
+            throw new McpToolError(`${label(hit)} is blockaded before the Airlift runs, so the Airlift ${hit === a.from ? 'from' : 'to'} it cannot happen.`, {
+              hint: 'The Emergency Blockade turns the territory neutral first: airlift elsewhere, or blockade another territory.',
+            });
+          }
+        }
         if (cardContext.seen.commanderAirlifted && moves.some((m) => m.commander)) {
           throw new McpToolError('Your commander is both airlifted and taken along on a move.', {
             hint: 'The Airlift runs before the moves; take the commander in one order only.',
@@ -2376,6 +2431,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             : undefined;
         // B2: an order that attacks a territory an active or in-notice truce covers is refused unless the
         // caller breaks the agreement on purpose (the plan never orders a surprise break, T7).
+        const bombs = plays.flatMap((p, play) =>
+          p.kind === 'Bomb' && p.targets?.territory ? [{ play, target: p.targets.territory.id }] : [],
+        );
+        const bombPlays = bombs.map((x) => x.play);
         const ledger = ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
         const breaks = ctx.dataDir
           ? truceBreaksIn({
@@ -2392,10 +2451,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 ...(p.team !== undefined ? { team: p.team } : {}),
               })),
               moves: moves.map((m) => ({ from: m.from.id, to: m.to.id, ...(m.mode !== undefined ? { mode: m.mode } : {}) })),
+              // A Bomb halves its target's armies: an attack on the partner like a move into it.
+              bombs: bombs.map((x) => x.target),
             })
           : [];
         if (breaks.length && break_agreement !== true) {
-          throw new McpToolError(`${breaksText(breaks, moves)}: nothing was sent.`, {
+          throw new McpToolError(`${breaksText(breaks, moves, bombPlays)}: nothing was sent.`, {
             hint:
               'Drop those orders, or give notice (warapp_record_agreement status notice-by-me) and wait until it runs. ' +
               'If the partner broke it first, record broken-by-them with warapp_record_agreement. To break it on purpose ' +
@@ -2432,7 +2493,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         if (overridden) warnings.unshift(`Deploys checked against the ${overridden}.`);
         if (breaks.length)
           warnings.unshift(
-            `${breaksText(breaks, moves)}. break_agreement is true: once these orders are committed the ledger records ` +
+            `${breaksText(breaks, moves, bombPlays)}. break_agreement is true: once these orders are committed the ledger records ` +
               `${breaks.length === 1 ? 'it' : 'them'} broken-by-me, and the partner's player record says so. That is final: ` +
               'withdrawing the orders afterwards (warapp_uncommit_turn) does not undo it.',
           );
@@ -2476,6 +2537,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // V8: a card read only under a teammate's id may be theirs to play; war.app has the last word.
         const theirs = [...plays.map((p) => p.card), ...discards].filter((c) => !isMyCard(c, playerId));
         if (theirs.length) warnings.push(teammateCardWarning(theirs));
+        const clash = claimedCardWarning(
+          claimedCardUses([...plays.map((p) => ({ card: p.card, kind: 'play' as const })), ...discards.map((c) => ({ card: c, kind: 'discard' as const }))], claimed),
+        );
+        if (clash) warnings.push(clash);
         const placedDelays = plays.filter((p) => placedAt(p) !== undefined);
         for (const p of placedDelays) {
           const m = moves[placedAt(p)! - 1]!;

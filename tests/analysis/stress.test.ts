@@ -267,6 +267,12 @@ describe('stressPlan', () => {
       expect(held.exposedNextTurn).toEqual([]);
     });
 
+    it('G2: counts a truce partner — a Diplomacy card ending next turn included — in the look-ahead', () => {
+      // The partner stays among the opponents tried (D3), so its stack two steps away is next turn's threat.
+      const r = stress(KEEP, [mine(1, 1), mine(2, 1), foe(3, 20), foe(4, 1)], { truces: [{ player: FOE, covered: [1, 2] }] });
+      expect(r.exposedNextTurn).toEqual([expect.objectContaining({ territory: 1, opponent: FOE, from: 3, via: 2 })]);
+    });
+
     it('looks through a neutral in between as well as a territory of mine', () => {
       const r = stress(KEEP, [mine(1, 3), neutral(2, 2), foe(3, 20), foe(4, 1)]);
       expect(r.exposedNextTurn).toEqual([expect.objectContaining({ territory: 1, via: 2, from: 3 })]);

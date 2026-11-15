@@ -343,7 +343,7 @@ export function frontierCosts(
   prev: ReturnType<typeof breakTargets> & ReturnType<typeof captureTargets>,
 ) {
   const { g, guarded, mineSet, armiesOf, unitsAt, defenceAt, rates } = pc;
-  const { holdArmies, threatAt } = threats;
+  const { holdArmies, nextTurnAt } = threats;
   const { conceded, stood } = hd;
   const { targets } = prev;
   // ---- 4d. frontier cost (#71) ----
@@ -356,7 +356,8 @@ export function frontierCosts(
    */
   const borderOf = (x: number, held: ReadonlySet<number>, have: number) => {
     if (neighborsOf(g, x).every((n) => held.has(n))) return { border: false, enemy: false, need: 0 };
-    const th = threatAt(x, (n) => held.has(n));
+    // G2: next turn's threat — a player a Diplomacy card shields me from only this turn counts.
+    const th = nextTurnAt(x, (n) => held.has(n));
     if (!th) return { border: true, enemy: false, need: 0 };
     const units = mineSet.has(x) ? unitsAt(x) : 0;
     return { border: true, enemy: true, need: Math.max(0, holdArmies(th.threat) - have - units) };

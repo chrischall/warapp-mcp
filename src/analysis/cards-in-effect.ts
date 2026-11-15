@@ -63,7 +63,10 @@ export interface CardsInEffect {
   diplomacy: SureDiplomacy[];
   /** Sanctions on me (one entry per card: they compound). */
   sanctionsOnMe: SureSanction[];
-  /** Sanctions on another player: reported, never applied to its estimate (observed deploys may already carry it). */
+  /**
+   * Sanctions on another player (G2): reported, and applied to its estimate only where the figure is read
+   * off the board (`applySanctions`, plan/estimates.ts) — an observed deploy may already carry the cut.
+   */
   sanctionsOnOthers: SureSanction[];
   /** Why a Diplomacy with me, or Sanctions on me, was read but not relied on. */
   unsure: string[];

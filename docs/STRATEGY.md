@@ -994,10 +994,10 @@ Settings and cards:
   Order Priority makes that certain unless both play one. **Advice only.** Derived. Source:
   <https://war.app/wiki/Order_priority_card>
 - `cards-bomb-standoff-size` — after a Bomb the capture needs about five sixths of the stack (83 v 100),
-  not five thirds; played in the game client. **Advice only.** Derived. Source: <https://war.app/wiki/Bomb_Card>
+  not five thirds; warapp_submit_turn plays it (unverified live). **Advice only.** Derived. Source: <https://war.app/wiki/Bomb_Card>
 - `cards-diplomacy-three-sides` — with three left, Diplomacy makes a two-on-one (whether a card can put
-  two other players at peace no page says); played in the game
-  client. **Advice only.** Derived. Source: <https://war.app/wiki/Diplomacy_Card>
+  two other players at peace no page says); warapp_submit_turn
+  plays it (unverified live). **Advice only.** Derived. Source: <https://war.app/wiki/Diplomacy_Card>
 - `cards-sanctions-on-leader` — Sanctions on the leader, together, the turn before the attack;
   `warapp_submit_turn` plays it (unverified live). **Encoded as advice** (D2): `cards.advice.sanctions`
   names the strongest opponent (the profile's ranking, else visible armies + 3 × visible income); on

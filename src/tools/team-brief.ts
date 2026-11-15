@@ -48,7 +48,7 @@ export const BRIEF_NOTES = [
 const CONFLICT_NOTE =
   "`same-target`: you both attack it — whichever lands second moves onto your teammate's territory (V7), so one of " +
   'you should switch, unless it is a joint capture (`joint`); `bonus`: their attack takes a member of a bonus your plan ' +
-  'completes (a bonus pays one holder); `attacks-me`: an order of theirs attacks your territory; `onto-mine`: a plain ' +
+  'completes (`completes`) or captures into (a bonus pays one holder: agree who takes it); `attacks-me`: an order of theirs attacks your territory; `onto-mine`: a plain ' +
   'order of theirs moves onto your territory (what it does is V7).';
 
 const PICKS_LOST_NOTE =
@@ -69,7 +69,7 @@ export function registerTeamBriefTool(server: McpServer, ctx: LiveContext): void
           "planned deploys and attacks (warapp_plan_turn's plan, profile goal), what you ask of your teammates (keep a " +
           'joint attack, cover a border you concede), what you could give them (a border of theirs your idle armies would ' +
           'hold), the card you intend to play and the cards left to them, and the conflicts with the orders they have ' +
-          'entered (a target you both attack, a bonus you complete, an order onto your territory). Word it and send it with ' +
+          'entered (a target you both attack, a bonus you complete or capture into, an order onto your territory). Word it and send it with ' +
           'warapp_send_chat (channel: "team"). Teammate orders and picks are read from the client\'s own structures and are ' +
           `UNVERIFIED live. Refuses outside a team game. ${BRIDGE_NOTE} Read-only: writes nothing.`,
       ),
@@ -257,7 +257,7 @@ export function registerTeamBriefTool(server: McpServer, ctx: LiveContext): void
             c.kind === 'same-target'
               ? { kind: c.kind, territory: name(c.territory), teammate: playerRef(c.teammate), mine: c.mine, theirs: c.theirs, joint: c.joint }
               : c.kind === 'bonus'
-                ? { kind: c.kind, bonus: bonusRef(c.bonus), territory: name(c.territory), teammate: playerRef(c.teammate) }
+                ? { kind: c.kind, bonus: bonusRef(c.bonus), territory: name(c.territory), teammate: playerRef(c.teammate), completes: c.completes }
                 : { kind: c.kind, from: name(c.from), to: name(c.to), teammate: playerRef(c.teammate), armies: c.armies },
           ),
           note: CONFLICT_NOTE,

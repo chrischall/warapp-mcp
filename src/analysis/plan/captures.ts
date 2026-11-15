@@ -75,7 +75,7 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
   } = pc;
   const { warnings, rationale, deployed, avail, captured, survivorsAt, incoming } = ps;
   const { guardAt, valueOf } = book;
-  const { holdArmies, threatAt, exposure, borderAt } = threats;
+  const { holdArmies, nextTurnAt, exposure, borderAt } = threats;
   const { conceded, keptIncome } = hd;
   // ---- R3: a completion must leave a frontier I can hold ----
   /**
@@ -120,7 +120,7 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
      */
     const either = (m: number) => {
       if (!mineSet.has(m)) return 0;
-      const th = threatAt(m, (n) => captured.has(n) && n !== t && !mineSet.has(n));
+      const th = nextTurnAt(m, (n) => captured.has(n) && n !== t && !mineSet.has(n));
       if (!th) return 0;
       return Math.max(0, holdArmies(th.threat) - armiesOf(m) - (deployed.get(m) ?? 0) - unitsAt(m));
     };

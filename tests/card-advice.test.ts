@@ -69,8 +69,21 @@ describe('adviseCards (#163)', () => {
     const eb: Card = { id: 'e'.repeat(32), type: 3, name: 'Emergency Blockade' };
     const plan = { deploys: [], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [4] };
     const { view, warnings } = adviseCards(input({ territories: [neutral(3, 2), me(4, 10), foe(5, 30), neutral(6, 2)], plan, hand: [eb] }));
-    expect(view.emergencyBlockade).toMatchObject({ territory: 4, wall: 30, kills: 21 });
+    expect(view.emergencyBlockade).toMatchObject({ territory: 4, wall: 30, kills: 21, order: { kind: 'card', card: eb.id, target: 4 } });
     expect(warnings.join('\n')).toMatch(/Consider an Emergency Blockade on T4/);
+    expect(warnings.join('\n')).toMatch(/pass `cards.advice.emergencyBlockade.order` to warapp_submit_turn/);
+  });
+
+  it('advises my Bomb with the order to play it, and no order when it says to hold the card', () => {
+    const bomb: Card = { id: 'b'.repeat(32), type: 13, name: 'Bomb' };
+    const plan = { deploys: [], moves: [{ from: 4, to: 5, armies: 15, kind: 'attack' as const, reason: '' }], moveSlots: ['last' as const], enemyDeploy: 5, conceded: [] };
+    const { view, warnings } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 8), neutral(6, 2)], plan, hand: [bomb] }));
+    expect(view.bomb).toMatchObject({ target: 5, order: { kind: 'card', card: bomb.id, target: 5 } });
+    expect(warnings.join('\n')).toMatch(/pass `cards.advice.bomb.order` to warapp_submit_turn/);
+    const hold = adviseCards(input({ territories: [neutral(3, 2), me(4, 2), foe(5, 2), neutral(6, 2)], hand: [bomb] }));
+    expect(hold.view.bomb).toMatchObject({ target: null });
+    expect(hold.view.bomb).not.toHaveProperty('order');
+    expect(turnOrdersArg.safeParse([view.bomb!.order]).success).toBe(true);
   });
 
   it('reads Diplomacy and Sanctions in effect: attacks on a protected player do nothing, Sanctions cut my income', () => {
@@ -138,6 +151,28 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     const ranking = { leader: FOE.id, myRank: 2, of: 3, commonThreat: FOE.id, players: [{ playerId: FOE.id, armies: 9, income: 30, strength: 99 }, { playerId: ME.id, armies: 20, income: 5, strength: 35 }] };
     const plan = { deploys: [], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [], profile: { ranking } as never };
     expect(adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], plan })).view.sanctions?.player).toBe(FOE.id);
+  });
+
+  it('G2: advises the spy cards where the fog hides what the plan needs, each with its order, and never with fog off', () => {
+    const fog = { territoryId: 3, owner: { kind: 'unknown' as const }, armies: null, fogLevel: 'Fogged' };
+    const territories = [me(1, 5), me(2, 7), fog, neutral(4, 2), neutral(5, 2), neutral(6, 2), foe(7, 3)];
+    const hand = [card(2, 'Spy', 'a'), card(10, 'Reconnaissance', 'b'), card(11, 'Surveillance', 'c')];
+    const { view, warnings } = adviseCards(input({ territories, game: ffa, hand }));
+    expect(view.spy).toEqual({ player: FOE2.id, order: { kind: 'card', card: 'a'.repeat(32), player: FOE2.id } });
+    expect(view.reconnaissance).toEqual({ target: 3, order: { kind: 'card', card: 'b'.repeat(32), target: 3 } });
+    expect(view.surveillance).toEqual({ bonus: 101, order: { kind: 'card', card: 'c'.repeat(32), bonus: 101 } });
+    expect(warnings.join('\n')).toMatch(/Spy on player 8811111299: none of its territories is in view.*Advice only, not in the orders/);
+    for (const o of [view.spy!.order, view.reconnaissance!.order, view.surveillance!.order]) expect(turnOrdersArg.safeParse([o]).success).toBe(true);
+    const off = adviseCards(input({ territories, game: { ...ffa, settings: { ...settings(), fog: 'NoFog' } }, hand }));
+    expect(off.view.spy ?? off.view.reconnaissance ?? off.view.surveillance).toBeUndefined();
+    expect(off.warnings.join('\n')).not.toMatch(/Spy|Reconnaissance|Surveillance/);
+  });
+
+  it('G2: Sanctions pass over a truce partner, saying why', () => {
+    const truces = [{ player: FOE2.id, state: 'active' as const, coveredMine: [4] }];
+    const { view, warnings } = adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], truces }));
+    expect(view.sanctions).toMatchObject({ player: FOE.id, skipped: [expect.stringMatching(/^player 8811111299: your truce with it is in force/)] });
+    expect(warnings.join('\n')).toMatch(/Sanctions on player 7176543229: .*Passed over: player 8811111299: your truce/);
   });
 
   it('advises an Airlift onto a border that falls without it', () => {
