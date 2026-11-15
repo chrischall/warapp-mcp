@@ -473,7 +473,9 @@ describe('warapp_plan_turn', () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(p.goalSource).toBe('profile');
-    expect(Object.keys(p.profile).sort()).toEqual(['format', 'phase', 'standing']);
+    expect(Object.keys(p.profile)).toEqual(['guard', 'format', 'phase', 'standing']);
+    // #276: the guard case leads, on in the lobby fixture.
+    expect(p.profile.guard).toMatchObject({ case: 'on', stated: true, interiorDefence: expect.stringMatching(/one army deep/) });
     // The lobby fixture seats nine players, all still playing: an FFA.
     expect(p.profile.format).toBe('ffa');
     expect(p.rationale[0]).toMatch(/^Goal (balanced|defend) from the game profile \(ffa, /);
@@ -497,6 +499,20 @@ describe('warapp_plan_turn', () => {
       settings: { fog: 'NoFog', cards: true, localDeployments: false, noSplit: false, commanders: false, luck: 0 },
     });
     expect(Array.isArray(p.profile.notes)).toBe(true);
+    expect(Object.keys(p.profile)[0]).toBe('guard');
+  });
+
+  it('names the guard case at the top of the profile, on and off, compact and full (#276)', async () => {
+    const off = { ...(lobbyFixture().settings as Record<string, unknown>), OneArmyStandsGuard: false };
+    h = await liveHarness({ feed: [game('Playing', { settings: off })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const compact = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(Object.keys(compact.profile)[0]).toBe('guard');
+    expect(compact.profile.guard).toMatchObject({ case: 'off', stated: true, interiorDefence: expect.stringMatching(/hollow/) });
+    const full = payload<PlanPayload & { profile: { notes: string[] } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }),
+    );
+    expect(full.profile.guard).toEqual(compact.profile.guard);
+    expect(full.profile.notes[0]).toMatch(/^One Army Must Stand Guard is off: every army may move/);
   });
 
   it('the plan description explains the profile and its rules (S1)', async () => {

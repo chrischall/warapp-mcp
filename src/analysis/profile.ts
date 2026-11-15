@@ -23,6 +23,39 @@ export const BEHIND_RATIO = 0.8;
 export const STRENGTH_INCOME_TURNS = 3;
 
 export type GameFormat = '1v1' | 'ffa' | 'teams';
+
+/**
+ * #276: the One Army Must Stand Guard case and what it means for interior defence. `stated` is
+ * false when the settings do not say, read as war.app's default (on), as the planner reads it.
+ */
+export interface GuardCase {
+  case: 'on' | 'off';
+  stated: boolean;
+  interiorDefence: string;
+}
+
+/** #276: the guard case of a game's settings (see {@link GuardCase}). Pure. */
+export function guardCase(s: { oneArmyStandsGuard?: boolean } | undefined): GuardCase {
+  const stated = s?.oneArmyStandsGuard !== undefined;
+  if (s?.oneArmyStandsGuard === false)
+    return {
+      case: 'off',
+      stated,
+      interiorDefence:
+        'every army may move, so any territory can stand at 0 and an advancing stack loses nothing per step. ' +
+        'Behind a breached border the interior is hollow: one large stack within two moves can split into single armies ' +
+        'that each take an empty territory. The plan keeps one army on each territory beside an enemy (#165) and counts ' +
+        'a stack two steps away whole; it keeps no second line inside a held bonus yet.',
+    };
+  return {
+    case: 'on',
+    stated,
+    interiorDefence:
+      `${stated ? '' : 'not stated, so the default: '}every territory keeps an army and every capture leaves one behind, ` +
+      'so an interior is one army deep and a breaching stack thins by an army per step; the guard-off risks (a hollow ' +
+      'interior, raids on an emptied hinterland) do not apply.',
+  };
+}
 export type GamePhase = 'opening' | 'expansion' | 'contact' | 'late';
 export type GameStanding = 'ahead' | 'even' | 'behind' | 'unknown';
 
@@ -90,6 +123,11 @@ export interface ProfileInput {
 }
 
 export interface GameProfile {
+  /**
+   * #276: the guard case, first, when the guard is off (its note leads `notes` too). Absent with the
+   * guard on, so a guard-on plan is what it was; `warapp_plan_turn` names both cases ({@link guardCase}).
+   */
+  guard?: GuardCase;
   format: GameFormat;
   /** Opponents still playing (teammates excluded). */
   opponents: number;
@@ -421,7 +459,12 @@ export function gameProfile(input: ProfileInput): GameProfile {
     );
   }
 
+  // #276: a guard-off game names the case at the top of the profile.
+  const guard = s.oneArmyStandsGuard === false ? guardCase(s) : undefined;
+  if (guard) notes.unshift(`One Army Must Stand Guard is off: ${guard.interiorDefence}`);
+
   return {
+    ...(guard ? { guard } : {}),
     format,
     opponents,
     settings: {

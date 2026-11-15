@@ -504,6 +504,24 @@ delays the orders listed after it; under No-Split the whole stack moves).
   trades. Send one army at empty enemy border territories to break bonuses, and keep armies on
   every border territory of a bonus you hold. **Advice only.** Derived. Source:
   <https://war.app/wiki/One_Army_Must_Stand_Guard>
+- `settings-guard-off-hollow-interior` — With no guard the territories behind a border can stand
+  empty, so one breach puts the whole interior a move away, and a big stack can split into single
+  armies that each take an empty territory. When a large enemy stack is within two moves of a bonus
+  you hold, keep a few armies on its inner territories as a second line (#276). **Advice only:** the
+  plan's profile names the guard case and says the planner keeps no second line yet. Derived. Source:
+  <https://war.app/wiki/One_Army_Must_Stand_Guard>
+- `settings-guard-off-raids` — With no guard a stack that moves on can leave the territory behind
+  it at 0. An empty enemy territory in view whose capture breaks its owner's bonus is the cheapest
+  income swing there is: two or three armies take it. A territory of yours that its stack left
+  empty can be retaken with a single army (#276). **Advice only:** the planner's one-army breaks
+  (#165) take an empty enemy territory beside one of mine; a raid one step deeper is not planned yet.
+  Derived. Source: <https://war.app/wiki/One_Army_Must_Stand_Guard>
+- `settings-guard-off-whole-stacks` — With no guard an advancing stack leaves nobody behind, so
+  two territories on, it still has every army it set out with, plus its deploys, less only what the
+  fighting killed. Size the garrison of a territory a stack two moves away could reach for that
+  whole stack (#276). **Encoded:** the two-step look-ahead (`twoStepReaches`, behind the planner's
+  two-step hold and `warapp_check_plan`'s `exposedNextTurn`) counts the stack whole when the guard is
+  off. Derived. Source: <https://war.app/wiki/One_Army_Must_Stand_Guard>
 - `settings-territory-income-threshold` — Income from territories replaces the base income only
   when it is the larger of the two, so more territories pay nothing until your count divided by
   the setting exceeds the base. Past that point each further group of territories is one army a

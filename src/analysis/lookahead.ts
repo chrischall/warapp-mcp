@@ -3,7 +3,9 @@
 // neutral), and each territory of mine beyond that one, the two turns are carried out: the stack
 // takes the one in between with its deploy (under whichever move order leaves it strongest
 // there), then attacks on with the survivors and its next deploy. I am taken to add nothing next
-// turn. Pure and deterministic; the reaches come out in a fixed order (opponents, stacks and
+// turn. Each step is a simulated turn under the game's settings, so with One Army Must Stand Guard
+// off the stack moves every army both times and arrives whole (#276); with it on, one stays behind
+// at each step. Pure and deterministic; the reaches come out in a fixed order (opponents, stacks and
 // territories ascending, as the graph lists neighbours).
 //
 // The one computation behind `warapp_check_plan`'s `exposedNextTurn` (stress.ts, which keeps

@@ -1026,6 +1026,40 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     source: S.guard,
     basis: 'derived',
   },
+  // #276: the guard-off risks beyond the taps (our own analysis of lost guard-off games).
+  {
+    id: 'settings-guard-off-hollow-interior',
+    topic: 'settings',
+    when: on({ guard: false }),
+    text:
+      'With no guard the territories behind a border can stand empty, so one breach puts the whole interior a ' +
+      'move away, and a big stack can split into single armies that each take an empty territory. When a large ' +
+      'enemy stack is within two moves of a bonus you hold, keep a few armies on its inner territories as a second line.',
+    source: S.guard,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-guard-off-raids',
+    topic: 'settings',
+    when: on({ guard: false }),
+    text:
+      'With no guard a stack that moves on can leave the territory behind it at 0. An empty enemy territory in ' +
+      "view whose capture breaks its owner's bonus is the cheapest income swing there is: two or three armies " +
+      'take it. A territory of yours that its stack left empty can be retaken with a single army.',
+    source: S.guard,
+    basis: 'derived',
+  },
+  {
+    id: 'settings-guard-off-whole-stacks',
+    topic: 'settings',
+    when: on({ guard: false }),
+    text:
+      'With no guard an advancing stack leaves nobody behind, so two territories on, it still has every army it ' +
+      'set out with, plus its deploys, less only what the fighting killed. Size the garrison of a territory a ' +
+      'stack two moves away could reach for that whole stack, not for what a guard would have thinned it to.',
+    source: S.guard,
+    basis: 'derived',
+  },
   {
     id: 'settings-territory-income-threshold',
     topic: 'settings',

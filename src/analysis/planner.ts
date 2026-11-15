@@ -35,7 +35,10 @@
 //     contact / late; in an FFA, contact only when an enemy stack as it stands can take a
 //     territory of mine or most of my borders face enemies, #132), standing (my income against the strongest opponent's estimate:
 //     ahead ≥ AHEAD_RATIO×, behind ≤ BEHIND_RATIO×, unknown when fog hides most of the
-//     board) and the settings that shape strategy. Only with `options.adapt` and no `goal`
+//     board) and the settings that shape strategy. #276: with One Army Must Stand Guard off it
+//     names that case first (`guard`, `guardCase`: what it means for interior defence) and its note
+//     leads `notes`; with the guard on it is absent, so a guard-on plan is unchanged
+//     (`warapp_plan_turn` names both cases). Only with `options.adapt` and no `goal`
 //     does it change the plan (each rule a rationale line when it fires):
 //       1. 1v1 in contact: a break is weighted like a completion of equal value (weight 1),
 //          and an advance (expansion that completes no bonus) ranks below every hold, unit,
@@ -1323,7 +1326,9 @@
 // armies (no special unit) whose owner holds a positive bonus it is in is attacked with one army —
 // it breaks the bonus — from the neighbour with the most to spare beyond what holds it once the
 // target falls, else one deployed on a neighbour not conceded; never one lowering income. Sized for
-// the board as it stands: if the owner deploys there first, the one army is lost.
+// the board as it stands: if the owner deploys there first, the one army is lost. #276: an enemy
+// stack advancing two steps loses nothing per step either — the two-step look-ahead (#172,
+// `twoStepReaches`) moves every army each step, so its holds count the stack whole.
 // Special units: a commander fights as COMMANDER_STRENGTH (7) armies, attacking and
 // defending, and takes no partial damage (armies die first; it falls to 7 damage left
 // over), so a stack of d armies plus a commander defends exactly as d + 7: every capture
