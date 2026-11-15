@@ -87,16 +87,17 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   player's income by its `Percentage`; applied only when the decoder reads it on me, below), income
   from cities, and per-player income mods. Overridden bonus values are modelled since #62 (see
   "Overridden bonus values" below), and the army cap since #253 (below).
-  `incomeUncertainties` names the army cap (with its arithmetic, as it rests on two live cases), `OverriddenBonuses` it could not read and an enabled Sanctions card
+  `incomeUncertainties` names the army cap (with its arithmetic; the formula is verified by six live cases, but where card armies and Local Deployment's pools fall is not), `OverriddenBonuses` it could not read and an enabled Sanctions card
   (`SanctionsCard` present in the settings) when a game's settings switch them on; then `warapp_plan_turn` warns and
   `warapp_submit_turn`'s deploy-total check becomes a preview warning instead of a refusal.
   Cities and per-player income mods are **not detected** (no known settings key says they
   pay income; the `Commerce` key is present, as `{}`, even in a plain lobby game), so a game
   using them still gets the hard refusal and the owner must fall back to the in-game number.
-- **Army cap (#253) — the formula verified by two live cases, 2026-11-15.** With `ArmyCap` set (a number, the
+- **Army cap (#253) — the formula verified by six live cases, 2026-11-15** (received 41, 49, 25, 27 and 71
+  where the cap bit, the binding case also sent through `warapp_submit_turn`, and a room of 61 it did not bind). With `ArmyCap` set (a number, the
   string `"null"` when off; `normalizeSettings` → `settings.armyCap`), war.app pays
   **received = min(income, round(ArmyCap × income) − my armies on the board at the start of the turn)**,
-  never below 0. Live, two data points, each exact to the army: ArmyCap 8, modelled income 52, 375 of my
+  never below 0. Live, each case exact to the army; the first two: ArmyCap 8, modelled income 52, 375 of my
   armies on the board — a `SendOrders` deploying 52 drew error 11 and the same orders deploying 41
   committed (8 × 52 = 416, 416 − 375 = 41); the next turn, income 56 with 399 armies on the board, 49
   deployed with `income: 49` committed at once (8 × 56 = 448, 448 − 399 = 49). **The cap is taken on

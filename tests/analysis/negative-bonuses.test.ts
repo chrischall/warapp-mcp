@@ -253,8 +253,12 @@ describe('negative bonuses (#70): captures are scored by their net effect on inc
     expect(p.rationale.join('\n')).not.toMatch(/Attack T21|wears T21/);
     expect(p.warnings.join('\n')).not.toMatch(/The capture of T21 \(#21\) combines/);
     // Both stacks are whole again (the softener's armies back, its survivors' return undone),
-    // so the leftover goes to the weaker border, T3 (10 against T1's 12).
-    expect(p.deploys).toEqual([{ territoryId: 3, armies: 3 }]);
+    // so the leftover goes to the weaker border first, T3 (10 against T1's 12), until both break at
+    // the same deploy (#268: the rest is spread for equal headroom), the last army to T1 by id.
+    expect(p.deploys).toEqual([
+      { territoryId: 1, armies: 1 },
+      { territoryId: 3, armies: 2 },
+    ]);
     // Equal stacks (10 and 10, income 5): if the softener's armies stayed spent, T3 would look
     // weaker and take the leftover first; whole again, the tie goes to the lower id, T1. (#121: the
     // leftover is spread to each short border's comfortable margin, T1 first, the rest to T1.)

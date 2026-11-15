@@ -100,7 +100,9 @@ export function boardIncome(g: MapGraph, held: ReadonlySet<number>, rules: Incom
  * `round(cap × income) − my armies on the board`, floored at 0, where the rounding is to the nearest
  * with .5 down and the armies are the plain army counts of my territories in the turn's standing
  * (special units not counted). So `received = min(income, max(0, round(cap × income) − armies))`.
- * Verified by two live cases (2026-11-15), each exact to the army: 8× income 52 with 375 armies paid 41
+ * Verified by six live cases (2026-11-15), each exact to the army — received 41, 49, 25, 27 and 71 where
+ * the cap bit (the binding case also through `warapp_submit_turn`), and a room of 61 it did not bind. The
+ * first two: 8× income 52 with 375 armies paid 41
  * (a deploy of 52 drew error 11, 41 committed), and the next turn 8× income 56 with 399 armies paid 49 —
  * the cap is taken on this turn's income (last turn's 52 would have left 17). The client's in-game guide says Reinforcement card armies are not income and always
  * pay in full, so callers add them after this (they neither raise the limit nor are cut).
@@ -159,9 +161,9 @@ export function armyCapPoolsUncertainty(c: ArmyCapIncome | undefined, localDeplo
   );
 }
 
-/** Why the army cap's figure is not certain: two live cases, and the card armies' place (from the client's guide). */
+/** What the army cap's figure rests on: six live cases, and the card armies' place (from the client's guide, unverified). */
 export const ARMY_CAP_BASIS =
-  "the formula rests on two live cases (2026-11-15), the cap taken on this turn's income; Reinforcement card armies are outside it (the client's guide: they are not income and always pay in full, unverified live)";
+  "the formula is verified by six live cases (2026-11-15: received 41, 49, 25, 27 and 71 where the cap bit, among them the binding case sent through warapp_submit_turn, and a room of 61 it did not bind), the cap taken on this turn's income; Reinforcement card armies are outside it (the client's guide: they are not income and always pay in full, unverified live)";
 
 /** {@link IncomeRules} from a game's settings (the defaults when it does not say). */
 export function incomeRules(settings: Pick<GameSettings, 'minimumArmyBonus' | 'bonusArmyPer'> | undefined): IncomeRules {
@@ -179,7 +181,8 @@ export function incomeRules(settings: Pick<GameSettings, 'minimumArmyBonus' | 'b
  * unverified (#163), so the model cannot be sure whether I am sanctioned this turn
  * (docs/WARAPP-API.md, the trade-off). With `sanctionsApplied` (PLAN-TEAMS D3: the
  * income already carries the Sanctions read on me) the reason says so instead. An army cap is
- * modelled ({@link armyCapIncome}, #253) but rests on two live cases, so it stays listed: with
+ * modelled ({@link armyCapIncome}, #253) and verified by six live cases, yet stays listed (where the
+ * card armies and Local Deployment's pools fall is not verified): with
  * `armyCap` (the figure the caller applied) the reason states its arithmetic.
  */
 export function incomeUncertainties(
