@@ -309,6 +309,8 @@ export function captureHelper(
   };
   /** Enemy commanders' territories attacked as a commander strike (rule 1s): exempt from R3. */
   const strikes = new Set<number>();
+  /** #272: captures out of a conceded border into a bonus (plan/conceded-out.ts), which R3 does not refuse. */
+  const r3Exempt = new Set<number>();
   /**
    * Defenders assumed at a target attacked to finish its owner off: its armies plus that
    * owner's full deploy estimate (the worst case). Other targets: their armies now.
@@ -537,7 +539,7 @@ export function captureHelper(
     captured.add(t);
     const survivors = sent - straightKills(defendersSeen(t), rates.defensiveKillRate);
     // A commander strike is never refused by R3: killing the commander eliminates a player.
-    if (!strikes.has(t) && !defensible(t, survivors)) {
+    if (!strikes.has(t) && !r3Exempt.has(t) && !defensible(t, survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
       avail.set(src, avail.get(src)! + sent - need);
       const left = (deployed.get(src) ?? 0) - need;
@@ -899,7 +901,7 @@ export function captureHelper(
       );
     }
   };
-  return { belowEven, movableFor, keepOf, concededSource, siblings, fundedOnConceded, strikes, worstCase, finishedOff, defendersAt, defendersSeen, tryCapture, shortAt, captureOnce, combinedPlan, tryCombined, rebalanceCombined, bareOn, bareTaken };
+  return { belowEven, movableFor, keepOf, concededSource, siblings, fundedOnConceded, strikes, r3Exempt, worstCase, finishedOff, defendersAt, defendersSeen, tryCapture, shortAt, captureOnce, combinedPlan, tryCombined, rebalanceCombined, bareOn, bareTaken };
 }
 
 /** Pass 1 (complete a bonus, all or nothing) and pass 2 (advance one a capture at a time, rule 4c(c), 4d). */

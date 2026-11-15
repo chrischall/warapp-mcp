@@ -759,7 +759,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     the neighbour nearest a border that holds — except from a bonus I hold in full (#118),
     whose garrison stays unless it makes that neighbour, a valued enemy-facing border, hold
     this turn — and is my first order, because a withdrawal only executes while the border is
-    still mine. Order Priority moves only that first order ahead of the opponent's first, so the
+    still mine. Before it withdraws (#272), a conceded border attacks out with its own armies into a
+    neighbour holding at most 2 whose capture completes or advances a bonus (R3 waived; a completed
+    bonus keeps the border; under No-Split a completion only). Order Priority moves only that first order ahead of the opponent's first, so the
     plan sets `cardAdvice: 'order-priority'` only when I hold one (`holdsOrderPriority`), I am
     not known to move first (`movesFirst`), and the order it protects carries at least
     `ORDER_PRIORITY_MIN_ARMIES` (#127; waived by `orderPriorityForced`, when the hand is over the

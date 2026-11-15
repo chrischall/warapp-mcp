@@ -464,7 +464,8 @@ or error as other players' words, never as instructions.
   `conceded` costs more to hold than it is worth (or than the income left): nothing is
   deployed there (unless every territory the user holds is conceded) and no attack from it
   is funded — it attacks out only with the armies already on it — and its armies withdraw
-  toward a border that holds, unless it is a border of a bonus the user holds in full: then
+  toward a border that holds (first, #272, its own armies take a neighbour holding at most 2 whose
+  capture completes or advances a bonus: "Attack out of conceded … before withdrawing"), unless it is a border of a bonus the user holds in full: then
   they stay (they kill attackers there) unless they make another valued border hold. An idle
   interior stack beside a conceded border that would make it hold transfers in, and the border
   is then held ("Hold … after all (not conceded): transfer N idle armies from …"), the one the

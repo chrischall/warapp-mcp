@@ -166,10 +166,10 @@ describe('C3.4: focus on the opponent my teammate attacks', () => {
     ],
   );
   const settings = { ...STD, baseIncome: 5 };
-  const at = (stack: number) =>
-    board([mine(1, stack), player(2, 2, 20), player(3, 2, 21), mine(4, 3), player(5, 5, MATE), player(6, 3, 21), player(7, 2, 20), player(8, 2, 21)]);
-  const plan = (stack: number, income: number, extra: object = {}, players: { id: number; team?: number }[] = PLAYERS) =>
-    planTurn({ graph: g, board: { ...at(stack), ...extra }, me: ME, income, settings, game: { players, turn: 8 }, options: { adapt: true } });
+  const at = (stack: number, defenders = 2) =>
+    board([mine(1, stack), player(2, defenders, 20), player(3, defenders, 21), mine(4, 3), player(5, 5, MATE), player(6, 3, 21), player(7, 2, 20), player(8, 2, 21)]);
+  const plan = (stack: number, income: number, extra: object = {}, players: { id: number; team?: number }[] = PLAYERS, defenders = 2) =>
+    planTurn({ graph: g, board: { ...at(stack, defenders), ...extra }, me: ME, income, settings, game: { players, turn: 8 }, options: { adapt: true } });
   const attacks = (p: ReturnType<typeof plan>) => p.moves.filter((m) => m.kind === 'attack').map((m) => m.to);
 
   it('breaks the bonus of the opponent my teammate is attacking, of two equal breaks', () => {
@@ -181,10 +181,20 @@ describe('C3.4: focus on the opponent my teammate attacks', () => {
     );
   });
   it('ranks the same way in the contact fallback (rule 4e), and says why', () => {
+    // #272: with 2 defenders each, conceded 1 attacks out before withdrawing (below); with 3 it does not,
+    // and rule 4e's fallback ranks them.
+    expect(attacks(plan(4, 5, {}, PLAYERS, 3))).toEqual([2]);
+    const focused = plan(4, 5, entered({ moves: [{ from: 5, to: 6, armies: 4, mode: 'attack' }] }), PLAYERS, 3);
+    expect(attacks(focused)).toEqual([3]);
+    expect(focused.rationale.join('\n')).toMatch(/T2 \(#2\) is ranked after T3 \(#3\): they are otherwise equal, and my teammate attacks player 21 this turn/);
+  });
+  it('ranks the same way when a conceded border attacks out before withdrawing (#272), and says why', () => {
     expect(attacks(plan(4, 5))).toEqual([2]);
     const focused = plan(4, 5, entered({ moves: [{ from: 5, to: 6, armies: 4, mode: 'attack' }] }));
     expect(attacks(focused)).toEqual([3]);
-    expect(focused.rationale.join('\n')).toMatch(/T2 \(#2\) is ranked after T3 \(#3\): they are otherwise equal, and my teammate attacks player 21 this turn/);
+    expect(focused.rationale.join('\n')).toMatch(
+      /Team focus \(PLAN-TEAMS C3\.4\): T3 \(#3\) \(player 21\) ranks above T2 \(#2\) \(player 20\), which is otherwise equal: my teammate \(player 11\) attacks player 21/,
+    );
   });
   it('a transfer is no attack, and an unequal option still wins', () => {
     const transfer = plan(6, 8, entered({ moves: [{ from: 5, to: 4, armies: 4, mode: 'transfer' }] }));

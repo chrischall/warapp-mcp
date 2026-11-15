@@ -657,6 +657,16 @@
 //     army): withdrawing turns "might lose it" into "certainly loses it". A warning says which
 //     case applied ("… is conceded but might still hold" / "… cannot be held"); a kept border
 //     may also take the leftover deploy.
+//     #272, before it withdraws (plan/conceded-out.ts): a conceded border attacks out with its own
+//     armies (no deploy) into a neighbour holding at most CONCEDED_OUT_MAX (2) armies — a neutral,
+//     or a foe's with no special unit, never a truce's, a player's only off `expand` — whose capture
+//     completes a positive bonus or advances one I am building (another member mine or captured;
+//     under No-Split, which sends the whole stack, a completion only), when its armies cover the
+//     cost: completions first, then bonus value, cost, a teammate's focus (C3.4) and id, again
+//     while one capture makes another complete. R3 does not refuse it (the armies would otherwise
+//     leave a border the plan gives up), and a completed bonus keeps the border (rule 1c). Live, the
+//     last empty members of a bonus stood beside a conceded border: one was taken, the other refused
+//     ("a conceded border never attacks out for a capture that only costs nothing").
 //  1i. Income at risk (#109). `expected.nextIncome` is next turn's income if every territory
 //     the plan keeps and captures is held — the borders it concedes included, withdrawn from
 //     or not. A conceded border is not kept, so the plan also reports
@@ -1420,6 +1430,7 @@ import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { spendUnderCap } from './plan/cap-spend.js';
+import { attackOutOfConceded } from './plan/conceded-out.js';
 import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
@@ -2292,6 +2303,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         if (c.target !== undefined && !captured.has(c.target) && targets.get(c.target)?.sources.some((x) => unlocked.has(x))) c.run();
     settleContested();
     reconsider();
+    // #272: a conceded border attacks out for a free step into a bonus before it withdraws.
+    attackOutOfConceded(pc, ps, book, hd, tgt, caps);
     withdraw();
   } else {
     for (const p of byCloseness) {
@@ -2304,7 +2317,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     }
     settleContested();
     reconsider();
-    if (acting) withdraw();
+    if (acting) {
+      // #272: a conceded border attacks out for a free step into a bonus before it withdraws.
+      attackOutOfConceded(pc, ps, book, hd, tgt, caps);
+      withdraw();
+    }
   }
 
   // #203: a lead step the bonus passes did not take is an ordinary enemy territory again: out of
