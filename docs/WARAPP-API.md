@@ -87,18 +87,20 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   player's income by its `Percentage`; applied only when the decoder reads it on me, below), income
   from cities, and per-player income mods. Overridden bonus values are modelled since #62 (see
   "Overridden bonus values" below), and the army cap since #253 (below).
-  `incomeUncertainties` names the army cap (with its arithmetic, as it rests on one live case), `OverriddenBonuses` it could not read and an enabled Sanctions card
+  `incomeUncertainties` names the army cap (with its arithmetic, as it rests on two live cases), `OverriddenBonuses` it could not read and an enabled Sanctions card
   (`SanctionsCard` present in the settings) when a game's settings switch them on; then `warapp_plan_turn` warns and
   `warapp_submit_turn`'s deploy-total check becomes a preview warning instead of a refusal.
   Cities and per-player income mods are **not detected** (no known settings key says they
   pay income; the `Commerce` key is present, as `{}`, even in a plain lobby game), so a game
   using them still gets the hard refusal and the owner must fall back to the in-game number.
-- **Army cap (#253) — the formula verified once live, 2026-11-15.** With `ArmyCap` set (a number, the
+- **Army cap (#253) — the formula verified by two live cases, 2026-11-15.** With `ArmyCap` set (a number, the
   string `"null"` when off; `normalizeSettings` → `settings.armyCap`), war.app pays
   **received = min(income, round(ArmyCap × income) − my armies on the board at the start of the turn)**,
-  never below 0. Live, one data point exact to the army: ArmyCap 8, modelled income 52, 375 of my
+  never below 0. Live, two data points, each exact to the army: ArmyCap 8, modelled income 52, 375 of my
   armies on the board — a `SendOrders` deploying 52 drew error 11 and the same orders deploying 41
-  committed (8 × 52 = 416, 416 − 375 = 41). The rest is from the client bundle's income function
+  committed (8 × 52 = 416, 416 − 375 = 41); the next turn, income 56 with 399 armies on the board, 49
+  deployed with `income: 49` committed at once (8 × 56 = 448, 448 − 399 = 49). **The cap is taken on
+  this turn's income**, not last turn's (the previous turn's limit of 416 would have left 17). The rest is from the client bundle's income function
   (read-only, not verified live): the cap applies after base, bonuses and cities and before Sanctions;
   `round` is to the nearest with .5 down; the armies counted are the plain army counts of my
   territories in the current standing (special units such as a commander are not counted); under
@@ -111,15 +113,17 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   armies are outside the cap**: the bundle adds them after it, and the client's own guide says they
   are not income and always pay in full (unverified live). `incomeDetail` (`src/analysis/plan/shared.ts`)
   computes it, so `warapp_plan_turn` (which reports `incomeCapped`: `uncapped`, `cap`, `armies`, `limit`,
-  `received`, `cut`) and `warapp_submit_turn`'s deploy check use the cut figure; while it rests on one
-  data point the check stays a preview warning that states the arithmetic; `warapp_check_plan` checks the
+  `received`, `cut`) and `warapp_submit_turn`'s deploy check use the cut figure; while it rests on two
+  data points the check stays a preview warning that states the arithmetic (over the cap it reads "is 0
+  (over the cap by N)"); `warapp_check_plan` checks the
   deploy total against the cut figure too. The fog prior (`planEnemyEstimates`' `incomeCap`), the standing
   and `warapp_check_plan`'s leader test read my income before the cut: they compare economies, and the cap
   is mine alone. The truces' trust (`truceRelations`' `myIncome`, in both `warapp_plan_turn` and
   `warapp_check_plan`) reads the cut figure on purpose: it weighs what I can deploy against the partner this
   turn. The plan's `expected.nextIncome` is this turn's cut income plus its gains, not the cap
   re-run for next turn. My armies a territory of mine does not show (never seen) leave the income uncut,
-  with a warning. Another player's cap is not modelled: its fogged armies are unknown, so every other
+  with a warning in the plan and in `warapp_submit_turn`'s preview. When the cap will take part of next
+  income, the planner spends idle armies on low-loss captures (rule 4h, `src/analysis/plan/cap-spend.ts`). Another player's cap is not modelled: its fogged armies are unknown, so every other
   player's income (`visibleIncomeFor`: a teammate's `visibleIncome` in `warapp_get_team`, the card
   advice's strengths) is read before any cap.
 - **Wastelands and Commerce (#167).** `Wastelands` is `{ NumberOfWastelands, WastelandSize }` (verified

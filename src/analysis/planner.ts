@@ -13,6 +13,7 @@
 //   R3 / 4b, No-Split, 3a. combined, 3b / #121, passes 1 and 2 .. plan/captures.ts
 //   1e, 1s, #165, 0p.3c strike stack, #102 spend, #167 lead ..... plan/strike.ts
 //   4e. never stand still ...................................... plan/stand-still.ts
+//   4h. the army cap prices idle armies (#253) .................. plan/cap-spend.ts
 //   5. the leftover deploy, 3b's short borders (#121) ........... plan/leftover.ts
 //   5b. a neutral the leftover pays for (#218) ................. plan/after-leftover.ts
 //   6. transfers, #125 staging ................................. plan/transfers.ts
@@ -860,7 +861,8 @@
 //     border or already ordered), the holds (it would fit without what they took), or its size
 //     (its cost against the movable armies and deploys that can reach it); #235: when the leftover
 //     then stages on another source toward that step (rule 5), the warning names that source. Army cap (`armyCap`, × income): war.app
-//     pays min(income, round(cap × income) − my armies on the board) (#253, one live case), so the
+//     pays min(income, round(cap × income) − my armies on the board) (#253, two live cases, the cap on
+//     this turn's income), so the
 //     caller passes the cut income and `incomeCap`, its arithmetic. When the cap cuts this turn's
 //     income, armies left standing cost income next turn, so the same fallback fires in any phase,
 //     and the rationale says so; without `incomeCap` it fires when my armies after deploy exceed
@@ -922,6 +924,21 @@
 //     that loss is at most the value — neutrals before players' territories, then the cheapest, then
 //     id — with the usual sizing (tryCapture: each source keeps what holds it), never one lowering
 //     income. Absent (no Reinforcement card, or a progressive one and none in hand): off.
+//  4h. The army cap prices idle armies (#253; every goal but `complete-bonus`; after rules 4e and 4g,
+//     whatever else the plan captures — rule 4e's army-cap fallback runs only when it captures
+//     nothing). When my armies after this turn (on the board, plus this turn's income, less what the
+//     plan's captures lose) and next income (this turn's plus the plan's gains, card armies out)
+//     exceed the cap, `eaten` = next income − what the cap would pay is lost unless armies are spent.
+//     Candidates: rule 2's neutral targets and every foe territory next to mine holding at most
+//     `CAP_SPEND_ENEMY_MAX` (1) armies (no commander, no truce, no teammate; `expand` attacks no
+//     player), none lowering income, ranked by expected loss (the defenders' kills on the attackers),
+//     neutrals first, then gain, cost, id. Each is taken while its loss is below what the cap would
+//     still eat, from idle armies first (deploys still left make up a shortfall; a combined capture
+//     of a player's territory only at an even trade), never from a conceded source, and undone when a source could then not hold its border. The
+//     rationale names the cap's arithmetic per capture ("Take … for the army cap (rule 4h, #253): …");
+//     what it did not take is listed with why, and the "Not attacking" line repeats it ("the army
+//     cap's spend of idle armies (rule 4h) tried it: …"); while the cap still eats income a warning
+//     names the largest idle stack.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, in
 //     the opening and expansion phases, and in an FFA while a neutral borders a territory of mine
 //     (#132: one front leaves the rest of the map to expand into; the rationale says "neutrals in
