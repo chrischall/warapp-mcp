@@ -2896,8 +2896,9 @@ describe('attackSizes: several attacks on one target are sized together (#130)',
       expect(a.combined).toEqual({ attacks: 2, armies: 7 });
       expect(a.cannotCapture).toBeUndefined();
       expect(a.winChance).toBeGreaterThan(0);
-      expect(a.expectedKills).toBe(4.2);
     }
+    // Each leg's own kills (#250): never the two as one stack (4.2).
+    expect(attacks.map((a) => a.expectedKills)).toEqual([1.8, 2.4]);
   });
 
   it('legs that cannot capture even together are all flagged', () => {
@@ -2946,6 +2947,8 @@ describe('attackSizes: several attacks on one target are sized together (#130)',
     expect(attacks.map((a) => a.winChance)).toEqual([1, 1, 1]);
     expect(attacks.map((a) => a.facing)).toEqual([7, 6, 4]);
     expect(attacks.map((a) => a.softener)).toEqual([true, true, undefined]);
+    // Each leg's luck-free kills, beside its `facing`; never round(6.4) for every leg.
+    expect(attacks.map((a) => a.expectedKills)).toEqual([1.2, 1.6, 3.6]);
     expect(hopelessAttackWarning(attacks, (p) => p.name)).toBeUndefined();
   });
 
@@ -3018,7 +3021,7 @@ describe('attackSizes: several attacks on one target are sized together (#130)',
     const attacks = attackSizes(sevenOn157, ANN.inGame, legs, luck);
     // The first leg is the likely captor: at the expectation the target is mine and the second leg a
     // transfer (facing 0, as in an exact run). What the second could still do were the first to fail
-    // is left out of the chance: a cautious estimate, never above what the legs could achieve.
+    // is left out of the chance.
     expect(attacks.map((a) => a.softener)).toEqual([undefined, undefined]);
     expect(attacks.map((a) => a.facing)).toEqual([7, 0]);
     expect(attacks.map((a) => a.winChance)).toEqual([alone, alone]);

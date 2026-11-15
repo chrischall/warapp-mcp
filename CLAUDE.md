@@ -819,8 +819,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       warning), and only for a target the passes already chose. `warapp_plan_turn` lists them
       in `multiSourceCaptures`. `warapp_submit_turn`'s preview (`attackSizes`, #250) judges
       attacks on one target the same way, in the order listed, each against what the earlier
-      ones leave (`facing`, `softener`; at the expectation with luck, where the chance stops at the
-      first leg likely to capture — a cautious estimate — and the legs after it are transfers), and warns "cannot capture"
+      ones leave (`facing`, `softener`, and each leg's own `expectedKills`; with luck an approximation at the
+      expectation, where the chance stops at the first leg likely to capture and the legs after it are transfers), and warns "cannot capture"
       only when the whole sequence falls short — never sized as one stack, which rounds once.
     - **Frontier cost (#71, rule 4d).** Every capture's score pays for the frontier it adds:
       `NEUTRAL_BORDER_COST` per border it opens (minus per border it closes), plus, under

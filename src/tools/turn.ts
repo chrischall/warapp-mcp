@@ -767,16 +767,16 @@ interface AttackSize {
   /** Visible armies on the target at the start of the turn, a commander counted as {@link COMMANDER_STRENGTH}. */
   defenders: number;
   /**
-   * The luck-free kills at the game's offensive kill rate: of this attack's armies, or of all the
-   * attacks on this target together when {@link combined} is set.
+   * The luck-free kills of this attack's own armies at the game's offensive kill rate — with
+   * {@link combined} too, each leg sized alone beside its {@link facing}, never the legs as one stack.
    */
   expectedKills: number;
   /**
    * The exact chance of capturing them (kill rates, luck, rounding); deploys there this turn are not
    * counted. With {@link combined}, the chance that the attacks capture run in the order listed,
    * each against what the earlier ones leave (#250): exact at 0% luck under straight rounding, else
-   * at the expectation (each failed attack kills its expected share; the attacks' own chances
-   * taken as independent).
+   * an approximation at the expectation (each failed attack kills its expected share; the attacks'
+   * own chances taken as independent).
    */
   winChance: number;
   /** Set when several moves attack this target this turn: how many, and their armies together. */
@@ -868,12 +868,11 @@ export function attackSizes(
   return attacks.map((m) => {
     const t = standing.get(m.to.id)!;
     const group = together.get(m.to.id)!;
-    const armies = group.attacks > 1 ? group.armies : power(m);
     const defenders = (t.armies ?? 0) + specialUnitStrength(t.specialUnits);
     const sequence = sequences.get(m.to.id);
     const at = seen.get(m.to.id) ?? 0;
     seen.set(m.to.id, at + 1);
-    const chance = sequence ? sequence.chance : winChance(armies, defenders, combat);
+    const chance = sequence ? sequence.chance : winChance(power(m), defenders, combat);
     return {
       from: m.from,
       to: m.to,
@@ -881,7 +880,7 @@ export function attackSizes(
       ...(m.percent ? { percent: m.armies } : {}),
       ...(m.commander ? { commander: true as const } : {}),
       defenders,
-      expectedKills: Math.round(expectedKills(armies, off) * 10) / 10,
+      expectedKills: Math.round(expectedKills(power(m), off) * 10) / 10,
       winChance: Math.round(chance * 1000) / 1000,
       ...(group.attacks > 1 ? { combined: { ...group } } : {}),
       ...(sequence ? { facing: sequence.facing[at]! } : {}),
@@ -924,7 +923,7 @@ export function hopelessAttackWarning(
 
 /** Attacks on one target run in the order listed (#250). */
 interface Sequence {
-  /** The chance that one of them captures (with luck, up to the likely captor only: a cautious estimate). */
+  /** The chance that one of them captures (with luck, up to the likely captor only: an approximation). */
   chance: number;
   /** The defenders each attack meets (rounded at the expectation); 0 after the captor, a transfer then. */
   facing: number[];
@@ -939,10 +938,12 @@ interface Sequence {
  * one defender (`turn-sim`'s rule). Exact at 0% luck under straight rounding, as the planner's
  * combined captures (rule 3a) are; otherwise each failed attack kills its expected share and the
  * chance is 1 − Π(1 − each attack's chance against what it meets) over the attacks up to the first
- * one likely to capture (chance ≥ 0.5). The attacks after it are left out of the chance — what they
- * would meet were it to fail is unknown (a failure kills less than its expected share) — so the
- * figure is a cautious estimate, never more than the attacks could do; at the expectation the target
- * is mine by then and they are transfers (facing 0), as in an exact run.
+ * one likely to capture (chance ≥ 0.5). The figure is an approximation, not a bound either way: the
+ * attacks after the likely captor are left out (what they would meet were it to fail is unknown),
+ * which errs low, while each later leg's chance is taken against the expected survivors of the
+ * earlier legs — though those legs count only when they fail, and a failed attack kills less than
+ * its expected share — which errs high. At the expectation the target is mine after the captor and
+ * the later attacks are transfers (facing 0), as in an exact run.
  */
 function attackSequence(armies: number, units: number, powers: readonly number[], combat: CombatSettings): Sequence {
   const off = combat.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE;
