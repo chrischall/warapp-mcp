@@ -180,9 +180,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   submit_picks, track/locate_opponents, send_chat to the team channel or with commitments, get_team): GameFeed's
   team when any player carries one (`gamefeed`); else, only in a game of more than two seats and only with the
   signed-in account readable, GetMyGames' `GameInfoPlayer` team (`myGamesTeams`, by in-game id; `my-games`);
-  else `none`. The answer — in-game ids and team numbers, or "no teams" when the list holds the game without
-  any — is kept name-free at `<dataDir>/teams/<gameId>.json` (newest 200), so the list is asked once per game; a
-  failed read, or a list without the game, is not kept and the teams stay unknown. Tools resolve after their
+  else `none`. The list's answer is judged against GameFeed's seats first (`judgeList`): only every seat on a
+  team with at least two distinct teams, or every seat listed without one (a free-for-all), is trusted; every
+  seat on one team is not (a misread field reads that way) and is never kept; a seat left out, or teams on some
+  seats only, is incomplete. A trusted answer is kept name-free at `<dataDir>/teams/<gameId>.json` (newest 200),
+  so the list is asked once per game; an incomplete one keeps only `incompleteTurn` (no teams), so it is asked
+  again at most once per turn; a failed read, or a list without the game, is not kept and the teams stay
+  unknown. The record carries `TEAM_RECORD_VERSION`: bump it whenever the GameInfoPlayer team decode or the
+  trust check changes (another version's record is ignored). Tools resolve after their
   cheap refusals (turn phase, seat), so a refusal reads nothing more. `teamSource` is reported by plan_turn and
   check_plan (team games only), `team.source` by plan_picks and get_team. Teammate orders and picks come from `LatestGameInfo`'s `TeammateOrders` dict (`src/team-orders.ts`,
   found by type name, orders by class and read order). `withTeammateOrders` sets `BoardState.teammateOrders`

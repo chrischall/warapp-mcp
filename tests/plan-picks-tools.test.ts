@@ -391,16 +391,22 @@ describe('warapp_plan_picks in a team game (C2)', () => {
             name: 'synthetic',
             lastTurn: -1,
             state: 2,
-            // Ann and Bob share a team; the other two seats have no wrapped id to match, so stay off it.
+            // Ann and Bob share a team, Cy and Dee the other: two teams over every seat, so it is trusted.
             players: [
               { id: ANN.inGame, name: 'Ann', state: 2, committed: false, team: 3 },
               { id: BOB.inGame, name: 'Bob', state: 2, committed: false, team: 3 },
+              { id: 222222, name: 'Cy', state: 2, committed: false, team: 4 },
+              { id: 333333, name: 'Dee', state: 2, committed: false, team: 4 },
             ],
           },
         ]),
     });
+    // Synthetic GameFeed ids for the other two seats: their in-game ids wrapped in two check digits each end.
+    const seats = fourSeats(false);
+    const ids = ['5522222211', '6633333322'];
+    const players = (seats.players as Array<Record<string, string>>).map((p, i) => (i >= 2 ? { ...p, id: ids[i - 2]! } : p));
     h = await liveHarness({
-      feed: [fourSeats(false)],
+      feed: [{ ...seats, players }],
       pages: SIGNED_IN_ANN,
       warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD), [Method.GetMyGames]: list }),
     });

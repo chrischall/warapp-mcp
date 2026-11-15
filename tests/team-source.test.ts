@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
-import { MAX_TEAM_RECORDS, readTeamRecord, teamRecordPath, writeTeamRecord } from '../src/tools/team-source.js';
+import { MAX_TEAM_RECORDS, readTeamRecord, TEAM_RECORD_VERSION, teamRecordPath, writeTeamRecord } from '../src/tools/team-source.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
 import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
@@ -89,7 +89,7 @@ describe('team source: GetMyGames when GameFeed sends no team', () => {
     // Kept name-free: in-game ids and team numbers only.
     const kept = readFileSync(teamRecordPath(h.dataDir, GAME), 'utf8');
     expect(JSON.parse(kept)).toEqual({
-      version: 1,
+      version: TEAM_RECORD_VERSION,
       gameId: GAME,
       teams: [
         [ANN.inGame, 4],
@@ -249,6 +249,80 @@ describe('team source: GetMyGames when GameFeed sends no team', () => {
   });
 });
 
+describe('team source: the game list is checked before it is trusted', () => {
+  const listed = (players: Array<{ id: number; name: string; state: number; committed: boolean; team?: number }>) => () => ({
+    body: (w: Parameters<NonNullable<ReplyFrame['body']>>[0]) => writeMyGamesReturn(w, [{ id: GAME, name: 'synthetic', lastTurn: 2, state: 3, players }]),
+  });
+
+  it('every seat on one team is not trusted: teams unknown, nothing kept, asked again', async () => {
+    const oneTeam = LIST_TEAMS.map((p) => ({ ...p, team: 4 }));
+    h = await liveHarness({ feed: [game()], pages: ME_PAGE, warapp: server(listed(oneTeam)) });
+    expect(payload<PlanView>(await h.call('warapp_plan_turn', { game_id: GAME }))).not.toHaveProperty('teamSource');
+    expect(existsSync(teamRecordPath(h.dataDir, GAME))).toBe(false);
+    await h.call('warapp_plan_turn', { game_id: GAME });
+    expect(listReads()).toBe(2);
+  });
+
+  it('one team among the seats, the rest without one, is not trusted either', async () => {
+    const partial = LIST_TEAMS.map((p, i) => (i < 2 ? p : { ...p, team: undefined }));
+    h = await liveHarness({ feed: [game()], pages: ME_PAGE, warapp: server(listed(partial)) });
+    const res = await h.call('warapp_get_team', { game_id: GAME });
+    expect(res.isError).toBe(true);
+    expect(await readTeamRecord(h.dataDir, GAME)).toBeUndefined();
+  });
+
+  it('a seat the list leaves out: teams unknown, and the list is asked again at most once per turn', async () => {
+    const turn = (n: number) => ({ ...game(), numberOfTurns: String(n) });
+    h = await liveHarness({ feed: [turn(2), turn(2), turn(3)], pages: ME_PAGE, warapp: server(listed(LIST_TEAMS.slice(0, 3))) });
+    expect((await h.call('warapp_get_team', { game_id: GAME })).isError).toBe(true);
+    expect(listReads()).toBe(1);
+    // No teams are kept, only the marker that the list left a seat out on this turn.
+    expect(await readTeamRecord(h.dataDir, GAME)).toBeUndefined();
+    expect(JSON.parse(readFileSync(teamRecordPath(h.dataDir, GAME), 'utf8'))).toEqual({
+      version: TEAM_RECORD_VERSION,
+      gameId: GAME,
+      incompleteTurn: 2,
+    });
+    // Same turn: not asked again.
+    expect((await h.call('warapp_get_team', { game_id: GAME })).isError).toBe(true);
+    expect(listReads()).toBe(1);
+    // The next turn asks once more.
+    expect((await h.call('warapp_get_team', { game_id: GAME })).isError).toBe(true);
+    expect(listReads()).toBe(2);
+    expect(JSON.parse(readFileSync(teamRecordPath(h.dataDir, GAME), 'utf8')).incompleteTurn).toBe(3);
+  });
+
+  it('a seat the list leaves out once, then lists: the marker yields to the full answer on a later turn', async () => {
+    let asked = 0;
+    const turn = (n: number) => ({ ...game(), numberOfTurns: String(n) });
+    h = await liveHarness({
+      feed: [turn(2), turn(3)],
+      pages: ME_PAGE,
+      warapp: server(() => listed(++asked === 1 ? LIST_TEAMS.slice(0, 3) : LIST_TEAMS)()),
+    });
+    expect((await h.call('warapp_get_team', { game_id: GAME })).isError).toBe(true);
+    const p = payload<{ team: { source: string } }>(await h.call('warapp_get_team', { game_id: GAME }));
+    expect(p.team.source).toBe('my-games');
+    expect(listReads()).toBe(2);
+    expect(await readTeamRecord(h.dataDir, GAME)).toEqual(new Map(LIST_TEAMS.map((p) => [p.id, p.team])));
+  });
+
+  it('a record kept by another decoder version is ignored: the list is asked again', async () => {
+    h = await liveHarness({ feed: [game()], pages: ME_PAGE, warapp: server() });
+    mkdirSync(join(h.dataDir, 'teams'), { recursive: true });
+    // An old record putting everyone on one team: ignored, never read as teams.
+    writeFileSync(
+      teamRecordPath(h.dataDir, GAME),
+      JSON.stringify({ version: TEAM_RECORD_VERSION - 1, gameId: GAME, teams: LIST_TEAMS.map((p) => [p.id, 4]) }),
+    );
+    expect(await readTeamRecord(h.dataDir, GAME)).toBeUndefined();
+    const p = payload<{ team: { source: string } }>(await h.call('warapp_get_team', { game_id: GAME }));
+    expect(p.team.source).toBe('my-games');
+    expect(listReads()).toBe(1);
+    expect(JSON.parse(readFileSync(teamRecordPath(h.dataDir, GAME), 'utf8')).version).toBe(TEAM_RECORD_VERSION);
+  });
+});
+
 describe('the kept team record', () => {
   const dir = () => mkdtempSync(join(tmpdir(), 'warapp-teams-'));
 
@@ -258,13 +332,13 @@ describe('the kept team record', () => {
     await writeTeamRecord(d, 1, new Map([[20, 1], [10, 0]]));
     expect(await readTeamRecord(d, 1)).toEqual(new Map([[10, 0], [20, 1]]));
     const bad = (body: unknown) => writeFileSync(teamRecordPath(d, 1), JSON.stringify(body));
-    bad({ version: 2, gameId: 1, teams: [] });
+    bad({ version: TEAM_RECORD_VERSION + 1, gameId: 1, teams: [] });
     expect(await readTeamRecord(d, 1)).toBeUndefined();
-    bad({ version: 1, gameId: 2, teams: [] });
+    bad({ version: TEAM_RECORD_VERSION, gameId: 2, teams: [] });
     expect(await readTeamRecord(d, 1)).toBeUndefined();
-    bad({ version: 1, gameId: 1, teams: [[10, 'x']] });
+    bad({ version: TEAM_RECORD_VERSION, gameId: 1, teams: [[10, 'x']] });
     expect(await readTeamRecord(d, 1)).toBeUndefined();
-    bad({ version: 1, gameId: 1, teams: [[10, -1]] });
+    bad({ version: TEAM_RECORD_VERSION, gameId: 1, teams: [[10, -1]] });
     expect(await readTeamRecord(d, 1)).toBeUndefined();
     writeFileSync(teamRecordPath(d, 1), '{');
     expect(await readTeamRecord(d, 1)).toBeUndefined();
@@ -273,7 +347,7 @@ describe('the kept team record', () => {
   it(`keeps the newest ${MAX_TEAM_RECORDS} games`, async () => {
     const d = dir();
     mkdirSync(join(d, 'teams'), { recursive: true });
-    for (let i = 1; i <= MAX_TEAM_RECORDS; i++) writeFileSync(teamRecordPath(d, i), JSON.stringify({ version: 1, gameId: i, teams: [] }));
+    for (let i = 1; i <= MAX_TEAM_RECORDS; i++) writeFileSync(teamRecordPath(d, i), JSON.stringify({ version: TEAM_RECORD_VERSION, gameId: i, teams: [] }));
     await writeTeamRecord(d, MAX_TEAM_RECORDS + 1, new Map());
     const kept = await Promise.all(Array.from({ length: MAX_TEAM_RECORDS + 1 }, (_, i) => readTeamRecord(d, i + 1)));
     expect(kept.filter((k) => k !== undefined)).toHaveLength(MAX_TEAM_RECORDS);

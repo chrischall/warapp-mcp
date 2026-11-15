@@ -516,7 +516,12 @@ advice), `warapp_check_plan`, `warapp_submit_turn` (the teammate set), `warapp_a
 `warapp_track_opponents` / `warapp_locate_opponents`, `warapp_send_chat` (team channel, commitments) and
 `warapp_get_team`. GameFeed's team wins when any player carries one (`gamefeed`); GetMyGames is asked only when
 none does, the game has more than two seats and the signed-in account can be read (`my-games`); otherwise
-`none`. Cost control: the answer (in-game ids → team numbers, or none when the list holds the game without
+`none`. Trust: the list's answer is judged against GameFeed's seats (`judgeList`) — only every seat on a team
+with at least two distinct teams, or every seat listed without a team, is trusted; every seat on one team (what a
+misread team field looks like) leaves the teams unknown and is never kept; a seat left out, or teams on some seats
+only, is incomplete: unknown too, with only an `incompleteTurn` marker kept, so the list is asked again at most once
+per turn rather than on every plan. The record carries `TEAM_RECORD_VERSION`, bumped whenever the GameInfoPlayer
+team decode or the trust check changes; a record of another version is ignored. Cost control: a trusted answer (in-game ids → team numbers, or none when the list holds the game without
 teams) is kept name-free at `<dataDir>/teams/<gameId>.json` (0600 in a 0700 folder, atomic, newest 200), so the
 extra request happens once per game, not per plan; a failed read or a list without the game is not kept and
 leaves the teams unknown, as before. A lobby's answer (`WaitingForPlayers`) is used but never kept, since a

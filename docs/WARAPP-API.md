@@ -53,8 +53,12 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   (`isTeamGame` / `teammatesOf`, `src/teams.ts`; C1). Every tool that decides teams loads them
   through `resolveTeams` (`src/tools/team-source.ts`): when no player in GameFeed's game carries a
   team and the game has more than two seats, it falls back on `GetMyGames`' `GameInfoPlayer` team
-  (from the client bundle, UNVERIFIED live), matching players by in-game id, asked once per game and
-  kept at `<dataDir>/teams/<gameId>.json` (ids and team numbers only); a failed read is not kept.
+  (from the client bundle, UNVERIFIED live), matching players by in-game id. Its answer is trusted
+  only when every GameFeed seat has a team and at least two distinct teams show, or when every seat is
+  listed without one (a free-for-all); every seat on one team is treated as unknown and never kept, and a
+  seat left out (or teams on some seats only) leaves the teams unknown and is asked again at most once
+  per turn. A trusted answer is asked once per game and kept at `<dataDir>/teams/<gameId>.json` (ids and
+  team numbers only, versioned: a record from another decoder version is ignored); a failed read is not kept.
   The tools report which source gave the team (`gamefeed` / `my-games`; V1 in `docs/PLAN-TEAMS.md`).
 - `settings` uses real JSON types (numbers, booleans, objects). A card is enabled when its
   `<Name>Card` value is an object and disabled when the value is the string `"none"`.

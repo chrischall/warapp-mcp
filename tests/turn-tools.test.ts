@@ -786,8 +786,23 @@ describe('warapp_plan_turn — threat trend', () => {
       env: { WARAPP_TRANSPORT: 'fetchproxy' },
       warapp: routes({
         [Method.GetLatestGameInfo]: board(BOARD),
-        // Nine seats and no team from GameFeed: the game list is asked once, and its answer (no teams) kept.
-        [Method.GetMyGames]: () => ({ body: (w) => writeMyGamesReturn(w, [{ id: GAME, name: 'synthetic', lastTurn: 2, state: 3, players: [] }]) }),
+        // Nine seats and no team from GameFeed: the game list is asked once, and its answer (every seat with an
+        // in-game id listed, none on a team: a free-for-all) kept.
+        [Method.GetMyGames]: () => ({
+          body: (w) =>
+            writeMyGamesReturn(w, [
+              {
+                id: GAME,
+                name: 'synthetic',
+                lastTurn: 2,
+                state: 3,
+                players: [
+                  { id: ANN.inGame, name: 'Ann', state: 2, committed: false },
+                  { id: BOB.inGame, name: 'Bob', state: 2, committed: false },
+                ],
+              },
+            ]),
+        }),
       }),
       // A history read is held until the board has been read, with no deadline: were the history read
       // first and the board after it, the call would never finish and the test fails on its timeout.
