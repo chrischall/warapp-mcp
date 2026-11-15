@@ -144,3 +144,140 @@ describe('C3.3: one owner per bonus', () => {
     expect(solo.team).toBeUndefined();
   });
 });
+
+/** My teammate's entered orders (V5), as the live board carries them. */
+const entered = (
+  orders: { deploys?: { territoryId: number; armies: number }[]; moves?: { from: number; to: number; armies: number; mode: 'attack' | 'transfer' | 'attack-transfer' }[] },
+  playerId = MATE,
+) => ({
+  teammateOrders: [{ playerId, orders: { deploys: orders.deploys ?? [], moves: orders.moves ?? [], cards: [], discards: [], unread: [] }, picks: null }],
+});
+const graphOf = (territories: [number, number[]][], bonuses: GameMap['bonuses'] = []) =>
+  buildGraph({ id: 1, name: 'M', territories: territories.map(([id, c]) => ({ id, name: `T${id}`, connectedTo: c })), bonuses, distributionModes: [] });
+
+describe('C3.4: focus on the opponent my teammate attacks', () => {
+  // 1 (mine) faces 2 (player 20, a +3 bonus) and 3 (player 21, a +3 bonus), equal in every way; 7 and 8
+  // keep each opponent alive beyond them. My teammate on 5 faces player 21's 6.
+  const g = graphOf(
+    [[1, [2, 3, 4]], [2, [1, 7]], [3, [1, 8]], [4, [1, 5]], [5, [4, 6]], [6, [5]], [7, [2]], [8, [3]]],
+    [
+      { id: 201, name: 'B201', value: 3, territoryIds: [2], bonusIds: [] },
+      { id: 202, name: 'B202', value: 3, territoryIds: [3], bonusIds: [] },
+    ],
+  );
+  const settings = { ...STD, baseIncome: 5 };
+  const at = (stack: number) =>
+    board([mine(1, stack), player(2, 2, 20), player(3, 2, 21), mine(4, 3), player(5, 5, MATE), player(6, 3, 21), player(7, 2, 20), player(8, 2, 21)]);
+  const plan = (stack: number, income: number, extra: object = {}, players: { id: number; team?: number }[] = PLAYERS) =>
+    planTurn({ graph: g, board: { ...at(stack), ...extra }, me: ME, income, settings, game: { players, turn: 8 }, options: { adapt: true } });
+  const attacks = (p: ReturnType<typeof plan>) => p.moves.filter((m) => m.kind === 'attack').map((m) => m.to);
+
+  it('breaks the bonus of the opponent my teammate is attacking, of two equal breaks', () => {
+    expect(attacks(plan(6, 8))).toEqual([2]);
+    const focused = plan(6, 8, entered({ moves: [{ from: 5, to: 6, armies: 4, mode: 'attack-transfer' }] }));
+    expect(attacks(focused)).toEqual([3]);
+    expect(focused.rationale.join('\n')).toMatch(
+      /Team focus \(PLAN-TEAMS C3\.4\): T3 \(#3\) \(player 21\) ranks above T2 \(#2\) \(player 20\), which is otherwise equal: my teammate \(player 11\) attacks player 21/,
+    );
+  });
+  it('ranks the same way in the contact fallback (rule 4e), and says why', () => {
+    expect(attacks(plan(4, 5))).toEqual([2]);
+    const focused = plan(4, 5, entered({ moves: [{ from: 5, to: 6, armies: 4, mode: 'attack' }] }));
+    expect(attacks(focused)).toEqual([3]);
+    expect(focused.rationale.join('\n')).toMatch(/T2 \(#2\) is ranked after T3 \(#3\): they are otherwise equal, and my teammate attacks player 21 this turn/);
+  });
+  it('a transfer is no attack, and an unequal option still wins', () => {
+    const transfer = plan(6, 8, entered({ moves: [{ from: 5, to: 4, armies: 4, mode: 'transfer' }] }));
+    expect(attacks(transfer)).toEqual([2]);
+    expect(transfer.rationale.join('\n')).not.toMatch(/Team focus/);
+  });
+  it("a no-team game never reads another player's orders", () => {
+    const solo = plan(6, 8, entered({ moves: [{ from: 5, to: 6, armies: 4, mode: 'attack' }] }), [{ id: ME }, { id: MATE }, { id: 20 }, { id: 21 }]);
+    expect(solo.rationale.join('\n')).not.toMatch(/Team focus/);
+  });
+});
+
+describe("C3.5: support for a teammate's border (advisory)", () => {
+  // 1 ─ 4 (mine, 12 idle: nothing to attack, no enemy beside it) ─ 5 (my teammate, 3) ─ 6 (player 20, 10) ─ 7 (player 21).
+  const g = graphOf([[1, [4]], [4, [1, 5]], [5, [4, 6]], [6, [5, 7]], [7, [6]]]);
+  const b = board([mine(1, 2), mine(4, 12), player(5, 3, MATE), player(6, 10, 20), player(7, 2, 21)]);
+  const settings = { ...STD, baseIncome: 5 };
+  const plan = (extra: object) => planTurn({ graph: g, board: { ...b, ...extra }, me: ME, income: 5, settings, game: { players: PLAYERS, turn: 8 }, options: { adapt: true } });
+  const withMate = plan(entered({ deploys: [{ territoryId: 5, armies: 2 }] }));
+  it('lists the border that falls given their deploys, and the idle armies of mine that make it hold', () => {
+    // 5 holds 3 + 2 = 5 against player 20's 9 movable + ~5 deploy = 14: 9 hold, so 4 short; 4 has 17 idle.
+    expect(withMate.team?.support).toEqual([{ territory: 5, teammate: MATE, armies: 5, threat: 14, player: 20, need: 4, from: [{ territory: 4, armies: 4 }] }]);
+  });
+  it('never puts it in the orders (a move onto a teammate is unverified, V7)', () => {
+    expect(withMate.moves.some((m) => m.to === 5)).toBe(false);
+    const without = plan({});
+    expect(withMate.deploys).toEqual(without.deploys);
+    expect(withMate.moves).toEqual(without.moves);
+  });
+  it('says nothing without their orders, or when their deploys hold it', () => {
+    expect(plan({}).team).toBeUndefined();
+    expect(plan(entered({ deploys: [{ territoryId: 5, armies: 8 }] })).team).toBeUndefined();
+  });
+  it("counts their orders out of the border, and finds no support my idle armies cannot give", () => {
+    // Their attack out leaves 5 on 1: 14 short of holding against 14; 4's 17 idle still cover it.
+    const out = plan(entered({ deploys: [{ territoryId: 5, armies: 2 }], moves: [{ from: 5, to: 6, armies: 4, mode: 'attack' }] }));
+    expect(out.team?.support?.[0]).toMatchObject({ territory: 5, armies: 1, need: 8 });
+    const thin = planTurn({
+      graph: g,
+      board: { ...board([mine(1, 2), mine(4, 2), player(5, 1, MATE), player(6, 30, 20), player(7, 2, 21)]), ...entered({}) },
+      me: ME,
+      income: 1,
+      settings,
+      game: { players: PLAYERS, turn: 8 },
+      options: { adapt: true },
+    });
+    expect(thin.team?.support).toBeUndefined();
+  });
+});
+
+describe('C3.6: joint captures (advisory)', () => {
+  // 4 (mine) and 5 (my teammate) both face player 20's 6 (20 armies); neither takes it alone.
+  const g = graphOf([[1, [4]], [4, [1, 5, 6]], [5, [4, 6]], [6, [4, 5, 7]], [7, [6]]]);
+  const settings = { ...STD, baseIncome: 5, luckModifier: 0, roundingMode: 'StraightRound' };
+  const b = board([mine(1, 2), mine(4, 26), player(5, 16, MATE), player(6, 20, 20), player(7, 2, 21)]);
+  const attack = entered({ deploys: [{ territoryId: 5, armies: 2 }], moves: [{ from: 5, to: 6, armies: 17, mode: 'attack-transfer' }] });
+  const plan = (extra: object, moveOrder?: string) =>
+    planTurn({
+      graph: g,
+      board: { ...b, ...extra },
+      me: ME,
+      income: 5,
+      settings,
+      game: { players: PLAYERS, turn: 8, ...(moveOrder ? { moveOrder } : {}) },
+      options: { adapt: true },
+    });
+  it("resolves their entered attack with my idle armies, in both orders, on the turn simulator", () => {
+    const p = plan(attack);
+    expect(p.team?.jointCaptures).toEqual([
+      {
+        target: 6,
+        owner: 20,
+        teammate: [{ player: MATE, from: 5, armies: 17 }],
+        mine: [{ from: 4, armies: 16 }],
+        inPlan: false,
+        cases: [
+          { first: ME, captured: true, by: MATE, capturedIfReinforced: false },
+          { first: MATE, captured: true, by: ME, capturedIfReinforced: false },
+        ],
+        exact: true,
+      },
+    ]);
+    // Reported only: the plan's orders are the ones it makes without their orders.
+    const without = plan({});
+    expect(p.moves).toEqual(without.moves);
+    expect(p.deploys).toEqual(without.deploys);
+  });
+  it('under a cyclic order says whose attack must go first (either, here)', () => {
+    expect(plan(attack, 'Cycle').team?.jointCaptures?.[0]?.mustGoFirst).toBeNull();
+    expect(plan(attack, 'Random').team?.jointCaptures?.[0]).not.toHaveProperty('mustGoFirst');
+  });
+  it('a target their attack takes alone is no joint capture', () => {
+    const alone = plan(entered({ deploys: [{ territoryId: 5, armies: 30 }], moves: [{ from: 5, to: 6, armies: 45, mode: 'attack' }] }));
+    expect(alone.team?.jointCaptures).toBeUndefined();
+  });
+});

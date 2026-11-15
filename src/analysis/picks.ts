@@ -238,8 +238,10 @@ export interface PlanPicksInput {
    * no threat, so only the rest are opponents in the threat model; a start known to be another
    * player's may still be a teammate's (the worst case keeps the opponent starts unknown), and the
    * list is judged by both award orders that fit, since a team game's is not settled. Absent: no team.
+   * `lists`: my teammates' pick lists as read (priority order; C2 coordination, see {@link TeamPicksReport}).
+   * None, or only empty ones: planned exactly as without them.
    */
-  team?: { teammates: number };
+  team?: { teammates: number; lists?: ReadonlyArray<readonly number[]> };
 }
 
 type PickGroupName = 'primary' | 'fallback';
@@ -330,7 +332,41 @@ interface AlternativePicks {
   submitPicks: number[];
 }
 
+/**
+ * The mirrored alternative (C2): every one of us lists the same top picks — my primary and each
+ * teammate's top — so whoever the award reaches next takes the next one. Laid out on the positions a
+ * reversing award gives one player (with the same list and no opponent taking one of them, one of two
+ * takes positions 1 and 4, the other 2 and 3), so each start group, and any pair in it that only works
+ * in one hand, stays in one hand.
+ */
+export interface MirroredPicks {
+  /** The shared top, in list order. */
+  top: number[];
+  /** Under a reversing award, the picks each of us is granted from `top` (mine first). */
+  hands: number[][];
+  /** Award orders under which a bonus a start group completes is lost because its picks go to two of us. */
+  splits: { order: AwardOrder; bonuses: { bonusId: number; picks: number[] }[] }[];
+  /** What warapp_submit_picks takes for it: the shared top, then my own fallback. */
+  submitPicks: number[];
+}
+
+/** With my teammates' pick lists read (C2, docs/PLAN-TEAMS.md). */
+export interface TeamPicksReport {
+  /** Each teammate's top picks (the territory limit, the pickable ones on their list): left to them. */
+  tops: number[][];
+  /** A pick on my list that a teammate also lists: positions 1-based, `teammate` the list's index. */
+  overlap: { territoryId: number; mine: number; teammate: number; theirs: number }[];
+  /** Bonuses a teammate's top picks into that my list also has a member of: credited to them, not me. */
+  sharedBonuses: { bonusId: number; mine: number[]; theirs: number[] }[];
+  /** `null`: not offered (a teammate's list unread or short of the limit, or my primary short). */
+  mirrored: MirroredPicks | null;
+  /** My list was shortened from starts × all players because it is disjoint from every teammate list. */
+  shortened?: { from: number; to: number };
+}
+
 export interface PickPlan {
+  /** With my teammates' lists read (C2); absent otherwise. */
+  team?: TeamPicksReport;
   picks: PickChoice[];
   groups: { primary: PickGroup; fallback: PickGroup };
   /** The list judged by what the award order can give; absent when too many outcomes to enumerate (#129). */
@@ -395,6 +431,11 @@ interface Ctx {
   opponentStarts: number;
   /** Starts my teammates are granted in all (0 outside a team game): a known start may be one of these. */
   teammateStarts: number;
+  /**
+   * My teammates' top picks, when their lists are read (C2): theirs, so never captured — a bonus with
+   * one in it never completes for me (a bonus pays one holder) and is no progress — and no threat.
+   */
+  friendly: ReadonlySet<number>;
   /**
    * Bonus id → by completion turn 0..PICK_HORIZON, the pickable territories that reach it by
    * then (hold a member, or a territory next to one), ascending (#166).
@@ -611,7 +652,7 @@ function simulate(
       const targets: number[] = [];
       for (const m of b.members) {
         if (held.has(m)) continue;
-        const c = taken.has(m) ? null : ctx.cost.get(m);
+        const c = taken.has(m) || ctx.friendly.has(m) ? null : ctx.cost.get(m);
         if (c === null || c === undefined) {
           blocked = true;
           break;
@@ -755,7 +796,7 @@ function simulate(
     }
     const share = b.members.filter((m) => held.has(m)).length / b.members.length;
     // A bonus someone else holds part of is not progress (#129).
-    if (share > 0 && !b.members.some((m) => taken.has(m))) {
+    if (share > 0 && !b.members.some((m) => taken.has(m) || ctx.friendly.has(m))) {
       progress.set(id, share);
       score += PROGRESS_WEIGHT * b.value * share * b.defense;
     }
@@ -824,6 +865,7 @@ export function openingIncome(input: OpeningIncomeInput): number[] {
     pickCount: pickSet.size,
     opponentStarts: 0,
     teammateStarts: 0,
+    friendly: NO_TAKEN,
     threats: new Map(),
   };
   const sim = simulate(ctx, starts, taken);
@@ -902,21 +944,33 @@ function bonusTables(
   return { bonuses, bonusesOf, penalties, penaltiesOf };
 }
 
-export function planPicks(input: PlanPicksInput): PickPlan {
+/** {@link planPicks} without a teammate's list: the plan, and the completions of an opening for the team report. */
+interface Core {
+  plan: PickPlan;
+  /** The bonuses an opening from `start` completes within the horizon, `taken` someone else's (nothing friendly). */
+  completes: (start: readonly number[], taken: readonly number[]) => Set<number>;
+  /** Positive bonuses (not superbonuses) by id. */
+  bonuses: ReadonlyMap<number, BonusInfo>;
+}
+
+function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): Core {
   const { graph: g } = input;
+  const friendly: ReadonlySet<number> = friendlyIds.length ? new Set(friendlyIds) : NO_TAKEN;
   const s = input.settings ?? {};
   const warnings: string[] = [];
   const rationale: string[] = [];
 
   // Pickable territories: known, unique, sorted.
   const unknown: number[] = [];
+  // `pickSet` is every pickable territory (for neutral sizes); `pickable` leaves out a teammate's top
+  // picks (C2): theirs, and known starts, so neither mine to pick nor a threat.
   const pickSet = new Set<number>();
   for (const t of input.pickable) {
     if (g.territoryById.has(t)) pickSet.add(t);
     else if (!unknown.includes(t)) unknown.push(t);
   }
   if (unknown.length) warnings.push(`Ignored pickable ids not on the map: ${unknown.sort(byNum).join(', ')}.`);
-  const pickable = [...pickSet].sort(byNum);
+  const pickable = [...pickSet].filter((t) => !friendly.has(t)).sort(byNum);
 
   // Settings and assumptions.
   const pickArmies = s.initialPlayerArmiesPerTerritory ?? DEFAULT_PICK_ARMIES;
@@ -997,7 +1051,9 @@ export function planPicks(input: PlanPicksInput): PickPlan {
     twoOrders: luckFraction(s.luckModifier) === 0 && (s.roundingMode === undefined || s.roundingMode === 'StraightRound') && s.noSplit !== true,
     pickCount: pickable.length,
     opponentStarts: Math.max(0, players - 1 - teammates) * limit,
-    teammateStarts: teammates * limit,
+    // A teammate's top picks are known teammate starts: only the rest may hide among the unknown ones.
+    teammateStarts: Math.max(0, teammates * limit - friendly.size),
+    friendly,
     threats: new Map(),
   };
 
@@ -1808,14 +1864,165 @@ export function planPicks(input: PlanPicksInput): PickPlan {
       }
     }
   }
+  const plain: Ctx = { ...ctx, friendly: NO_TAKEN };
   return {
-    picks,
-    groups,
-    ...(award ? { award } : {}),
-    coverage: primaryCoverage,
-    ...(alternative ? { alternative } : {}),
-    warnings,
+    plan: {
+      picks,
+      groups,
+      ...(award ? { award } : {}),
+      coverage: primaryCoverage,
+      ...(alternative ? { alternative } : {}),
+      warnings,
+      rationale,
+    },
+    completes: (start, taken) => new Set(simulate(plain, start, new Set(taken)).completions.keys()),
+    bonuses,
+  };
+}
+
+/**
+ * Rank the pickable territories (the module header). In a team game with my teammates' lists read
+ * (`team.lists`, C2), the plan is the split one — their top picks left to them, a bonus they pick into
+ * not credited to me — with a {@link TeamPicksReport}; with none, or only empty ones, exactly as before.
+ */
+export function planPicks(input: PlanPicksInput): PickPlan {
+  const lists = input.team?.lists ?? [];
+  if (!input.team || !lists.some((l) => l.length)) return planCore(input).plan;
+  return coordinate(input, input.team.teammates, lists);
+}
+
+function coordinate(input: PlanPicksInput, teammateCount: number, rawLists: ReadonlyArray<readonly number[]>): PickPlan {
+  const g = input.graph;
+  const limit = Math.max(0, Math.floor(input.territoryLimit));
+  const players = Number.isFinite(input.players) ? Math.max(1, Math.floor(input.players)) : 2;
+  const teammates = Math.min(players - 1, Math.max(0, Math.floor(teammateCount) || 0));
+  const onMap = (t: number) => g.territoryById.has(t);
+  const pickables = new Set(input.pickable.filter(onMap));
+  const lists = rawLists.map((l) => [...new Set(l.filter(onMap))]);
+  const tops = lists.map((l) => l.filter((t) => pickables.has(t)).slice(0, limit));
+  const friendly = [...new Set(tops.flat())].sort(byNum);
+  const theirs = new Set(lists.flat());
+  const listOf = (p: PickPlan) => p.picks.map((x) => x.territoryId);
+  const disjoint = (l: readonly number[]) => l.every((t) => !theirs.has(t));
+
+  let core = planCore(input, friendly);
+  // Starts × all players covers a pick we both list going to one of us; with the lists disjoint my
+  // list needs only my starts and the opponents' (C2).
+  // A teammate list shorter than the client allows can run out (an opponent takes its picks first), and
+  // war.app then grants that teammate from what is left, a pick of mine included: no shortening then.
+  const clientMax = Math.max(0, Math.floor(input.maxPicks));
+  const shortList = lists.findIndex((l) => l.length < clientMax);
+  let shortened: { from: number; to: number } | undefined;
+  let keptLong: { length: number } | undefined;
+  const long = listOf(core.plan);
+  const short = Math.max(core.plan.groups.primary.territoryIds.length, limit * Math.max(1, players - teammates));
+  if (disjoint(long) && short < long.length && shortList >= 0) keptLong = { length: lists[shortList]!.length };
+  else if (disjoint(long) && short < long.length) {
+    const c = planCore({ ...input, maxPicks: short }, friendly);
+    if (disjoint(listOf(c.plan))) {
+      core = c;
+      shortened = { from: long.length, to: listOf(c.plan).length };
+    }
+  }
+  const { plan } = core;
+  const mine = listOf(plan);
+  const terrName = (id: number) => g.territoryById.get(id)?.name ?? String(id);
+  const bonusName = (id: number) => core.bonuses.get(id)?.name ?? String(id);
+  const names = (ids: readonly number[]) => ids.map(terrName).join(', ');
+
+  const overlap: TeamPicksReport['overlap'] = [];
+  mine.forEach((t, i) =>
+    lists.forEach((l, j) => {
+      const at = l.indexOf(t);
+      if (at >= 0) overlap.push({ territoryId: t, mine: i + 1, teammate: j, theirs: at + 1 });
+    }),
+  );
+
+  const friendlySet = new Set(friendly);
+  const sharedBonuses: TeamPicksReport['sharedBonuses'] = [];
+  for (const b of [...core.bonuses.values()].sort((x, y) => x.id - y.id)) {
+    const theirsIn = b.members.filter((m) => friendlySet.has(m)).sort(byNum);
+    const mineIn = b.members.filter((m) => mine.includes(m)).sort(byNum);
+    if (theirsIn.length && mineIn.length) sharedBonuses.push({ bonusId: b.id, mine: mineIn, theirs: theirsIn });
+  }
+
+  // The mirrored alternative: my primary and each teammate's top, one group per hand.
+  const primary = plan.groups.primary.territoryIds;
+  const groups = [primary, ...tops];
+  const k = groups.length;
+  let mirrored: MirroredPicks | null = null;
+  if (
+    limit > 0 &&
+    teammates > 0 &&
+    lists.length === teammates &&
+    primary.length === limit &&
+    tops.every((t) => t.length === limit) &&
+    new Set(groups.flat()).size === k * limit
+  ) {
+    /** List positions (0-based) each of us takes from the shared top, under `order`. */
+    const positions = (order: AwardOrder) =>
+      groups.map((_, j) => Array.from({ length: limit }, (_, r) => r * k + (order === 'reversing' && r % 2 === 1 ? k - 1 - j : j)));
+    const top: number[] = new Array<number>(k * limit);
+    const laid = positions('reversing');
+    groups.forEach((gr, j) => gr.forEach((t, r) => (top[laid[j]![r]!] = t)));
+    const handsOf = (order: AwardOrder) => positions(order).map((ps) => ps.map((i) => top[i]!));
+    const others = (h: readonly number[]) => top.filter((t) => !h.includes(t));
+    const intended = new Set(groups.flatMap((gr) => [...core.completes(gr, others(gr))]));
+    const splits: MirroredPicks['splits'] = [];
+    for (const order of ['reversing', 'repeating'] as const) {
+      const done = new Set(handsOf(order).flatMap((h) => [...core.completes(h, others(h))]));
+      const lost = [...intended].filter((id) => !done.has(id)).sort(byNum);
+      if (lost.length)
+        splits.push({
+          order,
+          bonuses: lost.map((id) => ({ bonusId: id, picks: core.bonuses.get(id)!.members.filter((m) => top.includes(m)).sort(byNum) })),
+        });
+    }
+    mirrored = {
+      top,
+      hands: handsOf('reversing'),
+      splits,
+      // The shared top, then my own fallback, never past what the client allows (players × limit).
+      submitPicks: [...top, ...mine.filter((t) => !top.includes(t))].slice(0, Math.max(top.length, clientMax)),
+    };
+  }
+
+  const rationale = [...plan.rationale];
+  rationale.push(
+    `Your teammate${lists.length === 1 ? "'s list is" : "s' lists are"} read: their top pick${friendly.length === 1 ? '' : 's'} (${names(friendly)}) ` +
+      `${friendly.length === 1 ? 'is' : 'are'} left to them, as known starts of your team that threaten nothing. A bonus pays one holder: a pick in a bonus they pick into is not credited with it` +
+      (sharedBonuses.length ? ` (${sharedBonuses.map((b) => bonusName(b.bonusId)).join(', ')})` : '') +
+      '. This list is the split one: it leaves their top picks out.',
+  );
+  if (overlap.length)
+    rationale.push(
+      `Both lists carry ${names([...new Set(overlap.map((o) => o.territoryId))])}: such a pick goes to whichever of you the award reaches first.`,
+    );
+  if (shortened)
+    rationale.push(
+      `Your list is disjoint from your teammate's, so it is shortened from ${shortened.from} to ${shortened.to}: your starts and the opponents' ` +
+        '(a pick on both lists could go to either of you; none is).',
+    );
+  if (keptLong)
+    rationale.push(
+      `Your list is disjoint from your teammate's but not shortened: your teammate's list has ${keptLong.length} pick${keptLong.length === 1 ? '' : 's'}, ` +
+        `fewer than the ${clientMax} the client allows, so if an opponent takes them first war.app grants your teammate from what is left, one of yours included.`,
+    );
+  if (mirrored) {
+    rationale.push(
+      `A mirrored alternative: each of you lists the same top ${mirrored.top.length} (${names(mirrored.top)}), so whoever the award reaches next takes the next one. ` +
+        'They are laid on the positions a reversing award gives one player, so each start group stays in one hand' +
+        (mirrored.splits.length
+          ? `; under a ${mirrored.splits.map((x) => x.order).join(' or ')} award order (a team game's is unverified) ` +
+            `${mirrored.splits.flatMap((x) => x.bonuses.map((b) => bonusName(b.bonusId))).join(', ')} would be split between you and lost`
+          : '') +
+        '. It assumes no opponent takes one of them first: one that does moves every later pick to the other hand.',
+    );
+  }
+  return {
+    ...plan,
     rationale,
+    team: { tops, overlap, sharedBonuses, mirrored, ...(shortened ? { shortened } : {}) },
   };
 }
 

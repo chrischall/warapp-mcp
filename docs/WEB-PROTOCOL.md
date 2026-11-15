@@ -503,7 +503,11 @@ built from the game settings' move order, not verified live, #132); `NoLuckCycle
 speed first turn in `rules` and `plannerGaps`. The record carries no fog level and no neutral
 sizes: `warapp_join_game` reads those from the lobby's GameFeed settings for its screen. The plan expected the open seats as
 `warlight.shared.GameOpenSeat` records; inside `GameInfo` they read as a plain int32 list with one
-**team per open seat** (`-1` = no team), and that team is what a join sends. Anything the reader
+**team per open seat** (`-1` = no team), and that team is what a join sends. With open seats on several
+teams the client asks which team to join and sends the chosen one in the same int32 (`warapp_join_game`'s
+`team`, C4 of docs/PLAN-TEAMS.md: read from the bundle 2026-11-15, UNVERIFIED live). `GameInfoPlayer`'s 5th
+field is the client's IsAI (the record is built from `GamePlayer.get_IsAI` there; read from the bundle, not
+verified live): the join preview names each seat on the chosen team `human` or `ai`. Anything the reader
 cannot place is omitted, never guessed. Each `GameInfo`, `GameInfoPlayer` and `GameInfoSettings`
 must have exactly the client's field count (27, 10 and 24, read from the bundle 2026-11-14; GetMyGames
 checks the same counts): a field inserted or dropped would shift every position, so it fails with a

@@ -358,6 +358,58 @@ describe('warapp_join_game', () => {
     expect(s.sent[0]).toMatchObject({ gameId: 3003, team: 1 });
   });
 
+  // C4 (docs/PLAN-TEAMS.md): a team chosen by number. The chosen seat's team is the int32 AcceptOpenSeat already
+  // sends (the client's team picker passes it, read from the bundle; UNVERIFIED live).
+  const TEAMS_2V2: SyntheticGame = {
+    id: 3007,
+    name: 'Two teams',
+    lastTurn: -1,
+    state: WAITING,
+    players: [
+      { ...HOST, team: 0 },
+      { id: 222222, name: 'Bot', state: P_PLAYING, committed: false, team: 1, ai: true },
+      { id: 333333, name: 'Cy', state: P_PLAYING, committed: false, team: 2 },
+    ],
+    openSeats: [0, 1],
+    maxPlayers: null,
+  };
+
+  it('team: joins the team asked for and the preview lists that team\'s seats by id, human or AI', async () => {
+    const s = joinServer();
+    h = await harness({ warapp: s.warapp, feed: [feedGame(3007, true)], games: [TEAMS_2V2] });
+    const preview = payload<{ preview: { team: unknown }; willSend: unknown }>(await h.call('warapp_join_game', { game_id: 3007, team: 1 }));
+    expect(preview.preview.team).toEqual({
+      id: 1,
+      offered: [0, 1],
+      seats: [{ inGameId: 222222, kind: 'ai' }],
+      openSeats: 1,
+      note: expect.stringMatching(/UNVERIFIED/),
+    });
+    expect(JSON.stringify(preview)).not.toContain('Bot');
+    const p = payload(await confirmed('warapp_join_game', { game_id: 3007, team: 1 }));
+    expect(p.status).toBe('joined');
+    expect(s.sent[0]).toMatchObject({ gameId: 3007, team: 1 });
+  });
+
+  it('without team, a team game\'s preview names the first open seat\'s team and its seats', async () => {
+    h = await harness({ games: [TEAMS_2V2] });
+    const preview = payload<{ preview: { team: unknown } }>(await h.call('warapp_join_game', { game_id: 3007, allow_team: true }));
+    expect(preview.preview.team).toMatchObject({ id: 0, offered: [0, 1], seats: [{ inGameId: HOST.id, kind: 'human' }], openSeats: 1 });
+  });
+
+  it('team: refuses a full team, a team not offered, and any team outside a team game', async () => {
+    h = await harness({ games: [TEAMS_2V2, OPEN.plain!] });
+    const full = await h.call('warapp_join_game', { game_id: 3007, team: 2 });
+    expect(full.isError).toBe(true);
+    expect(textOf(full)).toMatch(/team 2 is full.*0, 1/is);
+    const absent = await h.call('warapp_join_game', { game_id: 3007, team: 5 });
+    expect(absent.isError).toBe(true);
+    expect(textOf(absent)).toMatch(/team 5 is not offered.*0, 1/is);
+    const plain = await h.call('warapp_join_game', { game_id: 3001, team: 0 });
+    expect(plain.isError).toBe(true);
+    expect(textOf(plain)).toMatch(/not a team game/i);
+  });
+
   it('refuses a coin entry fee unless accept_entry_fee', async () => {
     const s = joinServer();
     h = await harness({ warapp: s.warapp, feed: [feedGame(3004, true)] });

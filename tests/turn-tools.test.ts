@@ -1762,6 +1762,75 @@ describe('cards in the turn tools', () => {
     expect(w).toMatch(/Holding a Reinforcement card: in a team game the team shares one hand/);
   });
 
+  it("plan_turn in a team game reports support and a joint capture, and leaves a card my teammate entered to them (C3.5-C3.7)", async () => {
+    // Cy (in-game 222222, team 1) holds Knife Hills with 25, beside my Hornwood (50) and Bob's Bolton Moors (20).
+    // Bob has entered an attack of 19 on it and a play of my Reinforcement card. Every id is synthetic.
+    const CY = { feed: '5522222211', inGame: 222222 };
+    const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) =>
+      i === 2 ? { ...p, id: CY.feed, name: 'Cy', team: '1' } : { ...p, team: i < 2 ? '0' : '1' },
+    );
+    const contested = BOARD.map((t) =>
+      t.id === 135 ? { id: 135, fogLevel: 1, owner: CY.inGame, armies: 25 } : t.id === 159 ? { ...t, armies: 50 } : t.id === 158 ? { ...t, armies: 20 } : t,
+    );
+    h = await liveHarness({
+      feed: [game('Playing', { players: teams, settings: { ...modelledSettings(), MoveOrder: 'Cycle' } })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () =>
+          ({
+            body: (w) =>
+              writeLatestGameInfo(w, contested, [ANN.inGame, BOB.inGame], { [ANN.inGame]: [{ id: R1, type: 1, armies: 5 }], [BOB.inGame]: [{ id: OP, type: 4 }] }, {
+                [BOB.inGame]: {
+                  orders: [
+                    { kind: 'move', from: 158, to: 135, armies: 19 },
+                    { kind: 'card', tag: 5, card: R1 },
+                  ],
+                },
+              }),
+          }) satisfies Partial<ReplyFrame>,
+      }),
+    });
+    const p = payload<CardsPayload & { cards: { team?: { roles: Array<{ card: string; by: unknown; action: string; why: string }>; note: string } }; team?: Record<string, unknown> }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }),
+    );
+    const bob = { id: Number(BOB.feed), name: expect.stringContaining('Bob') };
+    const cy = { id: Number(CY.feed), name: expect.stringContaining('Cy') };
+    const T = (id: number) => ({ id, name: mapName(id) });
+    // C3.5: Bolton Moors keeps 1 once Bob's attack leaves; my idle 20 on Hornwood would hold it.
+    expect(p.team?.support).toEqual({
+      borders: [{ territory: T(158), teammate: bob, armies: 1, threat: 34, player: cy, need: 20, from: [{ territory: T(159), armies: 20 }] }],
+      note: expect.stringMatching(/V7.*never in `orders`/),
+    });
+    // C3.6: neither takes Knife Hills alone; together either order does (a cyclic order: 'either').
+    expect(p.team?.jointCaptures).toEqual({
+      targets: [
+        {
+          target: T(135),
+          owner: cy,
+          teammate: [{ player: bob, from: T(158), armies: 19 }],
+          mine: [{ from: T(159), armies: 29 }],
+          inPlan: false,
+          cases: [
+            { first: 'me', captured: true, by: bob, capturedIfReinforced: false },
+            { first: bob, captured: true, by: 'me', capturedIfReinforced: false },
+          ],
+          mustGoFirst: 'either',
+          exact: true,
+        },
+      ],
+      note: expect.stringMatching(/never added to `orders`/),
+    });
+    // Advisory: no order goes onto Bob's territory or at Knife Hills.
+    expect(p.orders.some((o) => o.to === 158 || o.to === 135)).toBe(false);
+    // C3.7: Bob has entered my Reinforcement card, so I do not play it; Order Priority is held.
+    expect(p.cards.plays).toEqual([]);
+    expect(p.cards.team?.roles.map((r) => [r.card, r.by, r.action])).toEqual([
+      [R1, bob, 'play'],
+      [OP, null, 'hold'],
+    ]);
+    expect(p.cards.team?.note).toMatch(/V8/);
+    expect(p.warnings.join('\n')).toMatch(new RegExp(`Reinforcement \\(${R1}\\): player ${BOB.feed} has already entered a play of it`));
+  });
+
   it('plan_turn in a team game reports a bonus shared with my teammate, and who is nearer (C3.3)', async () => {
     const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
     // Bob, my teammate, holds 157: bonus 118 (159, 161, 157) is shared, and I hold two of its three.

@@ -574,9 +574,27 @@ players; `warapp_submit_picks` warns in a team game when the list is shorter. Th
 teammate's to `teammateStarts`; a fogged one stays an opponent's (team vision unverified). The output is
 unchanged outside a team game, and the golden corpus (turn plans) is untouched.
 
-TODO (C2, coordination — a later PR): read the teammate's list (C1's `TeammateOrders` picks, then
-`GetTerritoryPicks`, V6), report the overlap, penalise a pick into a bonus the teammate also picks into,
-offer the mirrored alternative beside the split one, and shorten the list only when the lists are disjoint.
+*As built (C2, coordination):* `warapp_plan_picks` reads each playing teammate's list with `readTeammatePicks`
+(`src/tools/team.ts`, shared with `warapp_get_team`): the live board's `TeammateOrders` picks (V5), else
+`GetTerritoryPicks` with the teammate's in-game id (V6); an AI seat or a refusal is unknown (`picks: null`). Both are
+UNVERIFIED live and the result's `team.coordination.notes` says so. `planPicks` takes `team.lists`; with none read, or
+only empty ones, it is the plan it was (a test pins it equal). With a list, the plan is the **split** one: each
+teammate's top (its first territory-limit pickable ids) leaves my candidates and is `friendly` in the opening
+simulation — never captured, so a bonus with one in it never completes for me and is no progress (a bonus pays one
+holder: that is the penalty), no threat, and a known teammate start (the threat model's unknown teammate starts drop by
+as many). `team.coordination` reports the `overlap` (each pick on my list a teammate also lists, both positions),
+`sharedBonuses` (bonuses their top picks into with a member on my list), `shortened` (my list cut from starts × all
+players to my starts plus the opponents' — only when it is disjoint from every teammate's whole list and every teammate
+list is as long as the client allows, re-planned at that length and kept only if still disjoint; a shorter teammate list
+can run out when an opponent takes its picks first, and war.app then grants that teammate from what is left, so the
+rationale says why mine was kept long), and **`mirrored`**: when every teammate's top is full and distinct, my primary
+and each top are laid on the positions a reversing award gives one player when we all list the same top (two of us:
+positions 1 and 4, 2 and 3; three: 1–3 then reversed), so each start group — and any pair in it that only works in one
+hand — stays in one hand; `splits` names the bonuses a repeating order (the other order that fits; unverified) would
+split between us and so lose, judged by the opening simulation of each hand. Its `submitPicks` is the shared top then my
+own fallback, capped at the client's maximum (players × limit: the top already holds (teammates + 1) × limit). It assumes no opponent takes a top pick first (one that does moves every later pick to the other hand),
+which the rationale says. `warapp_submit_picks`' team warning about a short list now says a shorter list is safe only
+when no teammate lists any of its picks. Turn plans are untouched: the golden corpus is byte-identical.
 
 ### C3. The planner with a teammate
 
@@ -626,6 +644,35 @@ shows it with a note. No 1v1 or FFA plan changes; the golden corpus's team board
 was being advanced (moves become plain expansion or are dropped) and every team plan with a shared bonus gains
 the `team` field.
 
+*As built (C3.4–C3.7):* every item reads my teammates' entered orders (`board.teammateOrders`, V5 — UNVERIFIED
+live) and does nothing without them, so 1v1 and FFA plans and the whole golden corpus (no input carries teammate
+orders) are byte-identical. **Focus (C3.4):** `teamFocusOf` (`src/analysis/plan/team.ts`, `PlanCtx.teamFocus`)
+maps each opponent a teammate attacks (a move that is not transfer-only into a territory the board shows a foe
+holding) to the teammates attacking it. It is a tie-break, never a score: in the balanced greedy right after
+the score (breaks and counter-attacks carry their target's owner), in rule 4e's contact ranking before its
+last keys (the neutral rank and id); a "Team focus (PLAN-TEAMS C3.4)" rationale line, or rule 4e's "otherwise
+equal" line, names who attacks whom. Bonus plans (completions, advances) carry no owner and are never focused.
+**Support (C3.5):** `team.support[]` — per teammate border the planner's own threat model (`threatAt`, my
+captures gone) takes, given what they entered (armies + their deploys there − their orders out, a percentage
+order as its share; armies moved in left out, as for my own borders), where my idle armies beside it make it
+hold: idle is `avail` after every order less `keepFor` / the two-step keep / cover and central keeps, on a
+territory not locked, conceded or my commander's (No-Split: none from a territory with an order, and a whole
+stack). **Joint captures (C3.6):** `team.jointCaptures[]` — a foe's territory a teammate attacks, resolved on
+`simulateTurn` with only their entered attacks (and deploys) and mine (the plan's own attacks on it, `inPlan`,
+else my idle armies beside it, attack-only): skipped when either side takes it alone; reported when some
+order of the two takes it, with `cases` (each side first: captured, by whom, and whether it still falls when
+the owner first lands its whole deploy estimate there) and `exact`. Under a cyclic `game.moveOrder`
+(`PlanGameContext.moveOrder`, set by `warapp_plan_turn` in team games only) `mustGoFirst` names whose attack
+must run first (`null`/'either' when both orders work); otherwise both cases only. Every other order of the
+turn is left out, which the note says. Support and joint captures share the same idle armies (alternatives)
+and are advisory: neither is ever in `orders` until V7 is verified. **Cards (C3.7):** `src/team-cards.ts`:
+`teamCardClaims` reads my teammates' entered card plays and discards; `teamHandLeft` takes from the team hand
+the card each names (else, for a play naming only its type, the first card of that type), and the plan's card
+choice (`chooseCardPlays`, Order Priority, the card advice) works on the rest, so the team never plays one
+card twice and a teammate's discard counts toward the limit (V8: how the team hand is keyed is unverified).
+`warapp_plan_turn` warns per claimed card and reports `cards.team.roles` in a team game with a hand: who plays
+each card (a teammate for what they entered, me for my plays and discards, nobody for a card held).
+
 ### C4. The team brief and joining
 
 - Read-only `warapp_team_brief`: the content of a team-chat message as data, by stage. Before picks:
@@ -634,6 +681,31 @@ the `team` field.
   for, the card I intend to play, and conflicts with the teammate's entered orders. The agent words
   it and sends it with `channel: 'team'`. In a team everything true and concrete is shared.
 - `warapp_join_game` takes a `team`, and its preview lists the seats on it by id, human or AI.
+
+*As built (C4):* `warapp_team_brief` (`src/tools/team-brief.ts`, read-only, never sends) resolves the teams
+(`resolveTeamsFor`, after the phase and seat refusals) and refuses outside a team game or a game neither picking
+nor playing. Its pure parts are `src/analysis/team-brief.ts`. **Picking:** my list (`GetTerritoryPicks` for me),
+each teammate's (`readTeammatePicks`: `TeammateOrders` picks, else V6; an AI seat or a refusal is `null`), the
+`overlap` (both 1-based positions) and the positive bonuses with a member on both lists (`sharedBonuses`,
+superbonuses included). **Turn 1:** the picks my kept list lost (`picksLost`), `teammate` when the first board shows
+it as a teammate's, `opponent` otherwise; the award is computed with `readAward` and never written (plan_turn keeps
+it). **Each turn:** it plans exactly as plan_turn would (`livePlanSetup` with `award: false`, `planTurn`) and writes
+nothing — no board cache, no outlook; `opponents` lists every opponent still playing with its estimate (the plan's
+`planEnemyEstimates`) and a one-line `basis` per source (`null` when nothing of theirs is in view); `deploys`,
+`attacks`, `conceded` and `bonusesCompleted` are the plan's; `asks` are each joint capture (keep the attack, and
+`mustGoFirst` under a cyclic order) and each conceded border of mine a teammate's stack borders (`cover`: advice to
+them — a move onto my territory is V7); `offers` are the plan's `team.support`; `cards` the plays (with an advised
+Order Priority) and discards, and the cards left to a teammate (C3.7); `conflicts.list` has `same-target` (we both
+attack it, unless a joint capture — `joint`), `bonus` (their attack in a bonus my plan completes), `attacks-me`
+(`attack_teammates` onto mine) and `onto-mine` (a plain order onto mine, V7), with `conflicts.read: null` when no
+teammate's orders were read (unknown). Third-party names go through `untrustedText`. **Joining:** `warapp_join_game`
+takes `team` (implies `allow_team`): refused outside a team game, with random teams, and when the team has no open
+seat — "full" when a seated player is on it, else "not offered", naming the teams with an open seat. The choice is
+the int32 AcceptOpenSeat already sends: in the bundle the client collects the open seats' distinct teams and, when
+there are several, asks which and passes the chosen one there (read 2026-11-15; golden-pinned, UNVERIFIED live). The
+preview's `team` lists the teams offered, the open seats on the chosen team and its seated players by in-game id,
+`human` or `ai` (`GameInfoPlayer`'s 5th field is IsAI in the bundle; unverified live). No 1v1 or FFA plan changes:
+the golden corpus is untouched (no planner change).
 
 ## 10. Part D — cards for diplomacy and teams
 
@@ -677,6 +749,9 @@ with `channel` / `to` / `commitments`, `warapp_record_agreement`, `warapp_get_re
 - **Team games.** Part C is not built, so the skill carries only a placeholder: team coordination tools are
   coming; meanwhile `channel: "team"` for plain facts. The `warapp_get_team` / `warapp_team_brief` lines
   above arrive with C1/C4.
+  *As built (C4):* the placeholder is replaced: the skill's "Team games" bullet now says to call
+  `warapp_get_team` and `warapp_team_brief` every turn, the brief early and the commit late, what each stage of
+  the brief carries, and that in a team everything true and concrete is shared.
 - **Notes.** E1 is the skill only; the strategy notes and any `NoteCondition` for private messaging or an
   active relation are left to the notes step.
 

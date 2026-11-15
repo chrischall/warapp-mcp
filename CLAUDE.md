@@ -128,6 +128,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   In a team game (C2) only players off my team are threats (a known start may be a teammate's: the worst case), the award is
   judged by both a reversing and a repeating order (`award.orders`, unverified), the duel rules stay two-player, the list stays
   starts × all players, and the award reading puts a start the first board shows as a teammate's in `teammateStarts`.
+  With a teammate's list read (C2 coordination; `readTeammatePicks` in `src/tools/team.ts`: `TeammateOrders`, then
+  `GetTerritoryPicks` — V5/V6, unverified) `planPicks` takes `team.lists`: each teammate's top (the territory limit) leaves my
+  candidates and is `friendly` in the simulation (never captured, so a bonus with one never completes for me — a bonus pays one
+  holder; no threat; a known teammate start); my list is shortened to my starts + the opponents' only when disjoint from every
+  teammate list and each is as long as the client allows (a short one can run out, and war.app then grants from mine); `plan.team` reports `overlap`, `sharedBonuses` and `mirrored` (my primary and each top laid on the hands a
+  reversing award gives, `splits` naming what a repeating order would split; its `submitPicks`, the shared top then my
+  fallback, is capped at `maxPicks`). No list read, or only empty ones: byte-identical.
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes; in a two-player game without `spread` it also offers a
   coverage-first `alternative` (a pair, then the picks that most raise `coverage` — the reasonable bonuses reached within 2 moves
   past no wasteland; `coverageModel`) with its own `submitPicks`, only when it covers more, the primary unchanged (#166). `docs/STRATEGY.md` states the community
@@ -193,9 +200,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   found by type name, orders by class and read order). `withTeammateOrders` sets `BoardState.teammateOrders`
   (by GameFeed id, my entry out) on the live boards of `warapp_plan_turn`, `warapp_check_plan`,
   `warapp_submit_turn` and `warapp_get_team` when the dict is there — no key otherwise (1v1, FFA: goldens
-  unchanged); no rule reads it yet (C3), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
+  unchanged), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
   the team hand is `readHand` over `handOwners` (`{ inPlay: false }` when the settings put no card in play); unread team chat is counted from the web chat only. All
   UNVERIFIED live (V1, V5, V6, #163); absent means unknown (`null`), never "none".
+- **The planner reads teammate orders (C3.4–C3.7) only when `board.teammateOrders` carries them** (none in the
+  golden corpus: those plans are byte-identical). `teamFocusOf` (`src/analysis/plan/team.ts`, `PlanCtx.teamFocus`)
+  is a tie-break only: a capture of a player a teammate attacks ranks above an otherwise equal one (balanced greedy
+  after the score; rule 4e before its last keys), with a "Team focus" rationale line. `team.support` (a teammate's
+  border that falls given their entered deploys and orders out, where my idle armies beside it — `avail` beyond
+  `keepFor`/two-step/cover keeps — make it hold) and `team.jointCaptures` (neither takes it alone; the turn
+  simulator with only those attacks, both orders, also against the owner's deploy; `mustGoFirst` under a cyclic
+  `game.moveOrder`) are advisory: a move onto a teammate is V7, so neither is ever in `orders`. Cards
+  (`src/team-cards.ts`): a card a teammate entered a play or discard of leaves my hand before `chooseCardPlays`, and
+  plan_turn's `cards.team.roles` says who plays each card (V5, V8 unverified).
+- **The team brief (C4) is `warapp_team_brief`, read-only: data for a team-chat message, never sent.** It plans
+  as plan_turn does (`livePlanSetup`, `award: false`) and writes nothing (no board cache, award or outlook); the
+  pure parts are `src/analysis/team-brief.ts` (`opponentIncomes`/`incomeBasis`, `briefConflicts`, `briefAsks`,
+  `pickOverlap`, `picksLost`). Stages: picking (my list, teammates' lists, overlap, shared bonuses), turn 1 (the
+  picks my kept list lost, `readAward` computed without writing), each turn (incomes and basis, deploys and
+  attacks, asks, offers = `team.support`, cards, conflicts; `conflicts.read: null` = no teammate orders read).
+  `warapp_join_game` takes `team`: refused outside a team game, with random teams, or when full or not offered;
+  it is the int32 AcceptOpenSeat already sends (the client's team picker passes the chosen team: bundle, UNVERIFIED
+  live). The preview lists that team's seats by in-game id, human or AI (`GameInfoPlayer` field 4 is IsAI).
 - **The agreement ledger (part A2 of `docs/PLAN-TEAMS.md`).** An agreement (a truce) exists only when
   recorded with `warapp_record_agreement` (structured terms; chat is never parsed into one), at
   `<dataDir>/relations/<gameId>-<playerId>.json` (`src/relations-store.ts`: one file per account, ids,

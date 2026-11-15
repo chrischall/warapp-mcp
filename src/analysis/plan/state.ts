@@ -39,6 +39,11 @@ export interface OpponentsCtx {
   allies: Set<number>;
   /** A player whose stacks threaten me and whose territories I may attack: not me, not a teammate. */
   foe: (p: number) => boolean;
+  /**
+   * PLAN-TEAMS C3.4: per opponent my teammates' entered orders attack this turn (`board.teammateOrders`,
+   * V5, unverified live), the teammates attacking it, sorted. Empty with no teammate orders read.
+   */
+  teamFocus: ReadonlyMap<number, readonly number[]>;
   /** B2: the truces in force (plan/relations.ts); with none, every check is false. */
   truce: Truce;
   /** The turn being planned, when known (the opening board is the first turn's only, #128). */

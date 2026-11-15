@@ -52,6 +52,7 @@ import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type ProfilePlayer } from '../p
 import type { BoardCtx, CombatCtx, OpponentsCtx, PlanCtx, PlanState, StandingCtx } from './state.js';
 import { byNum } from './util.js';
 import { truceOf } from './relations.js';
+import { teamFocusOf } from './team.js';
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
@@ -276,6 +277,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     game: ctx,
     allies,
     foe,
+    teamFocus: teamFocusOf(board, allies, foe),
     truce,
     turnNow,
     incomePrior,

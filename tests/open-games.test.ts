@@ -173,14 +173,22 @@ describe('parseOpenGamesPage', () => {
             players: [
               { id: 111111, name: 'Ann', state: P_PLAYING, committed: false, color: 4 },
               { id: 222222, name: 'Gone', state: P_DECLINED, committed: false, color: 9 },
-              { id: 333333, name: 'Cy', state: P_PLAYING, committed: false },
+              { id: 333333, name: 'Cy', state: P_PLAYING, committed: false, team: 1, ai: true },
             ],
           },
         ]),
       ),
       bundle,
     );
-    expect(out.lobbies.get(2001)).toEqual({ seatedPlayerIds: [111111, 333333], colorsTaken: [4, 9] });
+    // C4: each seated player's team and whether the seat is an AI (the client's IsAI, GameInfoPlayer's fifth field).
+    expect(out.lobbies.get(2001)).toEqual({
+      seatedPlayerIds: [111111, 333333],
+      colorsTaken: [4, 9],
+      seated: [
+        { id: 111111, team: -1, ai: false },
+        { id: 333333, team: 1, ai: true },
+      ],
+    });
     expect(JSON.stringify(out.games)).not.toContain('colorsTaken');
   });
 
@@ -201,7 +209,7 @@ describe('parseOpenGamesPage', () => {
       ),
       bundle,
     );
-    expect(out.lobbies.get(2001)).toEqual({ seatedPlayerIds: [111111], colorsTaken: [7] });
+    expect(out.lobbies.get(2001)).toEqual({ seatedPlayerIds: [111111], colorsTaken: [7], seated: [{ id: 111111, team: -1, ai: false }] });
     expect(out.games[0]).toMatchObject({ players: 1, openSeats: 2, seats: 4 });
     expect(markJoined(out.games, out.lobbies, 333333)[0]).not.toHaveProperty('joined');
     expect(markJoined(out.games, out.lobbies, 111111)[0]).toMatchObject({ joined: true });

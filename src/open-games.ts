@@ -56,7 +56,8 @@ const GI = {
   settings: 21,
 } as const;
 /** GameInfoPlayer: the colour (an optional GameColor), the in-game id, the state (GamePlayerState) and the team. */
-const GP = { color: 0, id: 6, state: 7, team: 8 } as const;
+// `ai` is the client's IsAI (GameInfoPlayer is built from GamePlayer's get_IsAI in that place; read from the bundle).
+const GP = { color: 0, ai: 4, id: 6, state: 7, team: 8 } as const;
 
 /** GameInfoSettings field positions in read order. */
 const GS = {
@@ -153,6 +154,8 @@ export interface OpenLobby {
   seatedPlayerIds: number[];
   /** The GameColor indices the lobby's players hold (declined and removed players included, as the client counts them). */
   colorsTaken: number[];
+  /** The players holding a seat: in-game id, team (-1: none) and whether the seat is an AI (C4). */
+  seated: { id: number; team: number; ai: boolean }[];
 }
 
 interface OpenGamesPage {
@@ -319,6 +322,8 @@ interface LobbyPlayer {
   invited: boolean;
   /** The GameColor index, or null when the player has none. */
   color: number | null;
+  /** An AI seat (read loosely: anything but `true` is human). */
+  ai: boolean;
 }
 
 /** One GameInfoPlayer record, or `undefined` when it does not fit. */
@@ -331,7 +336,7 @@ function lobbyPlayer(p: unknown): LobbyPlayer | undefined {
   const color = colorIndexOf(f[GP.color]);
   if (!isInt(id) || !isInt(state) || !isInt(team)) return undefined;
   const name = playerStateName(state);
-  return { id, team, seated: holdsSeat(name), invited: name === 'Invited', color: color ?? null };
+  return { id, team, seated: holdsSeat(name), invited: name === 'Invited', color: color ?? null, ai: f[GP.ai] === true };
 }
 
 /**
@@ -389,7 +394,10 @@ function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | u
   if (teamGame) game.openSeatTeams = openSeatTeams;
   if (settings?.cards) game.cards = settings.cards;
   const colorsTaken = [...new Set(all.map((p) => p.color).filter((c): c is number => c !== null))];
-  return { game: orderKeys(game), lobby: { seatedPlayerIds: seated.map((p) => p.id), colorsTaken } };
+  return {
+    game: orderKeys(game),
+    lobby: { seatedPlayerIds: seated.map((p) => p.id), colorsTaken, seated: seated.map((p) => ({ id: p.id, team: p.team, ai: p.ai })) },
+  };
 }
 
 /** `games` with `joined: true` on each lobby where the in-game id `me` holds a seat. */
