@@ -443,7 +443,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   or leaves a border it presses uncovered; one a Diplomacy card in force covers is passed over), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
   percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
-  Gift of the members that complete a teammate's nearer bonus. **A team hand's cards carry `owner`**
+  Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only
+  where the fog hides what the plan needs, never with fog off: Spy on an opponent out of view (else the
+  owner shown beside my most hidden stacks), Surveillance on a bonus I hold half or more of with a fogged
+  member (else the most valuable with a hidden border of mine), Reconnaissance on the hidden territory
+  beside the most of mine. **A team hand's cards carry `owner`**
   (the in-game id read under, mine when under me at all; V8 unverified): the planner plays, discards and
   advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
   teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not

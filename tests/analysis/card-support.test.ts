@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { airliftAdvice, diplomacyAdvice, giftAdvice, pressures, sanctionsAdvice } from '../../src/analysis/card-support.js';
+import { airliftAdvice, diplomacyAdvice, giftAdvice, intelAdvice, pressures, sanctionsAdvice, type IntelCard } from '../../src/analysis/card-support.js';
 import type { CardBoard } from '../../src/analysis/card-threats.js';
 import type { SharedBonus } from '../../src/analysis/plan/team.js';
-import { board, mine, neutral, tinyMap } from './helpers.js';
+import { board, fogged, mine, neutral, tinyMap } from './helpers.js';
 
 // tinyMap: 1 ─ 2 ─ 3 triangle (bonus A +3), 3 ─ 4 ─ 5 ─ 6 ─ 7 (bonus B +2: 4, 5).
 const ME = 10;
@@ -179,5 +179,49 @@ describe('giftAdvice (D2)', () => {
     expect(giftAdvice({ ...c, moves: [{ from: 3, to: 4, armies: 3, kind: 'transfer' }] }, shared, 1)).toBeUndefined();
     const unit = ts().map((t) => (t.territoryId === 3 ? { ...t, specialUnits: [{ kind: 'commander' as const, id: 'd'.repeat(32), playerId: ME }] } : t));
     expect(giftAdvice(cb(unit, { friends: new Set([MATE]) }), shared, 1)).toBeUndefined();
+  });
+});
+
+describe('intelAdvice (G2): the spy cards only where they reveal what the plan needs', () => {
+  const all = new Set<IntelCard>(['Spy', 'Reconnaissance', 'Surveillance']);
+  // I hold 1 and 2 of bonus A (1, 2, 3); the fog hides 3, which borders both.
+  const building = () => [mine(1, 5), mine(2, 7), fogged(3), neutral(4, 2), neutral(5, 2), neutral(6, 2), b(7, 3)];
+
+  it('Surveillance on the bonus I am completing, Reconnaissance on the hidden border, Spy on an unseen opponent', () => {
+    const { advice, hold } = intelAdvice(cb(building()), { fog: 'Foggy', opponents: [A, B], held: all });
+    expect(advice).toEqual([
+      { card: 'Spy', player: A, why: expect.stringMatching(/^Spy on player 20: none of its territories is in view/) },
+      { card: 'Surveillance', bonus: 101, why: expect.stringMatching(/^Surveillance on bonus 101: you hold 2 of its 3 territories and the fog hides 3/) },
+      { card: 'Reconnaissance', target: 3, why: expect.stringMatching(/^Reconnaissance on 3: it borders 2 of your territories \(12 armies\)/) },
+    ]);
+    expect(hold).toEqual([]);
+  });
+
+  it('never with fog off', () => {
+    expect(intelAdvice(cb(building()), { fog: 'NoFog', opponents: [A, B], held: all })).toEqual({ advice: [], hold: [] });
+  });
+
+  it('Spy on the owner shown beside me whose stack the fog hides, when every opponent is in view', () => {
+    const ownerOnly = { territoryId: 4, owner: { kind: 'player' as const, playerId: B }, armies: null, fogLevel: 'OwnerOnly' };
+    const { advice } = intelAdvice(cb([neutral(1, 2), neutral(2, 2), mine(3, 9), ownerOnly, a(5, 3), neutral(6, 2), b(7, 3)]), {
+      fog: 'Foggy',
+      opponents: [A, B],
+      held: new Set<IntelCard>(['Spy', 'Surveillance']),
+    });
+    expect(advice).toEqual([
+      { card: 'Spy', player: B, why: expect.stringMatching(/^Spy on player 30: the fog hides the armies on its territory beside yours/) },
+      { card: 'Surveillance', bonus: 104, why: expect.stringMatching(/^Surveillance on bonus 104 \(\+4\)/) },
+    ]);
+  });
+
+  it('holds each card, saying why, when the fog hides nothing the plan needs', () => {
+    const { advice, hold } = intelAdvice(cb([mine(1, 5), mine(2, 5), mine(3, 5), neutral(4, 2), neutral(5, 2), a(6, 2), fogged(7)]), {
+      fog: 'Foggy',
+      opponents: [A],
+      held: all,
+    });
+    expect(advice).toEqual([]);
+    expect(hold).toHaveLength(3);
+    expect(hold[0]).toMatch(/^Hold the Spy card: the fog hides nothing the plan needs/);
   });
 });

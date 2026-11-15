@@ -1628,7 +1628,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'least in this game leave first; the timing cards are kept longest); never Blockade, Order Delay, Bomb or Emergency ' +
           'Blockade — `cards.advice` says where those pay (Order Delay above the calm orders, a Bomb target or hold it, an ' +
           "Emergency Blockade wall; Diplomacy on the opponent pressing you hardest when two or more do, Sanctions on the leader, an Airlift onto a " +
-          "border of yours or a teammate's that falls without it, a Gift that completes a teammate's bonus — each with an `order` to pass to " +
+          "border of yours or a teammate's that falls without it, a Gift that completes a teammate's bonus, Spy, Reconnaissance or Surveillance " +
+          'where the fog hides what the plan needs (never with fog off) — each with an `order` to pass to ' +
           "warapp_submit_turn, never added to the orders), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
           "order to send them (both players' orders interleave). The full rule list is in the planner's header and the warapp-mcp skill. " +
           'When this server kept your pick list (warapp_submit_picks or warapp_get_my_picks during distribution), ' +

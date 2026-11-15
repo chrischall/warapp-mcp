@@ -153,6 +153,21 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], plan })).view.sanctions?.player).toBe(FOE.id);
   });
 
+  it('G2: advises the spy cards where the fog hides what the plan needs, each with its order, and never with fog off', () => {
+    const fog = { territoryId: 3, owner: { kind: 'unknown' as const }, armies: null, fogLevel: 'Fogged' };
+    const territories = [me(1, 5), me(2, 7), fog, neutral(4, 2), neutral(5, 2), neutral(6, 2), foe(7, 3)];
+    const hand = [card(2, 'Spy', 'a'), card(10, 'Reconnaissance', 'b'), card(11, 'Surveillance', 'c')];
+    const { view, warnings } = adviseCards(input({ territories, game: ffa, hand }));
+    expect(view.spy).toEqual({ player: FOE2.id, order: { kind: 'card', card: 'a'.repeat(32), player: FOE2.id } });
+    expect(view.reconnaissance).toEqual({ target: 3, order: { kind: 'card', card: 'b'.repeat(32), target: 3 } });
+    expect(view.surveillance).toEqual({ bonus: 101, order: { kind: 'card', card: 'c'.repeat(32), bonus: 101 } });
+    expect(warnings.join('\n')).toMatch(/Spy on player 8811111299: none of its territories is in view.*Advice only, not in the orders/);
+    for (const o of [view.spy!.order, view.reconnaissance!.order, view.surveillance!.order]) expect(turnOrdersArg.safeParse([o]).success).toBe(true);
+    const off = adviseCards(input({ territories, game: { ...ffa, settings: { ...settings(), fog: 'NoFog' } }, hand }));
+    expect(off.view.spy ?? off.view.reconnaissance ?? off.view.surveillance).toBeUndefined();
+    expect(off.warnings.join('\n')).not.toMatch(/Spy|Reconnaissance|Surveillance/);
+  });
+
   it('G2: Sanctions pass over a truce partner, saying why', () => {
     const truces = [{ player: FOE2.id, state: 'active' as const, coveredMine: [4] }];
     const { view, warnings } = adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], truces }));

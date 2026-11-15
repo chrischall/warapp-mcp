@@ -1,7 +1,8 @@
 // Where to play the cards warapp_submit_turn can play but the planner never does (PLAN-TEAMS part D2):
 // Diplomacy on the opponent pressing me hardest when two or more are, Sanctions on the leader, Airlift
 // onto a border of mine or a teammate's that falls without it, and Gift as team support (a territory
-// that completes a teammate's bonus). Advice only: nothing here changes the plan or its orders. Pure and
+// that completes a teammate's bonus); and (G2) Spy, Reconnaissance and Surveillance only where the fog
+// hides what the plan needs. Advice only: nothing here changes the plan or its orders. Pure and
 // deterministic (ties on ascending id); no I/O.
 //
 // Rules (docs/STRATEGY.md, the wiki's card pages): a Diplomacy card stops attacks between its two
@@ -10,8 +11,11 @@
 // landing on a teammate's territory become the teammate's; a Gift moves a territory and its armies after
 // the airlifts and before the attacks. The card plays' encodings are UNVERIFIED live (V9).
 
+import { bonusTerritories } from './bonuses.js';
 import { COMMANDER_STRENGTH } from './combat.js';
 import { reader, type CardBoard } from './card-threats.js';
+import { neighborsOf } from './graph.js';
+import { ownerShown, visibleState } from './plan/shared.js';
 import type { SharedBonus } from './plan/team.js';
 
 /** A truce in force, as the Diplomacy advice reads it (the plan's relations). */
@@ -291,4 +295,123 @@ export function giftAdvice(cb: CardBoard, shared: readonly SharedBonus[], gifts:
       `(+${best.value} a turn for the team; a bonus pays only the player who holds all of it).` +
       (borders.length ? ` ${borders.join(', ')} ${borders.length === 1 ? 'faces' : 'face'} an opponent: your teammate must hold ${borders.length === 1 ? 'it' : 'them'}.` : ''),
   };
+}
+
+/** The information cards (G2): Spy (a player), Reconnaissance (a territory), Surveillance (a bonus). */
+export type IntelCard = 'Spy' | 'Reconnaissance' | 'Surveillance';
+
+export interface IntelAdvice {
+  card: IntelCard;
+  /** Spy: the player to see. */
+  player?: number;
+  /** Reconnaissance: the territory to see. */
+  target?: number;
+  /** Surveillance: the bonus to see. */
+  bonus?: number;
+  why: string;
+}
+
+/**
+ * G2: where an information card reveals something the plan needs — never with fog off, and never just
+ * to see more. Three needs, read off the board: a border of mine whose neighbour the fog hides (its
+ * armies unknown: an opponent may stand there), a bonus I am completing (I hold half its members or more, not all) with
+ * a member the fog hides, and an opponent with no territory in view. Spy goes on an unseen opponent, else
+ * on the owner shown beside the most hidden stacks next to me; Surveillance on the bonus I am completing
+ * that is nearest done (then the most valuable, then ascending id), else the bonus worth the most with a
+ * hidden border of mine in it; Reconnaissance on the hidden territory next to the most of mine (then the
+ * most armies of mine beside it, then ascending id), else a hidden member of the bonus I am completing.
+ * `hold` says, for a card held with nothing to reveal, why it is kept. Pure; ties on ascending id.
+ */
+export function intelAdvice(
+  cb: CardBoard,
+  opts: { fog?: string; opponents: readonly number[]; held: ReadonlySet<IntelCard> },
+): { advice: IntelAdvice[]; hold: string[] } {
+  if (opts.fog === 'NoFog' || !opts.held.size) return { advice: [], hold: [] };
+  const r = reader(cb);
+  const hidden = (t: number) => !visibleState(r.state.get(t));
+  const mineNext = (t: number) => neighborsOf(cb.graph, t).filter((n) => r.isMine(n));
+  // A border of mine whose neighbour the fog hides.
+  const blind = r.ids
+    .filter((t) => !r.isMine(t) && hidden(t) && mineNext(t).length)
+    .map((t) => ({ t, next: mineNext(t).length, armies: mineNext(t).reduce((a, n) => a + r.armiesOf(n), 0) }))
+    .sort((a, b) => b.next - a.next || b.armies - a.armies || a.t - b.t);
+  // A bonus I am completing with a member the fog hides.
+  const building = cb.graph.map.bonuses
+    .filter((b) => b.value > 0)
+    .map((b) => {
+      const ts = bonusTerritories(cb.graph, b.id);
+      const held = ts.filter((t) => r.isMine(t)).length;
+      return { id: b.id, value: b.value, size: ts.length, held, fogged: ts.filter((t) => !r.isMine(t) && hidden(t)) };
+    })
+    .filter((b) => b.size > 0 && 2 * b.held >= b.size && b.held < b.size && b.fogged.length)
+    .sort((a, b) => b.held / b.size - a.held / a.size || b.value - a.value || a.id - b.id);
+  // An opponent with no territory in view.
+  const inView = new Set(r.ids.flatMap((t) => {
+    const s = ownerShown(r.state.get(t));
+    return s?.owner.kind === 'player' ? [s.owner.playerId] : [];
+  }));
+  const unseen = [...opts.opponents].filter((p) => p !== cb.me && !cb.friends?.has(p) && !inView.has(p)).sort((a, b) => a - b);
+  // An owner shown beside me whose stack the fog hides (owner-only fog).
+  const shownBeside = new Map<number, number>();
+  for (const { t } of blind) {
+    const s = ownerShown(r.state.get(t));
+    if (s?.owner.kind === 'player' && r.foe(s.owner.playerId)) shownBeside.set(s.owner.playerId, (shownBeside.get(s.owner.playerId) ?? 0) + 1);
+  }
+  const hiddenStacks = [...shownBeside].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+
+  const advice: IntelAdvice[] = [];
+  const hold: string[] = [];
+  const nothing = (card: IntelCard) =>
+    hold.push(`Hold the ${card} card: the fog hides nothing the plan needs this turn (no hidden border of yours, no bonus you are completing with a fogged member, no opponent out of view).`);
+  if (opts.held.has('Spy')) {
+    if (unseen.length) {
+      const p = unseen[0]!;
+      advice.push({ card: 'Spy', player: p, why: `Spy on player ${p}: none of its territories is in view, so its income and stacks are unknown to the plan.` });
+    } else if (hiddenStacks) {
+      const [p, n] = hiddenStacks;
+      advice.push({
+        card: 'Spy',
+        player: p,
+        why: `Spy on player ${p}: the fog hides the armies on ${n === 1 ? 'its territory' : `${n} of its territories`} beside yours, so the threat there is a guess.`,
+      });
+    } else nothing('Spy');
+  }
+  if (opts.held.has('Surveillance')) {
+    const b = building[0];
+    if (b) {
+      advice.push({
+        card: 'Surveillance',
+        bonus: b.id,
+        why: `Surveillance on bonus ${b.id}: you hold ${b.held} of its ${b.size} territories and the fog hides ${b.fogged.join(', ')}, so what finishing it costs is a guess.`,
+      });
+    } else {
+      const blindSet = new Set(blind.map((x) => x.t));
+      const best = cb.graph.map.bonuses
+        .filter((x) => x.value > 0)
+        .map((x) => ({ id: x.id, value: x.value, n: bonusTerritories(cb.graph, x.id).filter((t) => blindSet.has(t)).length }))
+        .filter((x) => x.n > 0)
+        .sort((a, c) => c.value - a.value || c.n - a.n || a.id - c.id)[0];
+      if (best)
+        advice.push({
+          card: 'Surveillance',
+          bonus: best.id,
+          why: `Surveillance on bonus ${best.id} (+${best.value}): the fog hides ${best.n} of its territories beside yours, so who holds it, and what they earn, is a guess.`,
+        });
+      else nothing('Surveillance');
+    }
+  }
+  if (opts.held.has('Reconnaissance')) {
+    const x = blind[0];
+    if (x) {
+      advice.push({
+        card: 'Reconnaissance',
+        target: x.t,
+        why: `Reconnaissance on ${x.t}: it borders ${x.next} of your territories (${x.armies} armies) and the fog hides what stands there.`,
+      });
+    } else if (building[0]) {
+      const t = building[0].fogged[0]!;
+      advice.push({ card: 'Reconnaissance', target: t, why: `Reconnaissance on ${t}: a member of bonus ${building[0].id}, which you are completing, hidden by the fog.` });
+    } else nothing('Reconnaissance');
+  }
+  return { advice, hold };
 }
