@@ -661,7 +661,8 @@ export function captureHelper(
     // they kill by design (each attacks a stack larger than it can take), so a combined capture
     // of a player's territory can lose more than the whole stack it destroys.
     // Rule 4e in contact (#107) asks the same of its enemy captures.
-    if ((armiesBehind || ps.evenTradesOnly) && tg.enemy) {
+    const even = (armiesBehind || ps.evenTradesOnly) && tg.enemy;
+    if (even) {
       const lost =
         plan.softeners.reduce((n, x) => n + x.armies - x.survivors, 0) + plan.armies - plan.survivors;
       const killed = plan.softeners.reduce((n, x) => n + x.kills, 0) + plan.left;
@@ -674,6 +675,9 @@ export function captureHelper(
         return false;
       }
     }
+    // #265 review: what each source keeps back from this attack (#121, #172, #179), read before the
+    // capture lands, so a later rebalance never spends it.
+    const keeps = new Map([...plan.softeners.map((x) => x.from), plan.finisher].map((x) => [x, keepOf(x, t)] as const));
     const before = { avail: new Map(avail), incoming: new Map(incoming), deployed: new Map(deployed), budget: ps.budget };
     deploy(plan.finisher, plan.need);
     for (const x of plan.softeners) {
@@ -727,7 +731,7 @@ export function captureHelper(
       `The capture of ${label(t)} combines ${n} attacks that must run in this order (${order}): the first ${n === 2 ? 'one fails' : `${n - 1} fail`} by design, only wearing the defenders down; the arithmetic is exact only at 0% luck under straight rounding.`,
     );
     rationale.push(combinedLine(t, plan, reason));
-    combinedPlans.set(t, { plan, reason, start: defendersAt(t), real: armiesOf(t) });
+    combinedPlans.set(t, { plan, reason, start: defendersAt(t), real: armiesOf(t), keeps, even });
     return true;
   };
   /** The rationale line of a combined capture (rule 3a). */
@@ -737,19 +741,25 @@ export function captureHelper(
       .join(', then ')}, then from ${label(plan.finisher)} with ${plan.armies}${plan.need ? ` (deploy ${plan.need} there)` : ''}, taking the last ${plan.left}: ${reason}.`;
   /**
    * #265: each combined capture as built — the defenders it was sized on (`start`; `real`, those
-   * standing there now) — for {@link rebalanceCombined}. An entry whose moves have changed since
-   * (a restore, a capture undone) is ignored there.
+   * standing there now), what each source kept back from it (`keeps`: keepOf, #121/#172/#179) and
+   * whether it had to trade at least even (`even`, rule 0p.3 / 4e) — for {@link rebalanceCombined}.
+   * An entry whose moves have changed since (a restore, a capture undone) is ignored there.
    */
-  const combinedPlans = new Map<number, { plan: Combined; reason: string; start: number; real: number }>();
+  const combinedPlans = new Map<
+    number,
+    { plan: Combined; reason: string; start: number; real: number; keeps: Map<number, number>; even: boolean }
+  >();
   /**
    * #265: once the captures are known, a combined capture one of whose sources is a weak member of
    * a bonus this turn completes (`weakMember`, plan/completed.ts) is rebalanced at the same kills to
    * leave armies on it: every split of the same sources that still takes the target — each softener
    * killing fewer than the defenders it meets, the finisher taking the rest with no new deploy,
-   * landing at least as many survivors — and leaves every other source as it held (a border that
-   * held after the captures still holds; any other source no weaker), is judged by the armies it
-   * leaves on the weak members up to their holds, then the fewest armies lost, then the smallest
-   * change. Only one that leaves them more is taken. Live, a 14 + 18 capture could have been 15 + 17
+   * landing at least as many survivors — and leaves every other source as it held (never below
+   * what it kept back when the capture was built — the #121 safe-border keep, the #172 two-step
+   * hold, the #179 cover — and a border that held after the captures still holds), never trading
+   * below even where the capture had to (rule 0p.3 / 4e), is judged by the armies it leaves on the
+   * weak members up to their holds, then the smallest change, then the fewest armies lost: once the
+   * members hold, no more is moved. Only one that leaves them more is taken. Live, a 14 + 18 capture could have been 15 + 17
    * for the same kills and left its 1-army member beside an enemy that could deploy 5 one more army.
    * Never under No-Split (each order sends its whole stack) and only at the 0%-luck straight-round
    * arithmetic a combined capture is built on. `stays` is planPass's view of a territory's armies.
@@ -764,7 +774,7 @@ export function captureHelper(
     for (const t of [...combined].sort(byNum)) {
       const rec = combinedPlans.get(t);
       if (!rec || !captured.has(t)) continue;
-      const { plan, reason, start, real } = rec;
+      const { plan, reason, start, real, keeps, even } = rec;
       const attackOf = (from: number, armies: number) =>
         moves.find((m) => m.kind === 'attack' && m.to === t && m.from === from && m.armies === armies);
       const softMoves = plan.softeners.map((x) => attackOf(x.from, x.armies));
@@ -791,7 +801,9 @@ export function captureHelper(
         return held && (toTake(left + unitsAt(x)) ?? Infinity) > b.threat;
       };
       const kept = (x: number, left: number) => Math.min(left, staysNow.get(x)! + weak.get(x)!.need);
-      const cap = (x: number) => orig.get(x)! + avail.get(x)!;
+      // A weak member never sends more (judge refuses it); any other source spends only what it
+      // did not keep back when the capture was built.
+      const cap = (x: number) => orig.get(x)! + (weak.has(x) ? avail.get(x)! : Math.max(0, avail.get(x)! - keeps.get(x)!));
       type Split = { soft: Softener[]; armies: number; left: number; survivors: number; score: number; lost: number; change: number };
       const judge = (soft: Softener[], armies: number, left: number): Split | null => {
         const survivors = armies - straightKills(left, def);
@@ -810,10 +822,12 @@ export function captureHelper(
           lost += y.armies - y.survivors;
           change += Math.abs(y.armies - orig.get(y.from)!);
         }
+        // Every split kills all `start` defenders.
+        if (even && lost > start) return null;
         return { soft, armies, left, survivors, score, lost, change };
       };
       const better = (a: Split, b: Split | null) =>
-        !b || a.score > b.score || (a.score === b.score && (a.lost < b.lost || (a.lost === b.lost && a.change < b.change)));
+        !b || a.score > b.score || (a.score === b.score && (a.change < b.change || (a.change === b.change && a.lost < b.lost)));
       let best: Split | null = judge(plan.softeners, plan.armies, plan.left);
       if (!best) continue;
       const baseline = best.score;
@@ -855,7 +869,7 @@ export function captureHelper(
       const next: Combined = { softeners: chosen.soft, finisher: plan.finisher, armies: chosen.armies, need: plan.need, left: chosen.left, survivors: chosen.survivors };
       const line = rationale.indexOf(combinedLine(t, plan, reason));
       if (line >= 0) rationale[line] = combinedLine(t, next, reason);
-      combinedPlans.set(t, { plan: next, reason, start, real });
+      combinedPlans.set(t, { plan: next, reason, start, real, keeps, even });
       captureUndo.set(t, () => {
         for (const x of next.softeners) {
           avail.set(x.from, avail.get(x.from)! + x.armies);

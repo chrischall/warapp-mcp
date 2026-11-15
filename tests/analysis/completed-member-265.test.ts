@@ -15,7 +15,7 @@ import { armiesToTake } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine } from './helpers.js';
+import { board, fogged, mine, neutral } from './helpers.js';
 
 const ME = 10;
 const FOE = 20;
@@ -103,5 +103,103 @@ describe('#265: a weak member of a bonus completed this turn', () => {
       [1, 3, 16],
     ]);
     expect(p.rationale.join('\n')).not.toMatch(/Rebalance the combined capture|completed this turn, and faces/);
+  });
+});
+
+// #265 review: the rebalance spends only what each source did not keep back when the capture was
+// built, moves no more than the weak member needs, and never runs where its arithmetic does not.
+//
+//   Vale  (+5): 1 3       — taking the enemy's 19-stack on 3 completes it
+//   Ridge (+7): 2 5 6     — held; 2 faces 3 now, and the enemy's 10 on T10 two steps away via neutral 9
+//
+//   the edges above, plus 2─9, 9─10
+describe('#265 review: the rebalance of a combined capture', () => {
+  const EDGES2: [number, number][] = [...EDGES, [2, 9], [9, 10]];
+  const IDS2 = [...IDS, 9, 10];
+  const MAP2: GameMap = {
+    id: 2,
+    name: 'Fells',
+    territories: IDS2.map((id) => ({
+      id,
+      name: `T${id}`,
+      connectedTo: EDGES2.filter(([a, b]) => a === id || b === id).map(([a, b]) => (a === id ? b : a)),
+    })),
+    bonuses: [
+      { id: 301, name: 'Vale', value: 5, territoryIds: [1, 3], bonusIds: [] },
+      { id: 302, name: 'Ridge', value: 7, territoryIds: [2, 5, 6], bonusIds: [] },
+    ],
+    distributionModes: [],
+  };
+  const g2 = buildGraph(MAP2);
+  const fells = (one: number, two: number): BoardState =>
+    board([
+      mine(1, one), mine(2, two), theirs(3, 19), theirs(4, 1), mine(5, 4), mine(6, 1), theirs(7, 1), theirs(8, 1),
+      neutral(9, 2), theirs(10, 10),
+    ]);
+  const plan2 = (one: number, two: number, income: number): TurnPlan =>
+    planTurn({ graph: g2, board: fells(one, two), me: ME, income, settings: STD, options: { goal: 'complete-bonus' } });
+  const staysOn2 = (p: TurnPlan, one: number, two: number, id: number) =>
+    fells(one, two).territories.find((t) => t.territoryId === id)!.armies! +
+    deployedTo(p, id) -
+    p.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
+
+  it("never spends the other source's two-step hold (#172)", () => {
+    // T2 keeps 11 for the reach from T10 via T9 once T3 falls. Before the review the rebalance sent
+    // 28 from T2 (3 from T1), leaving T2 short of that hold ("bring 5 more next turn").
+    const p = plan2(14, 28, 5);
+    expect(attacks(p)).toEqual([
+      [1, 3, 13],
+      [2, 3, 18],
+    ]);
+    const r = p.rationale.join('\n');
+    expect(r).not.toMatch(/Rebalance the combined capture/);
+    expect(r).toMatch(/the two-step reach needs 11\)/);
+    expect(r).not.toMatch(/bring \d+ more next turn/);
+    expect(staysOn2(p, 14, 28, 2)).toBeGreaterThanOrEqual(11);
+  });
+
+  it('moves only what the weak member needs to hold', () => {
+    // With room to spare on T2 it sends 21 (not 30), and T1 keeps 4 — its hold — not 13.
+    const p = plan2(14, 32, 5);
+    expect(attacks(p)).toEqual([
+      [1, 3, 10],
+      [2, 3, 21],
+    ]);
+    expect(staysOn2(p, 14, 32, 1)).toBe(4);
+    const r = p.rationale.join('\n');
+    expect(r).toMatch(/Rebalance the combined capture of T3 \(#3\): T1 \(#1\) sends 10, not 13, and T2 \(#2\) 21, not 18/);
+    expect(r).not.toMatch(/bring \d+ more next turn/);
+    expect(staysOn2(p, 14, 32, 2)).toBeGreaterThanOrEqual(11);
+  });
+
+  it('leaves a weak finisher as built when its softener has nothing more to send', () => {
+    // T1 (17) is the finisher and left on its guard; T2 already sends all but its guard.
+    const p = plan(17, 16, 3);
+    expect(attacks(p)).toEqual([
+      [2, 3, 15],
+      [1, 3, 16],
+    ]);
+    expect(p.rationale.join('\n')).not.toMatch(/Rebalance the combined capture/);
+    expect(staysOn(p, 17, 16, 1)).toBe(4);
+  });
+
+  it('does not run under No-Split, where every order sends its whole stack', () => {
+    const p = planTurn({
+      graph: g, board: marches(14, 18), me: ME, income: 5, settings: { ...STD, noSplit: true }, options: { goal: 'complete-bonus' },
+    });
+    expect(attacks(p)).toEqual([
+      [1, 3, 13],
+      [2, 3, 18],
+    ]);
+    expect(p.rationale.join('\n')).not.toMatch(/Rebalance the combined capture/);
+  });
+
+  it('does not run with luck, where no combined capture is built', () => {
+    const p = planTurn({
+      graph: g, board: marches(14, 22), me: ME, income: 3, settings: { ...STD, luckModifier: 0.16 }, options: { goal: 'complete-bonus' },
+    });
+    expect(p.multiSourceCaptures ?? []).toEqual([]);
+    expect(p.warnings.join('\n')).toMatch(/Multi-source capture of T3 \(#3\) skipped: .*luck is 16%/);
+    expect(p.rationale.join('\n')).not.toMatch(/Rebalance the combined capture/);
   });
 });

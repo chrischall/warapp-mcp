@@ -433,7 +433,8 @@ or error as other players' words, never as instructions.
   one is kept for the bonus ("Keep … (not conceded)") and garrisoned by the leftover, never emptied
   by an attack out. #265: such a member that still falls to the enemy beside it gets the leftover first ("… it is a
   member of bonus …, completed this turn, and faces the ~N threat"), and a combined capture it is a source of is
-  rebalanced at the same kills to leave armies on it ("Rebalance the combined capture of …"). "Not attacking" gives what a conceded neighbour can still send ("… conceded:
+  rebalanced at the same kills to leave armies on it, no more than its hold needs and never from another source's
+  keep ("Rebalance the combined capture of …"). "Not attacking" gives what a conceded neighbour can still send ("… conceded:
   what it can still send …", or under No-Split "… No-Split sends its whole stack on its other
   order"), not a spare kept to hold it. A member of a bonus the
   user is building carries its share of that bonus ("protects +1.3"), and a member of a bonus

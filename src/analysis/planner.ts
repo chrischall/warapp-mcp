@@ -726,9 +726,12 @@
 //     completes (plan/completed.ts: facing an enemy once the captures land, and falling to it) is
 //     rebalanced at the same kills to leave armies on it — any split of the same sources that
 //     still takes the target with no new deploy (each softener short of the last defender) and
-//     lands as many survivors, leaving every other source holding as it held, judged by the armies
-//     left on the weak members up to their holds, then the fewest lost, then the smallest change
-//     ("Rebalance the combined capture of …"). Never under No-Split.
+//     lands as many survivors, leaving every other source holding as it held and never spending
+//     what it kept back when the capture was built (#121's safe-border keep, #172's two-step hold,
+//     #179's cover), never below even where the capture had to trade even (rule 0p.3 / 4e), judged
+//     by the armies left on the weak members up to their holds, then the smallest change, then the
+//     fewest lost — once they hold, nothing more moves ("Rebalance the combined capture of …").
+//     Never under No-Split.
 //  4. Bonuses (value > 0) are scored by value / remaining capture cost, ties by
 //     fewest external borders, then id; focused bonuses come first. The economy test charges
 //     what a capture costs, not what it sends (#125): the armies its attackers lose (the

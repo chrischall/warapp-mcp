@@ -927,7 +927,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       #265 (`src/analysis/plan/completed.ts`): a member that still falls to the enemy beside it once
       the captures land gets the leftover's first call (rule 5, when it covers the hold whole —
       before the worse-order holds, the strike stack and any comfort margin), and a combined
-      capture it is a source of is first rebalanced at the same kills to leave armies on it.
+      capture it is a source of is first rebalanced at the same kills to leave armies on it — no
+      more than its hold needs, never spending what another source kept back when the capture was
+      built (the #121 keep, the #172 two-step hold, the #179 cover).
     - **Defensibility (#19).** A capture that completes a bonus is checked against the frontier
       it leaves: when holding the members a visible enemy could take next turn needs more than
       the next income, `balanced`/`defend` refuse it ("… indefensible …: not completed") and
