@@ -5,6 +5,7 @@ import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations } from '@chrischa
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { clientPickLimits } from '../analysis/picks.js';
+import { isTeamGame } from '../teams.js';
 import { parseGameId } from '../client.js';
 import {
   FOG_LEVEL_NAMES,
@@ -393,6 +394,13 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
         if (bounds && picks.length > bounds.max)
           lengthWarnings.push(
             `war.app's client lets a player list at most ${bounds.max} picks here (${game.players.length} players × ${bounds.perPlayer} territories each); got ${picks.length}. The extra picks may be ignored.`,
+          );
+        // A team game (C2): my list and my teammate's are not agreed, so a pick we both list goes to one of
+        // us; a list as long as the client allows (starts × all players) is the one that cannot run out.
+        if (bounds && isTeamGame(game.players) && picks.length < bounds.max)
+          lengthWarnings.push(
+            `In a team game your list and your teammate's are not agreed: a pick you both list goes to one of you. ` +
+              `A list of ${bounds.max} picks (${game.players.length} players × ${bounds.perPlayer} each) cannot run out; got ${picks.length}.`,
           );
         if (bounds && picks.length < bounds.min)
           lengthWarnings.push(

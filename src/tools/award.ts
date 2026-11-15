@@ -9,6 +9,7 @@ import type { Game, Player } from '../normalize.js';
 import { readFirstMover, resolveFirstMover, verifiedFirstMover, writeFirstMover, type FirstMover, type FirstMoverSource } from '../move-order.js';
 import { readPickRecord, writeAward } from '../pick-list.js';
 import { pickSettings } from './picks.js';
+import { isTeamGame, teammatesOf } from '../teams.js';
 
 interface AwardContext {
   reading: AwardReading;
@@ -61,7 +62,12 @@ export async function loadAward(
     // Only the first board shows what was granted: later I hold what I captured, too.
     if (turn !== 1) return undefined;
     const mine = board.territories.filter((t) => isMine(t, me.id)).map((t) => t.territoryId);
-    reading = readAward({ list: record.list, mine, players: game.players.length });
+    // A team game (C2): a start the first board shows as a teammate's is theirs, not an opponent's.
+    const mates = isTeamGame(game.players) ? new Set(teammatesOf(game.players, me).map((p) => p.id)) : undefined;
+    const teammateHeld = mates
+      ? board.territories.filter((t) => t.owner.kind === 'player' && mates.has(t.owner.playerId)).map((t) => t.territoryId)
+      : undefined;
+    reading = readAward({ list: record.list, mine, players: game.players.length, ...(teammateHeld ? { teammateHeld } : {}) });
     const state = new Map(board.territories.map((t) => [t.territoryId, t]));
     // A start the board shows as nobody's, mine or a neutral cannot be another player's: the list is not the one awarded from.
     if (reading?.opponentStarts.some((t) => contradicts(state.get(t), me.id))) reading = null;
@@ -151,6 +157,8 @@ export function awardView<T>(
   name: (id: number) => T,
 ): {
   opponentStarts: T[];
+  /** A team game only (C2): the starts the award proves that the first board showed as a teammate's. */
+  teammateStarts?: T[];
   allStartsKnown: boolean;
   awarded: AwardRole | null;
   firstMover: 'you' | 'opponent' | null;
@@ -163,7 +171,22 @@ export function awardView<T>(
   const whose = duel ? "the opponent's" : "another player's";
   const ids = (xs: readonly number[]) => xs.join(', ');
   const notes: string[] = [];
-  if (reading.opponentStarts.length)
+  const team = reading.teammateStarts;
+  if (team) {
+    // A team game (C2): each start the award proves is a teammate's (the board showed it) or an opponent's.
+    if (team.length)
+      notes.push(
+        `Your pick list ranked territor${team.length === 1 ? 'y' : 'ies'} ${ids(team)} above a pick you were granted, and the first board showed ` +
+          `${team.length === 1 ? 'it' : 'them'} as your teammate's: your teammate's start${team.length === 1 ? '' : 's'}.`,
+      );
+    if (reading.opponentStarts.length)
+      notes.push(
+        `Your pick list ranked territor${reading.opponentStarts.length === 1 ? 'y' : 'ies'} ${ids(reading.opponentStarts)} above a pick you were granted, ` +
+          `and the first board did not show ${reading.opponentStarts.length === 1 ? 'it' : 'them'} as your teammate's: an opponent's start ` +
+          "(unverified: that teammates see each other's territories; a fogged one could still be your teammate's).",
+      );
+    if (!team.length && !reading.opponentStarts.length) notes.push('You were granted the top of your list, so the award shows no start of another player.');
+  } else if (reading.opponentStarts.length)
     notes.push(
       `Your pick list ranked territor${reading.opponentStarts.length === 1 ? 'y' : 'ies'} ${ids(reading.opponentStarts)} above a pick you were granted, ` +
         `so ${reading.opponentStarts.length === 1 ? 'it was' : 'they were'} taken first: ${whose} start${reading.opponentStarts.length === 1 ? '' : 's'}` +
@@ -196,6 +219,7 @@ export function awardView<T>(
     );
   return {
     opponentStarts: reading.opponentStarts.map(name),
+    ...(team ? { teammateStarts: team.map(name) } : {}),
     allStartsKnown: reading.allStartsKnown,
     awarded: duel ? reading.role : null,
     firstMover: a.firstMover === null ? null : a.firstMover === 'me' ? 'you' : 'opponent',

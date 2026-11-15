@@ -125,6 +125,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
   raises the worst outcome. With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
   is listed first, since the first pick awarded carries the commander (#129).
+  In a team game (C2) only players off my team are threats (a known start may be a teammate's: the worst case), the award is
+  judged by both a reversing and a repeating order (`award.orders`, unverified), the duel rules stay two-player, the list stays
+  starts × all players, and the award reading puts a start the first board shows as a teammate's in `teammateStarts`.
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes; in a two-player game without `spread` it also offers a
   coverage-first `alternative` (a pair, then the picks that most raise `coverage` — the reasonable bonuses reached within 2 moves
   past no wasteland; `coverageModel`) with its own `submitPicks`, only when it covers more, the primary unchanged (#166). `docs/STRATEGY.md` states the community

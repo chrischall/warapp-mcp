@@ -8,10 +8,11 @@ import { clientPickLimits, planPicks, type CoverageReport, type PickGroup, type 
 import { DEFAULT_TERRITORY_LIMIT } from '../analysis/opponents.js';
 import { OWNER_PICKABLE } from '../live.js';
 import type { Game, GameSettings } from '../normalize.js';
-import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, viewArg } from './common.js';
+import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { loadLiveTerritories, type LiveContext } from './live-context.js';
-import { BRIDGE_NOTE } from './live.js';
+import { BRIDGE_NOTE, resolveMe } from './live.js';
+import { isTeamGame, teammatesOf } from '../teams.js';
 import { pickingNeutrals } from '../pick-list.js';
 import { mapOf } from './map.js';
 import { keepPickable } from './where.js';
@@ -56,6 +57,20 @@ function requirePickPhase(game: Game): void {
   });
 }
 
+/**
+ * My playing teammates in a team game (C2); none, with a warning, when my seat cannot be told — then
+ * every other player is treated as an opponent (the worst case). Never throws.
+ */
+async function teamOf(ctx: LiveContext, game: Game, warnings: string[]): Promise<Game['players']> {
+  try {
+    const me = await resolveMe(ctx, game.players, undefined);
+    return teammatesOf(game.players, me).filter((p) => (p.state ?? 'Playing') === 'Playing');
+  } catch {
+    warnings.push("Could not tell which seat is yours in this team game: every other player is treated as an opponent.");
+    return [];
+  }
+}
+
 export function registerPickTools(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_plan_picks',
@@ -83,6 +98,8 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           'way into every region matter more than the fastest start — the user chooses per game. ' +
           'Its `submitPicks` is exactly what warapp_submit_picks ' +
           'takes — review it with the user first. Refuses outside the picking stage or when nothing is pickable. ' +
+          'In a team game only the players off your team are threats, `team` names your teammates, and the list is judged by both award ' +
+          "orders that fit (`award.orders`; a team game's is unverified); your teammate's list is not read yet. " +
           `${BRIDGE_NOTE} Read-only on war.app; it never submits picks.`,
       ),
       _meta: lookupMeta(['plan my picks', 'which territories to pick', 'suggest picks', 'warzone picks']),
@@ -132,6 +149,8 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
       const active = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length;
       const players = Math.max(2, active || game.players.length);
       const settings = pickSettings(game.settings);
+      // A team game (C2): only the players off my team are opponents. My seat is looked up only here.
+      const team = isTeamGame(game.players) ? await teamOf(ctx, game, warnings) : undefined;
       const plan = planPicks({
         graph: graphOf(map),
         pickable,
@@ -141,6 +160,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         maxPicks,
         neutralArmies,
         spread: spread === true,
+        ...(team ? { team: { teammates: team.length } } : {}),
       });
       const name = namer(map);
       const groupView = (g: PickGroup) => ({
@@ -174,6 +194,9 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         players,
         territoryLimit,
         maxPicks,
+        ...(team
+          ? { team: { teammates: team.map((p) => ({ id: p.id, name: untrustedText(p.name) })), opponents: Math.max(0, players - 1 - team.length) } }
+          : {}),
         picks: plan.picks.map((p, i) => ({
           priority: i + 1,
           territory: name(p.territoryId),
@@ -188,6 +211,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         award: plan.award
           ? {
               outcomes: plan.award.outcomes,
+              ...(plan.award.orders ? { orders: plan.award.orders } : {}),
               worst: {
                 territories: plan.award.worst.territoryIds.map(name),
                 score: plan.award.worst.score,

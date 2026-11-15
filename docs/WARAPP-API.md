@@ -285,6 +285,10 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   `warapp_plan_picks` lists as many picks as the client allows.
 - Picks are awarded round by round in move order, the order reversing each round, each player
   getting their highest-ranked territory still free (the community wiki; not read from the bundle).
+  UNVERIFIED for team games: whether the order reverses each round, or how teams interleave, so the
+  pick advisor enumerates both a reversing and a repeating order there and reports the worst (C2).
+  Also unverified: that teammates see each other's territories on the first board, which is how the
+  award reading tells a teammate's start from an opponent's.
 - What the award is read for (#166, `src/analysis/award.ts`) rests on that rule and two more from
   the wiki, none checked against a live game: under a `Cycle` move order the award is turn 0 of the
   cycle (the first awarded moves second on turn 1; the client's help text says so too, and under

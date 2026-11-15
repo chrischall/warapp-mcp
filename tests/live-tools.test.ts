@@ -463,6 +463,25 @@ describe('warapp_submit_picks', () => {
     return { sent, warapp };
   }
 
+  it('in a team game warns when the list is shorter than starts × all players: lists are not agreed (C2)', async () => {
+    const s = picksServer();
+    const seats = (teams: boolean) => {
+      const g = game('DistributingTerritories', { settings: { ...settingsOf(), TerritoryLimit: 1 } });
+      const players = (g.players as Array<Record<string, string>>)
+        .slice(0, 4)
+        .map((p, i) => ({ ...p, ...(teams ? { team: i < 2 ? '0' : '1' } : {}) }));
+      return { ...g, players };
+    };
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [seats(true)], warapp: s.warapp });
+    const team = JSON.stringify(payload(await h.call('warapp_submit_picks', { game_id: GAME, territories: [161, 159] })));
+    expect(team).toMatch(/team game.*teammate.*A list of 4 picks/);
+    await h.harness.close();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [seats(false)], warapp: s.warapp });
+    const ffa = JSON.stringify(payload(await h.call('warapp_submit_picks', { game_id: GAME, territories: [161, 159] })));
+    expect(ffa).not.toMatch(/teammate/);
+    expect(s.sent).toEqual([]);
+  });
+
   it('previews the picks by name and sends nothing until confirmed', async () => {
     const s = picksServer();
     h = await liveHarness({

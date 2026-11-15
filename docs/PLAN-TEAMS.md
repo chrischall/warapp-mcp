@@ -536,6 +536,24 @@ In two steps, since `src/analysis/picks.ts` is large.
   alternative (the same top N) beside a split one, and keep a pair that only works in one hand on
   positions the award gives to one player. Shorten the list only when the lists are disjoint.
 
+*As built (C2, correctness):* `planPicks` takes `team: { teammates }` in a team game (`warapp_plan_picks` looks
+up my seat only then; a seat it cannot tell is warned about and every other player is an opponent). Only
+the (players − 1 − teammates) opponents' starts enter the threat chance, and a known start of another
+player may be a teammate's, so only the known starts beyond the teammates' count are taken from the
+opponents' unknown ones (the worst case); a lost pick that threatens a bonus is still taken as an
+opponent's. `pickOutcomes` takes `orders` and a team game enumerates both the reversing and a repeating
+award order (unverified which war.app uses), reporting the worst of either (`award.orders`). The duel rules
+(entry weight, answering fallback, coverage alternative) stay `players === 2`; contest by centrality still
+counts every player, since a teammate's list can take a pick too. The list length stays starts × all
+players; `warapp_submit_picks` warns in a team game when the list is shorter. The award reading
+(`readAward`'s `teammateHeld`, from `loadAward`'s first board) moves a start the board shows as a
+teammate's to `teammateStarts`; a fogged one stays an opponent's (team vision unverified). The output is
+unchanged outside a team game, and the golden corpus (turn plans) is untouched.
+
+TODO (C2, coordination — a later PR): read the teammate's list (C1's `TeammateOrders` picks, then
+`GetTerritoryPicks`, V6), report the overlap, penalise a pick into a bonus the teammate also picks into,
+offer the mirrored alternative beside the split one, and shorten the list only when the lists are disjoint.
+
 ### C3. The planner with a teammate
 
 Smallest and safest first; each is its own PR.
