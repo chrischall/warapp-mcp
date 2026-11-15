@@ -7,6 +7,7 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import * as T from './team-fallback.js';
 import { readGameRecord } from '../src/replay.js';
 import { writeOrdersCache } from '../src/trend.js';
 
@@ -366,5 +367,28 @@ describe('warapp_plan_turn with failed attacks in my cached orders (#240)', () =
   it('one failed attack only: no such line', async () => {
     const p = await planWithAttacks([7, 9, 11], [4]);
     expect(p.rationale.join('\n')).not.toMatch(/My attacks on/);
+  });
+});
+
+describe('warapp_track_opponents: teams from the game list when GameFeed sends none (#246)', () => {
+  const tracked = async () =>
+    payload<TrackPayload>(await h!.call('warapp_track_opponents', { game_id: T.TEAM_GAME })).opponents.map((o) => o.player.id);
+
+  it('the teammate the list names is not tracked as an opponent, and the list is asked once', async () => {
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: T.teamServer() });
+    expect((await tracked()).sort()).toEqual([Number(T.CY.feed), Number(T.DEE.feed)]);
+    expect(await tracked()).not.toContain(Number(T.BOB.feed));
+    expect(T.listReads(h)).toBe(1);
+  });
+
+  it('without the game list the teammate is tracked as an opponent (the control)', async () => {
+    h = await liveHarness({ feed: [T.teamGame()], pages: T.SIGNED_IN_ANN, warapp: T.teamServer('fail') });
+    expect(await tracked()).toContain(Number(T.BOB.feed));
+  });
+
+  it('GameFeed with teams: the game list is never asked', async () => {
+    h = await liveHarness({ feed: [T.teamGame({ teams: true })], pages: T.SIGNED_IN_ANN, warapp: T.teamServer() });
+    expect((await tracked()).sort()).toEqual([Number(T.CY.feed), Number(T.DEE.feed)]);
+    expect(T.listReads(h)).toBe(0);
   });
 });

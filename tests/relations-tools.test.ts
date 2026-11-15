@@ -12,6 +12,7 @@ import { withLedgerLock } from '../src/relations-store.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import * as T from './team-fallback.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -609,5 +610,48 @@ describe('warapp_submit_turn — breaking a truce (B2)', () => {
     expect(done.outcome).toBe('unconfirmed');
     expect(done.agreementsBroken).toEqual([{ agreement: 'a1', ledger: 'not-recorded', why: expect.stringMatching(/broken-by-me/) }]);
     expect(ledgerFile().agreements[0]!.status).toBe('agreed');
+  });
+});
+
+describe('warapp_get_relations: teams from the game list when GameFeed sends none (#246)', () => {
+  type Rel = { incomes: { opponents: Record<string, number | null> }; tacit: Array<{ player: { id: number } }> };
+  /** get_relations on turns 2–5 of the same board (Bob's border quiet throughout), one harness per turn sharing a data dir. */
+  async function quietTurns(opts: { teams?: boolean; myGames?: Parameters<typeof T.teamServer>[0] }) {
+    let dir: string | undefined;
+    let reads = 0;
+    let p: Rel | undefined;
+    for (const turns of [2, 3, 4, 5]) {
+      await h?.harness.close();
+      h = await liveHarness({
+        ...(dir ? { dataDir: dir } : {}),
+        feed: [T.teamGame({ turns, ...(opts.teams ? { teams: true } : {}) })],
+        pages: T.SIGNED_IN_ANN,
+        warapp: T.teamServer(opts.myGames),
+      });
+      dir = h.dataDir;
+      p = payload<Rel>(await h.call('warapp_get_relations', { game_id: T.TEAM_GAME }));
+      reads += T.listReads(h);
+    }
+    return { p: p!, reads };
+  }
+
+  it('the teammate the list names is no opponent: not in the incomes, never a tacit truce; the list is asked once', async () => {
+    const { p, reads } = await quietTurns({});
+    expect(Object.keys(p.incomes.opponents).sort()).toEqual([T.CY.feed, T.DEE.feed]);
+    expect(p.tacit).toEqual([]);
+    expect(reads).toBe(1);
+  });
+
+  it('without the game list the same board reads Bob as an opponent with a quiet border (the control)', async () => {
+    const { p } = await quietTurns({ myGames: 'fail' });
+    expect(Object.keys(p.incomes.opponents)).toContain(T.BOB.feed);
+    expect(p.tacit.map((t) => t.player.id)).toEqual([Number(T.BOB.feed)]);
+  });
+
+  it('GameFeed with teams: the game list is never asked, and the teammate is no opponent either', async () => {
+    const { p, reads } = await quietTurns({ teams: true });
+    expect(reads).toBe(0);
+    expect(Object.keys(p.incomes.opponents).sort()).toEqual([T.CY.feed, T.DEE.feed]);
+    expect(p.tacit).toEqual([]);
   });
 });

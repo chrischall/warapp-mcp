@@ -5,11 +5,10 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
-import { Method } from '../src/protocol/methods.js';
+import type { ReplyFrame } from '../src/protocol/codec.js';
 import { MAX_TEAM_RECORDS, readTeamRecord, TEAM_RECORD_VERSION, teamRecordPath, writeTeamRecord } from '../src/tools/team-source.js';
-import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
-import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { liveHarness, payload, textOf, type Harness } from './helpers.js';
+import { ANN, BOB, CY, DEE, LIST_TEAMS, listReads as countListReads, SIGNED_IN_ANN, TEAM_GAME, teamGame, teamServer } from './team-fallback.js';
 import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
 
 let h: Harness | undefined;
@@ -18,57 +17,11 @@ afterEach(async () => {
   h = undefined;
 });
 
-const GAME = 12345678;
-// Synthetic GameFeed ids: the in-game id wrapped in two check digits each end.
-const ANN = { feed: '3312345644', inGame: 123456 };
-const BOB = { feed: '7176543229', inGame: 765432 };
-const CY = { feed: '5522222211', inGame: 222222 };
-const DEE = { feed: '6633333322', inGame: 333333 };
-const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
-
-/** Four seats (or the first `seats`), with GameFeed's team on each only when `teams`. */
-function game(opts: { teams?: boolean; seats?: number } = {}): Record<string, unknown> {
-  const f = lobbyFixture();
-  const base = { isAI: 'False', humanTurnedIntoAI: 'False', hasCommittedOrders: 'False', state: 'Playing' };
-  const team = (t: string) => (opts.teams ? { team: t } : {});
-  const players = [
-    { ...base, id: ANN.feed, name: 'Ann', ...team('0') },
-    { ...base, id: BOB.feed, name: 'Bob', ...team('0') },
-    { ...base, id: CY.feed, name: 'Cy', ...team('1') },
-    { ...base, id: DEE.feed, name: 'Dee', ...team('1') },
-  ].slice(0, opts.seats ?? 4);
-  const settings = { ...(f.settings as Record<string, unknown>), SanctionsCard: 'none' };
-  return { ...f, id: String(GAME), state: 'Playing', numberOfTurns: '2', players, settings };
-}
-
-// Ann holds 159 and 161; Bob, her teammate by the game list, holds 157 and 158 beside them.
-const BOARD: SyntheticTerritory[] = [
-  { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 6 },
-  { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
-  { id: 157, fogLevel: 2, owner: BOB.inGame, armies: 2 },
-  { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 7 },
-  { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
-];
-
-const LIST_TEAMS = [
-  { id: ANN.inGame, name: 'Ann', state: 2, committed: false, team: 4 },
-  { id: BOB.inGame, name: 'Bob', state: 2, committed: false, team: 4 },
-  { id: CY.inGame, name: 'Cy', state: 2, committed: false, team: 5 },
-  { id: DEE.inGame, name: 'Dee', state: 2, committed: false, team: 5 },
-];
-
-type Reply = (req: DecodedRequest, n: number) => Partial<ReplyFrame>;
-function server(myGames: Reply | 'fail' = () => ({ body: (w) => writeMyGamesReturn(w, [{ id: GAME, name: 'synthetic', lastTurn: 2, state: 3, players: LIST_TEAMS }]) })) {
-  return (req: DecodedRequest, n: number): Partial<ReplyFrame> => {
-    if (req.method === Method.GetLatestGameInfo) return { body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame]) };
-    if (req.method === Method.GetMyGames) {
-      if (myGames === 'fail') throw new Error('game list unavailable');
-      return myGames(req, n);
-    }
-    throw new Error(`unexpected method ${req.method}`);
-  };
-}
-const listReads = () => h!.exchanges.filter((e) => e.request.method === Method.GetMyGames).length;
+const GAME = TEAM_GAME;
+const ME_PAGE = SIGNED_IN_ANN;
+const game = teamGame;
+const server = teamServer;
+const listReads = () => countListReads(h!);
 
 interface PlanView {
   teamSource?: string;
