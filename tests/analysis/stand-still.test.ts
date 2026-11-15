@@ -235,8 +235,12 @@ describe('never stand still in the opening (#104)', () => {
     const p = plan(b, 5, { game: { ...FFA, turn: 9 }, settings: { ...STD, armyCap: 4 } });
     // #132: a lone 1-army enemy beside me is not contact in an FFA.
     expect(p.profile.phase).toBe('expansion');
-    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 4, armies: 6 })]);
+    expect(attacks(p)).toContainEqual(expect.objectContaining({ from: 1, to: 4, armies: 6 }));
     expect(p.rationale.join('\n')).toMatch(/22 armies after deploy exceed the army cap of 20 \(4× income 5\)/);
+    // #253, rule 4h: the cap still binds next turn (19 armies after the ~3 lost, 4 × 5 = 20), so the
+    // 1-army enemy on 22 is taken too, from 2's idle armies: it loses ~1, below the ~4 at stake.
+    expect(attacks(p).filter((m) => m.to !== 4)).toEqual([expect.objectContaining({ from: 2, to: 22 })]);
+    expect(p.rationale.join('\n')).toMatch(/Take T22 \(#22\) for the army cap \(rule 4h, #253\): my ~19 armies after this turn reach the army cap next turn \(4× income 5 = 20\): ~4 of next turn's income 5 would be lost/);
     expect(valid(p, b, 5)).toEqual([]);
     // Under the cap (5× income = 25) the contact fallback (#107) takes the same step, without the cap's reason.
     const under = plan(b, 5, { game: { ...FFA, turn: 9 }, settings: { ...STD, armyCap: 5 } });

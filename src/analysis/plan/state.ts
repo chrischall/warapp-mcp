@@ -262,6 +262,11 @@ export interface PlanState {
    * value is the rationale line, stated by the report only for a border the plan does not concede.
    */
   soloHeld: Map<number, string>;
+  /**
+   * #253, rule 4h: the candidates the army cap's spend of idle armies tried and did not take, with why
+   * (a clause after the territory's name): the offence report's "Not attacking" line repeats it.
+   */
+  capRefused: Map<number, string>;
 }
 
 /** PLAN-TEAMS C3: a territory a teammate visibly holds (never one in a no-team game). */
@@ -305,5 +310,6 @@ export function newPlanState(): PlanState {
     spendKeeps: false,
     firstOnlySkip: new Map(),
     soloHeld: new Map(),
+    capRefused: new Map(),
   };
 }

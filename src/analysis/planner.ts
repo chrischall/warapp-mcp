@@ -1319,6 +1319,7 @@ import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from '
 import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { neverStandStill } from './plan/stand-still.js';
+import { spendUnderCap } from './plan/cap-spend.js';
 import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
@@ -2229,6 +2230,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (tryCapture(tg.id, reason)) break;
     }
   }
+
+  // ---- 4h. the army cap prices idle armies (#253, plan/cap-spend.ts) ----
+  spendUnderCap(pc, ps, book, threats, hd, tgt, caps);
 
   // ---- rule 4c's guard: planned captures never lower next income (#70) ----
   // Known limit: dropping a capture rewinds its attacks, `avail`, `captured`, `survivorsAt` and
