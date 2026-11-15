@@ -26,7 +26,7 @@ const RULES: PlannerSettings = {
   baseIncome: 19,
 };
 
-function makeMap(ids: number[], edges: [number, number][]): GameMap {
+function makeMap(ids: number[], edges: [number, number][], bonuses: GameMap['bonuses'] = []): GameMap {
   return {
     id: 1,
     name: 'Synthetic',
@@ -35,7 +35,7 @@ function makeMap(ids: number[], edges: [number, number][]): GameMap {
       name: `T${id}`,
       connectedTo: edges.filter(([a, b]) => a === id || b === id).map(([a, b]) => (a === id ? b : a)),
     })),
-    bonuses: [],
+    bonuses,
     distributionModes: [],
   };
 }
@@ -53,11 +53,16 @@ const D = 10;
  * there), whose other neighbours are neutrals 20 and 21 (6 each, not worth taking). U's 10 movable
  * armies are one short of making a conceded border hold (11 more against the ~19).
  */
-function plan(v: number, gT: number, extra: { ids?: number[]; edges?: [number, number][]; armies?: TerritoryState[] } = {}): TurnPlan {
+function plan(
+  v: number,
+  gT: number,
+  extra: { ids?: number[]; edges?: [number, number][]; armies?: TerritoryState[]; bonuses?: GameMap['bonuses'] } = {},
+): TurnPlan {
   const g = buildGraph(
     makeMap(
       [U, v, gT, S, D, 11, 20, 21, ...(extra.ids ?? [])],
       extra.edges ?? [[U, v], [U, gT], [U, S], [v, D], [gT, D], [S, 20], [S, 21], [D, 11]],
+      extra.bonuses,
     ),
   );
   return planTurn({
@@ -112,15 +117,19 @@ describe('#260: an idle stack steps toward the enemy front through a conceded bo
     expect(into(p, W)).toBe(0);
   });
 
-  it('never steps into a conceded border a withdrawal leaves', () => {
-    // T2 (6 armies) faces the opponent's 30 on D: conceded and withdrawn from, with no attack out.
+  it('never steps into a conceded border a withdrawal leaves, even one the plan attacks from', () => {
+    // T2 (6 armies) is conceded, attacks the opponent's 1-army D to break its visible bonus B900
+    // (D + E = 12), and withdraws the rest to T1. T1's idle stack must not walk back into it.
+    const E = 12;
     const p = plan(2, 3, {
-      ids: [],
-      edges: [[U, 2], [U, S], [2, D], [S, 20], [S, 21], [D, 11]],
-      armies: [at(U, 11, ME), at(2, 6, ME), at(S, 12, ME), at(D, 30, FOE), at(11, 1, FOE), at(20, 6, 'neutral'), at(21, 6, 'neutral')],
+      ids: [E],
+      edges: [[U, 2], [U, S], [2, D], [2, 3], [3, 11], [S, 20], [S, 21], [D, 11], [D, E]],
+      armies: [at(U, 11, ME), at(2, 6, ME), at(3, 1, ME), at(S, 12, ME), at(D, 1, FOE), at(11, 30, FOE), at(E, 1, FOE), at(20, 6, 'neutral'), at(21, 6, 'neutral')],
+      bonuses: [{ id: 900, name: 'B900', value: 5, territoryIds: [D, E], bonusIds: [] }],
     });
     expect(p.conceded).toContain(2);
+    expect(p.moves.some((m) => m.kind === 'attack' && m.from === 2 && m.to === D)).toBe(true);
     expect(p.moves.some((m) => m.kind === 'transfer' && m.from === 2)).toBe(true);
     expect(into(p, 2)).toBe(0);
-  });
+});
 });

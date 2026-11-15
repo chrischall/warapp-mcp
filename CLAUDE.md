@@ -869,7 +869,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     beside it makes hold by transferring in, rule 6's first step, the border the plan attacks from
     first; #260: when none does and the enemy front lies only past a conceded border the plan attacks
     an enemy from, rule 6 still steps the stack into that border rather than to a neutral edge no
-    nearer, never into another conceded border or one a withdrawal leaves), else the top expansion's stack — never to a conceded border (the old "most enemies
+    nearer, never into another conceded border or one a withdrawal leaves; the #226 margin is sized
+    after it, so a step out of a held attack source shrinks that attack's margin), else the top expansion's stack — never to a conceded border (the old "most enemies
     next to it" rule picked the hopeless border). #218: once every short border has its margin, the
     rest goes to the source of the step the leftover would save toward (#125) when that source is a
     border of equal defensive value (same player, threat, enemy territories, protected value and

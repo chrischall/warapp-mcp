@@ -1051,7 +1051,10 @@
 //     when the nearest territory not mine is no nearer ("… is reached only through a border the plan
 //     concedes …; they are lost with it if it falls"); never into another conceded border or one a
 //     withdrawal leaves. Live, 10 idle armies walked to an empty neutral edge while the border the
-//     plan attacked from missed holding by one; the stress test preferred them there. Only a stack
+//     plan attacked from missed holding by one; the stress test preferred them there. A trade: the
+//     #226 margin is sized after rule 6, so such a step out of a held attack source shrinks that
+//     attack's margin (in the golden corpus one first strike's fell from 26 to 6, still above its
+//     owner's whole income); nothing keeps the margin above the deploy. Only a stack
 //     no enemy can be reached from heads for the nearest territory
 //     not mine (neutral or fog; never a teammate's, PLAN-TEAMS C3) instead (#121: idle armies walked toward a worthless neutral
 //     while the enemy front was short, and a stack beside one never moved). This turn's
