@@ -475,6 +475,13 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   sender, `docs/WEB-PROTOCOL.md` "Chat"). **Whether it returns
   team or private messages, and with which fields, is UNVERIFIED** (V2 in `docs/PLAN-TEAMS.md`): a
   message with no channel field is `unknown`.
+- **Opponent profiles and the history (docs/PLAN-PROFILES.md) — no history read yet.** Every habit is
+  observed from the verified live boards cached per turn and my own cached orders; a board from
+  `GetHistory` (`TurnBoard.source: 'history'`) is never observed, since the history's shape is
+  UNVERIFIED (below). Part D only reports the read (`warapp_plan_turn`'s `reads`,
+  `warapp_advise_diplomacy`'s `habits`, `warapp_scout_player`'s `met`) and adds no request. Reading a
+  finished game's history once (part C, owner decision P2) waits on V1/V2; each fact it relies on is
+  to be marked here, verified or not, when it is built.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
   second, best-effort GameFeed call) to find the previous turn's standing for the threat
   trend — only when the previous two turns are not both cached, and it only fills turns the cache lacks:

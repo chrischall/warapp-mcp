@@ -659,6 +659,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   200-file bound) unfolded is folded with every ending `unknown` from the seats it kept, then deleted. A store or salt
   that cannot be parsed is never overwritten (`pastGames: 'unreadable'`, folds fail). **Profiles inform only:** the planner reads none
   of it until part 0's measurement is reported and the owner approves each hook (P1).
+  **Where the read is reported (part D, `src/tools/profile-reads.ts`, read-only, never throws):** one computation
+  (`readOpponents`) serves `warapp_profile_opponents` and three reports, none of which any plan, price or verdict
+  reads (the golden corpus is unchanged): `warapp_plan_turn`'s `reads` (each opponent in contact on the live board
+  with a habit at the confidence bar or a label: its labels, those habits with `n` and `basis`, `gamesMet`; full adds
+  the counter lines; a what-if plan reports it too and still keeps nothing; absent with profiling off or the teams
+  unknown), `warapp_advise_diplomacy`'s per-neighbour `habits` (`retaliate` and `attack`, beside `record`; it keeps no
+  turn) and `warapp_scout_player`'s `met` (`metRead`: games met and every habit from the cross-game record alone,
+  shrunk toward the all-formats pool; only when the record holds the player).
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in
