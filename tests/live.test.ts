@@ -295,6 +295,7 @@ describe('the current standing is the current field, not the first one present (
     w.bool(true).list([id], (ww, t) => {
       ww.int32(t).bool(true).int32(1).int32(t).bool(false).int32(armies).u8(0).int32(123456).bool(false);
     });
+    w.bool(false); // no active cards
   };
   const reply = (current: boolean) => {
     const w = new Writer();

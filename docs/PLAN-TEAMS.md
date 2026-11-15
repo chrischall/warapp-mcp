@@ -716,6 +716,31 @@ commander cannot be gifted or airlifted to a teammate). Card advice: Diplomacy o
 me hardest when two or more are, Sanctions on the leader, Airlift and Gift as team support. The
 existing notes already state these.
 
+*As built (D2):* `src/analysis/card-support.ts` (pure) and `src/tools/card-support-advice.ts` add
+`cards.advice.diplomacy`, `.sanctions`, `.airlift` and `.gift` to `warapp_plan_turn`, each with the
+`order` to pass to `warapp_submit_turn`; none is put in `orders`. "Hitting me hardest" is read as the
+armies my borders (after the plan) keep against that opponent alone; a truce partner the truce covers is
+passed over unless the truce is in notice or leaves a border it presses uncovered, and the warning says
+which. The leader is the profile's FFA ranking, else visible armies + 3 × visible income. Airlift targets
+a falling border of mine or a teammate's (their entered deploys counted), from a source with armies to
+spare after what it must hold; Gift gives the members that complete a teammate's nearer bonus (C3.3). A
+team hand's cards carry the id they were read under (V8 unverified); only mine are played, discarded or
+advised. No planner rule changed: the golden corpus is unchanged.
+
+*As built (D3):* `src/analysis/cards-in-effect.ts` (pure) decides which decoded active cards are sure
+(the turn known; the card in play with a `Duration`; its `untilTurn` after this turn and at most
+`Duration` turns ahead, the bundle's ActiveCard arithmetic; every player named a distinct player of the
+game still playing; a Diplomacy naming me and a non-teammate). A sure Diplomacy reaches
+`planRelationsFrom` as `diplomacy`: a ledger truce with that player is marked `enforced` with
+`enforcedUntil`, else a relation `card: 'Diplomacy'` covering every territory of both sides is added. T9
+departures: an enforced relation binds in any format (the game enforces it), and when its card is gone by
+next turn the player still counts for the #172 two-step look-ahead (`lookAheadFoes`). Sanctions on me
+cut `warapp_plan_turn`'s income by the bundle's rule (not under Local Deployment: a warning); Sanctions on
+an opponent are reported only, since its observed deploys may already carry them. `warapp_check_plan`
+counts a sure Diplomacy as a truce in any format (`safeIfTruceHolds`; `safe` still tries its player, the
+decoder being unverified). An unsure card is a warning and changes nothing. With no active card the golden
+corpus is unchanged.
+
 ## 11. Part E — the skill and the notes
 
 **`skills/warapp-mcp/SKILL.md`,** a section on chat and diplomacy:

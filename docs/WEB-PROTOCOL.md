@@ -201,7 +201,9 @@ AttackTransfer  byte 01, bool attackTeammates, byte mode (1 Attack, 2 Transfer,
                 Armies { bool fogged, int32 count, byte specialUnitCount, units… },
                 int32 to, base
 PlayCard*       byte <card tag> (5 Reinforcement, 10 Order Priority, 11 Order Delay,
-                18 Blockade), card fields, GUID cardInstanceId, base
+                18 Blockade; UNVERIFIED live: 6 Spy, 12 Airlift, 13 Gift, 14 Diplomacy,
+                15 Sanctions, 16 Reconnaissance, 17 Surveillance), card fields,
+                GUID cardInstanceId, base
 Discard         byte 09, GUID cardInstanceId, base
 ```
 
@@ -248,6 +250,11 @@ advanced).
 | (attacks/transfers) | 1 | 50 |
 | Order Delay | 11 | **50** — placed in phase 12 (with Order Priority) it was refused with error 10 |
 | Blockade | 18 | 60 |
+| Spy, Reconnaissance, Surveillance | 6, 16, 17 | 15 — bundle, **UNVERIFIED live** |
+| Airlift | 12 | 43 — bundle, **UNVERIFIED live** |
+| Gift | 13 | 47 — bundle, **UNVERIFIED live** |
+| Diplomacy | 14 | 75 — bundle, **UNVERIFIED live** |
+| Sanctions | 15 | 80 — bundle, **UNVERIFIED live** |
 
 Within one phase the encoder writes card plays after the other orders (an Order Delay after
 every AttackTransfer): the shape of the 2026-11-12 commit that verified phase 50, and still the
@@ -285,6 +292,37 @@ so a player can raise an Order Delay among the moves but never above the deploys
 to be accepted — consistent with the 2026-11-12 refusal, which put the card in phase 12 ahead of
 the deploys — but no such commit has been sent, so the position stays unverified on the wire.
 
+**Targeted card plays (PLAN-TEAMS part D) — from the client bundle, UNVERIFIED live (V9).** Each
+layout is read from its `warlight.shared.GameOrderPlayCard<X>` class: the writer puts the tag, the
+card's own fields, then the base play-card part (the card GUID, then the order base); the class's
+phase method gives the phase. No commit carrying one has been sent; golden tests pin the bytes.
+
+| Card (class) | Tag | Fields after the tag, in write order | Phase |
+|---|---|---|---|
+| Spy (`…Spy`) | 6 | int32 target player (in-game id) | 15 |
+| Reconnaissance (`…Reconnaissance`) | 16 | int32 target territory | 15 |
+| Surveillance (`…Surveillance`) | 17 | int32 target bonus | 15 |
+| Airlift (`…Airlift`) | 12 | bool present + `Armies` (bool fogged, int32 count, byte special-unit count, units — as in an AttackTransfer), int32 from, int32 a legacy count the client leaves 0, int32 to | 43 |
+| Gift (`…Gift`) | 13 | int32 recipient player, int32 territory | 47 |
+| Diplomacy (`…Diplomacy`) | 14 | int32 player one, int32 player two | 75 |
+| Sanctions (`…Sanctions`) | 15 | int32 sanctioned player | 80 |
+
+The bundle's `GameValidateOrders` refuses, and `warapp_submit_turn` refuses up front: Spy on myself or a
+teammate (80) or a player not playing (79; a neutral target, 225, is not offered); a Gift of a territory
+not mine (212), to myself (211), of one territory twice (213), to a player not playing (210), or of a
+territory carrying a commander or other special unit (536 — a special unit's "can be gifted" is false for
+a commander and the bosses); an Airlift to its own source (184), from a territory not mine (182), to one
+neither mine nor a teammate's (183), or carrying a commander or boss to a teammate's territory (537); a
+Diplomacy naming one player twice or two teammates (214) or a player not playing (381); Sanctions on a
+player not playing (219); Surveillance on a bonus worth 0 (224); Reconnaissance on a territory not on the
+map (41). Ours, not the validator's: Sanctions on myself or a teammate (on an opponent instead when the
+game's `SanctionsCard.Percentage` is negative, a boost), more armies airlifted than stand on the source
+after the deploys, and a card the game's settings do not put in play. The executor runs an Airlift after
+the deploys, so `warapp_submit_turn` takes what it sends off its source's later moves (the armies it lands cannot move again that turn, per the wiki); a Gift runs before
+the moves, so a move from the gifted territory does not run (a preview warning). The preview warns that
+the encoding is unverified, and the result carries `cardPlayCheck`: after the first live commit of each,
+read back that the card left the hand and did what it should, then mark it verified here.
+
 **The hold limit (#20).** A play or discard is required only when the hand holds **more** whole
 cards than `MaxCardsHold`: live, a commit with no card was accepted at 4/4 and refused with error
 51 at 5/4. The bundle's `GameValidateOrders` agrees: it removes every played and discarded
@@ -296,6 +334,16 @@ current `GameStanding`, the last `GameTurn` and the previous `GameStanding`, and
 appear in all of them. Only the current standing's cards are playable: an instance that survives
 only in the previous standing or the turn's receive/play orders was already played, and playing
 it is refused with error 50 `CardInstanceUnavailable`.
+
+**The cards in effect (PLAN-TEAMS D3) — from the client bundle, UNVERIFIED live.** The current
+`GameStanding` also carries `ActiveCards`: a list of `warlight.shared.ActiveCard { Card, ExpiresAfterTurn }`,
+`Card` being the `GameOrderPlayCard<X>` play order that started it (Diplomacy: two int32 player ids;
+Sanctions: the int32 target; then the base's card GUID and player). ExpiresAfterTurn = the card's
+duration + the turn number processed + 1, and an `EndOfTurn` card (Diplomacy, Sanctions) is removed at
+the end of the turn that reaches it, so a card in the current standing binds the whole turn being
+ordered. `readActiveCards` (`src/cards.ts`) reads them; `src/analysis/cards-in-effect.ts` decides which
+the planner may rely on (docs/WARAPP-API.md). No live board with an active card has been decoded yet:
+once one has, compare `cardsInEffect` in `warapp_plan_turn` with the game and mark this verified.
 
 **Teammates' entered orders and picks (C1) — from the client bundle, UNVERIFIED live (V5).** After the
 standings, `LatestGameInfo` carries a dict in-game player id → `warlight.shared.TeammateOrders`

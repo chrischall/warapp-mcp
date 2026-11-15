@@ -53,7 +53,7 @@ describe('diplomacy notes: the data', () => {
     for (const n of STRATEGY_NOTES.filter((x) => x.topic === 'diplomacy')) expect(n.id.startsWith('diplomacy-'), n.id).toBe(true);
   });
 
-  it('no note advises a card play: the diplomacy cards are played in the game client, not sent', () => {
+  it('no diplomacy note advises a card play (when to play a card is the card notes\' and the card advice\'s)', () => {
     for (const id of DIPLOMACY_NOTES) {
       const text = STRATEGY_NOTES.find((x) => x.id === id)!.text;
       expect(text, id).not.toMatch(/\bplay (a|your|the) (Diplomacy|Gift|Sanctions|Spy|Airlift)/i);

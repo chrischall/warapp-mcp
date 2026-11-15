@@ -1942,7 +1942,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       'With three sides left a Diplomacy card makes a two-on-one while it runs: the two at peace can attack ' +
       'only the third. Play it on the opponent you want facing the other; if your two opponents end up at ' +
-      'peace by card, expect both on you from the next turn. It is played in the game client.',
+      'peace by card, expect both on you from the next turn. warapp_submit_turn plays it (unverified live).',
     source: S.diplomacy,
     basis: 'derived',
   },
@@ -1953,8 +1953,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     text:
       'A Sanctions card with a positive percentage takes a share of income, so it costs the largest player ' +
       'most, and two on one player compound. When several of you face one leader, play them on it for the ' +
-      'same turns, the turn before you attack: the cut starts with its next income. It is played in the game ' +
-      'client.',
+      'same turns, the turn before you attack: the cut starts with its next income. warapp_submit_turn plays ' +
+      'it (unverified live).',
     source: S.sanctions,
     basis: 'derived',
   },

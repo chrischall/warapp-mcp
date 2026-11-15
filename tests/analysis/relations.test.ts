@@ -9,6 +9,7 @@ import {
   coveredTerritories,
   newAgreement,
   partyRefusal,
+  planRelationsFrom,
   scopeRefusal,
   tacitTruces,
   transitionAgreement,
@@ -285,5 +286,48 @@ describe('truceBreaksIn', () => {
 
   it('nothing binds once only two players remain', () => {
     expect(check([agreed()], [{ from: 4, to: 5 }], 4, players({ [OTHER]: { state: 'Eliminated' } }))).toEqual([]);
+  });
+});
+
+describe('planRelationsFrom: Diplomacy cards in effect (PLAN-TEAMS D3, T9)', () => {
+  const b = at(4);
+  const plan = (agreements: Agreement[], diplomacy?: { player: number; untilTurn: number }[], turn = 4) =>
+    planRelationsFrom({
+      agreements,
+      graph,
+      board: b.board,
+      boards: [b],
+      me: ME,
+      turn,
+      players: players(),
+      incomes: { mine: null, opponents: new Map() },
+      ...(diplomacy ? { diplomacy } : {}),
+    }).relations;
+
+  it('never marks a relation enforced without a card, whatever the ledger says', () => {
+    const a = { ...agreed(), enforced: true };
+    expect(plan([a])[0]!.enforced).toBeUndefined();
+  });
+
+  it('marks the agreement with that player enforced until the card is gone', () => {
+    expect(plan([agreed()], [{ player: P, untilTurn: 6 }])).toEqual([
+      expect.objectContaining({ player: P, agreement: 'a1', state: 'active', enforced: true, enforcedUntil: 6 }),
+    ]);
+  });
+
+  it('gives a player with no agreement a relation of its own, every territory of each side covered', () => {
+    expect(plan([], [{ player: P, untilTurn: 6 }])).toEqual([
+      { player: P, coveredMine: [1, 2, 3, 4], coveredTheirs: [5, 6], state: 'active', trust: 'clear', enforced: true, enforcedUntil: 6, card: 'Diplomacy' },
+    ]);
+  });
+
+  it('a broken agreement stays broken, and the card gets its own relation', () => {
+    const broken = (transitionAgreement(agreed(), 'broken-by-them', 4) as { agreement: Agreement }).agreement;
+    expect(plan([broken], [{ player: P, untilTurn: 6 }]).map((r) => [r.card ?? r.agreement, r.enforced ?? false])).toEqual([['Diplomacy', true]]);
+  });
+
+  it('a card already gone by this turn, or naming me, is left out', () => {
+    expect(plan([], [{ player: P, untilTurn: 4 }])).toEqual([]);
+    expect(plan([], [{ player: ME, untilTurn: 6 }])).toEqual([]);
   });
 });

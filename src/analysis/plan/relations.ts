@@ -29,8 +29,10 @@
 //       when the trust turned `watch` for the endgame or for outgrowing;
 //   T8  broken by them (`state: 'broken'`): an ordinary opponent at once, the plan naming the term,
 //       the turn and the evidence, and saying to record `broken-by-them` before submitting;
-//   T9  enforced (a Diplomacy card the decoder is sure of): that player is no foe for the turn — its
-//       threat is 0 and no attack on it is planned.
+//   T9  enforced (a Diplomacy card the decoder is sure of, PLAN-TEAMS D3): that player is no foe for
+//       the turn — its threat is 0 and no attack on it is planned — in any format, since the game
+//       enforces it; when the card is gone by next turn (`enforcedUntil`), the player still counts
+//       for the two-step look-ahead (#172: `lookAheadFoes`).
 // With no relations every function here is a no-op, so every plan is byte-identical to one made
 // without them. Pure and deterministic (ties on ascending id).
 import { bonusTerritories } from '../bonuses.js';
@@ -69,6 +71,8 @@ export interface Truce {
   partners: ReadonlySet<number>;
   /** T9: players an enforced truce makes no foe this turn. */
   enforced: ReadonlySet<number>;
+  /** T9 (D3): enforced players whose card is gone by next turn — still foes for the two-step look-ahead. */
+  lookAheadFoes: ReadonlySet<number>;
   /**
    * T1: a territory of a partner the agreement covers (every one of an enforced partner) — wherever
    * the agreement binds, a team or two-player game included.
@@ -87,6 +91,7 @@ const NONE: Truce = {
   binds: [],
   partners: new Set(),
   enforced: new Set(),
+  lookAheadFoes: new Set(),
   noTarget: () => false,
   noFront: () => false,
   format: 'ffa',
@@ -104,21 +109,26 @@ export function truceOf(input: PlanInput, o: { notFoe: (p: number) => boolean; f
   const binds: boolean[] = [];
   /** Whether the agreement itself binds this turn, whatever the format (T1 keeps to it everywhere). */
   const kept: boolean[] = [];
-  for (const r of given) {
+  /** T9: whether each relation's card is in effect this turn (a game rule, so in any format). */
+  const enforcedNow = given.map((r) => r.enforced === true && (r.enforcedUntil === undefined || o.turnNow === null || o.turnNow < r.enforcedUntil));
+  given.forEach((r, i) => {
     let st: PlanRelationView['state'];
     if (o.notFoe(r.player)) st = 'not-a-foe';
     else if (r.state === 'broken') st = 'broken';
+    // D3: a relation that is only a card ends with it.
+    else if (r.card && !enforcedNow[i]) st = 'over';
     else if (r.state === 'notice' && r.endsTurn !== undefined && o.turnNow !== null && o.turnNow >= r.endsTurn) st = 'over';
     else st = r.state;
     kept.push(st === 'active' || st === 'notice');
-    if (!ffa) st = 'ignored';
+    if (!ffa && !r.card && !(enforcedNow[i] && kept[i])) st = 'ignored';
     status.push(st);
     binds.push(st === 'active' || st === 'notice');
-  }
+  });
   const owner = new Map<number, number>();
   for (const t of input.board.territories) if (t.owner.kind === 'player') owner.set(t.territoryId, t.owner.playerId);
   const partners = new Set<number>();
   const enforced = new Set<number>();
+  const lookAheadFoes = new Set<number>();
   /** Per partner whose agreement binds (in any format), the territories of theirs covered. */
   const theirs = new Map<number, Set<number>>();
   given.forEach((r, i) => {
@@ -126,7 +136,10 @@ export function truceOf(input: PlanInput, o: { notFoe: (p: number) => boolean; f
     // T2–T5 and T9 only in a free-for-all; T1 (never a surprise break, D3) wherever the agreement binds.
     if (binds[i]) {
       partners.add(r.player);
-      if (r.enforced) enforced.add(r.player);
+      if (enforcedNow[i]) {
+        enforced.add(r.player);
+        if (r.enforcedUntil !== undefined && o.turnNow !== null && r.enforcedUntil <= o.turnNow + 1) lookAheadFoes.add(r.player);
+      }
     }
     const set = theirs.get(r.player) ?? new Set<number>();
     for (const t of r.coveredTheirs) set.add(t);
@@ -143,7 +156,11 @@ export function truceOf(input: PlanInput, o: { notFoe: (p: number) => boolean; f
     const p = owner.get(t);
     return p !== undefined && partners.has(p) && noTarget(t);
   };
-  return { given, status, binds, partners, enforced, noTarget, noFront, format: o.format };
+  // A player another binding relation enforces for longer is no look-ahead foe.
+  given.forEach((r, i) => {
+    if (binds[i] && enforcedNow[i] && (r.enforcedUntil === undefined || (o.turnNow !== null && r.enforcedUntil > o.turnNow + 1))) lookAheadFoes.delete(r.player);
+  });
+  return { given, status, binds, partners, enforced, lookAheadFoes, noTarget, noFront, format: o.format };
 }
 
 /**
@@ -554,7 +571,7 @@ export function reportTruce(
   const relations = truce.given.map((r, i): PlanRelationView => {
     const st = truce.status[i]!;
     const flags = [...(r.watch ?? [])];
-    const name = `Truce with player ${r.player}${r.agreement ? ` (agreement ${r.agreement})` : ''}`;
+    const name = r.card ? `Diplomacy card with player ${r.player}` : `Truce with player ${r.player}${r.agreement ? ` (agreement ${r.agreement})` : ''}`;
     const mineRelaxed = tp ? [...tp.relaxed].filter(([t, p]) => p === r.player && r.coveredMine.includes(t)).map(([t]) => t).sort(byNum) : [];
     const fullHold = tp
       ? [...tp.fullHold]
@@ -568,6 +585,7 @@ export function reportTruce(
         `${name} is broken by them: ${r.breach.term} on turn ${r.breach.turn}${r.breach.territories.length ? ` (${r.breach.territories.map(label).join(', ')})` : ''} — ${r.breach.evidence}. Player ${r.player} is planned as an ordinary opponent from this turn (T8). ${RECORD_BROKEN(r)}`,
       );
     else if (st === 'broken') warnings.push(`${name} is broken by them: player ${r.player} is planned as an ordinary opponent from this turn (T8). ${RECORD_BROKEN(r)}`);
+    else if (st === 'over' && r.card) rationale.push(`${name}: it is gone by this turn, so player ${r.player} is an ordinary opponent (T9).`);
     else if (st === 'over')
       rationale.push(`${name}: its notice ran out on turn ${r.endsTurn}, so player ${r.player} is an ordinary opponent this turn (T7).`);
     else if (st === 'not-a-foe') warnings.push(`${name}: player ${r.player} is me or a teammate, so the truce changes nothing.`);
@@ -576,7 +594,12 @@ export function reportTruce(
       const notice = st === 'notice' && r.endsTurn !== undefined ? ` (in notice${r.noticeBy ? ` given by ${r.noticeBy === 'me' ? 'me' : 'them'}` : ''}: binding until turn ${r.endsTurn})` : '';
       rationale.push(
         enforced
-          ? `${name}${notice}: a Diplomacy card is in effect, so player ${r.player}'s attacks on me do nothing this turn — its threat is 0 and no attack on it is planned (T9).`
+          ? `${name}${notice}: a Diplomacy card is in effect, so player ${r.player}'s attacks on me do nothing this turn — its threat is 0 and no attack on it is planned (T9)` +
+              (truce.lookAheadFoes.has(r.player)
+                ? `; the card is gone by turn ${r.enforcedUntil}, so its stacks still count for next turn's look-ahead.`
+                : r.enforcedUntil !== undefined
+                  ? `; the card lasts until turn ${r.enforcedUntil}.`
+                  : '.')
           : `${name}${notice}: none of its ${r.coveredTheirs.length} covered ${r.coveredTheirs.length === 1 ? 'territory is' : 'territories are'} a target this turn (T1), and player ${r.player} is no front for the no-second-front rule or the idle armies (T4).`,
       );
       if (mineRelaxed.length)
@@ -600,6 +623,8 @@ export function reportTruce(
       state: st,
       honoured: truce.binds[i]!,
       enforced: truce.binds[i]! && truce.enforced.has(r.player),
+      ...(r.enforcedUntil !== undefined ? { enforcedUntil: r.enforcedUntil } : {}),
+      ...(r.card ? { card: r.card } : {}),
       trust: r.trust,
       flags,
       ...(r.endsTurn !== undefined ? { endsTurn: r.endsTurn } : {}),

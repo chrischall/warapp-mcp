@@ -397,20 +397,57 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the bundle's check is `remaining > MaxCardsHold` after removing every played and discarded
   card) war.app refuses a `SendOrders` (**error 51 `MustUseCard`**), so `cardsToShed` cards must
   be played or discarded and `warapp_submit_turn` refuses up front. The planner always plays
-  Reinforcement (its armies join the income); when cards must go, the lowest-value cards leave
-  first (#127: Order Delay is discarded before Order Priority is spent; an Order Priority that
-  must go is played, not discarded, one at most) — never playing Blockade (it gives a territory away) or
-  Order Delay (it holds back my attacks). A discard (`GameOrderDiscard`) is tag 9, the GUID, the
+  Reinforcement (its armies join the income); when cards must go, the lowest-value cards in the game leave
+  first (`keepValue`, #163: the information cards first, the timing cards — Order Delay, Order Priority,
+  Emergency Blockade, Bomb, Airlift — last). An Order Priority that must go is played, not discarded, one
+  at most (#127); an Order Delay that must go is played where the schedule advises it
+  (`cards.advice.orderDelay`, `insteadOfDiscard`) rather than discarded, and is discarded only when the
+  plan has no attack for it to delay. `chooseCardPlays` itself never plays
+  Blockade (it gives a territory away) or Order Delay (where it goes is the schedule's call). A discard (`GameOrderDiscard`) is tag 9, the GUID, the
   base — from the bundle's writer, not yet live-verified. Card plays must come in war.app's
   turn-phase order or the server answers **error 10 `OrdersInIncorrectOrder`**, so
   `writeSendOrdersParams` sorts every order by `TurnPhase` (discards 10, Order Priority 12,
   Reinforcement 20, deploys 25, moves 50, Order Delay 50, Blockade 60). Order Delay (tag 11) runs
   in phase 50, verified live 2026-11-12 (sent in phase 12 it drew error 10). Within a phase,
-  card plays are written after the other orders (an Order Delay after every move, wherever it
-  was listed: the live-verified shape); that war.app accepts it ahead of a move is unverified,
-  so an Order Delay play delays nothing and the submit preview warns so. Order Delay may be
-  combined with other card plays.
+  card plays are written after the other orders (an Order Delay after every move, the
+  live-verified shape), unless an Order Delay names `before` (`beforeMove`, #186): then it is
+  written among the moves, which war.app accepted live 2026-11-13; whether the later moves then
+  wait for the opponent's is unverified (docs/WEB-PROTOCOL.md). Order Delay may be combined with
+  other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
+  **The targeted cards (PLAN-TEAMS part D, UNVERIFIED live, V9):** Spy, Reconnaissance, Surveillance
+  (phase 15), Airlift (43), Gift (47), Diplomacy (75), Sanctions (80), tags and fields from each
+  `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). `warapp_submit_turn` takes their targets
+  (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
+  never gifted or airlifted to a teammate; no Spy on me or a teammate; no Diplomacy between teammates)
+  plus Sanctions on my own side (an opponent instead when the percentage is negative); what an Airlift
+  sends leaves its source's later moves (armies it lands cannot move that turn). The preview warns the encoding is unverified and the result
+  carries `cardPlayCheck`. The planner never plays them; `warapp_plan_turn`'s `cards.advice` (D2,
+  `src/analysis/card-support.ts`, pure) says where they pay, each with an `order`, never added to the
+  orders: Diplomacy on the opponent whose stacks tie down the most of my border armies, only with two or
+  more in contact (a truce partner the truce already covers is passed over unless the truce is in notice
+  or leaves a border it presses uncovered; one a Diplomacy card in force covers is passed over), Sanctions
+  on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
+  percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
+  Gift of the members that complete a teammate's nearer bonus. **A team hand's cards carry `owner`**
+  (the in-game id read under, mine when under me at all; V8 unverified): the planner plays, discards and
+  advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
+  teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not
+  discarded.
+  **The cards in effect (D3, UNVERIFIED live: `readActiveCards` is not yet checked on a live board).**
+  `src/analysis/cards-in-effect.ts` (pure) keeps a decoded ActiveCard only when sure: turn known, the card
+  in play with a `Duration`, its `untilTurn` after this turn and at most Duration turns ahead (the
+  bundle's ActiveCard: ExpiresAfterTurn = Duration + turn number + 1, worn off at the end of the turn
+  that reaches it), every named player a distinct player still playing. A Diplomacy between me and an
+  opponent (never a teammate) is T9: `planRelationsFrom`'s `diplomacy` marks a ledger truce with it
+  enforced, else adds a relation `card: 'Diplomacy'` covering everything; an enforced relation binds in
+  any format, its player is no foe this turn, and still counts for the two-step look-ahead when the card
+  is gone by next turn (`lookAheadFoes`). Sanctions on me cut `warapp_plan_turn`'s income by the bundle's
+  rule (per card, round((1 − Percentage) × income), .5 up, cap 10000; not under Local Deployment, which
+  warns). Sanctions on others only show (an observed deploy may already carry them). Anything not sure is
+  a warning and changes nothing; the plan reports `cardsInEffect` (`verified: false`), and
+  `warapp_check_plan` counts a card as a truce (`safeIfTruceHolds`; `safe` still tries its player).
+  With no active card every plan is unchanged (golden).
 - **Turn notifications are a socket.io v0.9 client with two transports.** While the active
   transport is the direct leg, a **WebSocket** (`src/push/websocket.ts`): handshake GET with the
   `AuthToken` cookie (host-locked to war.app), then `wss://war.app/socket.io/1/websocket/<sid>`

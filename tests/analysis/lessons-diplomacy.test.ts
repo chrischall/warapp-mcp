@@ -12,6 +12,7 @@ import {
   type TurnPlan,
 } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
+import { truceOf } from '../../src/analysis/plan/relations.js';
 import { board, mine, neutral } from './helpers.js';
 
 const ME = 10;
@@ -823,6 +824,61 @@ describe('B2: truces only in a free-for-all; none given changes nothing', () => 
     expect(attacks(over).map((m) => m.to)).toContain(2);
     const broken = planTurn(input([truce({ state: 'broken' })], { game: teams, board: b }));
     expect(attacks(broken).map((m) => m.to)).toContain(2);
+  });
+});
+
+describe('D3 T9: a Diplomacy card in effect, decoded from the board', () => {
+  const card = (over: Partial<PlanRelation> = {}): PlanRelation =>
+    truce({ card: 'Diplomacy', enforced: true, enforcedUntil: 10, coveredMine: [1, 3], coveredTheirs: [2], ...over });
+  const two = { players: [{ id: ME }, { id: PARTNER }], turn: 8 };
+  const b2 = board([mine(1, 24), enemy(2, 40, PARTNER), mine(3, 2), neutral(4, 4), neutral(5, 2), neutral(9, 3)]);
+
+  it('binds in any format, since the game enforces it: a two-player game plans no hold against that player', () => {
+    const plain = planTurn(input(undefined, { game: two, board: b2 }));
+    expect(deployedTo(plain, 1)).toBeGreaterThanOrEqual(3);
+    const p = planTurn(input([card()], { game: two, board: b2 }));
+    expect(deployedTo(p, 1)).toBe(0);
+    expect(p.relations![0]).toMatchObject({ state: 'active', honoured: true, enforced: true, enforcedUntil: 10, card: 'Diplomacy' });
+    expect(warned(p)).not.toMatch(/Truces ignored/);
+    expect(why(p)).toMatch(/Diplomacy card with player 20: a Diplomacy card is in effect.*\(T9\); the card lasts until turn 10/);
+  });
+
+  it('a team game too: no attack on that player', () => {
+    const teams = { players: [{ id: ME, team: 0 }, { id: 11, team: 0 }, { id: PARTNER, team: 1 }, { id: OTHER, team: 1 }], turn: 8 };
+    const weakB = board([mine(1, 24), enemy(2, 2, PARTNER), mine(3, 2), neutral(4, 4), neutral(5, 2), enemy(9, 3, OTHER)]);
+    expect(attacks(planTurn(input(undefined, { game: teams, board: weakB }))).map((m) => m.to)).toContain(2);
+    const p = planTurn(input([card()], { game: teams, board: weakB }));
+    expect(attacks(p).map((m) => m.to)).not.toContain(2);
+    expect(p.relations![0]).toMatchObject({ honoured: true, enforced: true });
+  });
+
+  it('a card gone by this turn changes nothing: the player is an ordinary opponent', () => {
+    const plain = planTurn(input(undefined, { game: two, board: b2 }));
+    const p = planTurn(input([card({ enforcedUntil: 8 })], { game: two, board: b2 }));
+    expect(p.deploys).toEqual(plain.deploys);
+    expect(p.moves).toEqual(plain.moves);
+    expect(p.relations![0]).toMatchObject({ state: 'over', honoured: false, enforced: false });
+    expect(why(p)).toMatch(/Diplomacy card with player 20: it is gone by this turn/);
+  });
+
+  it('a card gone by next turn still shields this turn, and says the look-ahead counts the player', () => {
+    const p = planTurn(input([card({ enforcedUntil: 9 })]));
+    expect(deployedTo(p, 1)).toBe(0);
+    expect(why(p)).toMatch(/the card is gone by turn 9, so its stacks still count for next turn's look-ahead/);
+  });
+
+  it('the look-ahead keeps a player whose card is gone by next turn, unless another card lasts longer', () => {
+    const read = (rs: PlanRelation[], turnNow = 8) => truceOf(input(rs), { notFoe: (p) => p === ME, format: 'ffa', turnNow });
+    expect([...read([card({ enforcedUntil: 9 })]).lookAheadFoes]).toEqual([PARTNER]);
+    expect([...read([card({ enforcedUntil: 10 })]).lookAheadFoes]).toEqual([]);
+    expect([...read([card({ enforcedUntil: 9 }), card({ enforcedUntil: 11 })]).lookAheadFoes]).toEqual([]);
+    expect([...read([card({ enforcedUntil: 9 })]).enforced]).toEqual([PARTNER]);
+    expect([...read([card({ enforcedUntil: 9 })], 9).enforced]).toEqual([]);
+  });
+
+  it('marks a ledger truce enforced beside it: the truce is not relaxed, it is enforced', () => {
+    const p = planTurn(input([truce({ enforced: true, enforcedUntil: 10 })]));
+    expect(p.relations![0]).toMatchObject({ enforced: true, relaxed: [], lossIfBroken: null });
   });
 });
 

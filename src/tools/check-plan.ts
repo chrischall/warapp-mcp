@@ -10,6 +10,7 @@ import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponent
 import { stressPlan, type StressDodge, type StressExposure, type StressJoint, type StressReply } from '../analysis/stress.js';
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners, opponentReinforcement } from './card-advice.js';
+import { boardCardsInEffect, sanctionMyIncome } from './card-effects.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand } from '../cards.js';
 import { boardStateFromLive } from '../live.js';
 import { withTeammateOrders } from '../team-orders.js';
@@ -268,11 +269,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // and a game with two players still playing (a 1v1, or an FFA down to two) ends every agreement
       // in the ledger (`agreementState`: two-left), so what binds is always one the planner's 'ffa' honours.
       // `income` is the board's, card armies out — the same figure warapp_plan_turn passes.
-      const truces = (await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks }))?.relations ?? [];
-      const binding =
-        teams.size === 0
-          ? truces.filter((r) => (r.state === 'active' || r.state === 'notice') && (r.endsTurn === undefined || turn === null || turn < r.endsTurn) && !friend(r.player))
-          : [];
+      // PLAN-TEAMS D3: a Diplomacy card in effect that the decoder is sure of is a truce here in any format
+      // (T9: the game enforces it). Its player stays among the opponents too: the decoder is unverified.
+      const effect = boardCardsInEffect(game, me, turn, info);
+      const truces =
+        (await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks, diplomacy: effect.diplomacy }))
+          ?.relations ?? [];
+      const binding = truces.filter(
+        (r) =>
+          !friend(r.player) &&
+          (r.enforced
+            ? r.enforcedUntil === undefined || turn === null || turn < r.enforcedUntil
+            : teams.size === 0 && (r.state === 'active' || r.state === 'notice') && (r.endsTurn === undefined || turn === null || turn < r.endsTurn)),
+      );
+      // D3: the deploy total is checked against my income under the Sanctions on me.
+      const sanction = sanctionMyIncome(income, effect, { localDeployments: settings.localDeployments === true });
 
       const report = stressPlan({
         graph,
@@ -494,9 +505,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(refused.size
           ? [`These orders use ${[...refused].join(', ')}: war.app would refuse them in this game, and warapp_submit_turn does; the test ran them anyway.`]
           : []),
-        ...(deployed !== income
+        ...sanction.warnings,
+        ...effect.unsure,
+        ...(deployed !== sanction.income
           ? [
-              `The orders deploy ${deployed} and your income is ${income}: the test used the orders as given (a Reinforcement card adds to the income; otherwise war.app refuses a wrong total).`,
+              `The orders deploy ${deployed} and your income is ${sanction.income}: the test used the orders as given (a Reinforcement card adds to the income; otherwise war.app refuses a wrong total).`,
             ]
           : []),
       ];
@@ -510,7 +523,14 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(report.safeIfTruceHolds !== undefined
           ? {
               safeIfTruceHolds: report.safeIfTruceHolds,
-              truces: binding.map((r) => ({ player: who(r.player), ...(r.agreement ? { agreement: r.agreement } : {}), state: r.state, covered: r.coveredMine.length })),
+              truces: binding.map((r) => ({
+                player: who(r.player),
+                ...(r.agreement ? { agreement: r.agreement } : {}),
+                ...(r.card ? { card: r.card } : {}),
+                ...(r.enforced ? { enforced: true, ...(r.enforcedUntil !== undefined ? { enforcedUntil: r.enforcedUntil } : {}), verified: false } : {}),
+                state: r.state,
+                covered: r.coveredMine.length,
+              })),
             }
           : {}),
         summary,

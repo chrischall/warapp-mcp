@@ -16,7 +16,7 @@ import { boardIncome } from '../src/analysis/player.js';
 import { readCachedOrders } from '../src/trend.js';
 import { writeAward, writePickList } from '../src/pick-list.js';
 import { writeFirstMover } from '../src/move-order.js';
-import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { writeLatestGameInfo, type SyntheticActiveCard, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 import { CHAT_SUMMARY_NOTE } from '../src/tools/chat.js';
 import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
 
@@ -1831,6 +1831,85 @@ describe('cards in the turn tools', () => {
     expect(p.warnings.join('\n')).toMatch(new RegExp(`Reinforcement \\(${R1}\\): player ${BOB.feed} has already entered a play of it`));
   });
 
+  it('plan_turn in a team game never advises me a card my teammate has entered a play of (C3.7 with V8)', async () => {
+    // Cy (team 1) holds Bolton Moors; my Order Delay would be advised above the calm orders (as in the
+    // two-player case), until Bob, my teammate, enters a play of it. Every id is synthetic.
+    const CY = { feed: '5522222211', inGame: 222222 };
+    const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) =>
+      i === 2 ? { ...p, id: CY.feed, name: 'Cy', team: '1' } : { ...p, team: i < 2 ? '0' : '1' },
+    );
+    const attacking: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 30 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 157, fogLevel: 1, owner: 0, armies: 2 },
+      { id: 158, fogLevel: 1, owner: CY.inGame, armies: 7 },
+      { id: 135, fogLevel: 1, owner: 0, armies: 2 },
+    ];
+    type Advised = CardsPayload & {
+      cards: { advice?: { orderDelay?: { card: string } }; team?: { roles: Array<{ card: string; by: unknown; action: string }> } };
+    };
+    const plan = async (claimed: boolean) => {
+      h = await liveHarness({
+        feed: [game('Playing', { players: teams, settings: modelledSettings() })],
+        warapp: routes({
+          [Method.GetLatestGameInfo]: () =>
+            ({
+              body: (w) =>
+                writeLatestGameInfo(
+                  w,
+                  attacking,
+                  [ANN.inGame, BOB.inGame],
+                  { [ANN.inGame]: [{ id: OD, type: 5 }] },
+                  claimed ? { [BOB.inGame]: { orders: [{ kind: 'card', tag: 5, card: OD }] } } : undefined,
+                ),
+            }) satisfies Partial<ReplyFrame>,
+        }),
+      });
+      const p = payload<Advised>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+      await h.harness.close();
+      return p;
+    };
+    // Unclaimed, the card is mine and advised.
+    const free = await plan(false);
+    expect(free.cards.advice?.orderDelay?.card).toBe(OD);
+    // Claimed by Bob: left to him, never advised or played for me.
+    const p = await plan(true);
+    expect(p.cards.advice?.orderDelay).toBeUndefined();
+    expect(p.orders.some((o) => o.kind === 'card' || o.kind === 'discard')).toBe(false);
+    expect(p.cards.team?.roles.map((r) => [r.card, r.by, r.action])).toEqual([
+      [OD, { id: Number(BOB.feed), name: expect.stringContaining('Bob') }, 'play'],
+    ]);
+    expect(p.warnings.join('\n')).not.toMatch(/Play Order Delay/);
+  });
+
+  it("plan_turn in a team game never sheds a card read under a teammate: it says how many they must shed (V8)", async () => {
+    const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    h = await liveHarness({
+      feed: [game('Playing', { players: teams, settings: modelledSettings() })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () =>
+          ({
+            body: (w) =>
+              writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], {
+                [ANN.inGame]: [{ id: BL, type: 12 }],
+                [BOB.inGame]: [
+                  { id: SP, type: 2 },
+                  { id: OP, type: 4 },
+                  { id: OD, type: 5 },
+                  { id: BL2, type: 12 },
+                  { id: AL, type: 6 },
+                ],
+              }),
+          }) satisfies Partial<ReplyFrame>,
+      }),
+    });
+    const p = payload<CardsPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.cards.hand).toHaveLength(6);
+    // Over the limit by one: my own Blockade goes, not Bob's Spy (worth less, but read under him).
+    expect(p.orders.filter((o) => o.kind === 'discard' || o.kind === 'card')).toEqual([{ kind: 'discard', card: BL }]);
+    expect(p.warnings.join('\n')).not.toMatch(/from your teammates' cards/);
+  });
+
   it('plan_turn in a team game reports a bonus shared with my teammate, and who is nearer (C3.3)', async () => {
     const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
     // Bob, my teammate, holds 157: bonus 118 (159, 161, 157) is shared, and I hold two of its three.
@@ -2258,7 +2337,8 @@ describe('cards in the turn tools', () => {
     ['a card type not held', [{ id: OP, type: 4 }], [{ kind: 'card', card: 'Order Delay' }, { kind: 'deploy', territory: 159, armies: 5 }], /hold no Order Delay card/],
     ['an unknown card name', [], [{ kind: 'card', card: 'Joker' }, { kind: 'deploy', territory: 159, armies: 5 }], /No card type matches "Joker"/],
     ['the same card twice', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP }, { kind: 'card', card: OP }, { kind: 'deploy', territory: 159, armies: 5 }], /played twice/],
-    ['an unsupported card', [{ id: AL, type: 6 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /Airlift.*not supported/],
+    ['an unsupported card', [{ id: AL, type: 13 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /Bomb.*not supported/],
+    ['an Airlift missing its fields', [{ id: AL, type: 6 }], [{ kind: 'card', card: AL }, { kind: 'deploy', territory: 159, armies: 5 }], /An Airlift card needs `from` and `to` and `armies`/],
     ['a Blockade without a target', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL }, { kind: 'deploy', territory: 159, armies: 5 }], /Blockade needs a `target`/],
     ['a Blockade on a territory not mine', [{ id: BL, type: 12 }], [{ kind: 'card', card: BL, target: 158 }, { kind: 'deploy', territory: 159, armies: 5 }], /not yours/],
     ['a target on a card that takes none', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP, target: 159 }, { kind: 'deploy', territory: 159, armies: 5 }], /takes no target/],
@@ -2332,6 +2412,19 @@ describe('cards in the turn tools', () => {
       expect(s.sent).toEqual([]);
     });
 
+    it("warns when the orders play or discard a card read only under a teammate (V8)", async () => {
+      const s = teamServer([], [{ id: SP, type: 2 }]);
+      const feed = { players: teams(), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const preview = await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [{ kind: 'discard', card: SP }, { kind: 'deploy', territory: 159, armies: 5 }],
+      });
+      expect(preview.isError).toBeFalsy();
+      const w = payload<{ preview: { warnings?: string[] } }>(preview).preview.warnings?.join('\n');
+      expect(w).toMatch(/Spy [0-9a-f]{32} was read under a teammate, not under you/);
+    });
+
     it('still refuses when my own cards are over the limit', async () => {
       const s = teamServer(
         [
@@ -2360,6 +2453,72 @@ describe('cards in the turn tools', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(message);
     expect(s.sent).toEqual([]);
+  });
+});
+
+describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  const G1 = 'abababababababababababababababab';
+  const G2 = 'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+  // The lobby fixture: Diplomacy lasts 2 turns, Sanctions 1 at 60%. GameFeed numberOfTurns 2: turn 3.
+  const dip = (expiresAfterTurn: number): SyntheticActiveCard => ({ card: 'Diplomacy', players: [ANN.inGame, BOB.inGame], by: BOB.inGame, guid: G1, expiresAfterTurn });
+  const san = (expiresAfterTurn: number): SyntheticActiveCard => ({ card: 'Sanctions', target: ANN.inGame, by: BOB.inGame, guid: G2, expiresAfterTurn });
+  const withActive = (active: SyntheticActiveCard[]) => () =>
+    ({ body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], {}, undefined, active) }) satisfies Partial<ReplyFrame>;
+  interface EffectPayload extends PlanPayload {
+    relations?: Array<Record<string, unknown> & { player: { id: number } }>;
+    cardsInEffect?: Record<string, unknown>;
+  }
+
+  it('honours a Diplomacy card with an opponent (T9): no hold against it, no attack on it, marked unverified', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([dip(4)]) }) });
+    const p = payload<EffectPayload>(await h.call('warapp_plan_turn', { game_id: GAME, view: 'full' }));
+    expect(p.relations).toEqual([expect.objectContaining({ player: expect.objectContaining({ id: Number(BOB.feed) }), card: 'Diplomacy', enforced: true, enforcedUntil: 5, honoured: true })]);
+    expect(p.moves.filter((m) => m.kind === 'attack').map((m) => m.to.id)).not.toContain(158);
+    expect(p.cardsInEffect).toEqual({ diplomacy: [{ player: expect.objectContaining({ id: Number(BOB.feed) }), untilTurn: 5 }], verified: false, note: expect.stringMatching(/unverified decoder/) });
+    expect(p.rationale.join('\n')).toMatch(/Diplomacy card with player 7176543229: .*\(T9\); the card lasts until turn 5/);
+    expect(p.warnings.join('\n')).toMatch(/Diplomacy is in effect between you and player 7176543229 \(until turn 5\): .*The plan honours it \(T9\)/);
+  });
+
+  it('a Diplomacy card the decoder cannot be sure of changes nothing and says why', async () => {
+    // Expiry 9 on turn 3: further off than the game's 2-turn Diplomacy allows.
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([dip(9)]) }) });
+    const p = payload<EffectPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.relations).toBeUndefined();
+    expect(p.cardsInEffect).toBeUndefined();
+    expect(p.warnings.join('\n')).toMatch(/Diplomacy with player 7176543229 was read from the board, but the plan does not rely on it: .*longer than the game's Diplomacy duration/);
+  });
+
+  it("Sanctions on me cut the plan's income by the client's rule", async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([san(3)]) }) });
+    const p = payload<EffectPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.income).toBe(2);
+    expect(p.deploys.reduce((n, d) => n + d.armies, 0)).toBe(2);
+    expect(p.cardsInEffect).toMatchObject({ sanctionsOnMe: [{ percentage: 0.6, untilTurn: 4 }], incomeBefore: 5, incomeAfter: 2, verified: false });
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/Sanctions are on you \(60%, until turn 4\): the plan's income is 2, not 5/);
+    expect(w).toMatch(/Income 2 may be off: the Sanctions on you by 60% are applied as read from the board by an unverified decoder/);
+    expect(w).not.toMatch(/the modelled income does not apply/);
+  });
+
+  it('with no card in effect the plan is the one made without the decoder', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([]) }) });
+    const a = payload<EffectPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    await h.harness.close();
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const b = payload<EffectPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(a.orders).toEqual(b.orders);
+    expect(a.income).toBe(5);
+    expect(a.cardsInEffect).toBeUndefined();
+  });
+
+  it('warapp_check_plan counts a Diplomacy card as a truce: safeIfTruceHolds leaves its player out', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([dip(4)]) }) });
+    const p = payload<{ safe: boolean | null; safeIfTruceHolds?: boolean | null; truces?: Array<Record<string, unknown>> }>(
+      await h.call('warapp_check_plan', { game_id: GAME, orders: [{ kind: 'deploy', territory: 161, armies: 5 }] }),
+    );
+    expect(p.truces).toEqual([expect.objectContaining({ card: 'Diplomacy', enforced: true, enforcedUntil: 5, verified: false })]);
+    expect(p.safeIfTruceHolds).not.toBeUndefined();
   });
 });
 
