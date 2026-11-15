@@ -544,6 +544,8 @@ export interface TurnPlan {
     /**
      * Next turn's income if every territory the plan keeps and captures is held — conceded
      * borders included (#109: see `nextIncomeIfConcededFall`). One income rule ({@link boardIncome}).
+     * #253: under an army cap it is this turn's capped income plus what the plan's captures gain, not
+     * a re-run of the cap (next turn's cut depends on the armies spent and on the larger income).
      */
     nextIncome: number;
     /**
@@ -1833,6 +1835,19 @@ export function defaultEnemyDeploy(
  */
 export function incomeFor(g: MapGraph, board: BoardState, me: number, settings?: GameSettings): number {
   return incomeDetail(g, board, me, settings).income;
+}
+
+/**
+ * Another player's income from what the board shows, before any army cap: base, bonuses and cities
+ * over the territories it visibly holds. The cap is not applied (#253): its fogged armies are
+ * unknown, so a cut from its visible armies alone would depend on the fog. My own income is
+ * {@link incomeFor}.
+ */
+export function visibleIncomeFor(g: MapGraph, board: BoardState, player: number, settings?: GameSettings): number {
+  const held = new Set<number>();
+  for (const t of board.territories)
+    if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === player) held.add(t.territoryId);
+  return boardIncome(g, held, incomeRules(settings)).total;
 }
 
 /**

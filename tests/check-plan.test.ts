@@ -176,6 +176,29 @@ describe('warapp_check_plan', () => {
     expect(carded.enemyDeploy[0]!.deploy).toBe(plain.enemyDeploy[0]!.deploy + 20);
   });
 
+  it('#253: a capped game gets the same opponent estimate as warapp_plan_turn (the fog prior reads my income before the cut)', async () => {
+    // I hold bonus 118 (+2): income 7. 60 armies of mine against a 2x cap: round(2 x 7) - 60 < 0, so I receive 0.
+    // Bob beside the fog is floored at my income before the cut (7), as warapp_plan_turn has it, never at 0.
+    const terr: SyntheticTerritory[] = [
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 20 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 20 },
+      { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 20 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 3 },
+      { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+    ];
+    h = await live(terr, 'Playing', {}, { ArmyCap: 2 });
+    const p = await check({ orders: [] });
+    expect(p.income).toBe(0);
+    const plan = payload<{ income: number; enemyDeploy: number; incomeCapped?: { uncapped: number } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(plan.income).toBe(0);
+    expect(plan.incomeCapped?.uncapped).toBe(7);
+    const bob = p.enemyDeploy.find((e) => e.player.id === Number(BOB.feed))!;
+    expect(bob.deploy).toBe(plan.enemyDeploy);
+    expect(bob.deploy).toBeGreaterThanOrEqual(7);
+  });
+
   it('finds no harmful reply for orders that leave every border holding', async () => {
     // Bob's 3 with his 5 make 7 attackers: neither of my 20s falls.
     h = await live(at(20, 20, 3));
@@ -394,6 +417,20 @@ describe('warapp_check_plan', () => {
       expect.objectContaining({ territory: expect.objectContaining({ id: 159 }), armies: 6, needs: 11, attackers: [8, 8] }),
     ]);
     expect(thin.safe).toBe(false);
+    // #253: under an army cap that pays me nothing (round(1 x 7) - 46 < 0) I still earn 7 and still lead,
+    // as the plan's standing reads it: the cap is mine alone.
+    await h.harness.close();
+    const capped = { ...g, settings: { ...(g.settings as object), ArmyCap: 1 } };
+    h = await liveHarness({
+      feed: [capped],
+      warapp: (req: DecodedRequest): Partial<ReplyFrame> => {
+        if (req.method !== Method.GetLatestGameInfo) throw new Error(`unexpected method ${req.method}`);
+        return { body: (w) => writeLatestGameInfo(w, territories, [ANN.inGame]) };
+      },
+    });
+    const cut = await check({ orders: [] });
+    expect(cut.income).toBe(0);
+    expect(cut.leader).toBe(true);
   });
 
   it('says so when battles are not exact, and names what it did not try', async () => {

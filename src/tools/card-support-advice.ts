@@ -4,7 +4,7 @@
 
 import { airliftAdvice, diplomacyAdvice, giftAdvice, intelAdvice, sanctionsAdvice, type IntelCard, type Strength, type TruceCover } from '../analysis/card-support.js';
 import type { CardBoard } from '../analysis/card-threats.js';
-import { incomeFor } from '../analysis/plan/shared.js';
+import { visibleIncomeFor } from '../analysis/plan/shared.js';
 import type { TurnPlan } from '../analysis/planner.js';
 import { STRENGTH_INCOME_TURNS } from '../analysis/profile.js';
 import type { Card } from '../cards.js';
@@ -49,7 +49,8 @@ function percentage(game: Pick<Game, 'settings'>): number | undefined {
 /**
  * Each player in sight by strength (visible armies + {@link STRENGTH_INCOME_TURNS} × income): the
  * profile's free-for-all ranking when the plan has one, else read off the board (visible bonuses only:
- * an opponent's figure is a lower bound under fog). Teammates and players no longer playing are left out.
+ * an opponent's figure is a lower bound under fog; every income before any army cap, as the profile's
+ * ranking reads mine, #253). Teammates and players no longer playing are left out.
  */
 function strengths(input: SupportInput): Strength[] {
   const ranking = input.plan.profile?.ranking;
@@ -64,7 +65,7 @@ function strengths(input: SupportInput): Strength[] {
   }
   return [...out].map(([playerId, armies]) => ({
     playerId,
-    strength: armies + STRENGTH_INCOME_TURNS * incomeFor(input.cb.graph, input.cb.board, playerId, input.game.settings),
+    strength: armies + STRENGTH_INCOME_TURNS * visibleIncomeFor(input.cb.graph, input.cb.board, playerId, input.game.settings),
   }));
 }
 

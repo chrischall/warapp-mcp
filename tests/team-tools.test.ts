@@ -276,6 +276,19 @@ describe('warapp_get_team', () => {
     expect(p.hand).toEqual({ inPlay: false });
   });
 
+  it("#253: a teammate's visible income is never cut by the army cap (its fogged armies are unknown)", async () => {
+    const run = async (extra: Record<string, unknown>) => {
+      await h?.harness.close();
+      h = await liveHarness({ feed: [game('Playing', { extra })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: latest(BOARD) }) });
+      return payload<TeamPayload>(await h.call('warapp_get_team', { game_id: GAME })).teammates.find((t) => t.id === Number(BOB.feed))!.visibleIncome;
+    };
+    const plain = await run({});
+    // Bob's 7 armies against a 1x cap on his income would leave him nothing: not applied to another player.
+    const capped = await run({ settings: { ...(lobbyFixture().settings as object), ArmyCap: 1 } });
+    expect(plain).toBeGreaterThan(0);
+    expect(capped).toBe(plain);
+  });
+
   it('a lobby has no board: the roster only', async () => {
     h = await liveHarness({ feed: [game('WaitingForPlayers')], pages: ME_PAGE, warapp: routes({}) });
     const p = payload<TeamPayload>(await h.call('warapp_get_team', { game_id: GAME }));

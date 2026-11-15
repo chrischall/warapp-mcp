@@ -22,7 +22,7 @@ import {
 import { neighborsOf, type MapGraph } from '../graph.js';
 import type { MyOrders, OpponentTrack } from '../opponents.js';
 import { OUTLOOK_TURNS } from '../outlook.js';
-import { boardIncome, DEFAULT_BASE_INCOME } from '../player.js';
+import { boardIncome, DEFAULT_BASE_INCOME, type ArmyCapIncome } from '../player.js';
 import {
   AHEAD_PRESSURE_FACTOR,
   captureCost,
@@ -104,6 +104,9 @@ export function alliesOf(me: number, players: readonly ProfilePlayer[] | undefin
  * prior (#119, {@link fogPrior}) when the game context allows it, and the turn being played (the
  * opening board is the first turn's only, #128). {@link planTurn} and warapp_check_plan both use
  * it, so they work from the same figures. `income` is my board income, card armies left out.
+ * #253: with `incomeCap` (the army cap's arithmetic for this turn) `income` is what the cap leaves,
+ * and the fog prior reads it with the cut added back: the cap is mine alone, so the prior compares
+ * what I earn, not what I am paid. Without it, `income` is read as given.
  * Every visible player is listed, teammates included (the caller filters them).
  */
 export function planEnemyEstimates(input: {
@@ -111,6 +114,8 @@ export function planEnemyEstimates(input: {
   board: BoardState;
   me: number;
   income: number;
+  /** #253: the army cap's arithmetic, when `income` is the cut figure: the prior adds the cut back. */
+  incomeCap?: ArmyCapIncome;
   settings?: PlannerSettings;
   previousBoard?: BoardState;
   /** #226: my orders on the turn `previousBoard` was played: a failed attack's kills count back. */
@@ -122,7 +127,8 @@ export function planEnemyEstimates(input: {
   sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
 }): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
   const ctx = input.game ?? {};
-  const { prior, skipped } = fogPrior(input.board, input.me, ctx, input.income);
+  const capCut = input.incomeCap ? Math.max(0, Math.floor(input.incomeCap.uncapped - input.incomeCap.received)) : 0;
+  const { prior, skipped } = fogPrior(input.board, input.me, ctx, input.income + capCut);
   const turn = input.turn ?? ctx.turn ?? null;
   const estimates = enemyDeployEstimates(input.graph, input.board, input.me, input.settings ?? {}, input.previousBoard, input.tracks, prior, {
     turn,

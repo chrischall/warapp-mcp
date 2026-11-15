@@ -108,9 +108,14 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   are not income and always pay in full (unverified live). `incomeDetail` (`src/analysis/plan/shared.ts`)
   computes it, so `warapp_plan_turn` (which reports `incomeCapped`: `uncapped`, `cap`, `armies`, `limit`,
   `received`, `cut`) and `warapp_submit_turn`'s deploy check use the cut figure; while it rests on one
-  data point the check stays a preview warning that states the arithmetic. My armies a territory of mine
-  does not show (never seen) leave the income uncut, with a warning. An opponent's cap is not modelled:
-  its fogged armies are unknown.
+  data point the check stays a preview warning that states the arithmetic; `warapp_check_plan` checks the
+  deploy total against the cut figure too. The fog prior (`planEnemyEstimates`' `incomeCap`), the standing
+  and `warapp_check_plan`'s leader test read my income before the cut: they compare economies, and the cap
+  is mine alone. The plan's `expected.nextIncome` is this turn's cut income plus its gains, not the cap
+  re-run for next turn. My armies a territory of mine does not show (never seen) leave the income uncut,
+  with a warning. Another player's cap is not modelled: its fogged armies are unknown, so every other
+  player's income (`visibleIncomeFor`: a teammate's `visibleIncome` in `warapp_get_team`, the card
+  advice's strengths) is read before any cap.
 - **Wastelands and Commerce (#167).** `Wastelands` is `{ NumberOfWastelands, WastelandSize }` (verified
   as zeros on a lobby game; `normalizeSettings` → `settings.wastelands`). With wastelands on, the planner
   costs a fogged missing bonus member with the expected surcharge of being one (the picking board, where

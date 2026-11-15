@@ -635,6 +635,9 @@
 //     present only when the figures differ or a bonus is at risk. When the at-risk figure is
 //     lower a warning names both ("This plan concedes bonus …: next income A if they hold, B if
 //     the conceded borders fall."), and the frontier rationale's next income names both.
+//     Under an army cap (#253) both start from this turn's capped income plus the gains
+//     (`nextIncomeWith`): the cap is not re-run for next turn, whose cut depends on the armies
+//     spent and on the larger income; R3, rule 4d's frontier test and `sinceLastTurn` read that figure.
 //  2. Targets: visible neutrals adjacent to a territory I held at the start of
 //     the turn (plus visible enemy territories under `goal: 'complete-bonus'`, and
 //     under `balanced` only enemy territories in a breakable bonus — one whose

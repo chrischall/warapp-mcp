@@ -1964,7 +1964,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         board,
         me: me.id,
         // #253: the fog prior reads my income before the army cap's cut, as the planner's does.
-        income: income - cards.extraArmies + (setup.incomeCap ? setup.incomeCap.uncapped - setup.incomeCap.received : 0),
+        income: income - cards.extraArmies,
+        ...(setup.incomeCap ? { incomeCap: setup.incomeCap } : {}),
         settings,
         ...(trend ? { previousBoard: trend.board } : {}),
         ...(trend && previousOrders ? { previousOrders } : {}),

@@ -6,7 +6,7 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { incomeFor, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart } from '../analysis/index.js';
+import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart } from '../analysis/index.js';
 import { stressPlan, type StressDodge, type StressExposure, type StressJoint, type StressReply } from '../analysis/stress.js';
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { handOwners, opponentReinforcement } from './card-advice.js';
@@ -240,7 +240,12 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         turn !== null
           ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map))
           : undefined;
-      const income = incomeFor(graph, board, me.id, game.settings);
+      // #253: what the army cap leaves me (the deploy check, the truces' trust and the Sanctions read
+      // it, as warapp_plan_turn's do) and what I earn before the cut (the fog prior and the leader
+      // test compare economies, and the cap is mine alone, as in the plan's standing).
+      const incomeOnBoard = incomeDetail(graph, board, me.id, game.settings);
+      const income = incomeOnBoard.income;
+      const earnedIncome = incomeOnBoard.cap ? incomeOnBoard.cap.uncapped : income;
       // PLAN-TEAMS D3: the cards in effect the decoder is sure of (G2: Sanctions on another player cut
       // its estimate read off the board, as warapp_plan_turn does).
       const effect = boardCardsInEffect(game, me, turn, info);
@@ -249,6 +254,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         board,
         me: me.id,
         income,
+        ...(incomeOnBoard.cap ? { incomeCap: incomeOnBoard.cap } : {}),
         settings,
         ...(history.previous ? { previousBoard: history.previous.board } : {}),
         // #226: my orders on that turn, when this server sent them, as warapp_plan_turn has them.
@@ -299,7 +305,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // may strike one territory of mine together.
       const rivals = opponents.filter((o) => inView.has(o.id));
       const estimateOf = (id: number) => estimates.find((x) => x.playerId === id)?.estimate ?? base;
-      const leader = teams.size === 0 && rivals.length >= 2 && rivals.every((o) => income > estimateOf(o.id));
+      const leader = teams.size === 0 && rivals.length >= 2 && rivals.every((o) => earnedIncome > estimateOf(o.id));
 
       // B2 T6: the truces in force (the ledger, as warapp_plan_turn reads it). Their partners stay among
       // the opponents tried, so `safe` still means safe against a break; `safeIfTruceHolds` leaves the
