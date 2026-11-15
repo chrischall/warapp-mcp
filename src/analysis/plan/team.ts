@@ -204,7 +204,9 @@ function idleAt(pc: TeamCtx, v: TeamPlanView, x: number): number {
  * PLAN-TEAMS C3.5: the teammates' borders my idle armies would make hold, by territory id. Each source's idle
  * armies are allotted once (G3): the borders are served in order of the armies they need, fewest first (then
  * by id), each from its sources with the most left, and a border its sources can no longer cover is left out
- * — so no two offers count the same armies.
+ * — so no two offers count the same armies. The trade-off: fewest first holds the most borders, not the most
+ * worth, so a teammate's big border may be left out for several small ones (the worth of a teammate's border
+ * is theirs to judge; it is advice, never in `orders`).
  */
 export function teamSupport(pc: TeamCtx, v: TeamPlanView): TeamSupport[] {
   const orders = mateOrders(pc);

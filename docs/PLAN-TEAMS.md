@@ -658,7 +658,9 @@ order as its share; armies moved in left out, as for my own borders), where my i
 hold: idle is `avail` after every order less `keepFor` / the two-step keep / cover and central keeps, on a
 territory not locked, conceded or my commander's (No-Split: none from a territory with an order, and a whole
 stack). Each idle army is allotted once (G3): the borders are served by the armies they need, fewest first (then
-by id), each from its sources with the most left, and a border its sources can no longer cover is left out. **Joint captures (C3.6):** `team.jointCaptures[]` — a foe's territory a teammate attacks, resolved on
+by id), each from its sources with the most left, and a border its sources can no longer cover is left out.
+The trade-off is deliberate: fewest first holds the most borders, not the most worth, so a teammate's big border
+may be left out for several small ones (its worth is the teammate's to judge; the offer is advice only). **Joint captures (C3.6):** `team.jointCaptures[]` — a foe's territory a teammate attacks, resolved on
 `simulateTurn` with only their entered attacks (and deploys) and mine (the plan's own attacks on it, `inPlan`,
 else my idle armies beside it, attack-only): skipped when either side takes it alone; reported when some
 order of the two takes it, with `cases` (each side first: captured, by whom, and whether it still falls when
