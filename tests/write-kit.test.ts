@@ -1,7 +1,8 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import { describe, expect, it } from 'vitest';
 import type { Game, GameMap, Player } from '../src/normalize.js';
-import { WarappServerError } from '../src/protocol/rpc.js';
+import { Method } from '../src/protocol/methods.js';
+import { WarappRpc, WarappServerError } from '../src/protocol/rpc.js';
 import { bonusNamer, namer } from '../src/tools/common.js';
 import {
   accountUnknown,
@@ -148,6 +149,26 @@ describe('sendAndVerify: send, classify the failure, read back', () => {
       }),
     );
     expect(r).toEqual({ outcome: 'unknown', status: 'unknown', detail: 'timed out' });
+    expect(read).toBe(false);
+  });
+
+  it('#272: a failure before the request left is an error saying it was not sent, never `unknown`', async () => {
+    let read = false;
+    const before = new WarappRpc({ bridge: async () => Promise.reject(new Error('bridge not paired')), env: {} });
+    const e = await refusal(
+      sendAndVerify(
+        spec({
+          send: async () => {
+            await before.call('GetTerritoryPicks', Method.GetTerritoryPicks);
+          },
+          readBack: async () => {
+            read = true;
+            return 1;
+          },
+        }),
+      ),
+    );
+    expect(e.message).toMatch(/^The request was not sent \(.+\), so nothing changed\.$/);
     expect(read).toBe(false);
   });
 

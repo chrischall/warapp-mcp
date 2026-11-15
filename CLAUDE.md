@@ -43,7 +43,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   preview names it, and `execute` refuses if it changed (`requireApprovedAccount`, `src/tools/live-context.ts`),
   so an approval for one account never acts as another. The shared pieces are in `src/tools/write-kit.ts`:
   `requireMe` / `requireMySeat` (every write refuses an unreadable signed-in account, one wording),
-  `sendAndVerify` (a refusal throws; no answer is `unknown` and is never read back or resent), and
+  `sendAndVerify` (a refusal throws; no answer is `unknown` and is never read back or resent; #272: a
+  failure before the request left — no email, the bridge not ready, marked by `WarappRpc.call`, `notSent` —
+  throws "The request was not sent …, so nothing changed"), and
   `defineGatedWrite`. Every write result carries `outcome` (`confirmed`, `accepted`, `unconfirmed`,
   `unknown`, `not_applied`; the per-tool mapping is in that file's header) beside its own `status`,
   which callers still read. `warapp_submit_picks` validates against the live board and reports
