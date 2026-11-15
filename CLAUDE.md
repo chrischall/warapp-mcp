@@ -455,8 +455,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   that reaches it), every named player a distinct player still playing. A Diplomacy between me and an
   opponent (never a teammate) is T9: `planRelationsFrom`'s `diplomacy` marks a ledger truce with it
   enforced, else adds a relation `card: 'Diplomacy'` covering everything; an enforced relation binds in
-  any format, its player is no foe this turn, and still counts for the two-step look-ahead when the card
-  is gone by next turn (`lookAheadFoes`). Sanctions on me cut `warapp_plan_turn`'s income by the bundle's
+  any format, its player is no foe this turn, and when the card is gone by next turn (`lookAheadFoes`) still
+  counts for every next-turn judgement: the two-step hold (#172), the frontier's hold cost (rule 4d) and a
+  completion's defensibility (R3) — `nextTurnAt` in `plan/threats.ts` (G2). `warapp_check_plan` keeps the
+  player among the opponents, so `exposedNextTurn` counts it anyway. Sanctions on me cut `warapp_plan_turn`'s income by the bundle's
   rule (per card, round((1 − Percentage) × income), .5 up, cap 10000; not under Local Deployment, which
   warns). Sanctions on others only show (an observed deploy may already carry them). Anything not sure is
   a warning and changes nothing; the plan reports `cardsInEffect` (`verified: false`), and

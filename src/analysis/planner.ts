@@ -1200,7 +1200,9 @@
 //           term, the turn and the evidence, and says to record `broken-by-them` with
 //           warapp_record_agreement before submitting (warapp_submit_turn reads only the ledger).
 //       T9. Enforced (a Diplomacy card the decoder is sure of): that player is no foe this turn
-//           (`foe`), so its threat is 0 and no attack on any of its territories is planned.
+//           (`foe`), so its threat is 0 and no attack on any of its territories is planned. A card
+//           gone by next turn leaves its player a foe for next turn's reasoning (`lookAheadFoes`): the
+//           two-step hold (#172), the frontier (rule 4d) and R3's defensibility (G2, `nextTurnAt`).
 //     The plan's `relations` reports each truce: its state, whether it binds, the trust and its
 //     flags, the borders relaxed and kept full (and why), the armies the relaxed holds free (per
 //     border, what its full hold needs beyond the armies there less what the truce hold needs —

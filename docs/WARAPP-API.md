@@ -130,7 +130,9 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   the user, only when every check holds (turn known; the card in play with a `Duration`, and a
   `Percentage` ≤ 1 for Sanctions; `untilTurn` after this turn and within `Duration`; distinct players of
   the game still playing; no teammate). Then `warapp_plan_turn` plans that opponent as no threat and no
-  target this turn (rule T9; it still counts for next turn's look-ahead when the card is gone by then) and
+  target this turn (rule T9; when the card is gone by next turn it still counts for every next-turn judgement —
+  the two-step hold, the frontier's hold cost and a completion's defensibility — and `warapp_check_plan`'s
+  `exposedNextTurn`, which tries every opponent) and
   cuts the user's income by the Sanctions; the result's `cardsInEffect` says so with `verified: false`.
   Sanctions on an opponent are only reported: its observed deploys may already carry the cut. The submit
   check stays soft.

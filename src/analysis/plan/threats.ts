@@ -89,7 +89,7 @@ export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput) {
   const {
     growthOf, deployReaching, reinforcementAt, holdArmies, bombSized, hiddenFoe, hiddenMovable, hiddenPool,
   } = src;
-  const { chainAt, stacksAt, forceAt, threatAt, expectedAt, exposure } = forces;
+  const { chainAt, stacksAt, forceAt, threatAt, nextTurnAt, expectedAt, exposure } = forces;
   const seen = visibleOpponents(pc, input);
   return {
     ...seen,
@@ -105,6 +105,7 @@ export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput) {
     stacksAt,
     forceAt,
     threatAt,
+    nextTurnAt,
     expectedAt,
     exposure,
     borders,
@@ -378,6 +379,12 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
 export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
   const { g, board, s, foe, territories: state, mineSet, unitsAt, guard, rates, toTake, ffaLeader } = pc;
   const { captured } = ps;
+  /**
+   * G2 (T9, D3): a player a Diplomacy card shields me from only this turn is a foe again next turn:
+   * {@link nextTurnAt} (the frontier and a completion's defensibility) counts its stacks.
+   */
+  const returning = pc.truce.lookAheadFoes;
+  const foeNext = (p: number) => foe(p) || returning.has(p);
   const {
     growthOf, teamOf, deployReaching, holdArmies, bombSized, takesAlone, killsOf, hiddenFoe, hiddenMovable, lostAt,
   } = src;
@@ -444,7 +451,8 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
    * ({@link lostAt}), the pool's carrier keeping what they leave of it. With `trend`, its fastest
    * growth there. Shared by {@link forceAt} and the floor tier's armies already next to a border.
    */
-  const stacksAt = (t: number, gone: (n: number) => boolean, trend: boolean) => {
+  const stacksAt = (t: number, gone: (n: number) => boolean, trend: boolean, nextTurn = false) => {
+    const isFoe = nextTurn ? foeNext : foe;
     const byPlayer = new Map<number, { stacks: { id: number; movable: number }[]; growth: number }>();
     // #164: a player's unaccounted armies are one pool, in one place at most: its first hidden stack
     // next to `t` carries them; any other hidden stack of it there is the guard alone (movable 0).
@@ -452,7 +460,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
     const carrier = new Map<number, number>();
     for (const n of [...neighborsOf(g, t)].sort(byNum)) {
       const st = state.get(n);
-      if (gone(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId)) continue;
+      if (gone(n) || st?.owner.kind !== 'player' || !isFoe(st.owner.playerId)) continue;
       // #164: an owner shown with its armies hidden (Dense / Heavy fog) is a stack of bounded size.
       const hidden = hiddenFoe(n) !== undefined;
       if (st.armies === null && !hidden) continue;
@@ -509,9 +517,9 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
   const forceAt = (
     t: number,
     gone: (n: number) => boolean,
-    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean; solo?: boolean },
+    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean; solo?: boolean; nextTurn?: boolean },
   ): Force | null => {
-    const byPlayer = stacksAt(t, gone, o.trend);
+    const byPlayer = stacksAt(t, gone, o.trend, o.nextTurn === true);
     // B2 (T2, plan/relations.ts): on a truce hold the partner attacks with its stacks alone — no
     // deploy, no trend, its Multi-Attack chains from the armies standing; `full` asks for the hold
     // the truce relaxed.
@@ -591,6 +599,15 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
     return f ? { player: f.player, threat: f.threat } : null;
   };
   /**
+   * {@link threatAt} for next turn (G2): the same force, with the players a Diplomacy card shields me
+   * from only this turn counted again ({@link foeNext}). The same as threatAt when there is none.
+   */
+  const nextTurnAt = (t: number, gone: (n: number) => boolean): { player: number; threat: number } | null => {
+    if (!returning.size) return threatAt(t, gone);
+    const f = forceAt(t, gone, { trend: true, allPlayers: true, solo: ps.soloHeld.has(t), nextTurn: true });
+    return f ? { player: f.player, threat: f.threat } : null;
+  };
+  /**
    * The expected (not worst-case) attack on my `t` next turn (issue #59): per player, its
    * movable armies (and units, #128) next to `t` plus its deploy estimate — no trend projection,
    * one opponent at a time, its stacks attacking separately when that takes more. 0 with none.
@@ -601,7 +618,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
   const exposure = (members: readonly number[], gone: (n: number) => boolean, stays: (m: number) => number): Exposure[] => {
     const out: Exposure[] = [];
     for (const m of members) {
-      const th = threatAt(m, gone);
+      const th = nextTurnAt(m, gone);
       if (!th) continue;
       // My commander defends with the armies on my territory (a capture's units were the enemy's).
       const have = stays(m) + (mineSet.has(m) ? unitsAt(m) : 0);
@@ -616,6 +633,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
     stacksAt,
     forceAt,
     threatAt,
+    nextTurnAt,
     expectedAt,
     exposure,
   };

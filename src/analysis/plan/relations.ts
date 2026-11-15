@@ -32,7 +32,8 @@
 //   T9  enforced (a Diplomacy card the decoder is sure of, PLAN-TEAMS D3): that player is no foe for
 //       the turn — its threat is 0 and no attack on it is planned — in any format, since the game
 //       enforces it; when the card is gone by next turn (`enforcedUntil`), the player still counts
-//       for the two-step look-ahead (#172: `lookAheadFoes`).
+//       for next turn's reasoning (`lookAheadFoes`): the two-step look-ahead (#172), and (G2) the
+//       frontier's hold cost (rule 4d) and a completion's defensibility (R3), via `nextTurnAt`.
 // With no relations every function here is a no-op, so every plan is byte-identical to one made
 // without them. Pure and deterministic (ties on ascending id).
 import { bonusTerritories } from '../bonuses.js';

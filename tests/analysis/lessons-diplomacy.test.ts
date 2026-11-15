@@ -867,6 +867,43 @@ describe('D3 T9: a Diplomacy card in effect, decoded from the board', () => {
     expect(why(p)).toMatch(/the card is gone by turn 9, so its stacks still count for next turn's look-ahead/);
   });
 
+  it("G2: a card gone by next turn counts its player in next turn's frontier, not only the two-step hold (#172)", () => {
+    // T1 (24) faces the partner's 40: shielded this turn, but next turn the 40 can attack again, so the
+    // frontier the plan leaves faces it and needs deploys to hold.
+    const ending = planTurn(input([card({ enforcedUntil: 9 })], { game: two, board: b2 }));
+    expect(deployedTo(ending, 1)).toBe(0);
+    expect(ending.frontier.enemyBorders).toBeGreaterThanOrEqual(1);
+    expect(ending.frontier.holdCost).toBeGreaterThan(0);
+    // A card that lasts past next turn keeps its player out of the frontier too.
+    const lasting = planTurn(input([card({ enforcedUntil: 10 })], { game: two, board: b2 }));
+    expect(lasting.frontier.enemyBorders).toBe(0);
+    expect(lasting.frontier.holdCost).toBe(0);
+  });
+
+  it("G2: a completion that leaves a border the returning player can take is judged by next turn's threat (R3)", () => {
+    // B901 = {3, 4}: capturing T4 completes it, and T4 borders the partner's 40 on T2, shielded only this turn.
+    const g3 = buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 5, 9],
+        [
+          [1, 2],
+          [1, 3],
+          [2, 4],
+          [3, 4],
+          [4, 5],
+          [5, 9],
+        ],
+        [[901, 3, [3, 4]]],
+      ),
+    );
+    const at = (rs: PlanRelation[]) => planTurn(input(rs, { graph: g3, game: two, board: b2, income: 5 }));
+    const lasting = at([card({ enforcedUntil: 10 })]);
+    const ending = at([card({ enforcedUntil: 9 })]);
+    expect(lasting.expected.bonusesCompleted).toEqual([901]);
+    expect(ending.expected.bonusesCompleted).toEqual([]);
+    expect(warned(ending)).toMatch(/indefensible/);
+  });
+
   it('the look-ahead keeps a player whose card is gone by next turn, unless another card lasts longer', () => {
     const read = (rs: PlanRelation[], turnNow = 8) => truceOf(input(rs), { notFoe: (p) => p === ME, format: 'ffa', turnNow });
     expect([...read([card({ enforcedUntil: 9 })]).lookAheadFoes]).toEqual([PARTNER]);
