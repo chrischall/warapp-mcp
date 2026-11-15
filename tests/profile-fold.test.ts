@@ -301,6 +301,34 @@ describe('foldFinishedGame', () => {
     expect(statSync(profileGamePath(dir, GAME2, SMALL_ME)).isFile()).toBe(true);
   });
 
+  it('keeps the recorded team format when the finished read carries no team field', async () => {
+    const dir = tmp();
+    const MATE = 5544332211;
+    await recordBehaviour(
+      dir,
+      {
+        gameId: GAME,
+        me: SMALL_ME,
+        graph: g,
+        settings: {},
+        cards: [],
+        opponents: [SMALL_OPP, SMALL_BOT],
+        boards: boards(),
+        seats: { format: 'team', players: 4, ai: [SMALL_BOT], turnedAI: [] },
+      },
+      {},
+    );
+    // GameFeed's team field is unverified: this read sends none, so the raw seats would say `ffa`.
+    const raw: Game = { ...finished(), players: [...finished().players, player(MATE, 'Mate Seat', 'Won')] };
+    expect(await foldFinishedGame(dir, raw, {})).toBe(1);
+    const stored = JSON.parse(readFileSync(profilePlayersPath(dir), 'utf8'));
+    const entries = Object.values(stored.players as Record<string, { entries: { format: string; players: number }[] }>).flatMap((p) => p.entries);
+    expect(entries).toEqual([expect.objectContaining({ format: 'team', players: 4 })]);
+    const population = JSON.parse(readFileSync(profilePopulationPath(dir), 'utf8'));
+    expect(Object.keys(population.totals)).toEqual(['team']);
+    expect(JSON.parse(readFileSync(profileGamePath(dir, GAME, SMALL_ME), 'utf8')).seats).toMatchObject({ format: 'team', players: 4 });
+  });
+
   it('does nothing when profiling is off', async () => {
     const dir = tmp();
     await recorded(dir);

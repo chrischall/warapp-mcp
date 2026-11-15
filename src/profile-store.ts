@@ -58,7 +58,7 @@ import type { Game } from './normalize.js';
 import { withPathLock } from './path-lock.js';
 import { playerKey, playerRecordSalt, playerRecordSaltPath, playerSaltForWrite, profileGameKey } from './player-record-store.js';
 import { holdsSeat } from './player-states.js';
-import { teammatesOf } from './teams.js';
+import { isTeamGame, teammatesOf } from './teams.js';
 import { BOARD_CACHE_MAX_AGE_MS } from './trend.js';
 
 export const PROFILE_ENV = 'WARAPP_PLAYER_PROFILE';
@@ -687,6 +687,17 @@ export function profileSeatsOf(game: Pick<Game, 'players'>): ProfileSeats {
 }
 
 /**
+ * The seats a finished read folds under. GameFeed's team field is unverified (the profile tool
+ * resolves teams from GetMyGames when it is missing), so a read with no team carries no evidence
+ * about the format: the format and seat count recorded from the team-resolved game stand, and only
+ * the AI seats come from the final read.
+ */
+function seatsForFold(raw: ProfileSeats, recorded: ProfileSeats | undefined, rawHasTeams: boolean): ProfileSeats {
+  if (rawHasTeams || !recorded) return raw;
+  return { ...raw, format: recorded.format, players: recorded.players };
+}
+
+/**
  * On a read that shows `game` finished: fold every per-game file of it not folded yet (one per
  * account of mine that recorded it), with each player's final state as its ending, and mark it
  * `folded: 'live'`. Only opponents in GameFeed's player list, never a teammate, never a human who
@@ -699,7 +710,7 @@ export async function foldFinishedGame(dir: string, game: Pick<Game, 'id' | 'sta
   try {
     const prefix = `${game.id}-`;
     const names = (await readdir(profileGamesDir(dir)).catch(() => [] as string[])).filter((n) => n.startsWith(prefix) && /^\d+-\d+\.json$/.test(n)).sort();
-    const seats = profileSeatsOf(game);
+    const raw = profileSeatsOf(game);
     const byId = new Map(game.players.map((p) => [p.id, p]));
     for (const name of names) {
       const me = Number(name.slice(prefix.length, -'.json'.length));
@@ -710,6 +721,7 @@ export async function foldFinishedGame(dir: string, game: Pick<Game, 'id' | 'sta
       const done = await withPathLock(path, async () => {
         const file = await readGameFile(dir, game.id, me);
         if (file.folded) return false;
+        const seats = seatsForFold(raw, file.seats, isTeamGame(game.players));
         // Only players of this game, never a teammate.
         const turns: Record<string, Record<string, TurnPrimitives>> = {};
         for (const [t, byOpponent] of Object.entries(file.turns))
