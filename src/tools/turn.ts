@@ -222,7 +222,8 @@ const turnOrderArg = z.discriminatedUnion('kind', [
     target: territoryRef
       .optional()
       .describe(
-        'Blockade: your territory to blockade. Gift: your territory to give away. Reconnaissance: the territory to see. Id or name.',
+        'Blockade, Emergency Blockade: your territory to blockade. Bomb: a territory next to yours, not yours or a ' +
+          "teammate's. Gift: your territory to give away. Reconnaissance: the territory to see. Id or name.",
       ),
     player: playerRef
       .optional()
@@ -990,6 +991,9 @@ const PLAYABLE: Readonly<Record<number, CardPlayKind>> = {
   9: 'Sanctions',
   10: 'Reconnaissance',
   11: 'Surveillance',
+  // Bomb (GameOrderPlayCardBomb) and Emergency Blockade (GameOrderPlayCardAbandon): bundle writers, UNVERIFIED live (V9).
+  13: 'Bomb',
+  3: 'EmergencyBlockade',
 };
 
 /** A card order as the tool takes it: the card and its targets (`card-plays.ts`). */
@@ -1084,7 +1088,7 @@ function resolveCardPlays(
     const kind = PLAYABLE[card.type];
     if (!kind) {
       throw new McpToolError(`Playing a ${card.name} card is not supported here yet.`, {
-        hint: 'Play it in the game itself; this tool plays every card but Emergency Blockade and Bomb.',
+        hint: 'Play it in the game itself; this tool plays only the built-in cards.',
       });
     }
     const { card: _card, before: _before, ...targets } = input;
@@ -2202,7 +2206,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         '(with a `target` of yours; an Order Delay goes after every move unless it has `before`: a move number to ' +
         'place it above, unverified live) from your hand, and the targeted cards — Spy (`player`), Reconnaissance ' +
         '(`target`), Surveillance (`bonus`), Airlift (`from` yours, `to` yours or a teammate\'s, `armies`, optional ' +
-        '`commander`), Gift (`target` yours, `player`) and Diplomacy (`players`: two) and Sanctions (`player`), encoded ' +
+        '`commander`), Gift (`target` yours, `player`), Diplomacy (`players`: two), Sanctions (`player`), Bomb (`target` ' +
+        "next to yours, not yours or a teammate's) and Emergency Blockade (`target` yours, never your commander's), encoded " +
         'as the client does but not yet verified live, each refused where war.app would refuse it (a commander is never ' +
         'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
@@ -2358,6 +2363,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         };
         for (const p of plays) {
           if (UNVERIFIED_CARD_PLAYS.has(p.kind)) p.targets = resolveCardTargets(p.kind, p.card.name, p.input, cardContext);
+        }
+        // An Emergency Blockade (phase 37) turns its territory neutral before an Airlift (phase 43) runs.
+        for (const p of plays) {
+          const a = p.kind === 'Airlift' ? p.targets : undefined;
+          const hit = a && [a.from, a.to].find((t) => t && cardContext.seen.blockaded.has(t.id));
+          if (hit) {
+            throw new McpToolError(`${label(hit)} is blockaded before the Airlift runs, so the Airlift ${hit === a.from ? 'from' : 'to'} it cannot happen.`, {
+              hint: 'The Emergency Blockade turns the territory neutral first: airlift elsewhere, or blockade another territory.',
+            });
+          }
         }
         if (cardContext.seen.commanderAirlifted && moves.some((m) => m.commander)) {
           throw new McpToolError('Your commander is both airlifted and taken along on a move.', {

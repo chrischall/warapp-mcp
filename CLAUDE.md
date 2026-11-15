@@ -427,7 +427,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
   never gifted or airlifted to a teammate; no Spy on me or a teammate; no Diplomacy between teammates)
   plus Sanctions on my own side (an opponent instead when the percentage is negative); what an Airlift
-  sends leaves its source's later moves (armies it lands cannot move that turn). The preview warns the encoding is unverified and the result
+  sends leaves its source's later moves (armies it lands cannot move that turn). **Bomb** (tag 20, phase 30,
+  `GameOrderPlayCardBomb`) and **Emergency Blockade** (tag 8, phase 37, `GameOrderPlayCardAbandon`) each write one
+  int32 territory, UNVERIFIED live too: a Bomb is refused on my own or a teammate's territory (526) or one next to
+  none of mine (527); an Emergency Blockade on a territory not mine (95), twice on one (96), on my commander's
+  (ours), or under an Airlift that runs after it; the preview warns when it breaks a bonus I hold or strands
+  moves. The preview warns the encoding is unverified and the result
   carries `cardPlayCheck`. The planner never plays them; `warapp_plan_turn`'s `cards.advice` (D2,
   `src/analysis/card-support.ts`, pure) says where they pay, each with an `order`, never added to the
   orders: Diplomacy on the opponent whose stacks tie down the most of my border armies, only with two or

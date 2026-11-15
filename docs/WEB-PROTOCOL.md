@@ -306,6 +306,8 @@ phase method gives the phase. No commit carrying one has been sent; golden tests
 | Gift (`…Gift`) | 13 | int32 recipient player, int32 territory | 47 |
 | Diplomacy (`…Diplomacy`) | 14 | int32 player one, int32 player two | 75 |
 | Sanctions (`…Sanctions`) | 15 | int32 sanctioned player | 80 |
+| Bomb (`…Bomb`) | 20 | int32 target territory | 30 |
+| Emergency Blockade (`…Abandon`) | 8 | int32 target territory | 37 |
 
 The bundle's `GameValidateOrders` refuses, and `warapp_submit_turn` refuses up front: Spy on myself or a
 teammate (80) or a player not playing (79; a neutral target, 225, is not offered); a Gift of a territory
@@ -315,7 +317,12 @@ a commander and the bosses); an Airlift to its own source (184), from a territor
 neither mine nor a teammate's (183), or carrying a commander or boss to a teammate's territory (537); a
 Diplomacy naming one player twice or two teammates (214) or a player not playing (381); Sanctions on a
 player not playing (219); Surveillance on a bonus worth 0 (224); Reconnaissance on a territory not on the
-map (41). Ours, not the validator's: Sanctions on myself or a teammate (on an opponent instead when the
+map (41); a Bomb on a territory whose owner is me or a teammate (526 `CannotBombTeammates`) or none of
+whose neighbours (the map's list for the target) is mine (527 `CannotBombNonAdjacent`) — a neutral target
+passes; an Emergency Blockade on a territory not mine (95 `AbandonCardMustTargetYourTerritory`) or on one
+territory twice (96). Ours, not the validator's: an Emergency Blockade on my commander's territory (it
+would be lost with it), or on a territory an Airlift of the same orders leaves or lands on (the wall, phase
+37, comes first); Sanctions on myself or a teammate (on an opponent instead when the
 game's `SanctionsCard.Percentage` is negative, a boost), more armies airlifted than stand on the source
 after the deploys, and a card the game's settings do not put in play. The executor runs an Airlift after
 the deploys, so `warapp_submit_turn` takes what it sends off its source's later moves (the armies it lands cannot move again that turn, per the wiki); a Gift runs before

@@ -7,6 +7,11 @@ import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/co
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { buildGraph } from '../src/analysis/graph.js';
+import type { Card } from '../src/cards.js';
+import type { Player } from '../src/normalize.js';
+import { adviseCards } from '../src/tools/card-advice.js';
+import { board as boardOf, fixtureMap, mine as mineState } from './analysis/helpers.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -356,6 +361,168 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
       pages: ME_PAGE,
       warapp: s.warapp,
     });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: [...c.orders, DEPLOY] });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(c.message);
+    expect(s.sent).toEqual([]);
+  });
+});
+
+// Bomb and Emergency Blockade (#G1): encoded from the bundle's GameOrderPlayCardBomb (tag 20, phase 30) and
+// GameOrderPlayCardAbandon (tag 8, phase 37) writers, UNVERIFIED live (V9). Refusals mirror GameValidateOrders.
+const BOMB = '13131313242424243535353546464646';
+const WALL = '03030303141414142525252536363636';
+const WALL2 = '03030303141414142525252536363637';
+const COMBAT_HAND: SyntheticCard[] = [
+  { id: BOMB, type: 13 },
+  { id: WALL, type: 3 },
+];
+const combatSettings = (extra: Record<string, unknown> = {}) =>
+  settings({ BombCard: piece, EmergencyBlockadeCard: { ...piece, MultiplyAmount: 3 }, ...extra });
+
+describe('submit_turn plays Bomb and Emergency Blockade (UNVERIFIED live)', () => {
+  it('sends a Bomb (phase 30) and an Emergency Blockade (phase 37) after the deploys and before the moves', async () => {
+    const s = server(COMBAT_HAND);
+    const cs = combatSettings();
+    h = await liveHarness({ feed: [game({ settings: cs }), game({ settings: cs }), game({ settings: cs, turns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    const { preview, result } = await confirmed({
+      game_id: GAME,
+      orders: [
+        { kind: 'move', from: 159, to: 158, armies: 9 },
+        { kind: 'card', card: 'Emergency Blockade', target: 161 },
+        { kind: 'card', card: BOMB, target: 'Bolton Moors' },
+        DEPLOY,
+      ],
+    });
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+          { kind: 'card', card: 'Bomb', cardId: BOMB, target: 158 },
+          { kind: 'card', card: 'EmergencyBlockade', cardId: WALL, target: 161 },
+          { kind: 'move', from: 159, to: 158, armies: 9 },
+        ],
+        3,
+      ),
+    );
+    const warnings = (preview as unknown as Preview).preview.warnings?.join('\n') ?? '';
+    expect(warnings).toMatch(/UNVERIFIED encoding: the Emergency Blockade, Bomb card plays/);
+    expect(warnings).toMatch(/Emergency Blockade: territory 161 turns neutral .*× 3/);
+    expect(warnings).toMatch(/Bomb: territory 158's armies .*halved after the deploys/);
+    expect(result).toMatchObject({ status: 'resolved', cardPlayCheck: expect.stringMatching(/not yet verified live/) });
+  });
+
+  it('warns when the Emergency Blockade gives up a member of a bonus I hold, and when moves leave it', async () => {
+    const held = BOARD.map((t) => (t.id === 157 ? { ...t, owner: ANN.inGame } : t));
+    const s = server(COMBAT_HAND, held);
+    h = await liveHarness({ feed: [game({ settings: combatSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const r = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [{ kind: 'card', card: 'Emergency Blockade', target: 161 }, DEPLOY, { kind: 'move', from: 161, to: 158, armies: 2 }],
+    });
+    expect(r.isError).toBeFalsy();
+    const warnings = (payload(r) as unknown as Preview).preview.warnings?.join('\n') ?? '';
+    expect(warnings).toMatch(/territory 161 is in bonus 118, which you hold: the blockade breaks it/);
+    expect(warnings).toMatch(/moves from it in these orders will not run/);
+  });
+
+  it("plays the Bomb and Emergency Blockade orders warapp_plan_turn's card advice gives, as they are", async () => {
+    const player = (id: string, name: string): Player => ({ id: Number(id), name, isAI: false, humanTurnedIntoAI: false, hasCommittedOrders: false, state: 'Playing' });
+    const [ann, bob, cat] = [player(ANN.feed, 'Ann'), player(BOB.feed, 'Bob'), player(CAT.feed, 'Cat')];
+    const foe = (territoryId: number, armies: number, p: Player) => ({ territoryId, owner: { kind: 'player' as const, playerId: p.id }, armies });
+    const hand: Card[] = [
+      { id: BOMB, type: 13, name: 'Bomb' },
+      { id: WALL, type: 3, name: 'Emergency Blockade' },
+    ];
+    const cs = combatSettings();
+    const { view } = adviseCards({
+      game: { players: [ann, bob, cat], settings: { cards: ['Bomb', 'EmergencyBlockade'], raw: cs } },
+      me: ann,
+      turn: 3,
+      info: null,
+      hand,
+      choice: { required: false, plays: [], discards: [], extraArmies: 0, warnings: [] },
+      plan: {
+        deploys: [{ territoryId: 159, armies: 5 }],
+        moves: [{ from: 159, to: 158, armies: 10, kind: 'attack', reason: '' }],
+        moveSlots: ['last'],
+        enemyDeploy: 5,
+        conceded: [161],
+      },
+      board: boardOf([mineState(159, 6, ann.id), mineState(161, 3, ann.id), foe(157, 2, cat), foe(158, 7, bob)]),
+      graph: buildGraph(fixtureMap()),
+      settings: { offensiveKillRate: 60, defensiveKillRate: 70 },
+      label: (id) => `T${id}`,
+    });
+    const orders = [view.bomb?.order, view.emergencyBlockade?.order];
+    expect(orders).toEqual([
+      { kind: 'card', card: BOMB, target: 158 },
+      { kind: 'card', card: WALL, target: 161 },
+    ]);
+    const s = server(COMBAT_HAND);
+    h = await liveHarness({ feed: [game({ settings: cs }), game({ settings: cs }), game({ settings: cs, turns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    await confirmed({ game_id: GAME, orders: [...orders, DEPLOY, { kind: 'move', from: 159, to: 158, armies: 10 }] });
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes(
+        [
+          { kind: 'deploy', territoryId: 159, armies: 5 },
+          { kind: 'card', card: 'Bomb', cardId: BOMB, target: 158 },
+          { kind: 'card', card: 'EmergencyBlockade', cardId: WALL, target: 161 },
+          { kind: 'move', from: 159, to: 158, armies: 10 },
+        ],
+        3,
+      ),
+    );
+  });
+
+  it('bombs a neutral or fogged territory next to mine', async () => {
+    const s = server(COMBAT_HAND);
+    h = await liveHarness({ feed: [game({ settings: combatSettings() })], pages: ME_PAGE, warapp: s.warapp });
+    const r = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'card', card: 'Bomb', target: 135 }, DEPLOY] });
+    expect(r.isError).toBeFalsy();
+    expect((payload(r) as unknown as Preview).preview.warnings?.join('\n')).toMatch(/Territory 135 is fogged/);
+  });
+
+  const commanderBoard = BOARD.map((t) => (t.id === 161 ? { ...t, units: [{ kind: 'commander' as const, id: CMDR, owner: ANN.inGame }] } : t));
+  const refusals: Array<{ name: string; orders: Array<Record<string, unknown>>; message: RegExp; hand?: SyntheticCard[]; board?: SyntheticTerritory[]; team?: boolean; settings?: Record<string, unknown> }> = [
+    { name: 'a Bomb with no target', orders: [{ kind: 'card', card: 'Bomb' }], message: /A Bomb card needs `target`/ },
+    { name: 'a Bomb naming a player', orders: [{ kind: 'card', card: 'Bomb', target: 158, player: 'Bob' }], message: /A Bomb card takes no player/ },
+    { name: 'a Bomb on my own territory', orders: [{ kind: 'card', card: 'Bomb', target: 159 }], message: /cannot bomb your own .*error 526/ },
+    { name: 'a Bomb on a teammate', orders: [{ kind: 'card', card: 'Bomb', target: 157 }], team: true, message: /cannot bomb your teammate's .*error 526/ },
+    { name: 'a Bomb on a territory next to none of mine', orders: [{ kind: 'card', card: 'Bomb', target: 134 }], message: /next to none of yours .*error 527/ },
+    { name: 'a Bomb not in play', orders: [{ kind: 'card', card: 'Bomb', target: 158 }], settings: combatSettings({ BombCard: 'none' }), message: /Bomb card is not in play/ },
+    { name: 'an Emergency Blockade on a territory not mine', orders: [{ kind: 'card', card: 'Emergency Blockade', target: 158 }], message: /not yours .*error 95/ },
+    {
+      name: 'an Emergency Blockade twice on one territory',
+      orders: [
+        { kind: 'card', card: WALL, target: 161 },
+        { kind: 'card', card: WALL2, target: 161 },
+      ],
+      hand: [...COMBAT_HAND, { id: WALL2, type: 3 }],
+      message: /blockaded twice .*error 96/,
+    },
+    {
+      name: 'an Emergency Blockade on my commander',
+      orders: [{ kind: 'card', card: 'Emergency Blockade', target: 161 }],
+      board: commanderBoard,
+      settings: combatSettings({ Commanders: true }),
+      message: /holds your commander, so it cannot be blockaded/,
+    },
+    {
+      name: 'an Airlift onto a territory blockaded first',
+      orders: [
+        { kind: 'card', card: 'Emergency Blockade', target: 161 },
+        { kind: 'card', card: 'Airlift', from: 159, to: 161, armies: 2 },
+      ],
+      hand: [...COMBAT_HAND, { id: AIR, type: 6 }],
+      message: /blockaded before the Airlift runs, so the Airlift to it cannot happen/,
+    },
+  ];
+
+  it.each(refusals)('refuses $name, sending nothing', async (c) => {
+    const s = server(c.hand ?? COMBAT_HAND, c.board ?? BOARD);
+    const cs = c.settings ?? combatSettings();
+    h = await liveHarness({ feed: [game({ settings: cs, ...(c.team ? { team: true } : {}) })], pages: ME_PAGE, warapp: s.warapp });
     const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: [...c.orders, DEPLOY] });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(c.message);

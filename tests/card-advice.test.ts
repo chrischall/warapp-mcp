@@ -69,8 +69,21 @@ describe('adviseCards (#163)', () => {
     const eb: Card = { id: 'e'.repeat(32), type: 3, name: 'Emergency Blockade' };
     const plan = { deploys: [], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [4] };
     const { view, warnings } = adviseCards(input({ territories: [neutral(3, 2), me(4, 10), foe(5, 30), neutral(6, 2)], plan, hand: [eb] }));
-    expect(view.emergencyBlockade).toMatchObject({ territory: 4, wall: 30, kills: 21 });
+    expect(view.emergencyBlockade).toMatchObject({ territory: 4, wall: 30, kills: 21, order: { kind: 'card', card: eb.id, target: 4 } });
     expect(warnings.join('\n')).toMatch(/Consider an Emergency Blockade on T4/);
+    expect(warnings.join('\n')).toMatch(/pass `cards.advice.emergencyBlockade.order` to warapp_submit_turn/);
+  });
+
+  it('advises my Bomb with the order to play it, and no order when it says to hold the card', () => {
+    const bomb: Card = { id: 'b'.repeat(32), type: 13, name: 'Bomb' };
+    const plan = { deploys: [], moves: [{ from: 4, to: 5, armies: 15, kind: 'attack' as const, reason: '' }], moveSlots: ['last' as const], enemyDeploy: 5, conceded: [] };
+    const { view, warnings } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 8), neutral(6, 2)], plan, hand: [bomb] }));
+    expect(view.bomb).toMatchObject({ target: 5, order: { kind: 'card', card: bomb.id, target: 5 } });
+    expect(warnings.join('\n')).toMatch(/pass `cards.advice.bomb.order` to warapp_submit_turn/);
+    const hold = adviseCards(input({ territories: [neutral(3, 2), me(4, 2), foe(5, 2), neutral(6, 2)], hand: [bomb] }));
+    expect(hold.view.bomb).toMatchObject({ target: null });
+    expect(hold.view.bomb).not.toHaveProperty('order');
+    expect(turnOrdersArg.safeParse([view.bomb!.order]).success).toBe(true);
   });
 
   it('reads Diplomacy and Sanctions in effect: attacks on a protected player do nothing, Sanctions cut my income', () => {

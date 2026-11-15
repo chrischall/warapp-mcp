@@ -1,5 +1,5 @@
 // The targeted card plays warapp_submit_turn sends (PLAN-TEAMS part D): Spy, Reconnaissance,
-// Surveillance, Airlift, Gift, Diplomacy and Sanctions. Each card's fields come from the client
+// Surveillance, Airlift, Gift, Diplomacy and Sanctions, and the combat cards Bomb and Emergency Blockade. Each card's fields come from the client
 // bundle's `GameOrderPlayCard<X>` writer and its refusals mirror the bundle's `GameValidateOrders`
 // (the error code each check stands in for is named), so a target war.app would refuse is refused
 // here before anything is sent. The encodings are golden-pinned but UNVERIFIED live (V9,
@@ -35,6 +35,8 @@ const TAKES: Readonly<Record<CardPlayKind, readonly TargetField[]>> = {
   OrderPriority: [],
   OrderDelay: [],
   Blockade: ['target'],
+  EmergencyBlockade: ['target'],
+  Bomb: ['target'],
   Reconnaissance: ['target'],
   Spy: ['player'],
   Sanctions: ['player'],
@@ -51,6 +53,8 @@ const FIELD_HELP: Readonly<Record<CardPlayKind, string>> = {
   OrderPriority: 'it takes no target',
   OrderDelay: 'it takes no target (only `before`)',
   Blockade: '`target`: your territory to blockade',
+  EmergencyBlockade: '`target`: your territory to turn into a neutral wall before the attacks',
+  Bomb: "`target`: a territory next to one of yours, not yours or a teammate's (its armies are halved)",
   Reconnaissance: '`target`: the territory to see',
   Spy: '`player`: the player whose territories to see',
   Sanctions: "`player`: the player whose income it cuts",
@@ -121,11 +125,16 @@ export interface CardPlayContext {
   /** Territories this turn's moves leave from. */
   movesFrom: ReadonlySet<number>;
   /** Kept across the turn's plays. */
-  seen: { gifted: Set<number>; airliftedFrom: Map<number, number>; commanderAirlifted: boolean };
+  seen: { gifted: Set<number>; blockaded: Set<number>; airliftedFrom: Map<number, number>; commanderAirlifted: boolean };
 }
 
 /** A fresh `seen` for one turn's plays. */
-export const newCardPlaySeen = (): CardPlayContext['seen'] => ({ gifted: new Set(), airliftedFrom: new Map(), commanderAirlifted: false });
+export const newCardPlaySeen = (): CardPlayContext['seen'] => ({
+  gifted: new Set(),
+  blockaded: new Set(),
+  airliftedFrom: new Map(),
+  commanderAirlifted: false,
+});
 
 const place = (t: { id: number; name: string }) => `${untrustedText(t.name)} (${t.id})`;
 const who = (p: CardPlayer) => `${untrustedText(p.name)} (${p.id})`;
@@ -175,6 +184,32 @@ function teammateIds(ctx: CardPlayContext): Set<number> {
     }
   }
   return out;
+}
+
+/** The Emergency Blockade's `MultiplyAmount`, when the settings carry one. */
+function wallMultiplier(settings: GameSettings | undefined): number | undefined {
+  const raw = settings?.raw.EmergencyBlockadeCard;
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const m = Number((raw as Record<string, unknown>).MultiplyAmount);
+  return Number.isFinite(m) && m > 0 ? m : undefined;
+}
+
+/** A bonus's territories, its member bonuses' included (a superbonus). */
+function bonusMembers(map: GameMap, id: number, seen = new Set<number>()): number[] {
+  const b = map.bonuses.find((x) => x.id === id);
+  if (!b || seen.has(id)) return [];
+  seen.add(id);
+  return [...b.territoryIds, ...b.bonusIds.flatMap((m) => bonusMembers(map, m, seen))];
+}
+
+/** The bonuses worth something that I hold whole at the start of the turn and `territory` is in, by ascending id. */
+function heldBonusesWith(ctx: CardPlayContext, territory: number): Array<{ id: number; value: number }> {
+  return ctx.map.bonuses
+    .filter((b) => b.value > 0)
+    .map((b) => ({ id: b.id, value: b.value, members: bonusMembers(ctx.map, b.id) }))
+    .filter((b) => b.members.includes(territory) && b.members.every((m) => mine(ctx, m)))
+    .map(({ id, value }) => ({ id, value }))
+    .sort((a, b) => a.id - b.id);
 }
 
 /** The Sanctions percentage (`SanctionsCard.Percentage`), when the settings carry one. */
@@ -307,11 +342,84 @@ export function resolveCardTargets(kind: CardPlayKind, cardName: string, input: 
       );
       return { fields: { player: p.inGameId, target: t.id }, territory: terr, player: p, warnings };
     }
+    case 'Bomb':
+      return bomb(input, ctx, warnings);
+    case 'EmergencyBlockade':
+      return emergencyBlockade(input, ctx, warnings);
     case 'Airlift':
       return airlift(input, ctx, warnings);
     default:
       return { fields: {}, warnings };
   }
+}
+
+/**
+ * A Bomb (`GameOrderPlayCardBomb`), as GameValidateOrders checks it: 526 CannotBombTeammates (the
+ * target's owner at the start of the turn is me or a teammate), 527 CannotBombNonAdjacent (none of the
+ * target's neighbours, by the map's own list for it, is mine). A neutral or fogged target is allowed.
+ * It runs in phase 30, after the deploys and before every move.
+ */
+function bomb(input: CardTargetInput, ctx: CardPlayContext, warnings: string[]): CardTargets {
+  const t = resolveTerritory(ctx.map, input.target!);
+  const terr = { id: t.id, name: t.name };
+  const standing = standingOf(ctx, t.id);
+  const visible = standing !== undefined && !standing.fogged;
+  if (mine(ctx, t.id)) {
+    throw new McpToolError(`${place(terr)} is yours: you cannot bomb your own territory (war.app refuses it: error 526).`, {
+      hint: 'Bomb an opponent\'s or a neutral territory next to one of yours.',
+    });
+  }
+  if (visible && teammateIds(ctx).has(standing.owner)) {
+    throw new McpToolError(`${place(terr)} is your teammate's: you cannot bomb your teammate's territory (war.app refuses it: error 526).`, {
+      hint: 'Bomb an opponent\'s or a neutral territory next to one of yours.',
+    });
+  }
+  if (!t.connectedTo.some((n) => mine(ctx, n))) {
+    throw new McpToolError(`${place(terr)} is next to none of yours at the start of this turn, so it cannot be bombed (war.app refuses it: error 527).`, {
+      hint: 'A Bomb hits a territory that borders one you hold on the live board (warapp_get_live_board).',
+    });
+  }
+  warnings.push(
+    `Bomb: territory ${t.id}'s armies (its owner's deploys there included) are halved after the deploys and before every move; a commander there is unharmed.` +
+      (visible ? '' : ` Territory ${t.id} is fogged: its owner and armies are not known here.`),
+  );
+  return { fields: { target: t.id }, territory: terr, warnings };
+}
+
+/**
+ * An Emergency Blockade (`GameOrderPlayCardAbandon`), as GameValidateOrders checks it: 95
+ * AbandonCardMustTargetYourTerritory, 96 AbandonCannotBeUsedOnSameSpotMoreThanOnce. Ours (#163): never
+ * on my commander's territory (it would be lost with it). It runs in phase 37, after the deploys and
+ * before Airlift and the attacks: the territory turns neutral with its armies multiplied, so a move from
+ * it does not run and a held bonus it is in is broken (both warnings).
+ */
+function emergencyBlockade(input: CardTargetInput, ctx: CardPlayContext, warnings: string[]): CardTargets {
+  const t = resolveTerritory(ctx.map, input.target!);
+  const terr = { id: t.id, name: t.name };
+  if (!mine(ctx, t.id)) {
+    throw new McpToolError(`${place(terr)} is not yours at the start of this turn, so it cannot be blockaded (war.app refuses it: error 95).`, {
+      hint: 'An Emergency Blockade targets a territory you hold on the live board (warapp_get_live_board).',
+    });
+  }
+  if (ctx.seen.blockaded.has(t.id)) {
+    throw new McpToolError(`${place(terr)} is blockaded twice (war.app refuses it: error 96).`, { hint: 'Play one Emergency Blockade per territory.' });
+  }
+  if (standingOf(ctx, t.id)?.specialUnits?.some((u) => u.kind === 'commander' && u.owner === ctx.myInGameId)) {
+    throw new McpToolError(`${place(terr)} holds your commander, so it cannot be blockaded.`, {
+      hint: 'An Emergency Blockade makes the territory neutral and your commander on it would be lost. Move the commander out first, or blockade another territory.',
+    });
+  }
+  ctx.seen.blockaded.add(t.id);
+  const m = wallMultiplier(ctx.settings);
+  warnings.push(
+    `Emergency Blockade: territory ${t.id} turns neutral with its armies (this turn's deploys there included) ${m !== undefined ? `× ${m}` : 'multiplied'} ` +
+      'before the attacks, and is no longer yours' +
+      (ctx.movesFrom.has(t.id) ? '; the moves from it in these orders will not run.' : '.'),
+  );
+  for (const b of heldBonusesWith(ctx, t.id)) {
+    warnings.push(`Emergency Blockade: territory ${t.id} is in bonus ${b.id}, which you hold: the blockade breaks it (+${b.value} a turn).`);
+  }
+  return { fields: { target: t.id }, territory: terr, warnings };
 }
 
 /**
