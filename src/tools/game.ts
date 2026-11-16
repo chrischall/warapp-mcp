@@ -145,7 +145,7 @@ export function registerGameTool(
         // #312: once per finished game of mine, its history read once and kept name-free; an explicit
         // `include_history` re-runs a failed pass from this read.
         if (game.state === 'Finished') {
-          const me = await finishedAccount(dir(), game.id, identity);
+          const me = await finishedAccount(dir(), env ?? process.env, game.id, identity);
           end = await endOfGame({ client, dataDir: dir(), env: env ?? process.env }, game.id, me, game, include_history ? { history: game, retry: true } : {});
         }
       }

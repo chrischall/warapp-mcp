@@ -1052,8 +1052,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   Triggers: `warapp_get_game` (the account: the board cache's, else the signed-in one), `warapp_wait_for_turn`'s read,
   and the `warapp_my_games` sweep over its finished games (my seat held) not yet processed, newest first, at most
   `END_OF_GAME_PER_CALL` (2) per call, each also folding its live profile (`foldFinished`, #273); the records are the
-  sweep's cursor (`endOfGame: { processed, pending }`). Only a seat of mine (P3); `WARAPP_PLAYER_PROFILE=off` or no data
-  dir: nothing. Registered hosted like the profile store. Inform only (P1): no planner decision reads it (golden
+  sweep's cursor (`endOfGame: { processed, pending }`). A pass that spent its request but left no record (the write
+  failed, or the reply showed the game not finished or not mine) is remembered in-process (`attempted`, bounded), so no
+  trigger reads that game's history again in this process (`attempted` status). Only a seat of mine (P3);
+  `WARAPP_PLAYER_PROFILE=off` or no data dir: nothing — not even the signed-in account is read (`finishedAccount` checks
+  first); `warapp_get_game` asks for the account (an InviteToken page read) at most once per finished game per process
+  when it cannot be read (the sweep picks the game up later). Registered hosted like the profile store. Inform only (P1): no planner decision reads it (golden
   unchanged); the per-map record, the lessons summary and C1's history habits will read these records.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the

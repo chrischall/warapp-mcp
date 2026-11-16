@@ -1,7 +1,7 @@
 // The end-of-game pass (#312 E1): once per finished game of mine, its history read once and kept
 // name-free at <dataDir>/finished/<hmac>.json. Triggers: warapp_get_game, warapp_wait_for_turn's read,
 // and the warapp_my_games sweep. Synthetic GameFeed answers only; no war.app traffic.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -153,6 +153,8 @@ describe('the end-of-game pass', () => {
     h = await liveHarness({ feed: [finished()], dataDir: dir, pages: SIGNED_IN, env: { WARAPP_PLAYER_PROFILE: 'off' } });
     expect(payload(await h.call('warapp_get_game', { game_id: GAME }))).not.toHaveProperty('endOfGame');
     expect(historyCalls(h)).toBe(0);
+    // Off means off: not even the signed-in account is read (no InviteToken page through the bridge).
+    expect(h.bridge.requests.some((r) => r.path.includes('InviteToken'))).toBe(false);
     expect(existsSync(finishedDir(dir))).toBe(false);
   });
 
@@ -206,5 +208,75 @@ describe('the end-of-game pass', () => {
     expect(third).not.toHaveProperty('endOfGame');
     expect(historyCalls(h)).toBe(3);
     expect(readdirSync(finishedDir(dir))).toHaveLength(3);
+  });
+
+  it('a pass that spent its history read is never read again in this process, even when nothing could be kept', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    // The finished folder cannot be written (a read-only or full data dir): the record cannot land.
+    mkdirSync(finishedDir(dir), { recursive: true });
+    chmodSync(finishedDir(dir), 0o500);
+    const over = { id: GAME, name: 'Over', lastTurn: 2, state: 4, players: [{ id: 123456, name: 'Ann', state: 3, committed: false }] };
+    h = await liveHarness({
+      feed: [withHistory()],
+      dataDir: dir,
+      pages: SIGNED_IN,
+      warapp: (req) => {
+        if (req.method !== Method.GetMyGames) throw new Error(`unexpected method ${req.method}`);
+        return { body: (w: Writer) => writeMyGamesReturn(w, [over]) };
+      },
+    });
+    try {
+      const first = payload(await h.call('warapp_my_games'));
+      expect(first.endOfGame).toEqual({ processed: [{ gameId: GAME, status: 'failed' }], pending: 0 });
+      expect(historyCalls(h)).toBe(1);
+      const second = payload(await h.call('warapp_my_games'));
+      expect(second).not.toHaveProperty('endOfGame');
+      expect(historyCalls(h)).toBe(1);
+      // A read that shows the game finished does not spend another history request either.
+      const viaGet = payload(await h.call('warapp_get_game', { game_id: GAME }));
+      expect(viaGet.endOfGame).toEqual({ status: 'attempted' });
+      expect(historyCalls(h)).toBe(1);
+    } finally {
+      chmodSync(finishedDir(dir), 0o700);
+    }
+  });
+
+  it('a history read that shows the game not mine, or not finished, is not read again by the sweep', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    mkdirSync(dir, { recursive: true });
+    const over = (id: number) => ({ id, name: `Over ${id}`, lastTurn: 2, state: 4, players: [{ id: 123456, name: 'Ann', state: 3, committed: false }] });
+    const notSeated = finished({ players: [{ id: String(BOB), name: 'Bob', isAI: 'False', humanTurnedIntoAI: 'False', hasCommittedOrders: 'False', state: 'Won' }] });
+    h = await liveHarness({
+      feed: [notSeated, finished({ state: 'Playing' })],
+      dataDir: dir,
+      pages: SIGNED_IN,
+      warapp: (req) => {
+        if (req.method !== Method.GetMyGames) throw new Error(`unexpected method ${req.method}`);
+        return { body: (w: Writer) => writeMyGamesReturn(w, [over(1002), over(1001)]) };
+      },
+    });
+    const first = payload(await h.call('warapp_my_games'));
+    expect(first.endOfGame).toEqual({
+      processed: [
+        { gameId: 1002, status: 'not-a-player' },
+        { gameId: 1001, status: 'not-finished' },
+      ],
+      pending: 0,
+    });
+    expect(historyCalls(h)).toBe(2);
+    expect(payload(await h.call('warapp_my_games'))).not.toHaveProperty('endOfGame');
+    expect(historyCalls(h)).toBe(2);
+  });
+
+  it('warapp_get_game asks the signed-in account at most once per finished game when it cannot be read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    h = await liveHarness({ feed: [finished()], dataDir: dir, pages: {} });
+    const invite = () => h!.bridge.requests.filter((r) => r.path.includes('InviteToken')).length;
+    expect(payload(await h.call('warapp_get_game', { game_id: GAME })).endOfGame).toEqual({ status: 'account-unknown' });
+    const asked = invite();
+    expect(asked).toBeGreaterThan(0);
+    expect(payload(await h.call('warapp_get_game', { game_id: GAME })).endOfGame).toEqual({ status: 'account-unknown' });
+    expect(invite()).toBe(asked);
+    expect(historyCalls(h)).toBe(0);
   });
 });

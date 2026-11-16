@@ -9,7 +9,9 @@
 // Triggers: any read that shows the game finished (warapp_get_game, warapp_wait_for_turn's read), and
 // the sweep in warapp_my_games over the account's finished games not yet processed, at most
 // `END_OF_GAME_PER_CALL` per call (the records themselves are its cursor: each attempt leaves one, so
-// the next call moves on). Off with `WARAPP_PLAYER_PROFILE=off`; nothing without a data directory.
+// the next call moves on). A pass that spent its request but left no record (the write failed, or
+// the reply showed the game not finished or not mine) is remembered for the life of the process
+// (`attempted`), so no trigger reads that game's history twice (P2: never retried in a loop). Off with `WARAPP_PLAYER_PROFILE=off`; nothing without a data directory.
 // Profiles inform only (P1): no planner decision reads any of this. Never throws.
 import type { EnvSource } from '@chrischall/mcp-utils';
 import { captureFinished, type FinishedCapture } from '../analysis/finished-game.js';
@@ -35,6 +37,8 @@ export type EndOfGameStatus =
   | FinishedStatus
   /** A record was already there (any status): nothing read. */
   | 'already-processed'
+  /** This process already spent the history read on it (no record could be kept): nothing read. */
+  | 'attempted'
   /** A record exists but does not parse: never overwritten, nothing read. */
   | 'record-unreadable'
   | 'off'
@@ -76,12 +80,33 @@ export interface EndOfGameOptions {
 
 const SAFE = /^[a-z_]{1,40}$/;
 
+/** Bound on the in-process memos below (oldest forgotten first). */
+const MEMO_LIMIT = 1000;
+
+function remember(set: Set<string>, key: string): void {
+  set.delete(key);
+  set.add(key);
+  while (set.size > MEMO_LIMIT) set.delete(set.values().next().value as string);
+}
+
+/**
+ * Games (per data dir and account) whose history request this process already spent, whatever came
+ * of it: a game in here is never read again by any trigger in this process, even when no record
+ * could be written (a read-only or full data dir) or the reply showed it not finished or not mine.
+ */
+const attempted = new Set<string>();
+const attemptKey = (dataDir: string, me: number, gameId: number): string => `${dataDir}\0${me}\0${gameId}`;
+
+/** Finished games (per data dir) whose signed-in account could not be read for the pass: asked once per process. */
+const accountUnread = new Set<string>();
+
 /**
  * Whether `gameId` still needs its pass as `me`: `true` unless a record is there (or the pass cannot
  * run: off, no data dir, malformed salt). Read-only: never makes the salt. Never throws.
  */
 export async function needsEndOfGame(dataDir: string | undefined, env: EnvSource, gameId: number, me: number): Promise<boolean> {
   if (!dataDir || !profileEnabled(env)) return false;
+  if (attempted.has(attemptKey(dataDir, me, gameId))) return false;
   try {
     const salt = await playerRecordSalt(dataDir);
     if (!salt) return true;
@@ -121,6 +146,10 @@ export async function endOfGame(
       let game: Game | undefined = opts.history;
       let failure: FinishedFailure | undefined;
       if (!game) {
+        // The request is spent from here on, whatever follows: never again in this process.
+        const key = attemptKey(dataDir, me, gameId);
+        if (attempted.has(key)) return { status: 'attempted' };
+        remember(attempted, key);
         try {
           game = await deps.client.getGame(gameId, { history: true, settings: true });
         } catch (e) {
@@ -216,19 +245,32 @@ function capture(
   });
 }
 
-/** The account a finished game was played as, with no request: the board cache's, else `identity` (the signed-in account). */
+/**
+ * The account a finished game was played as: the board cache's, else `identity` (the signed-in
+ * account, a page read through the bridge or the direct leg). Nothing at all with profiling off or no
+ * data directory (the pass cannot run, so no request is made for it). A failed `identity` read is not
+ * repeated for the same game in this process: the warapp_my_games sweep, which reads the account
+ * anyway, picks the game up later. Never throws.
+ */
 export async function finishedAccount(
   dataDir: string | undefined,
+  env: EnvSource,
   gameId: number,
   identity?: () => Promise<number | undefined>,
 ): Promise<number | undefined> {
-  const cached = dataDir ? await readCachedPlayer(dataDir, gameId) : undefined;
+  if (!dataDir || !profileEnabled(env)) return undefined;
+  const cached = await readCachedPlayer(dataDir, gameId).catch(() => undefined);
   if (cached !== undefined) return cached;
+  const key = `${dataDir}\0${gameId}`;
+  if (!identity || accountUnread.has(key)) return undefined;
+  let me: number | undefined;
   try {
-    return await identity?.();
+    me = await identity();
   } catch {
-    return undefined;
+    me = undefined;
   }
+  if (me === undefined) remember(accountUnread, key);
+  return me;
 }
 
 /**

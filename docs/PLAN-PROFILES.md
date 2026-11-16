@@ -371,7 +371,9 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   standings (and the history entry replacing the live one) are not built yet: they will read these
   records, never GameFeed again.
 - One request per finished game, through `WarappClient`, never retried in a loop, never for a game
-  the account did not play.
+  the account did not play. A request spent with no record left (the write failed; the reply showed the
+  game not finished or not mine) is remembered for the life of the process, so no trigger repeats it.
+  With profiling off the pass makes no request at all, the signed-in account's page included.
 
 **Done when** a synthetic finished game folds to the same habits as the same game observed live
 with the fog off, and a history that does not parse changes nothing.
