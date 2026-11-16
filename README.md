@@ -114,7 +114,7 @@ active. `warapp_healthcheck` reports the same.
 the host captures war.app's session cookie into the per-user secret `WARAPP_AUTH_TOKEN` (your
 war.app password is asked once at sign-in and never stored), and the server holds it in memory,
 falling back to the browser bridge if it stops working. `warapp_session_status` then reports
-`linked: "host-captured"` (no capture time or age), and a signed-out session says to use
+`linked: true` with `linkedBy: "host"` (no capture time or age), and a signed-out session says to use
 **Sign in** on the connection, or to reconnect it; a paired war.app tab works meanwhile. Without that token the hosted
 server uses the browser bridge, as before. (The war.app sign-in mcp-host runs is
 `docs/examples/warapp-auth-flow.json`, one password page; its capture calls `warapp_sign_in`, a hosted-only tool that

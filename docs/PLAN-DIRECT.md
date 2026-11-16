@@ -267,7 +267,7 @@ connection whose sign-in failed, see step 2), and decide whether to hide
 4. **Connect.** On the connection (admin portal), run **Sign in** (or disconnect and connect again):
    the page asks only for the war.app password, masked. Enter it once.
 5. **Verify.** Call `warapp_session_status` on that connection. Expected:
-   `{ hosted: true, linked: "host-captured", activeTransport: "direct" }` and a `hostedNote` saying
+   `{ hosted: true, linked: true, linkedBy: "host", activeTransport: "direct" }` and a `hostedNote` saying
    war.app calls go directly to war.app. Then one live read (`warapp_my_games`) and call
    `warapp_session_status` again: `activeTransport` still `direct`, no `sessionExpired`. If it says
    `linked: false` with `activeTransport: "fetchproxy"`, the child is still the one spawned before

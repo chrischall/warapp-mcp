@@ -220,7 +220,7 @@ afterEach(async () => {
 });
 
 describe('registerAllTools hosted with a captured token', () => {
-  it('serves over the direct leg; status and healthcheck say host-captured, never the token or an age', async () => {
+  it('serves over the direct leg; status and healthcheck say linked by the host, never the token or an age', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'warapp-hosted-direct-'));
     const directFetch = vi.fn<DirectFetch>(async (url) => ({ status: 200, body: '<p>open games</p>', url }));
     h = await liveHarness({ dataDir, env: hostedEnv(), directFetch });
@@ -235,7 +235,7 @@ describe('registerAllTools hosted with a captured token', () => {
 
     const res = await h.call('warapp_session_status');
     const p = payload<Record<string, unknown>>(res);
-    expect(p).toMatchObject({ hosted: true, linked: 'host-captured', activeTransport: 'direct' });
+    expect(p).toMatchObject({ hosted: true, linked: true, linkedBy: 'host', activeTransport: 'direct' });
     expect(p).not.toHaveProperty('capturedAt');
     expect(p).not.toHaveProperty('ageSeconds');
     expect(JSON.stringify(res)).not.toContain(HOST_TOKEN);
@@ -243,7 +243,7 @@ describe('registerAllTools hosted with a captured token', () => {
 
     const health = await h.call('warapp_healthcheck');
     expect(JSON.stringify(health)).not.toContain(HOST_TOKEN);
-    expect(JSON.stringify(health)).toContain('host-captured');
+    expect(JSON.stringify(health)).toMatch(/linkedBy[^a-z]+host/);
     expect(JSON.stringify(health)).not.toContain('ageSeconds');
 
     // Nothing was written for the session: no session file in the data dir.
@@ -264,7 +264,7 @@ describe('registerAllTools hosted with a captured token', () => {
     await h.call('warapp_my_games');
     const res = await h.call('warapp_session_status');
     const p = payload<Record<string, unknown>>(res);
-    expect(p).toMatchObject({ hosted: true, linked: 'host-captured', activeTransport: 'fetchproxy', sessionExpired: true });
+    expect(p).toMatchObject({ hosted: true, linked: true, linkedBy: 'host', activeTransport: 'fetchproxy', sessionExpired: true });
     expect(String(p.hint)).toMatch(/Sign in/);
     expect(JSON.stringify(res)).not.toContain(LINK);
     expect(JSON.stringify(res)).not.toContain(HOST_TOKEN);

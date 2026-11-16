@@ -13,7 +13,7 @@
 // Hosted (src/hosted.ts) `warapp_link_session` is never registered: a hosted
 // child stores no session. Its session, when it has one, is the AuthToken
 // mcp-host captured at sign-in (WARAPP_AUTH_TOKEN, #333): `warapp_session_status`
-// then reports `hosted: true`, `linked: 'host-captured'` and the active leg (no
+// then reports `hosted: true`, `linked: true`, `linkedBy: 'host'` and the active leg (no
 // capture time, no age), and a signed-out one points at the connection's
 // "Sign in". Without it the status reports the browser bridge, as before,
 // without suggesting a link.
@@ -154,7 +154,8 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
         const pt = deps.pushTransport?.();
         const base = {
           hosted: true,
-          linked: 'host-captured' as const,
+          linked: true,
+          linkedBy: 'host' as const,
           activeTransport: deps.transport.activeLeg(),
           ...(pt ? { pushTransport: pt } : {}),
           ...decoderView(),
