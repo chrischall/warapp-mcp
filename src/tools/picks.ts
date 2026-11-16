@@ -1,7 +1,7 @@
 // Pick advisor tool (docs/PLAN-PICKS.md, K2): rank the pickable territories of a
 // manual-distribution game from the map, the settings and the live board.
 // Read-only — the owner submits the list with warapp_submit_picks.
-import { McpToolError } from '@chrischall/mcp-utils';
+import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { clientPickLimits, planPicks, type CoverageReport, type PickGroup, type PickSettings } from '../analysis/picks.js';
@@ -17,6 +17,7 @@ import { teammateOrdersOf } from '../team-orders.js';
 import { readTeammatePicks, type TeammatePicks } from './team.js';
 import { pickingNeutrals } from '../pick-list.js';
 import { mapOf } from './map.js';
+import { mapRecordFor, mapRecordView } from './past-games.js';
 import { keepPickable } from './where.js';
 import { resolveTeams } from './team-source.js';
 
@@ -83,7 +84,7 @@ const TEAM_LIST_NOTES = [
     'the bonuses a repeating order would split between you. Agree a list in team chat before relying on it.',
 ];
 
-export function registerPickTools(server: McpServer, ctx: LiveContext): void {
+export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { env?: EnvSource } = {}): void {
   server.registerTool(
     'warapp_plan_picks',
     {
@@ -116,6 +117,9 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
           '(a bonus pays one holder, so yours there are not credited), and a `mirrored` alternative (the same top picks in both ' +
           'lists, with its own submitPicks) beside the split list that `submitPicks` gives — which leaves their top picks to them ' +
           'and is shortened only when disjoint from their full-length list. ' +
+          'When you have finished games on this map, `mapRecord` reports them (reported only, never ranked on): games and results, ' +
+          'your results by each bonus your start touched (`inPrimary` when this primary touches it too), the bonuses winners started in, ' +
+          'and the pace — the median income after turns 4 and 8 of the winners and of you. ' +
           `${BRIDGE_NOTE} Read-only on war.app; it never submits picks.`,
       ),
       _meta: lookupMeta(['plan my picks', 'which territories to pick', 'suggest picks', 'warzone picks']),
@@ -124,7 +128,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         game_id: gameIdArg,
         view: viewArg(
           VIEWS,
-          'compact (default) gives the ranked picks with reasons, the groups and submitPicks; "full" adds the settings the plan assumed.',
+          'compact (default) gives the ranked picks with reasons, the groups and submitPicks (and the first start bonuses of `mapRecord`); "full" adds the settings the plan assumed and every start bonus.',
         ),
         spread: z
           .boolean()
@@ -216,6 +220,8 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
         uncovered: c.uncovered.map((b) => ({ id: b.bonusId, name: b.name })),
       });
       const alt = plan.alternative;
+      // #312 E3: what my finished games on this map say (reported only: the ranking above never reads it).
+      const record = await mapRecordFor(ctx.dataDir, deps.env, game.settings?.mapId);
 
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, state: game.state },
@@ -303,6 +309,14 @@ export function registerPickTools(server: McpServer, ctx: LiveContext): void {
                 fallback: alt.fallback.map(name),
                 submitPicks: { game_id: game.id, territories: alt.submitPicks },
               },
+            }
+          : {}),
+        ...(record
+          ? {
+              mapRecord:
+                record === 'unreadable'
+                  ? record
+                  : mapRecordView(record, { bonusName, full: rung === 'full', graph: graphOf(map), picks: plan.groups.primary.territoryIds }),
             }
           : {}),
         ...(rung === 'full' ? { settings } : {}),

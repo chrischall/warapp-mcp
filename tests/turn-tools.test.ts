@@ -17,6 +17,7 @@ import { boardIncome } from '../src/analysis/player.js';
 import { readCachedOrders } from '../src/trend.js';
 import { writeAward, writePickList } from '../src/pick-list.js';
 import { writeFirstMover } from '../src/move-order.js';
+import { recordMapGame, type MapEntry } from '../src/lessons-store.js';
 import {
   writeLatestGameInfo,
   type SyntheticActiveCard,
@@ -166,6 +167,31 @@ describe('warapp_plan_turn', () => {
       p = payload<PlanPayload & { surrenderPending: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
       expect(p.surrenderPending).toEqual([]);
     });
+  });
+
+  it('#312 E3: reports the pace beside my income after turns 4 and 8 when the map has a record, never changing the plan', async () => {
+    const entry: MapEntry = {
+      key: '1'.padStart(32, '0'),
+      format: 'ffa',
+      seats: 4,
+      result: 'eliminated',
+      turns: 12,
+      me: { territories: [159], bonuses: [118], income: [], income4: 7, income8: 11 },
+      winners: [{ territories: [133], bonuses: [116], income4: 13, income8: 26 }],
+    };
+    h = await liveHarness({ feed: [game('Playing', { numberOfTurns: '4' })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const plain = payload<PlanPayload & { pace?: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(plain).not.toHaveProperty('pace');
+    expect(await recordMapGame(h.dataDir, 39905, entry)).toBe('kept');
+    const p = payload<PlanPayload & { pace?: Record<string, unknown> }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.pace).toEqual({ afterTurn: 4, mine: 5, winners: 13, myPast: 7, games: 1, behindWinners: true, note: expect.stringMatching(/reported only/) });
+    // Inform only: the orders are the plan's own.
+    expect(p.orders).toEqual(plain.orders);
+    expect(p.deploys).toEqual(plain.deploys);
+    // Another turn: no pace.
+    await h.harness.close();
+    h = await liveHarness({ dataDir: h.dataDir, feed: [game('Playing', { numberOfTurns: '5' })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    expect(payload<Record<string, unknown>>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }))).not.toHaveProperty('pace');
   });
 
   it('warns that the income may be off when a setting the model does not compute is on (#38)', async () => {

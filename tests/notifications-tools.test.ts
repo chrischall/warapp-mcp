@@ -136,39 +136,78 @@ describe('warapp_get_notifications', () => {
     expect(second.next).toBeUndefined();
   });
 
-  it('a game-ended notification folds a kept opponent profile of that game, reading the game once', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-notif-'));
+  const ended = (id: string, game: number) => ({ id, title: 'Game "g" has ended. You can now view its history', data: link(game) });
+  const keepProfile = (dir: string, game = GAME) => {
     mkdirSync(profileGamesDir(dir), { recursive: true });
     const turn = { contact: true, attackedMe: true, iAttacked: false, reinforce: { n: 0, e: 0, extra: 0 }, stack: null, tookFromMe: [], lostToMe: [] };
-    writeFileSync(
-      profileGamePath(dir, GAME, Number(ME.feed)),
-      JSON.stringify({ version: 1, gameId: GAME, playerId: Number(ME.feed), turns: { 1: { [BOB]: turn } } }),
-    );
-    const s = notificationServer([{ id: '9001', title: 'Game "g" has ended. You can now view its history', data: link(GAME) }]);
+    writeFileSync(profileGamePath(dir, game, Number(ME.feed)), JSON.stringify({ version: 1, gameId: game, playerId: Number(ME.feed), turns: { 1: { [BOB]: turn } } }));
+  };
+  const feedCalls = (hh: Harness) => hh.calls.filter((c) => c.url.includes('GameFeed'));
+  const historyReads = (hh: Harness) => feedCalls(hh).filter((c) => c.url.includes('GetHistory=true'));
+
+  it('#312: a game-ended notification runs the end-of-game pass once per game, one history read each, at most two per call', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-notif-'));
+    const s = notificationServer([ended('9001', GAME), ended('9002', GAME + 1), ended('9003', GAME), ended('9004', GAME + 2)]);
     h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp, feed: [finishedGame()], dataDir: dir });
-    const p = payload(await h.call('warapp_get_notifications', {}));
-    expect(p.profilesFolded).toEqual([{ gameId: GAME, files: 1 }]);
-    expect(JSON.parse(readFileSync(profileGamePath(dir, GAME, Number(ME.feed)), 'utf8')).folded).toBe('live');
-    expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(1);
-    // Read again: already folded, so GameFeed is not asked.
-    const again = payload(await h.call('warapp_get_notifications', {}));
-    expect(again.profilesFolded).toBeUndefined();
-    expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(1);
+    const first = payload(await h.call('warapp_get_notifications', {}));
+    expect(first.endOfGame).toEqual({
+      processed: [
+        { gameId: GAME, status: 'history-unreadable', profileFold: 'nothing' },
+        { gameId: GAME + 1, status: 'history-unreadable', profileFold: 'nothing' },
+      ],
+      pending: 1,
+    });
+    expect(historyReads(h)).toHaveLength(2);
+    // The history read asks no map (P2: never a second read for a map refresh).
+    expect(historyReads(h).every((c) => c.url.includes('GetMap=false'))).toBe(true);
+    const second = payload(await h.call('warapp_get_notifications', {}));
+    expect(second.endOfGame).toEqual({ processed: [{ gameId: GAME + 2, status: 'history-unreadable', profileFold: 'nothing' }], pending: 0 });
+    const third = payload(await h.call('warapp_get_notifications', {}));
+    expect(third.endOfGame).toBeUndefined();
+    expect(historyReads(h)).toHaveLength(3);
+    expect(feedCalls(h)).toHaveLength(3);
   });
 
-  it('asks GameFeed nothing for a game-ended notification with no kept profile, or with profiling off', async () => {
-    const s = notificationServer([{ id: '9001', title: 'Game "g" has ended. You can now view its history', data: link(GAME) }]);
-    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp, feed: [finishedGame()] });
+  it('the pass folds a kept opponent profile of the game it reads, with no read of its own', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-notif-'));
+    keepProfile(dir);
+    const s = notificationServer([ended('9001', GAME)]);
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp, feed: [finishedGame()], dataDir: dir });
+    const p = payload(await h.call('warapp_get_notifications', {}));
+    expect(p.endOfGame).toEqual({ processed: [{ gameId: GAME, status: 'history-unreadable', profileFold: 'folded' }], pending: 0 });
+    expect(p.profilesFolded).toBeUndefined();
+    expect(JSON.parse(readFileSync(profileGamePath(dir, GAME, Number(ME.feed)), 'utf8')).folded).toBe('live');
+    expect(feedCalls(h)).toHaveLength(1);
+    // Read again: processed and folded, so GameFeed is not asked.
+    const again = payload(await h.call('warapp_get_notifications', {}));
+    expect(again.endOfGame).toBeUndefined();
+    expect(again.profilesFolded).toBeUndefined();
+    expect(feedCalls(h)).toHaveLength(1);
+  });
+
+  it('a game already processed folds a profile kept since with one read without the history', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-notif-'));
+    const s = notificationServer([ended('9001', GAME)]);
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp, feed: [finishedGame()], dataDir: dir });
+    payload(await h.call('warapp_get_notifications', {}));
+    expect(feedCalls(h)).toHaveLength(1);
+    keepProfile(dir);
+    const p = payload(await h.call('warapp_get_notifications', {}));
+    expect(p.endOfGame).toBeUndefined();
+    expect(p.profilesFolded).toEqual([{ gameId: GAME, files: 1 }]);
+    expect(feedCalls(h)).toHaveLength(2);
+    expect(historyReads(h)).toHaveLength(1);
+  });
+
+  it('asks GameFeed nothing with profiling off', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-notif-off-'));
+    keepProfile(dir);
+    const s = notificationServer([ended('9001', GAME)]);
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp, feed: [finishedGame()], dataDir: dir, env: { WARAPP_PLAYER_PROFILE: 'off' } });
     const p = payload(await h.call('warapp_get_notifications', {}));
     expect(p.profilesFolded).toBeUndefined();
-    expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(0);
-    await h.harness.close();
-    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-notif-off-'));
-    mkdirSync(profileGamesDir(dir), { recursive: true });
-    writeFileSync(profileGamePath(dir, GAME, Number(ME.feed)), JSON.stringify({ version: 1, gameId: GAME, playerId: Number(ME.feed), turns: {} }));
-    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp, feed: [finishedGame()], dataDir: dir, env: { WARAPP_PLAYER_PROFILE: 'off' } });
-    expect(payload(await h.call('warapp_get_notifications', {})).profilesFolded).toBeUndefined();
-    expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(0);
+    expect(p.endOfGame).toBeUndefined();
+    expect(feedCalls(h)).toHaveLength(0);
   });
 });
 

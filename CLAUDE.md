@@ -278,9 +278,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   else `other`), `gameId` (from a war.app `GameID=` link in the data JSON), `time`, `unread`; the title and body
   are read only to classify, never shown, and the record's field 4 (an unverified free-text string) is neither
   reported nor used. A game-ended notification
-  folds the game's opponent profile through `foldFinishedGame` only when a per-game file is kept unfolded
-  (`hasUnfoldedProfile`): then one GameFeed read (no map), at most `FOLD_LOOKUPS` (5) per call, else no request
-  (it is also where #312's end-of-game pass is to be triggered: a TODO in `foldEndedGames` until that exists).
+  runs #312's end-of-game pass on that game (`passEndedGames`: the same idempotent `endOfGame`, the account the
+  board cache's else the signed-in one, read at most once per call; a game with a record or processed mark costs
+  nothing; at most `END_OF_GAME_PER_CALL` (2) games that still need it per call, the rest `pending`; one history
+  read each; `endOfGame: { processed: [{ gameId, status, turns?, profileFold? }], pending }`), which folds its live
+  profile too; then a game's opponent profile still kept unfolded is folded through `foldFinishedGame`
+  (`hasUnfoldedProfile`): one GameFeed read (no map), at most `FOLD_LOOKUPS` (5) per call, else no request.
   `warapp_dismiss_notification` (confirm-gated) sends `AcknowledgeInAppNotifications` (319: marks read, never
   deletes) for the listed unread ids; the preview names ids and game ids only; read back by listing
   again (up to `MAX_FIND_PAGES` pages): `dismissed` (`confirmed`) only when every id reads read or is seen gone —
@@ -1012,7 +1015,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the reverse), and a game new to a player first fades its totals and entry weights by `PROFILE_DECAY` (0.9). AI
   seats reach the pool only; a human who became an AI is left out of the game. `foldFinishedGame` runs on the first
   read showing the game `Finished` (warapp_get_game, warapp_wait_for_turn's read; no request) and marks the per-game
-  file `folded: 'live'`; part C is not built, so the file then goes by the 60-day age rule, and one reaching it (or the
+  file `folded: 'live'`; the end-of-game pass (#312, part C) then folds the game's history over it and marks it
+  `folded: 'history'`. Otherwise the file goes by the 60-day age rule, and one reaching it (or the
   200-file bound) unfolded is folded with every ending `unknown` from the seats it kept, then deleted. **Backfill
   (#264, `foldFinished` in `src/tools/profile-hook.ts`):** a finished game with no per-game file (finished before
   #263, or never planned on this build) is observed once from the boards and orders the board cache holds for it
@@ -1033,6 +1037,91 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   unknown), `warapp_advise_diplomacy`'s per-neighbour `habits` (`retaliate` and `attack`, beside `record`; it keeps no
   turn) and `warapp_scout_player`'s `met` (`metRead`: games met and every habit from the cross-game record alone,
   shrunk toward the all-formats pool; only when the record holds the player).
+- **The end-of-game pass (#312 E1; owner decisions P2–P4 of 2026-11-16) runs once per finished game the account
+  played** (`src/tools/end-of-game.ts`, never throws): it reads the game's history ONCE (`getGame` with history,
+  settings and `map: false`: a cached map is attached by its id, and the client's refresh of a cached map lacking
+  land the standing names — which would repeat the request — never runs, and `noRetry` keeps the client from
+  re-sending it on a 429 or 5xx, so the POST goes out once; with no map cached, one map-only read without the
+  history follows, and when that fails the record is kept `noMap`), never retried, and keeps the
+  capture name-free at `<dataDir>/finished/<hmac>.json` (`src/finished-store.ts`: the file name `finishedGameKey`, an
+  HMAC of my account and the game under the ONE shared salt; players inside by `playerKey`; no clock; 0600, atomic, at
+  most `MAX_FINISHED_RECORDS` (500) by last write or the sweep's refresh, never one the writer protects; a file that does not parse is never overwritten and blocks the pass,
+  `record-unreadable`). The file is a processed mark: any status stops every trigger. So is the **lasting mark**
+  (`markProcessed`, `<dataDir>/finished/processed.json`: the record keys only, hashed, no id; at most
+  `MAX_PROCESSED_KEYS` (5000, ten times the record bound), the least recently marked dropped; atomic, 0600, under
+  the path lock; a marks file that does not parse is never overwritten and marks then rest on the records), written
+  as soon as a pass's request is spent (a failed request included; not when the reply shows the game still in
+  play, which may end later) or it consumes the history a caller read (`warapp_get_game` with `include_history`), so a game whose record the bound pruned is never read again. **The one remaining
+  exception:** a game whose record and mark have both aged out (5000 later passes) reads again if a trigger names it. `captured` holds
+  (`src/analysis/finished-game.ts`, pure) the outcome from my player state (`won`, `lost`, `surrendered`, `eliminated`,
+  `booted`, `ended-by-vote`) with the completed turns, the first history board I held no land (`outTurn`) and the
+  winners; my pick list and award (`readPickRecord`); each player's start; per history board (`afterTurn` completed
+  turns) each player's income by `boardIncome` (base or per-territory, plus full bonuses; cards and the army cap aside),
+  territories, armies and full bonuses; for each target my cached orders attacked and did not take (orders of turn T on
+  boards T − 1 and T) what stood there before and after; the history's boards themselves (`boards`: `[territory,
+  owner, armies]` rows, the owner an index into `boardOwners` (player keys; any other owner unknown, its raw value
+  never kept), a board listing the same territories as the one before kept as its changed rows; at most the first
+  `MAX_RECORD_BOARDS_HEAD` (30) and the last `MAX_RECORD_BOARDS_TAIL` (30) boards, `boardsOmitted` counting the rest:
+  the calibration harness's truth, #318); the settings shape (`nameFreeSettings`, src/replay.ts) and the
+  map id. Every status also keeps the final outlook line this server logged for the game (`outlook`: `finalOutlookOf`,
+  src/outlook-log.ts, from `<dataDir>/outlook/<gameId>.json` as me — the newest planned turn, its state, held turns,
+  ratio, and `estimated` (the outlook log now marks a turn read on the likely high) / `thin`; no id, none of the basis's
+  words; absent when it never planned the game). A failed request is `read-failed` (the error kind only), an unreadable history `history-unreadable` with
+  #315's reason, each with the outcome the read that showed it finished gives; neither is retried by a trigger — only
+  `warapp_get_game` with `include_history` re-runs a failed pass, from that call's own read (no further request).
+  Triggers: `warapp_get_game` (the account: the board cache's, else the signed-in one), `warapp_wait_for_turn`'s read,
+  a game-ended in-app notification in `warapp_get_notifications` (see "In-app notifications"), and the `warapp_my_games` sweep over its finished games (my seat held) not yet processed, newest first, at most
+  `END_OF_GAME_PER_CALL` (2) per call, each also folding its live profile (`foldFinished`, #273); the records are the
+  sweep's cursor (`endOfGame: { processed, pending }`). The sweep looks only at the newest `sweepWindow` (half the
+  record bound: 250) finished games, refreshes their records each call and protects them from its own writes' prune,
+  so the records kept are the newest games'; the lasting marks keep any game from being read twice (P2). A pass that spent its request but left no record (the write
+  failed, or the reply showed the game not finished or not mine) is remembered in-process (`attempted`, bounded), so no
+  trigger reads that game's history again in this process (`attempted` status). Only a seat of mine (P3);
+  `WARAPP_PLAYER_PROFILE=off` or no data dir: nothing — not even the signed-in account is read (`finishedAccount` checks
+  first); `warapp_get_game` asks for the account (an InviteToken page read) at most once per finished game per process
+  when it cannot be read (the sweep picks the game up later). Registered hosted like the profile store. Inform only (P1): no planner decision reads it (golden
+  unchanged).
+  **Processing a captured history (#312 E2, `processHistory` in `src/tools/end-of-game.ts`; pure parts in
+  `src/analysis/game-lessons.ts`, stores in `src/lessons-store.ts`)** runs right after a `captured` record is written,
+  each part on its own, and reports `processed: { profiles, map, lessons }` (`no-map` without the map; profiles
+  `teams-unknown` for a game of 3+ seats whose teams `keptTeams` cannot read, `nothing` when no turn was observed).
+  (1) **Part C:** `observeHistory` reads each pair of consecutive history boards N, N + 1 as turn N + 1 with my
+  cached orders of that turn (`observeTurn`, while I held land), `habitsOf` per opponent (never me, a teammate or a
+  human who became an AI; AI seats pooled), folded with `source: 'history'`, which replaces the live entry; the
+  per-game file, when there, is marked `folded: 'history'` (`markHistoryFolded`). `foldGame` never counts a game twice
+  (`foldedBefore`: the population holds it, or the per-game file was marked): a player with no entry for the game
+  is skipped when its entry list is full (one may have been dropped), and the population when it no longer holds
+  the game. (2) **The map's record** `<dataDir>/maps-record/<mapId>.json`: games, outcomes, and per game (at most
+  `MAX_MAP_ENTRIES`, 50) the format, seats, result, turns, my start region (territories and every bonus they touch,
+  `startRegion`), my income curve (by completed turns, at most 60 points) and income after turns 4 and 8, and each
+  winner's start region and income after turns 4 and 8 (the pace to beat); at most `MAX_MAP_RECORDS` (200) maps
+  by last write; `mapRecordSummary` gives the medians. (3) **The lessons** `<dataDir>/lessons.json`: per format the
+  games, outcomes, lost games by cause (`lessonLoss`: `howLost` on the history boards — `commander`,
+  `last-territories`, `unknown` — or `surrendered`, `booted`, `still-holding`), the turn my income first went flat
+  (`flatTurn`: from board 1 on, within `FLAT_TOLERANCE` (10%, at least 1) on each of the next `FLAT_TURNS` (3)
+  boards; `flat: { n, sum }`), and the calibration (#294, #318 a): for each turn T I cached a board for,
+  `trackOpponents` over my cached boards up to T (every seat as still playing) against the opponent's income on
+  history board T − 1, estimate ÷ truth counted by coverage bucket (`none`, `under-25`, `25-50`, `50-75`, `75-up`:
+  `n`, `sum`, `sq`, `logSum`, `under` < 0.5, `over` > 1.5) — aggregates only, no turn or player. Each game's entry
+  (at most `MAX_LESSON_ENTRIES`, 500) holds its own counts, so processing it again replaces its share; a dropped
+  entry's counts stay. Both stores: keyed by `finishedGameKey`, no id, name or clock; 0600, atomic, under the path
+  lock; a file that does not parse (or a malformed total) is never overwritten (`failed`).
+  **Where they are read (#312 E3, `src/tools/past-games.ts`, read-only, never throws; off with profiling off or no data
+  dir; every view carries `PAST_GAMES_NOTE` and none is a planner input — P1, the golden corpus is unchanged):**
+  `warapp_plan_picks`' `mapRecord` (when the map has a game: games, outcomes, `myStarts` — my results per bonus my start
+  touched (`mapRecordStarts`), `inPrimary` when this primary touches it — `winnerStarts`, and `pace.afterTurn4/8`: the
+  medians of the winners' and my income; compact lists the first `MAP_RECORD_COMPACT` (8) bonuses; `unreadable` when the
+  record does not parse); `warapp_plan_turn`'s `pace` (only when `turnsCompleted` is 4 or 8 and the record has a figure
+  there: my income now — card armies out — beside the median winner's and my past median, `behindWinners`; read after
+  the plan is made); `warapp_map_stats`' `myGames` (the same view in full, no request; the tool stays opt-in); and
+  `warapp_track_opponents` full's `pastGames` (`lessonsSummary`: per format the games, outcomes, how lost, the mean flat
+  turn, and the calibration per coverage band — `n`, `mean` and `geoMean` of estimate ÷ truth, `low` < 0.5 and `high` >
+  1.5 shares — and every format together; `thisFormat` names the game's). The profile reads name a habit's basis
+  `history` (`HabitBasis`) when the past weighs most and at least half of its `n` comes from entries folded from a
+  finished history (`ProfileHistory.players[].fromHistory`, the player's `history` entries at their weight, this game's
+  left out); the value never changes for it. **#312 item 4 is only partly met:** the calibration from past games is
+  reported in `warapp_track_opponents` full (`pastGames`) only; the outlook and the estimate warnings
+  (`warapp_plan_turn`'s) do not report it yet.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in
@@ -1576,7 +1665,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   whatever its age. A bad file is ignored and
   replaced; the disk never fails a call. A tool
   that never uses the map (the turn wait, surrender, uncommit, chat — a send with `commitments` aside, which
-  plans — join-game, scout, begin-turn, submit-turn's read-back) always asks `GetMap=false`, even for a game it has not seen.
+  plans — join-game, scout, begin-turn, submit-turn's read-back) asks `GetMap=false` for its own reads, even for a game
+  it has not seen. The one exception is the end-of-game pass that the turn wait (like `warapp_get_game`, the
+  `warapp_my_games` sweep and `warapp_get_notifications`) runs on a finished game: its history read asks
+  `GetMap=false` too, but with no map cached it makes one more read for the map (#312).
 - **Offline replay (`src/replay.ts`).** Wherever the board cache is written (plan_turn,
   track_opponents, locate_opponents, get_relations) the game's settings are kept at
   `<dataDir>/games/<gameId>.json`: name-free (players by id, team, state and AI flags; raw settings
@@ -1588,9 +1680,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   inputs from the data directory alone: `{ game, settings, map, playerId, boards, orders }`
   (`undefined` without a settings record; `map` absent when the store evicted it).
 
+- **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
+  the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
+  `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's
+  estimate via `planEnemyEstimates`, each ÷ the history's true income, by format and coverage band),
+  `openingBenchmark` (my real start replayed 8 turns on `planTurn` + `simulateTurn`, the opponents put back where the
+  history shows them by `overlayHistory`: no fog, no attacks on me, no cards — said in the output) and the aggregates.
+  Truth is the end-of-game record itself (`<dataDir>/finished/<hmac>.json`, which keeps the history's boards, owners
+  by `playerKey`, delta-encoded, bounded): the harness keeps no store and makes NO request (no `--fetch`, no GameFeed
+  path of its own). `calibrationSources` (`src/calibration-source.ts`) reads every record: one matched to its game's
+  settings record gets the ids back by key (`historyOfRecord`, a key is never reversed) and my cached boards; one
+  whose settings record aged out is read on its own (its own settings shape, the stored map by its map id at any age,
+  players labelled by position — `anonymousHistoryOfRecord` — and no cached boards, so the opening benchmark only);
+  what it skips (no settings, no stored map, a failed pass, a settings record whose pass has not run) is counted and
+  printed with the approximations, with why. So one history read per finished game (P2) feeds the profiles, the
+  lessons and the harness under one bound and one name-free store (P4). The data comes from the normal end-of-game
+  pass (its triggers above); then run the harness. With `WARAPP_PLAYER_PROFILE=off` it reads nothing. Until a pass
+  has run there is no truth and the harness says so (no number). No planner decision reads any of it (P1). How to run:
+  `docs/PLAN-PROFILES.md` "Calibration and the opening benchmark".
+
 ## Commands
 
-`npm run build` (tsc --noEmit + esbuild bundle) · `npm test` (typecheck + lint + vitest) ·
+`npm run build` (tsc, which emits `dist/**` — what `scripts/calibrate.mjs` imports — then the esbuild bundle) · `npm test` (typecheck + lint + vitest) ·
 `npm run test:coverage` (what CI runs: `npm test` plus the coverage thresholds in `vitest.config.ts`) · `npm run typecheck` ·
 `npm run lint` (Biome, lint only — no formatter; `biome.json` turns off the house-style rules such as
 `noNonNullAssertion`, which `noUncheckedIndexedAccess` makes the idiom). `exactOptionalPropertyTypes`

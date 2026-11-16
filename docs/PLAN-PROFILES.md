@@ -134,6 +134,56 @@ throwaway script is fine.
 Verdict per habit: `trait`, `pooled only`, or `not measurable yet`. Repeat after part C has read
 twenty finished games; the second report is the one P1 is decided on.
 
+### Calibration and the opening benchmark (#318): `scripts/calibrate.mjs`
+
+A local dev script, not a tool and not run in CI; it prints aggregates only (no game id, player id or
+name). Its pure parts are `src/analysis/calibrate.ts` (tested in `tests/analysis/calibrate.test.ts`).
+
+```sh
+npm run build                                   # tsc emits dist/**, which the script imports
+node scripts/calibrate.mjs                      # the data dir: MCP_DATA_DIR, else ~/.config/warapp-mcp
+node scripts/calibrate.mjs --data-dir <dir> --turns 8 --json
+```
+
+**How to get the data:** the harness makes no request and has no `--fetch`. The normal end-of-game
+pass fills the store, one history read per finished game: the `warapp_my_games` sweep (two games a
+call), `warapp_get_game` on a finished game, `warapp_wait_for_turn`'s read, or a game-ended
+notification in `warapp_get_notifications`. Let those run, then run the harness.
+
+- **Truth** is each finished game's history as the end-of-game pass kept it: the record
+  `<dataDir>/finished/<hmac>.json` (E1, `src/finished-store.ts`) holds the history's boards (the first 30
+  and the last 30), owners by `playerKey`, a board that lists the same territories as the one before
+  kept as its changes. The harness keeps no store of its own and never reads a history itself; it reads
+  every record (`calibrationSources`, `src/calibration-source.ts`). A record whose game still has its
+  settings record in `<dataDir>/games` gets its ids back by matching keys against that record's ids
+  (`historyOfRecord`; a key is never reversed) and my cached boards and orders. A record whose settings
+  record aged out (200 kept, 60 days) is read on its own: the settings shape the record keeps, the stored
+  map by the record's map id (any age), the players labelled by position (`anonymousHistoryOfRecord`) and
+  no cached boards — those are found by game id, which the record does not hold — so it feeds the opening
+  benchmark (b) only. One history read per finished game (P2) so feeds the profiles, the lessons and the
+  harness, under one bound (500 records) and one name-free store (P4). With `WARAPP_PLAYER_PROFILE=off`
+  nothing is read. **Until a pass has run there is no truth and no number:** the harness says so. It
+  prints, with its approximations, what it skipped and why: records with no settings shape or no stored
+  map, records whose pass kept no history (`read-failed`, `history-unreadable`: never re-read), settings
+  records whose game has no record yet (`missing`: the pass has not run), and how many records were read
+  on their own (benchmark only).
+- **(a) Calibration.** On every turn T with a cached board whose history board T − 1 is kept, per
+  opponent with land there: the tracker's income (`calibrationSamples`, E2), the fog prior (#119, before
+  #235's blend) and the plan's estimate (`planEnemyEstimates`, as `warapp_plan_turn` calls it: my income,
+  the previous cached board and my orders on it, the tracks), each ÷ its true income (`turnIncomes`), by
+  format and coverage band (#294). Printed per band: `n`, mean, geometric mean, sd, and the shares under
+  0.5 and over 1.5. These are the numbers `LOW_COVERAGE_FACTOR` (1.5), `PRIOR_EVIDENCE_TURNS` (4) and
+  `HIDDEN_INCOME_FACTOR` (2) are judged on; changing one goes through the owner.
+- **(b) Opening benchmark.** My real start (history board 0) replayed for 8 turns on today's planner,
+  my deploys and moves resolved with `simulateTurn`, and after each turn the opponents put back where
+  the history shows them (`overlayHistory`). Compared by turn: my replayed income, my real income and the
+  winner's; after turn 4, the games with land without bonuses (11+ territories on 8 or less) and with an
+  opponent at 1.5× my income, replayed and real. **Approximated, and printed with the result:** the
+  planner sees the whole board (no fog); the opponents never attack me (no interaction) — they hold the
+  land and armies the history shows, except land I hold in the replay; a territory I really took but did
+  not take in the replay keeps its replayed state; card plays are left out; with luck or weighted
+  rounding a battle is resolved at its expectation (counted as inexact).
+
 ## 8. Part A — the in-game read
 
 ### A1. Observing (`src/analysis/opponent-profile.ts`, pure)
@@ -313,8 +363,10 @@ confidence = n / (n + K)
 - **The per-game file after a fold:** marked `folded: 'live'` and kept until part C has tried the
   game's history once (or P2 is off), then deleted. A file untouched for `BOARD_CACHE_MAX_AGE_MS` is
   folded with `ending: unknown` and deleted, so no id-bearing file outlives the board cache.
-  *As built in part B (C not built yet):* a folded file is kept until that age rule deletes it; the
+  *As built in part B:* a folded file is kept until that age rule deletes it; the
   file keeps the game's seats (format, seat count, AI seats) so the age rule can fold it unread.
+  *As built, #312 (part C):* the end-of-game pass reads each finished game's history once and folds it over the
+  live counts (`source: 'history'`), marking the per-game file `folded: 'history'`.
   *As built, #264 (backfill):* a finished game with cached boards but no per-game file (it finished
   before #263) is observed once from those boards and my cached orders and folded as `live`, the file
   marked `backfill` and dated as the board cache so it is deleted with it. It runs in `warapp_get_game`
@@ -354,11 +406,59 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
 - **C2, from orders**, only once V2 names the keys: a loose `historyOrders` in `src/trend.ts`, then
   `reinforce`, `stacking`, `firstStrike` and `retaliate` exactly for every pair of players, and card
   habits (a Reinforcement card held unplayed; Order Priority use).
-- **Where the read happens:** in `warapp_get_game` for that game, or on the next
-  `warapp_profile_opponents` call for any game (at most one pending history per call). Not inside
-  `warapp_wait_for_turn`, which should not gain a request.
-- One request per finished game, through `WarappClient`, never retried in a loop, never for a game
-  the account did not play.
+- **Where the read happens (#312 E1, built):** the end-of-game pass (`src/tools/end-of-game.ts`)
+  makes the one read, on the first read that shows the game finished — `warapp_get_game`, and (owner
+  request of 2026-11-16, superseding "not inside the wait") `warapp_wait_for_turn`'s read — on a
+  game-ended in-app notification in `warapp_get_notifications` (at most 2 games per call, the rest
+  `pending`), and in the `warapp_my_games` sweep over the account's finished games not yet processed (`END_OF_GAME_PER_CALL`,
+  2, per call, newest first, among the newest 250 only: half the store bound, their records refreshed
+  each call and never pruned by the sweep's writes). The history read asks `GetMap=false` (a cached map is
+  attached by id, and the client's map refresh, which would repeat the read, never runs) and `noRetry` (the
+  client's transport does not re-send it on a 429 or 5xx: the POST goes out once); with no map
+  cached one map-only read follows, never a second history read. It keeps the capture name-free at `<dataDir>/finished/<hmac>.json`
+  (`src/finished-store.ts`: the key an HMAC of my account and the game under the shared salt; players by
+  `playerKey`; 0600, atomic, at most 500, an unparsable file never overwritten), which is a processed
+  mark — and so is a lasting one, `<dataDir>/finished/processed.json` (hashed record keys only, at most
+  5000), written once the request is spent or the history `warapp_get_game` read with `include_history` is consumed, so a game whose record the 500 bound pruned is still never
+  read again (the one exception: a game whose record and mark both aged out). The record keeps: outcome (from the player states) and the turn I was out, my pick list and award,
+  every player's income (`boardIncome`), territories, armies and full bonuses on each history board,
+  the boards themselves (owners by key, at most the first 30 and the last 30, `boardsOmitted` counting
+  the rest; the calibration harness's truth, #318),
+  what stood on each target my cached orders failed to take, the settings shape and the map id
+  (`src/analysis/finished-game.ts`, pure), and on any status the final outlook line this server logged
+  (`outlook`: the newest planned turn's state, held turns, ratio, `estimated` / `thin`; no id, no words;
+  absent when it never planned the game). A failed request is `read-failed`, an unreadable history
+  `history-unreadable` with #315's reason; neither is retried by a trigger, only by an explicit
+  `warapp_get_game` with `include_history`, from that call's own read. The sweep also folds each game's
+  live profile (`foldFinished`), so #273 needs no `warapp_get_game` per game; so does the notification
+  trigger.
+- **Processing the history (#312 E2, built):** right after a `captured` record, the same pass (no
+  further request) folds the opponent profiles from the history boards — `observeTurn` over each pair
+  of full boards with my cached orders where present (`observeHistory`, `src/analysis/game-lessons.ts`),
+  the primitives of part A rather than C1's standing-only habits above, folded as `history` so the entry
+  replaces the live one. The double count named in section 9 is guarded: when the game was folded
+  before (the population holds it, or the per-game file is marked folded), a player with no entry for
+  it is skipped if its entry list is full, and the population is skipped if it no longer holds the game.
+  The same pass keeps the game in its map's record (`<dataDir>/maps-record/<mapId>.json`: outcomes, my
+  start region and income curve, each winner's start region and income after turns 4 and 8) and adds
+  its lessons (`<dataDir>/lessons.json`: per format the outcomes, how each lost game was lost, the
+  turn my income first went flat, and the tracker's estimates over my cached boards against the
+  history's true incomes by frontier coverage — part 0's measurement, aggregates only). Both are
+  name-free (keyed by `finishedGameKey`), bounded, 0600, and never overwritten when they do not parse.
+  **Read back (#312 E3), reported only (P1: no plan, ranking or estimate reads them):** `warapp_plan_picks`'
+  `mapRecord` (games, my results by start bonus, the bonuses winners started in, the winners' and my median income
+  after turns 4 and 8), `warapp_plan_turn`'s `pace` after turns 4 and 8, `warapp_map_stats`' `myGames`, and
+  `warapp_track_opponents` full's `pastGames` (the lessons; the calibration as estimate ÷ truth by format and coverage
+  band: count, mean, geometric mean, shares under half and over 1.5×). A habit whose past weighs most, at least half of
+  it folded from finished histories, reads `basis: history` in `warapp_profile_opponents` and the plan's `reads`.
+  **#312 item 4 is only partly met:** the calibration from past games is reported in
+  `warapp_track_opponents` full (`pastGames`) only; the outlook and the estimate warnings do not report it yet.
+- One request per finished game, through `WarappClient`, sent once (`noRetry`: no transport retry on a 429
+  or 5xx) and never retried in a loop, never for a game
+  the account did not play. A request spent with no record left (the write failed; the reply showed the
+  game not mine) still leaves the lasting mark; one whose reply showed the game not finished is remembered
+  for the life of the process only (it may end later), so no trigger repeats it.
+  With profiling off the pass makes no request at all, the signed-in account's page included.
 
 **Done when** a synthetic finished game folds to the same habits as the same game observed live
 with the fog off, and a history that does not parse changes nothing.

@@ -126,14 +126,26 @@ async function pruneGames(dir: string, keep: number): Promise<void> {
   for (const f of files.slice(0, excess)) await unlink(join(folder, f.name)).catch(() => {});
 }
 
+/**
+ * `game`'s raw settings without free text or names (`sanitizeSettings`, against its players' and its own
+ * names), the overridden bonuses re-written in their verified shape; `undefined` without settings. What the
+ * replay record and the end-of-game record (src/finished-store.ts) keep as the settings shape.
+ */
+export function nameFreeSettings(game: Pick<Game, 'settings' | 'players' | 'name'>): Rec | undefined {
+  const s = game.settings;
+  if (!s) return undefined;
+  const names = [...game.players.map((p) => p.name), ...(game.name !== undefined ? [game.name] : [])];
+  const settings = sanitizeSettings(s.raw, names);
+  if (s.overriddenBonuses) settings.OverriddenBonuses = [...s.overriddenBonuses].map(([bonusID, value]) => ({ bonusID, value }));
+  return settings;
+}
+
 /** Keep the settings needed to replay `game` (name-free). `false` when it has none or the write failed; never throws. */
 export async function writeGameRecord(dir: string, game: Game): Promise<boolean> {
   const s = game.settings;
   if (!s) return false;
   try {
-    const names = [...game.players.map((p) => p.name), ...(game.name !== undefined ? [game.name] : [])];
-    const settings = sanitizeSettings(s.raw, names);
-    if (s.overriddenBonuses) settings.OverriddenBonuses = [...s.overriddenBonuses].map(([bonusID, value]) => ({ bonusID, value }));
+    const settings = nameFreeSettings(game)!;
     const derived: Derived = {
       ...(s.mods !== undefined ? { mods: s.mods } : {}),
       ...(s.commerce !== undefined ? { commerce: s.commerce } : {}),

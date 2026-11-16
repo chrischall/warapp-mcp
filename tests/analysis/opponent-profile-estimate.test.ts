@@ -67,6 +67,24 @@ describe('estimateHabits across games', () => {
     expect(estimateHabits(withRate('reinforce', 1, 2), { past: withRate('reinforce', 1, 3) }).reinforce.basis).toBe('default');
   });
 
+  it('#312 E3: names the basis `history` when the past that weighs most was mostly read from finished games\' histories', () => {
+    const past = withRate('reinforce', 7, 8);
+    // 6 of the past's 8 opportunities came from history folds.
+    expect(estimateHabits(withRate('reinforce', 1, 2), { past, pastHistory: withRate('reinforce', 5, 6) }).reinforce.basis).toBe('history');
+    // Exactly half still reads history; under half stays past-games.
+    expect(estimateHabits(withRate('reinforce', 1, 2), { past, pastHistory: withRate('reinforce', 3, 4) }).reinforce.basis).toBe('history');
+    expect(estimateHabits(withRate('reinforce', 1, 2), { past, pastHistory: withRate('reinforce', 3, 3) }).reinforce.basis).toBe('past-games');
+    // The value never changes for it.
+    expect(estimateHabits(withRate('reinforce', 1, 2), { past, pastHistory: withRate('reinforce', 5, 6) }).reinforce.value).toBe(
+      estimateHabits(withRate('reinforce', 1, 2), { past }).reinforce.value,
+    );
+    // When this game or the prior weighs most, the history share does not matter.
+    expect(estimateHabits(withRate('reinforce', 6, 6), { past: withRate('reinforce', 0, 5), pastHistory: withRate('reinforce', 0, 5) }).reinforce.basis).toBe('this-game');
+    // A size: the stacking readings.
+    const size: Habits = { ...emptyHabits(), stacking: { n: 10, sum: 5, sq: 3 } };
+    expect(estimateHabits(emptyHabits(), { past: size, pastHistory: size }).stacking.basis).toBe('history');
+  });
+
   it('shrinks toward the population pool (format first, then all) once it has enough opportunities', () => {
     const format = withRate('reinforce', 9, 10);
     const all = withRate('reinforce', 2, 20);

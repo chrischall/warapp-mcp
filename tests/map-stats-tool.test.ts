@@ -5,6 +5,7 @@ import { createTestHarness, type TestHarness } from '@chrischall/mcp-utils/test'
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MapCache } from '../src/client.js';
+import { recordMapGame } from '../src/lessons-store.js';
 import { registerAllTools } from '../src/tools/index.js';
 import { mockWarappBridge } from './bridge-mock.js';
 import { CREDS, payload, textOf } from './helpers.js';
@@ -46,6 +47,7 @@ function rawGame(id: number, state = 'Finished') {
 
 interface H {
   harness: TestHarness;
+  dataDir: string;
   urls: string[];
   call: (args: Record<string, unknown>) => Promise<CallToolResult>;
 }
@@ -86,6 +88,7 @@ async function harness(
   );
   open = {
     harness: h,
+    dataDir,
     urls,
     call: (args) => h.client.callTool({ name: 'warapp_map_stats', arguments: args }) as Promise<CallToolResult>,
   };
@@ -93,6 +96,32 @@ async function harness(
 }
 
 describe('warapp_map_stats', () => {
+  it('#312 E3: counts my own finished games\' pace on the map beside the ladder stats (cache only, no request for it)', async () => {
+    const h = await harness({ WARAPP_STATS: '1' });
+    const none = payload<Record<string, unknown>>(await h.call({ map_id: 777, max_new_games: 0 }));
+    expect(none).not.toHaveProperty('myGames');
+    expect(
+      await recordMapGame(h.dataDir, 777, {
+        key: '1'.padStart(32, '0'),
+        format: '1v1',
+        seats: 2,
+        result: 'eliminated',
+        turns: 9,
+        me: { territories: [3], bonuses: [2], income: [], income4: 4, income8: 6 },
+        winners: [{ territories: [1], bonuses: [1], income4: 6, income8: 10 }],
+      }),
+    ).toBe('kept');
+    const p = payload<Record<string, any>>(await h.call({ map_id: 777, max_new_games: 0 }));
+    expect(p.myGames).toMatchObject({
+      games: 1,
+      outcomes: { eliminated: 1 },
+      myStarts: [{ bonus: { id: 2 }, games: 1, outcomes: { eliminated: 1 } }],
+      winnerStarts: [{ bonus: { id: 1 }, games: 1 }],
+      pace: { afterTurn4: { winners: 6, mine: 4 }, afterTurn8: { winners: 10, mine: 6 } },
+    });
+    expect(h.urls).toEqual([]);
+  });
+
   it('is off by default: refuses with how to enable it, and makes no request', async () => {
     const h = await harness({});
     const res = await h.call({ map_id: 777 });

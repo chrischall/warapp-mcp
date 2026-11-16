@@ -117,7 +117,16 @@ state:
     WARAPP_PLAYER_RECORD=off switches it off), and the opponent profile turns
     ($MCP_DATA_DIR/profiles/games: gameplay counts per game, owner decision P4,
     on hosted as well, folded when a game finishes into the name-free
-    profiles/players.json and population.json, keyed by the same salt; WARAPP_PLAYER_PROFILE=off switches it off). GameFeed maps are kept at
+    profiles/players.json and population.json, keyed by the same salt; WARAPP_PLAYER_PROFILE=off switches it off), and the
+    end-of-game records ($MCP_DATA_DIR/finished: once per finished game the
+    account played, its history read once and kept name-free under the same
+    salt, its boards and final outlook line included, at most 500, and a lasting hashed mark per game in
+    finished/processed.json (5000 keys) so a game is never read twice; a read whose record cannot be
+    written is remembered in-process and not repeated; each captured history is
+    then folded into the profiles, the per-map record at
+    $MCP_DATA_DIR/maps-record/<mapId>.json and the lessons at
+    $MCP_DATA_DIR/lessons.json, both name-free and bounded, read back only to be
+    reported beside the picks, plans and tracks, never planned on). GameFeed maps are kept at
     $MCP_DATA_DIR/maps/<mapId>.json (public map data, base bonus values, at most
     40, re-downloaded after 30 days) with maps/games.json naming each game's map,
     so a known game is not downloaded with its map again after a cold start; and

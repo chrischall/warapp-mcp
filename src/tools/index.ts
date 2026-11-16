@@ -95,7 +95,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     identity: () => bridge.identityState(),
   });
   registerHealthcheckTool(server, fetchproxy, bridge, deps);
-  registerGameTool(server, client, () => dataDir(deps.env), deps.env);
+  // The signed-in account names a finished game's player for its end-of-game pass when no board was cached (#312).
+  registerGameTool(server, client, () => dataDir(deps.env), deps.env, () => live.myInviteToken());
   registerMapTool(server, client);
   // Opt-in (WARAPP_STATS=1), never hosted: the tool refuses before any request
   // when off. One collector per registration, so its 1 s throttle spans calls.
@@ -106,14 +107,15 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
       ...(deps.sleep ? { sleep: deps.sleep } : {}),
     }),
     mapCache: deps.mapCache ?? defaultMapCache,
+    dataDir: () => dataDir(deps.env),
     ...(deps.env ? { env: deps.env } : {}),
   });
   registerBoardTool(server, client, live);
   registerRouteTool(server, client);
   registerStrategyTool(server, client, live);
   registerLiveTools(server, live);
-  registerPickTools(server, live);
-  registerMyGamesTool(server, live);
+  registerPickTools(server, live, deps.env ? { env: deps.env } : {});
+  registerMyGamesTool(server, live, deps.env ? { env: deps.env } : {});
   registerOpenGamesTool(server, live);
   registerJoinGameTool(server, live);
   registerLeaveGameTool(server, live);

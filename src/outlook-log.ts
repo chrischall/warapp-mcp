@@ -26,6 +26,8 @@ export interface OutlookLogTurn {
   high: number | null;
   ratio: { low: number; high: number | null };
   state: OutlookState;
+  /** #312: the state was read on the likely high (an estimate, not a bound). Absent otherwise, and on turns logged before #312. */
+  estimated?: true;
   /**
    * #283: the armies and income behind the strengths (an opponent's in view only), and which side the
    * strongest was (its lowest player id; `team` in a team game). Absent on turns logged before #283.
@@ -102,6 +104,7 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
         high: t.strongest?.high ?? null,
         ratio: t.ratio,
         state: t.state,
+        ...(t.estimated ? { estimated: true as const } : {}),
         ...(t.figures
           ? {
               figures: {
@@ -137,6 +140,34 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
   } catch {
     // The log is optional.
   }
+}
+
+/**
+ * #312: the final outlook line as the end-of-game record keeps it — the newest planned turn's state, how
+ * long it held, its ratio, and whether it rested on an estimate or thin evidence. Name-free: no player id
+ * and none of the basis's words. `undefined` when the log holds no latest outlook. Pure.
+ */
+export interface FinalOutlook {
+  turn: number;
+  state: OutlookState | null;
+  heldTurns: number;
+  ratio?: { low: number; high: number | null };
+  estimated?: true;
+  thin?: true;
+}
+
+export function finalOutlookOf(log: OutlookLog): FinalOutlook | undefined {
+  const l = log.latest;
+  if (!l || typeof l.turn !== 'number') return undefined;
+  const t = log.turns[String(l.turn)];
+  return {
+    turn: l.turn,
+    state: l.state ?? null,
+    heldTurns: typeof l.heldTurns === 'number' ? l.heldTurns : 0,
+    ...(t?.ratio ? { ratio: { low: t.ratio.low, high: t.ratio.high } } : {}),
+    ...(t?.estimated ? { estimated: true as const } : {}),
+    ...(l.evidence?.thin ? { thin: true as const } : {}),
+  };
 }
 
 /** Record the final result of a game the log already holds; `true` when written. Best effort. */

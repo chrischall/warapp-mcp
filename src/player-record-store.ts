@@ -104,6 +104,8 @@ const hmac = (salt: string, text: string) => createHmac('sha256', salt).update(t
 export const playerKey = (salt: string, playerId: number) => hmac(salt, `player:${playerId}`);
 /** A game's key in the opponent profiles: my account and the game, never the ids themselves. */
 export const profileGameKey = (salt: string, myId: number, gameId: number) => hmac(salt, `profile-game:${myId}:${gameId}`);
+/** A finished game's end-of-game record (#312, src/finished-store.ts): my account and the game, never the ids themselves. */
+export const finishedGameKey = (salt: string, myId: number, gameId: number) => hmac(salt, `finished-game:${myId}:${gameId}`);
 /** An agreement's key in the record: my account, the game and the agreement, never the ids themselves. */
 export const entryKey = (salt: string, myId: number, gameId: number, agreementId: string) =>
   hmac(salt, `agreement:${myId}:${gameId}:${agreementId}`);
