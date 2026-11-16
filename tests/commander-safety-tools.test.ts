@@ -26,7 +26,11 @@ const BOARD = (withUnit = true): SyntheticTerritory[] => [
   { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 16 },
 ];
 
-function feedGame(settings: Record<string, unknown>, extra: Record<string, unknown> = {}, opts: { ffa?: boolean } = {}): Record<string, unknown> {
+function feedGame(
+  settings: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+  opts: { ffa?: boolean; cidState?: string } = {},
+): Record<string, unknown> {
   const f = lobbyFixture();
   // With `ffa`, a free-for-all: Ann, Bob and Cid playing, and Dan out (eliminated), so no fog prior
   // lifts Bob's and Cid's estimates to my income (#235): I lead, 7 against base 5 each.
@@ -36,7 +40,7 @@ function feedGame(settings: Record<string, unknown>, extra: Record<string, unkno
       : i === 1
         ? { ...p, id: BOB.feed, name: 'Bob' }
         : i === 2 && opts.ffa
-          ? { ...p, id: CID.feed, name: 'Cid' }
+          ? { ...p, id: CID.feed, name: 'Cid', ...(opts.cidState ? { state: opts.cidState } : {}) }
           : i === 3 && opts.ffa
             ? { ...p, id: DAN.feed, name: 'Dan', state: 'Eliminated' }
             : p,
@@ -208,6 +212,23 @@ describe('warapp_submit_turn commander check (#274)', () => {
     expect(textOf(res)).toMatch(/commander on territory 159/);
   });
 
+  it('a surrendered seat beside the commander is static land, never a killer (#270 with #274)', async () => {
+    // Cid surrendered (no AI plays the seat): his 60 on 135 beside my commander stand still. Bob's 16 + 7
+    // − 1 = 22 attackers kill 13 of the 13 + 7 HOME leaves there: it holds.
+    const board: SyntheticTerritory[] = [...BOARD(), { id: 135, fogLevel: 1, owner: CID.inGame, armies: 60 }];
+    const feed = () => feedGame(CMD, {}, { ffa: true, cidState: 'SurrenderAccepted' });
+    const s = server(board, { ffa: true });
+    h = await liveHarness({ feed: [feed(), feed(), feed()], pages: ME_PAGE, warapp: s.warapp });
+    const preview = payload<Record<string, unknown>>(await h.call('warapp_submit_turn', { game_id: GAME, orders: HOME }));
+    expect(preview.confirmToken, JSON.stringify(preview)).toEqual(expect.any(String));
+    expect(JSON.stringify(preview)).not.toMatch(/accept_commander_risk/);
+    // warapp_check_plan's block agrees, and so does warapp_plan_turn's.
+    const c = payload<{ commander: { replies: number } }>(await h.call('warapp_check_plan', { game_id: GAME, orders: HOME }));
+    expect(c.commander.replies).toBe(0);
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.commander!.safe).toBe(true);
+  });
+
   it('describes the flag', async () => {
     h = await liveHarness({ feed: [feedGame(CMD)], pages: ME_PAGE, warapp: server(BOARD()).warapp });
     const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_submit_turn')!;
@@ -352,5 +373,58 @@ describe('warapp_plan_turn commander block (#274)', () => {
     h = await liveHarness({ feed: [feedGame({ Commanders: false })], pages: ME_PAGE, warapp: server(BOARD(false)).warapp });
     const p = await plan();
     expect(p).not.toHaveProperty('commander');
+  });
+});
+
+interface CheckPayload {
+  summary: string;
+  commander?: { territory: { id: number }; armies: number; needs: number | null; replies: number; replyDeploy: number; text: string };
+}
+
+describe('warapp_check_plan commander block: the submit\'s own check (#274 review)', () => {
+  const check = async (args: Record<string, unknown>) => payload<CheckPayload>(await h!.call('warapp_check_plan', { game_id: GAME, ...args }));
+
+  it('sizes every reply at the larger of the estimate and my income, so it says what the submit refuses', async () => {
+    // Bob's estimate is 5 (16 + 5 − 1 = 20 kill 12 < 13: it survives); my income 7 (22 kill 13: it falls).
+    const s = server(BOARD());
+    h = await liveHarness({ feed: [feedGame(CMD), feedGame(CMD)], pages: ME_PAGE, warapp: s.warapp });
+    const c = await check({ orders: AWAY });
+    expect(c.commander).toMatchObject({ territory: { id: 159 }, armies: 6, needs: 7, replyDeploy: 7 });
+    expect(c.commander!.replies).toBeGreaterThan(0);
+    expect(c.summary).toMatch(/^Your commander on territory 159 falls to/);
+    expect(c.commander!.text).toMatch(/your income/);
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: AWAY });
+    expect(textOf(res)).toMatch(/needs 7 armies there/);
+  });
+
+  it('enemy_deploy raises the replies, never lowers them below the submit\'s', async () => {
+    const s = server(BOARD());
+    h = await liveHarness({ feed: [feedGame(CMD)], pages: ME_PAGE, warapp: s.warapp });
+    // enemy_deploy 1 is below my income: the commander block still sizes at 7.
+    const c = await check({ orders: AWAY, enemy_deploy: 1 });
+    expect(c.commander).toMatchObject({ needs: 7, replyDeploy: 7 });
+    expect(c.commander!.replies).toBeGreaterThan(0);
+  });
+
+  it('counts my Airlift off the commander\'s territory, as the submit does', async () => {
+    const s = server(BOARD(), { hand: [{ id: AIR, type: 6 }] });
+    h = await liveHarness({ feed: [feedGame({ ...CMD, MaxCardsHold: 9 })], pages: ME_PAGE, warapp: s.warapp });
+    // HOME alone holds (13 there); the Airlift then takes 12 of them to 161, leaving 1 and the commander.
+    const c = await check({ orders: [...HOME, { kind: 'card', card: AIR, from: 159, to: 161, armies: 12 }] });
+    expect(c.commander).toMatchObject({ territory: { id: 159 }, armies: 1 });
+    expect(c.commander!.replies).toBeGreaterThan(0);
+  });
+
+  it('tries both move orders whatever first_mover says, as the submit does', async () => {
+    // The commander walks 159 → 161 with 5 (161 then 3 + 7 + 5). Moving first it escapes; if Bob moves
+    // first, his 16 + 7 − 1 = 22 attackers kill the 6 + 7 left on 159 before the walk runs.
+    const s = server(BOARD());
+    h = await liveHarness({ feed: [feedGame(CMD)], pages: ME_PAGE, warapp: s.warapp });
+    const walk = [
+      { kind: 'deploy', territory: 161, armies: 7 },
+      { kind: 'move', from: 159, to: 161, armies: 5, commander: true },
+    ];
+    const c = await check({ orders: walk, first_mover: 'me' });
+    expect(c.commander!.replies).toBeGreaterThan(0);
   });
 });

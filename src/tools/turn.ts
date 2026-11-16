@@ -138,8 +138,8 @@ import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
-import { commanderSafety, myCommanderTerritory, type CommanderAirlift, type CommanderSafety } from '../analysis/commander-safety.js';
-import type { SimOrder } from '../analysis/turn-sim.js';
+import { myCommanderTerritory } from '../analysis/commander-safety.js';
+import { commanderCheckOn, guessKeepsCommander, type CommanderCheck, type CommanderCheckInput, type CommanderRisk } from './commander-check.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
@@ -398,16 +398,6 @@ interface TurnState {
   breaks?: string[];
   /** #274: the commander risk accepted with `accept_commander_risk`, recorded in the result. */
   commanderRisk?: CommanderRisk;
-}
-
-/** #274: the commander left takeable, as the result records it. */
-interface CommanderRisk {
-  territory: number;
-  armies: number;
-  needs: number | null;
-  /** The deploy each reply was sized at for this opponent, the larger of its estimate and my income. */
-  replyDeploy: number;
-  replies: number;
 }
 
 /**
@@ -1657,22 +1647,12 @@ export async function livePlanSetup(
 }
 
 /**
- * Card plays that turn my territory over, which the commander check does not simulate (an Airlift it
- * does): played on a territory my commander stands on before or after my orders, they may lose it,
- * so the submit refuses them there unless accepted. A Bomb only hits a territory not mine.
- */
-const UNSIMULATED_NEAR_COMMANDER: ReadonlySet<CardPlayKind> = new Set(['Blockade', 'EmergencyBlockade', 'Gift']);
-
-/**
- * #274: whether these orders leave my commander takeable by a single-deploy reply, each sized at the
- * larger of the opponent's estimate (as warapp_check_plan has it, from the cached boards only: no
+ * #274: whether these orders leave my commander takeable by a single-deploy reply (`commanderCheckOn`,
+ * src/tools/commander-check.ts: the one check, which warapp_check_plan reports too), each reply sized at
+ * the larger of the opponent's estimate (as warapp_check_plan has it, from the cached boards only: no
  * GameFeed request) and my own income. One computation for warapp_submit_turn's refusal and
- * warapp_plan_turn's commander block, so the plan never calls safe what the submit refuses: the same
- * opponents (`stressOpponents`: every owner on the board and every player still playing), teams,
- * free-for-all lead (#180: two opponents striking together) and Order Priority. Undefined when my
- * commander is not on the board; `risk` and `text` only when a reply tried kills it, or when a card
- * play it does not simulate (a Blockade or a Gift) lands on a territory the commander stands on before
- * or after my orders (`cards` names them). My Airlifts are simulated (`airlifts`).
+ * warapp_plan_turn's commander block, so the plan never calls safe what the submit refuses. Undefined
+ * when my commander is not on the board.
  */
 async function commanderCheck(
   ctx: LiveContext,
@@ -1685,19 +1665,8 @@ async function commanderCheck(
     info: unknown;
     hand: readonly Card[];
     income: number;
-    deploys: { territoryId: number; armies: number }[];
-    moves: SimOrder[];
-    orderPriority: boolean;
-    /** warapp_plan_turn's enemy_deploy what-if: a floor on every reply, never below what the submit tries. */
-    floor?: number;
-    /** Search for the smallest deploy that kills it (warapp_plan_turn's block); the submit skips it. */
-    killedBy?: boolean;
-    /** My Airlifts, which run after the deploys and before the moves. */
-    airlifts?: readonly CommanderAirlift[];
-    /** The territories the other card plays sent with the orders target; those in {@link UNSIMULATED_NEAR_COMMANDER} are not simulated. */
-    cardTargets?: readonly { kind: CardPlayKind; territory: number }[];
-  },
-): Promise<{ safety: CommanderSafety; replyDeploy: number; risk?: CommanderRisk; text?: string; cards?: string[] } | undefined> {
+  } & Omit<CommanderCheckInput, 'graph' | 'me' | 'settings' | 'so' | 'income'>,
+): Promise<CommanderCheck | undefined> {
   if (myCommanderTerritory(a.seen, a.me.id) === undefined) return undefined;
   const graph = graphOf(a.map);
   const settings = plannerSettings(a.game.settings);
@@ -1705,14 +1674,14 @@ async function commanderCheck(
     boardHistory(ctx, a.game, a.me, a.turn, { cacheOnly: true }),
     loadAward(ctx.dataDir, a.game, a.me, a.seen, a.turn),
   ]);
-  const board = award?.board ?? a.seen;
   const opening = openingThreat(award, a.game, graph, a.seen, a.turn);
+  // stressOpponents reads a static seat's territories as neutrals (#270), on its own `board` too.
   const so = stressOpponents({
     graph,
     map: a.map,
     game: a.game,
     me: a.me,
-    board,
+    board: award?.board ?? a.seen,
     seen: a.seen,
     boards: history.boards,
     ...(history.previous ? { previous: history.previous.board } : {}),
@@ -1722,76 +1691,20 @@ async function commanderCheck(
     info: a.info,
     ...(opening ? { opening } : {}),
   });
-  const sizeOf = (deploy: number) => Math.max(deploy, a.income, a.floor ?? 0);
-  const sized = so.opponents.map((o) => ({ ...o, deploy: sizeOf(o.deploy) }));
-  const safety = commanderSafety({
+  return commanderCheckOn({
     graph,
-    board,
     me: a.me.id,
+    settings,
+    so,
+    income: a.income,
     deploys: a.deploys,
     moves: a.moves,
-    opponents: sized,
-    settings,
-    ...(so.teams.size ? { teams: so.teams } : {}),
     orderPriority: a.orderPriority,
-    ...(settings.localDeployments ? { localDeployments: true } : {}),
-    leader: so.leader,
-    killedBy: a.killedBy ?? false,
-    ...(a.airlifts?.length ? { airlifts: a.airlifts } : {}),
+    ...(a.floor !== undefined ? { floor: a.floor } : {}),
+    ...(a.killedBy !== undefined ? { killedBy: a.killedBy } : {}),
+    ...(a.airlifts ? { airlifts: a.airlifts } : {}),
+    ...(a.cardTargets ? { cardTargets: a.cardTargets } : {}),
   });
-  if (!safety) return undefined;
-  const w = safety.worst;
-  const opponent = w ? so.opponents.find((o) => o.id === w.opponent) : undefined;
-  const replyDeploy = opponent ? sizeOf(opponent.deploy) : sizeOf(Math.max(0, ...so.opponents.map((o) => o.deploy)));
-  const its = new Set([safety.from, safety.territory]);
-  const cards = [
-    ...new Set(
-      (a.cardTargets ?? [])
-        .filter((c) => UNSIMULATED_NEAR_COMMANDER.has(c.kind) && its.has(c.territory))
-        .map((c) => `${c.kind === 'EmergencyBlockade' ? 'an Emergency Blockade' : c.kind === 'Gift' ? 'a Gift' : 'a Blockade'} of territory ${c.territory}`),
-    ),
-  ];
-  const cardText = cards.length
-    ? `These orders play ${cards.join(' and ')}, where your commander stands${
-        safety.from === safety.territory ? '' : ' before or after your orders'
-      }: that card play is not simulated by the commander check, and a territory blockaded or gifted is lost with the commander on it.`
-    : '';
-  if (safety.killers === 0 && !safety.lostUnanswered) {
-    if (!cards.length) return { safety, replyDeploy };
-    return {
-      safety,
-      replyDeploy,
-      risk: { territory: safety.territory, armies: safety.armies, needs: null, replyDeploy, replies: 0 },
-      text: cardText,
-      cards,
-    };
-  }
-  const where = `your commander on territory ${safety.territory}`;
-  const partner = w?.partner !== undefined ? so.opponents.find((o) => o.id === w.partner) : undefined;
-  const reply =
-    w && opponent
-      ? partner
-        ? `player ${w.opponent} (deploying ${replyDeploy} on territory ${w.deployTo}) and player ${partner.id} (deploying ${sizeOf(partner.deploy)}${
-            w.partnerDeployTo !== undefined ? ` on territory ${w.partnerDeployTo}` : ''
-          }) striking it together kill it, as two opponents may gang up on the leader of a free-for-all`
-        : `a single deploy of ${replyDeploy} by player ${w.opponent} on territory ${w.deployTo}${w.to !== undefined ? `, attacking territory ${w.to}` : ''}, kills it`
-      : 'a single deploy kills it';
-  const text = safety.lostUnanswered
-    ? `These orders lose ${where} with nobody answering (an attack it goes along on fails).`
-    : `These orders leave ${where} takeable: ${reply} (${safety.killers} of the replies tried, each sized at the larger of the opponent's estimate${
-        opponent ? ` ${opponent.deploy}` : ''
-      } and your income ${a.income}${a.floor !== undefined ? ` and enemy_deploy ${a.floor}` : ''}). ${
-        safety.needs !== null
-          ? `It needs ${safety.needs} armies there (${safety.armies} after your orders) to survive every one.`
-          : 'No number of armies there holds it against every one.'
-      }${a.airlifts?.length ? ' Your Airlifts are counted (they run after the deploys and before the moves).' : ''}${cardText ? ` ${cardText}` : ''}`;
-  return {
-    safety,
-    replyDeploy,
-    risk: { territory: safety.territory, armies: safety.armies, needs: safety.needs, replyDeploy, replies: safety.killers },
-    text,
-    ...(cards.length ? { cards } : {}),
-  };
 }
 
 export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
@@ -2233,7 +2146,33 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(gameContext.players ? { players: gameContext.players } : {}),
         seed: guessSeed(game.id, turn, await guessSalt(ctx.dataDir)),
       });
-      const guess = guessed.kind === 'guess' ? guessed : undefined;
+      let guess = guessed.kind === 'guess' ? guessed : undefined;
+      let guessSkip: { reason: string; message: string } | undefined = guessed.kind === 'skipped' ? { reason: guessed.reason, message: guessed.message } : undefined;
+      // #274: the draw's deploys go through the submit's own commander check too. The guess keeps the
+      // plan's deploy where my commander stands or walks to; should its draw still leave the commander
+      // takeable where the plan's orders do not, warapp_submit_turn would refuse it: no guess then.
+      if (guess && checked) {
+        const drawn = await commanderCheck(ctx, {
+          game,
+          me,
+          map,
+          seen,
+          turn,
+          info,
+          hand,
+          income: setup.boardIncome,
+          deploys: guess.deploys,
+          moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+          orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+          ...(enemy_deploy !== undefined ? { floor: enemy_deploy } : {}),
+        });
+        if (!guessKeepsCommander(checked, drawn)) {
+          const message = `The border guess was dropped: its draw leaves your commander on territory ${drawn!.safety.territory} takeable (${drawn!.safety.killers} of the replies tried), where the plan's own split does not, and warapp_submit_turn would refuse it.`;
+          warnings.push(message);
+          guess = undefined;
+          guessSkip = { reason: 'commander', message };
+        }
+      }
       const guessOrders = guess ? guessOrdersOf(orders, guess) : undefined;
 
       return respond(view, VIEWS, (rung) => ({
@@ -2524,8 +2463,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               guess: guessView(guess, rung, name, game.players.find((p) => p.id === guess.opponent)?.name ?? null),
               guessOrders,
             }
-          : rung === 'full' && guessed.kind === 'skipped'
-            ? { guessSkipped: { reason: guessed.reason, message: guessed.message } }
+          : rung === 'full' && guessSkip
+            ? { guessSkipped: guessSkip }
             : {}),
         ...(rung === 'full'
           ? {

@@ -929,7 +929,10 @@ sampled split) and `guessOrders` (the plan's `orders` with that split in place o
 on those borders) only when no fixed split holds every border and the mix beats the best fixed split by
 at least 5% of the worth at stake (`MIN_GUESS_GAIN`). The plan's own `orders` are unchanged; the
 guess is the user's choice. The draw is seeded by the game, the turn and a secret kept in the data directory, so re-planning a turn gives
-the same split.
+the same split. The territory my commander stands on, or walks to under the plan's orders, keeps the
+plan's deploy in every allocation (#274: the planner holds it against more than this model's one
+deploy), and a draw that the submit's commander check would refuse where the plan's orders pass is
+dropped with a warning.
 
 Measured on the planner's own test positions (350 usable, no Local Deployment, exact combat): 179
 had a fixed split holding everything; in 42 (12%) the mix beat the best fixed split, cutting the

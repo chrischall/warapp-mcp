@@ -97,12 +97,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   orders that leave it takeable with replies sized at max(each opponent's estimate, my income) — estimates from
   `src/tools/stress-opponents.ts` (shared with `warapp_check_plan`), the cached boards only, never a GameFeed
   request — unless `accept_commander_risk: true`, which the preview warns of first and the result records
-  (`commanderRiskAccepted`); never refused without commanders or with the commander safe. `warapp_check_plan`
-  reports `commander` and leads its summary with it when the commander check's own run finds a reply that kills
-  it (its count and `needs` from that one run); `warapp_plan_turn` carries a `commander` block every turn (and a
-  first warning when the plan's orders would be refused), computed by the submit's own check (`commanderCheck` in
-  `src/tools/turn.ts`: the same opponents, teams, free-for-all lead — two opponents striking together when I lead
-  — and Order Priority; `enemy_deploy` only raises the replies), so it never calls safe what the submit refuses;
+  (`commanderRiskAccepted`); never refused without commanders or with the commander safe. One check serves all
+  three tools (`commanderCheckOn`, `src/tools/commander-check.ts`; `stressOpponents` reads a static seat (#270) as
+  neutral land, never a killer): the same opponents, teams, free-for-all lead — two opponents striking together
+  when I lead — Order Priority and Airlifts, each reply at max(estimate, my income), `enemy_deploy` only raising
+  it, both move orders always (`first_mover` is not passed). `warapp_check_plan` reports `commander` (with
+  `replyDeploy` and `sizing`) by that check, so its count and `needs` may differ from the stress test's
+  `atRisk.commander`, which tries the estimates, and leads its summary with it when a reply kills it;
+  `warapp_plan_turn` carries a `commander` block every turn (and a first warning when the plan's orders would be
+  refused) by the same check, so it never calls safe what the submit refuses;
   its first warning names the submit's refusal only when the submit would make it (Commanders on, and the risk
   found without `enemy_deploy`). `killedBy` is one deploy made by every opponent at once, with `partner` when the
   killing reply is a joint strike. My Airlifts are simulated (`airlifts`: applied with my deploys before the moves,
@@ -1102,6 +1105,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   no fixed split holds them all and the mix beats it by `MIN_GUESS_GAIN` of the worth at stake. It
   redistributes only the plan's deploys on those borders and never changes the planner or the plan's
   `orders`; with no guess both fields are absent, and the skip reason is `guessSkipped` in `full` only.
+  #274: the territory my commander stands on, and any a commander move of the plan walks it to, keeps the
+  plan's deploy in every allocation (the planner's hold there is sized above this model's), and the draw goes
+  through the submit's commander check: when it leaves the commander takeable where the plan's orders do not
+  (`guessKeepsCommander`), the guess is dropped with a warning (`guessSkipped.reason: 'commander'`).
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it

@@ -898,7 +898,9 @@ do not send a backlog of turns unread. Override it when one of these shows up:
    against the expected loss of the random split (`mixedLoss`), and this turn's draw. Show both
    order lists — `orders` (the plan's fixed split) and `guessOrders` (the draw) — and let the user
    choose; never pick for them, and never re-plan to re-roll the draw (it is seeded by the turn).
-   It is a model: one opponent, one deploy beside one border, its visible stacks.
+   It is a model: one opponent, one deploy beside one border, its visible stacks. It never takes
+   armies off the territory your commander stands on or walks to, and a draw the submit's commander
+   check would refuse is dropped (a warning says so).
 
 A bad plan is re-planned — with `focus`, `enemy_deploy` or `reserve` — never replaced by a
 deploy-only turn while captures are in reach. When editing by hand, keep the plan's card orders

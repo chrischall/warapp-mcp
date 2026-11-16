@@ -477,7 +477,9 @@ describe('warapp_check_plan', () => {
   });
 
   it('#274: leads the summary with a commander at risk and the armies its territory needs against every reply tried', async () => {
-    // My commander on Hornwood behind 2 armies; Bob's 40 beside it, with his deploy, kill it.
+    // My commander on Hornwood behind 2 armies; Bob's 40 beside it, with his deploy, kill it. The block is
+    // the submit's own check (each reply at the larger of the estimate and my income), so its count may
+    // differ from the stress test's `atRisk.commander`, which tries the estimate.
     const terr = (a159: number): SyntheticTerritory[] => [
       { id: 159, fogLevel: 1, owner: ANN.inGame, armies: a159, units: [{ kind: 'commander', id: COMMANDER_ID, owner: ANN.inGame }] },
       { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
@@ -486,17 +488,19 @@ describe('warapp_check_plan', () => {
     h = await live(terr(2), 'Playing', {}, { Commanders: true });
     const p = await check({ orders: [{ kind: 'deploy', territory: 161, armies: 5 }] });
     expect(p.atRisk.commander).toBeGreaterThan(0);
-    expect(p.commander).toMatchObject({ territory: { id: 159 }, armies: 2, replies: p.atRisk.commander });
+    const replies = p.commander!.replies;
+    expect(replies).toBeGreaterThan(0);
+    expect(p.commander).toMatchObject({ territory: { id: 159 }, armies: 2 });
     const needs = p.commander!.needs!;
     expect(needs).toBeGreaterThan(2);
-    expect(p.summary).toMatch(new RegExp(`^Your commander on territory 159 falls to ${p.atRisk.commander} of the replies tried: it needs ${needs} armies there`));
+    expect(p.summary).toMatch(new RegExp(`^Your commander on territory 159 falls to ${replies} of the replies tried \\(.*\\): it needs ${needs} armies there`));
     // With that many there, no reply tried kills it; one fewer, and one does.
     const holds = await check({ orders: [{ kind: 'deploy', territory: 159, armies: needs - 2 }] });
     expect(holds.atRisk.commander).toBe(0);
     expect(holds.summary).not.toMatch(/^Your commander/);
     expect(holds.commander).toMatchObject({ armies: needs, needs, replies: 0 });
     const short = await check({ orders: [{ kind: 'deploy', territory: 159, armies: needs - 3 }] });
-    expect(short.atRisk.commander).toBeGreaterThan(0);
+    expect(short.commander!.replies).toBeGreaterThan(0);
   });
 
   it('#274: no commander block in a game without commanders', async () => {

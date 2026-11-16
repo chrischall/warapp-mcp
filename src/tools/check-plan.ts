@@ -36,7 +36,9 @@ import {
 } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
-import { commanderSafety, type CommanderSafety } from '../analysis/commander-safety.js';
+import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
+import { COMMANDER_SIZING, commanderCheckOn } from './commander-check.js';
+import type { CardPlayKind } from '../protocol/methods.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -49,6 +51,14 @@ const ORDER_PRIORITY = cardTypeByName('Order Priority');
 const UNSIMULATED_CARDS = new Map<number | undefined, (on: string) => string>([
   [cardTypeByName('Bomb'), (on) => `The Bomb${on} is not simulated: the test fights at its armies before the Bomb halves them.`],
   [cardTypeByName('Emergency Blockade'), (on) => `The Emergency Blockade${on} is not simulated: the test keeps it yours, armies unchanged.`],
+]);
+
+/** #274: the card plays the commander check reads (an Airlift simulated, the others named on its territory). */
+const COMMANDER_CARD_KINDS = new Map<number | undefined, CardPlayKind>([
+  [cardTypeByName('Airlift'), 'Airlift'],
+  [cardTypeByName('Blockade'), 'Blockade'],
+  [cardTypeByName('Emergency Blockade'), 'EmergencyBlockade'],
+  [cardTypeByName('Gift'), 'Gift'],
 ]);
 
 /** What the stress test does not try, said with every answer so "safe" is never read as more. */
@@ -91,7 +101,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'the armies it would need to hold, if you add nothing next turn. Decide on the fields (`safe`, ' +
           '`worst`, `exposedNextTurn`), not on the wording of `summary`, which may change. With your commander on the ' +
           'board, `commander` says where it stands after the orders, the armies there and `needs`: the armies its ' +
-          'territory needs to survive every reply tried; when a reply kills it, the summary starts with it. Exact with no luck and ' +
+          'territory needs to survive every reply tried, by the check warapp_submit_turn refuses on (each reply at the larger ' +
+          'of the estimate and your income, enemy_deploy only raising it, both move orders, your Airlifts counted); when a ' +
+          'reply kills it, the summary starts with it. Exact with no luck and ' +
           'straight rounding; otherwise battles are resolved at their expectation and `exact` is false. It does not ' +
           `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. When this server kept your pick list, \`award\` says what the ` +
           "award of picks showed (as in warapp_plan_turn): the opponent's proven starts stand on the board the " +
@@ -184,6 +196,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         if (card) uses.push({ card, kind });
       };
       let orderPriority = false;
+      const airlifts: CommanderAirlift[] = [];
+      const cardTargets: { kind: CardPlayKind; territory: number }[] = [];
       const ignored: string[] = [];
       const unsimulatedCards: string[] = [];
       const friends = friendsOf(game.players, me);
@@ -236,13 +250,28 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             }
             unsimulatedCards.push(unsimulated(on));
           }
+          // #274: the commander check simulates my Airlifts, and names a Blockade or Gift of the commander's
+          // territory, as warapp_submit_turn does.
+          const kindOf = type !== undefined ? COMMANDER_CARD_KINDS.get(type) : undefined;
+          try {
+            if (kindOf === 'Airlift' && o.from !== undefined && o.to !== undefined)
+              airlifts.push({
+                from: resolveTerritory(map, o.from).id,
+                to: resolveTerritory(map, o.to).id,
+                armies: o.armies ?? 0,
+                ...(o.commander ? { commander: true } : {}),
+              });
+            else if (kindOf && kindOf !== 'Airlift' && o.target !== undefined) cardTargets.push({ kind: kindOf, territory: resolveTerritory(map, o.target).id });
+          } catch {
+            // A territory not on the map: warapp_submit_turn refuses it; the check goes without it.
+          }
           if (type !== undefined && type === ORDER_PRIORITY) orderPriority = true;
           else if (type === undefined || cardTypeName(type) !== 'Reinforcement') ignored.push('a card play other than Order Priority or Reinforcement');
         }
       }
 
       // The same per-opponent estimates warapp_plan_turn works from (stress-opponents.ts).
-      const { tracks, income, effect, friend, opponents, teams, inView, leader } = stressOpponents({
+      const so = stressOpponents({
         graph,
         map,
         game,
@@ -258,6 +287,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(opening ? { opening } : {}),
         ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
       });
+      const { tracks, income, effect, friend, opponents, teams, inView, leader } = so;
 
       // B2 T6: the truces in force (the ledger, as warapp_plan_turn reads it). Their partners stay among
       // the opponents tried, so `safe` still means safe against a break; `safeIfTruceHolds` leaves the
@@ -295,23 +325,23 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         leader,
         ...(binding.length ? { truces: binding.map((r) => ({ player: r.player, covered: r.coveredMine })) } : {}),
       });
-      // #274: my commander, against the same replies: the armies its territory needs to survive them all.
-      const guard = commanderSafety({
+      // #274: my commander, by the check warapp_submit_turn refuses on (commander-check.ts): the same
+      // opponents, each reply at the larger of its estimate and my income (enemy_deploy only raises it),
+      // both move orders whatever first_mover says, my Airlifts simulated.
+      const checked = commanderCheckOn({
         graph,
-        board,
         me: me.id,
+        settings,
+        so,
+        income,
         deploys,
         moves,
-        opponents,
-        settings,
-        ...(teams.size ? { teams } : {}),
-        ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         orderPriority,
-        ...(settings.localDeployments ? { localDeployments: true } : {}),
-        leader,
-        // Not reported here: skip the search for the smallest deploy that kills it.
-        killedBy: false,
+        ...(enemy_deploy !== undefined ? { floor: enemy_deploy } : {}),
+        airlifts,
+        cardTargets,
       });
+      const guard = checked?.safety;
 
       const name = namer(map);
       const playerName = new Map(game.players.map((p) => [p.id, p.name]));
@@ -614,6 +644,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
                 needs: guard.needs,
                 replies: guard.killers,
                 distance: guard.distance,
+                // The deploy the worst reply was sized at: as warapp_submit_turn sizes it.
+                replyDeploy: checked!.replyDeploy,
+                sizing: COMMANDER_SIZING,
+                // A Blockade or Gift of its territory, which the check does not simulate (the submit refuses it).
+                ...(checked!.cards ? { cards: checked!.cards } : {}),
               },
             }
           : {}),
@@ -639,5 +674,5 @@ export function commanderText(c: CommanderSafety, replies: number): string {
     c.needs === null
       ? 'no number of armies there holds it against all of them'
       : `it needs ${c.needs} armies there (${c.armies} after your orders) to survive every one`;
-  return `${where} falls to ${replies} of the replies tried: ${hold}.`;
+  return `${where} falls to ${replies} of the replies tried (${COMMANDER_SIZING}, as warapp_submit_turn sizes them): ${hold}.`;
 }
