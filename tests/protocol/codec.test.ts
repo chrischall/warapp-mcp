@@ -479,6 +479,7 @@ describe('methods', () => {
       GameRefresh: 39,
       GetLatestGameInfo: 40,
       SendChat: 42,
+      RegisterChatView: 43,
       GetGameSettings: 48,
       GetMyGames: 50,
       AcceptGame: 60,
@@ -498,6 +499,9 @@ describe('methods', () => {
       GetTurns: 81,
       Subscribe: 238,
       GameUpdated: 241,
+      GetInAppNotifications: 317,
+      DeleteInAppNotification: 318,
+      AcknowledgeInAppNotifications: 319,
     });
     expect(methodName(40)).toBe('GetLatestGameInfo');
     expect(methodName(41)).toBeUndefined();

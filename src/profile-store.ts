@@ -778,6 +778,20 @@ export async function profileFileState(dir: string, gameId: number, playerId: nu
 }
 
 /**
+ * Whether any account of mine keeps a per-game file of `gameId` not folded yet (#311): what makes a fold
+ * worth a GameFeed read when a notification says the game ended. Never throws, never writes.
+ */
+export async function hasUnfoldedProfile(dir: string, gameId: number): Promise<boolean> {
+  const prefix = `${gameId}-`;
+  const names = await readdir(profileGamesDir(dir)).catch(() => [] as string[]);
+  for (const name of names) {
+    if (!name.startsWith(prefix) || !/^\d+-\d+\.json$/.test(name)) continue;
+    if ((await profileFileState(dir, gameId, Number(name.slice(prefix.length, -'.json'.length)))) === 'kept') return true;
+  }
+  return false;
+}
+
+/**
  * Whether the cross-game stores already hold `gameId` as folded by `me` (#264: a per-game file the
  * age rule or the file bound removed after its fold). Reads the population's entries under the game's
  * key; `false` when no salt was ever made. A store or salt that cannot be read counts as folded, so a

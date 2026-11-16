@@ -117,6 +117,8 @@ export interface SyntheticGame {
   realTime?: boolean;
   /** `null`: no settings record. */
   settings?: SyntheticSettings | null;
+  /** GameInfo's unread-chat flags (0-based fields 8, 17, 18, 23; #311); each default false. */
+  unread?: { group?: boolean; private?: boolean; public?: boolean; team?: boolean };
 }
 
 function writePlayer(w: Writer, p: SyntheticGamePlayer): void {
@@ -149,7 +151,8 @@ export function writeSettings(w: Writer, s: SyntheticSettings = {}): void {
 export function writeGameInfo(w: Writer, g: SyntheticGame): void {
   w.int32(g.randomTeamsOf ?? 0).float64(0).string('synthetic').int32(g.entryFee ?? 0).int32(g.prize ?? 0);
   w.float64(g.bootTimeMs ?? 259_200_000).u8(1);
-  w.int32(g.id).bool(false).date(null).int32(g.mapId ?? 39905).int32(0);
+  const u = g.unread ?? {};
+  w.int32(g.id).bool(u.group ?? false).date(null).int32(g.mapId ?? 39905).int32(0);
   writeOptionalInt(w, g.maxPlayers === undefined ? 7 : g.maxPlayers);
   w.string(g.name).int32(g.lastTurn);
   const seats = g.openSeats === undefined ? [1, 2] : g.openSeats;
@@ -157,10 +160,10 @@ export function writeGameInfo(w: Writer, g: SyntheticGame): void {
   else w.bool(true).list(seats, (ww, n) => ww.int32(n));
   if (g.players === null) w.bool(false);
   else w.bool(true).list(g.players, writePlayer);
-  w.bool(false).bool(false).bool(g.realTime ?? false).bool(false);
+  w.bool(u.private ?? false).bool(u.public ?? false).bool(g.realTime ?? false).bool(false);
   if (g.settings === null) w.bool(false);
   else writeSettings(w.bool(true), g.settings ?? {});
-  w.u8(g.state).bool(false).float64(0).bool(false).float64(0);
+  w.u8(g.state).bool(u.team ?? false).float64(0).bool(false).float64(0);
 }
 
 /** The result of GetMyGames (present flag first), as the synthetic bundle reads it. */

@@ -11,6 +11,7 @@ export const Method = {
   GameRefresh: 39,
   GetLatestGameInfo: 40,
   SendChat: 42,
+  RegisterChatView: 43,
   GetGameSettings: 48,
   GetMyGames: 50,
   AcceptGame: 60,
@@ -30,6 +31,9 @@ export const Method = {
   GetTurns: 81,
   Subscribe: 238,
   GameUpdated: 241,
+  GetInAppNotifications: 317,
+  DeleteInAppNotification: 318,
+  AcknowledgeInAppNotifications: 319,
 } as const;
 
 type MethodName = keyof typeof Method;
@@ -197,6 +201,46 @@ export function writeUnCommitParams(w: Writer, gameId: number): void {
   w.int32(gameId);
 }
 
+/** The page size the client always asks GetInAppNotifications for. */
+export const NOTIFICATIONS_PAGE_SIZE = 30;
+
+/**
+ * GetInAppNotifications(auth, start, count) — the client's notifications screen (#311). READ FROM THE
+ * CLIENT BUNDLE's writer, NOT VERIFIED LIVE: after the auth block the int32 start index (the paging
+ * offset), then the int32 page size (the client always sends 30). Reply: GetInAppNotificationsReturn.
+ */
+export function writeGetInAppNotificationsParams(w: Writer, start: number, count: number = NOTIFICATIONS_PAGE_SIZE): void {
+  w.int32(start).int32(count);
+}
+
+/** A notification id as war.app sends it back: decimal text. */
+export const NOTIFICATION_ID = /^\d{1,20}$/;
+
+/**
+ * AcknowledgeInAppNotifications(auth, ids) — marks notifications read (#311). READ FROM THE CLIENT
+ * BUNDLE's writer, NOT VERIFIED LIVE: after the auth block a present list (int32 count) of the ids, each
+ * a string of decimal text. No result payload: the effect is read back from a later list.
+ */
+export function writeAcknowledgeInAppNotificationsParams(w: Writer, ids: readonly string[]): void {
+  if (ids.length === 0) throw new RangeError('no notification ids');
+  for (const id of ids) if (!NOTIFICATION_ID.test(id)) throw new RangeError(`not a notification id: ${JSON.stringify(id)}`);
+  w.bool(true).list(ids, (ww, id) => ww.string(id));
+}
+
+/**
+ * DeleteInAppNotification(auth, id) — deletes one notification (#311), the client's Delete button. READ
+ * FROM THE CLIENT BUNDLE's writer, NOT VERIFIED LIVE: after the auth block one string, the id as decimal
+ * text. No result payload; the client treats server error 699 (`InAppNotificationKeyNotFound`) as already
+ * deleted. The effect is read back from a later list.
+ */
+export function writeDeleteInAppNotificationParams(w: Writer, id: string): void {
+  if (!NOTIFICATION_ID.test(id)) throw new RangeError(`not a notification id: ${JSON.stringify(id)}`);
+  w.string(id);
+}
+
+/** The server error DeleteInAppNotification answers for an id it does not hold: already deleted. */
+export const NOTIFICATION_NOT_FOUND = 699;
+
 /**
  * DeclineGame(auth, gameId, modHook) — the lobby's Decline button, which is also how a seated
  * player leaves a game still `WaitingForPlayers` (#217). READ FROM THE CLIENT BUNDLE's writer,
@@ -302,6 +346,51 @@ export function writeGameRefreshParams(w: Writer, p: GameRefreshParams): void {
     .bool(p.lobby)
     .bool(false)
     .bool(false);
+}
+
+/** A chat read mark: a message id as decimal text, or `-1` (the client's "no mark"). */
+export const CHAT_MARK = /^(-1|\d{1,20})$/;
+
+/** What RegisterChatView marks read: per channel, the highest message id seen (decimal text). */
+export interface RegisterChatViewParams {
+  gameId: number;
+  /** The public channel's mark; `-1` (default) marks nothing there. */
+  publicMark?: string;
+  /** The team channel's mark; `-1` (default) marks nothing there. */
+  teamMark?: string;
+  /** Per private conversation: the counterpart's in-game id → its mark. Absent or empty: no dict. */
+  privateMarks?: ReadonlyMap<number, string>;
+  /** Per game group: the group id → its mark. Absent or empty: no dict. */
+  groupMarks?: ReadonlyMap<number, string>;
+}
+
+function writeMarkDict(w: Writer, marks: ReadonlyMap<number, string> | undefined): void {
+  if (!marks || marks.size === 0) {
+    w.bool(false);
+    return;
+  }
+  w.bool(true).dict(
+    marks,
+    (ww, k) => ww.int32(k),
+    (ww, v) => ww.string(v),
+  );
+}
+
+/**
+ * RegisterChatView(auth, …) — marks a game's chat read (#311). READ FROM THE CLIENT BUNDLE's writer, NOT
+ * VERIFIED LIVE: the int32 game id, the public and team marks (strings of decimal text: the highest message
+ * id seen on that channel; the client sends `-1` for a channel it is not marking), then two optional dicts
+ * (present flag, int32 count, int32 key, string mark): per private counterpart (in-game id), and per game
+ * group. No result payload: the effect is read back from GetMyGames' unread flags.
+ */
+export function writeRegisterChatViewParams(w: Writer, p: RegisterChatViewParams): void {
+  const marks = [p.publicMark, p.teamMark, ...(p.privateMarks?.values() ?? []), ...(p.groupMarks?.values() ?? [])];
+  for (const m of marks) if (m !== undefined && !CHAT_MARK.test(m)) throw new RangeError(`not a chat mark: ${JSON.stringify(m)}`);
+  w.int32(p.gameId)
+    .string(p.publicMark ?? NO_CHAT_MARKER)
+    .string(p.teamMark ?? NO_CHAT_MARKER);
+  writeMarkDict(w, p.privateMarks);
+  writeMarkDict(w, p.groupMarks);
 }
 
 interface SendChatParams {

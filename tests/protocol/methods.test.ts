@@ -6,6 +6,9 @@ import {
   writeGetLatestGameInfoParams,
   writeSendChatParams,
   writeGameRefreshParams,
+  writeRegisterChatViewParams,
+  Method,
+  methodName,
   writeAttackTransferOrder,
   writeDeployOrder,
   writeCardPlayOrder,
@@ -110,6 +113,50 @@ describe('GameRefresh params (UNVERIFIED live, from the client serializer)', () 
     expect(hex((w) => writeGameRefreshParams(w, { gameId: 5, chat: true, nonChat: false, lobby: true }))).toBe(
       '05000000' + '01' + '00' + '01022D31' + '01022D31' + '01' + '00' + '00',
     );
+  });
+});
+
+describe('RegisterChatView params (UNVERIFIED live, from the client writer; #311)', () => {
+  const str = (s: string) => {
+    const w = new Writer();
+    w.string(s);
+    return toHex(w.bytes());
+  };
+
+  it('is method 43', () => {
+    expect(Method.RegisterChatView).toBe(43);
+    expect(methodName(43)).toBe('RegisterChatView');
+  });
+
+  it('game id, the public and team marks, then no dicts; a channel not marked is -1', () => {
+    expect(hex((w) => writeRegisterChatViewParams(w, { gameId: 5, publicMark: '12' }))).toBe(
+      '05000000' + str('12') + str('-1') + '00' + '00',
+    );
+    expect(hex((w) => writeRegisterChatViewParams(w, { gameId: 5 }))).toBe('05000000' + '01022D31' + '01022D31' + '00' + '00');
+  });
+
+  it('per private counterpart and per game group: a present dict, int32 count, int32 key, string mark', () => {
+    expect(
+      hex((w) =>
+        writeRegisterChatViewParams(w, {
+          gameId: 0x0102,
+          teamMark: '7',
+          privateMarks: new Map([[765432, '30']]),
+          groupMarks: new Map([[9, '4']]),
+        }),
+      ),
+    ).toBe(
+      '02010000' + '01022D31' + str('7') + '01' + '01000000' + 'F8AD0B00' + str('30') + '01' + '01000000' + '09000000' + str('4'),
+    );
+    // An empty dict is written as absent.
+    expect(hex((w) => writeRegisterChatViewParams(w, { gameId: 5, privateMarks: new Map() }))).toBe(
+      '05000000' + '01022D31' + '01022D31' + '00' + '00',
+    );
+  });
+
+  it('refuses a mark that is not a message id', () => {
+    expect(() => writeRegisterChatViewParams(new Writer(), { gameId: 5, publicMark: '1a' })).toThrow(RangeError);
+    expect(() => writeRegisterChatViewParams(new Writer(), { gameId: 5, groupMarks: new Map([[1, '']]) })).toThrow(RangeError);
   });
 });
 

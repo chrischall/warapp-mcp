@@ -593,13 +593,16 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
       return [...src.matchAll(/defineGatedWrite\([\s\S]*?name: '(warapp_\w+)'/g)].map((m) => m[1]!);
     })
     .sort();
-  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'];
   // How the store-facing prose names each write.
   const plain: Record<string, RegExp> = {
     warapp_begin_turn: /\bbegin/i,
+    warapp_delete_notification: /\bdelet/i,
+    warapp_dismiss_notification: /\bnotifications?\b/i,
     warapp_join_game: /\bjoin/i,
     warapp_leave_game: /\bleav/i,
     warapp_link_session: /\blink/i,
+    warapp_mark_chat_read: /\bchat read\b/i,
     warapp_send_chat: /\bchat/i,
     warapp_submit_picks: /\bpicks\b/i,
     warapp_submit_turn: /\bturn orders\b/i,
@@ -658,6 +661,13 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
     for (const tool of gated.filter((t) => t !== 'warapp_link_session')) expect(sentence, tool).toMatch(plain[tool]!);
   });
 
+  it("mint.yaml's summary fits mcp-host's 300-character limit (#311)", () => {
+    const mint = doc('../mint.yaml');
+    const summary = mint.slice(mint.indexOf('\nsummary: >-') + '\nsummary: >-'.length, mint.indexOf('\nexamples:')).replace(/\s+/g, ' ').trim();
+    expect(summary.length).toBeGreaterThan(0);
+    expect(summary.length).toBeLessThanOrEqual(300);
+  });
+
   it('no doc still says the tracked income is a median (#100: the maximum)', () => {
     for (const p of ['../CLAUDE.md', '../skills/warapp-mcp/SKILL.md', '../README.md', '../docs/PLAN-STRATEGY.md']) {
       expect(doc(p), p).not.toMatch(/income estimate \(median/i);
@@ -694,5 +704,38 @@ describe('card plays verified live (#296)', () => {
     expect(claude).toMatch(/Order Priority[^.]*ran first[^.]*unverified/i);
     const v9 = teams.split('\n').find((l) => l.startsWith('| V9 |')) ?? '';
     expect(v9).toMatch(/Airlift[^|]*verified live 2026-11-16/);
+  });
+});
+
+describe('packaging for in-app notifications and read marks (#311, N1)', () => {
+  const protocol = readFileSync(new URL('../docs/WEB-PROTOCOL.md', import.meta.url), 'utf8');
+  const start = protocol.indexOf('## Notifications and read marks');
+  const section = start === -1 ? '' : protocol.slice(start, protocol.indexOf('\n## ', start + 1));
+
+  it('lists the notification methods and RegisterChatView in the method table', () => {
+    const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
+    expect(methods).toMatch(/\| 43 \| \*\*RegisterChatView\*\*/);
+    expect(methods).toMatch(/\| 317 \| \*\*GetInAppNotifications\*\*/);
+    expect(methods).toMatch(/\| 318 \| \*\*DeleteInAppNotification\*\*/);
+    expect(methods).toMatch(/\| 319 \| \*\*AcknowledgeInAppNotifications\*\*/);
+  });
+
+  it('documents each method from the bundle, UNVERIFIED live, with its field order', () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(section).toMatch(/UNVERIFIED live/);
+    for (const m of ['GetInAppNotifications', 'DeleteInAppNotification', 'AcknowledgeInAppNotifications', 'RegisterChatView']) {
+      expect(section, m).toContain(`m=${m}&js=1`);
+    }
+    expect(section).toContain('warlight.shared.GetInAppNotificationsReturn');
+    expect(section).toContain('warlight.shared.InAppNotification');
+    expect(section).toContain('warlight.shared.UnreadMailCheckResults');
+    expect(section).toContain('**699**');
+  });
+
+  it('names the GetMyGames GameInfo unread-chat flags by read position', () => {
+    for (const flag of ['unread group', 'unread private', 'unread public', 'unread team']) {
+      expect(section.toLowerCase(), flag).toContain(flag);
+    }
+    expect(section).toMatch(/0-based/);
   });
 });

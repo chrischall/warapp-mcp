@@ -6,7 +6,11 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeGameDetailsAndChat, type SyntheticMessage } from './protocol/chat-bundle.js';
-import { writeMyGamesReturn, type SyntheticGame } from './protocol/my-games-bundle.js';
+import { MY_GAMES_BUNDLE, writeMyGamesReturn, type SyntheticGame } from './protocol/my-games-bundle.js';
+import { WarappBundle } from '../src/protocol/bundle.js';
+import { LIVE_BUNDLE } from './protocol/live-bundle.js';
+import { CHAT_BUNDLE } from './protocol/chat-bundle.js';
+import { NOTIFICATIONS_BUNDLE } from './protocol/notifications-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -47,13 +51,31 @@ function feedGame(id: number, state: string, extra: Record<string, unknown> = {}
 
 const at = (min: number) => new Date(Date.UTC(2026, 10, 1, 10, min));
 
-/** A fake war.app: GetMyGames lists `games`; GameRefresh answers each game's chat (an error for a game in `fail`). */
-function warapp(games: SyntheticGame[], chats: Record<number, () => SyntheticMessage[]>, fail: number[] = []) {
+/** One RegisterChatView as the fake received it. */
+type Mark = { gameId: number; pub: string | null; team: string | null; priv: Array<[number, string | null]> | null; groups: Array<[number, string | null]> | null };
+
+/**
+ * A fake war.app: GetMyGames lists `games`; GameRefresh answers each game's chat (an error for a game in `fail`);
+ * a RegisterChatView (#311) is recorded in `marks`, so a test can show the inbox never sends one.
+ */
+function warapp(
+  games: SyntheticGame[],
+  chats: Record<number, () => SyntheticMessage[]>,
+  fail: number[] = [],
+) {
   const refreshed: number[] = [];
+  const marks: Mark[] = [];
+  const dict = (r: DecodedRequest['body']) => (r.bool() ? [...(r.dict((x) => x.int32(), (x) => x.string()) ?? [])] : null);
   return {
     refreshed,
+    marks,
     handler: (req: DecodedRequest): Partial<ReplyFrame> => {
       if (req.method === Method.GetMyGames) return { body: (w) => writeMyGamesReturn(w, games) };
+      if (req.method === Method.RegisterChatView) {
+        const r = req.body;
+        marks.push({ gameId: r.int32(), pub: r.string(), team: r.string(), priv: dict(r), groups: dict(r) });
+        return { body: (w) => w.bool(false) };
+      }
       if (req.method === Method.GameRefresh) {
         const id = req.body.int32();
         refreshed.push(id);
@@ -241,10 +263,89 @@ describe('warapp_chat_inbox', () => {
     expect(textOf(res)).toMatch(/games cannot be listed/);
   });
 
-  it('is read-only by its annotations, and registered hosted too', async () => {
+  it('is read-only by its annotations (mark_seen stays on this machine, #311); registered hosted too', async () => {
     h = await liveHarness({ feed: FEED, pages: SIGNED_IN_ANN, env: { MCP_HOST_METER_FILE: '/tmp/meter' } });
     const tools = await h.harness.client.listTools();
     const t = tools.tools.find((x) => x.name === 'warapp_chat_inbox');
-    expect(t?.annotations).toMatchObject({ readOnlyHint: true });
+    expect(t?.annotations).toMatchObject({ readOnlyHint: true, idempotentHint: true, openWorldHint: true });
+  });
+});
+
+describe('warapp_chat_inbox: finished games with unread chat (#311)', () => {
+  /** The games, fresh per test. */
+  const flagged = (): SyntheticGame[] => [
+    { ...myGame(103, WAITING), unread: { public: true } },
+    { ...myGame(101, PLAYING), unread: { public: true, private: true } },
+    { ...myGame(104, FINISHED), unread: { team: true } },
+    myGame(105, FINISHED),
+    myGame(102, DISTRIBUTING),
+  ];
+  const CHATS_311: Record<number, () => SyntheticMessage[]> = {
+    ...CHATS,
+    104: () => [{ id: 6, date: at(6), from: BOB.inGame, text: 'gg', channel: 1, turn: 9 }],
+  };
+  const FEED_311 = [feedGame(101, 'Playing'), feedGame(102, 'DistributingTerritories'), feedGame(103, 'WaitingForPlayers'), feedGame(104, 'Finished')];
+
+  it('reads a finished game whose chat war.app flags unread, never one it does not', async () => {
+    const fake = warapp(flagged(), CHATS_311);
+    h = await liveHarness({ feed: FEED_311, pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    expect(fake.refreshed).toEqual([101, 102, 103, 104]);
+    expect(p.games.map((g) => g.id)).toEqual([101, 103, 104]);
+    expect(p.games[2]).toMatchObject({ state: 'Finished', newCount: 1 });
+    // Reading marks nothing, here or on war.app.
+    expect(fake.marks).toEqual([]);
+    expect(p).not.toHaveProperty('readOnWarapp');
+  });
+
+  it('reads a finished game whose flags do not read (UNVERIFIED live), and says how many it read unjudged', async () => {
+    // A bundle whose GameInfo reads the team flag (field 23) as a number: the flags do not read as booleans.
+    const odd = MY_GAMES_BUNDLE.replace('e.c7=P.Yc(a)', 'e.c7=P.Yc(a)?1:0');
+    expect(odd).not.toBe(MY_GAMES_BUNDLE);
+    const bundle = new WarappBundle(`${LIVE_BUNDLE}\n${odd}\n${CHAT_BUNDLE}\n${NOTIFICATIONS_BUNDLE}`, 'test');
+    const fake = warapp(flagged(), { ...CHATS_311, 105: () => [{ id: 7, date: at(7), from: BOB.inGame, text: 'gg wp', turn: 9 }] });
+    const feed = [...FEED_311, feedGame(105, 'Finished')];
+    h = await liveHarness({ feed, pages: SIGNED_IN_ANN, warapp: fake.handler, bundle });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    // Both finished games are read: 104 (flags unreadable too) and 105, which a readable flag set would have left out.
+    expect(fake.refreshed).toEqual([101, 102, 103, 104, 105]);
+    expect(p.games.map((g) => g.id)).toEqual([101, 103, 104, 105]);
+    expect(p.finishedUnflagged).toBe(2);
+    expect(String(p.finishedNote)).toMatch(/flags/);
+  });
+
+  it('says nothing of unflagged finished games when every flag reads', async () => {
+    const fake = warapp(flagged(), CHATS_311);
+    h = await liveHarness({ feed: FEED_311, pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    expect(p).not.toHaveProperty('finishedUnflagged');
+    expect(p).not.toHaveProperty('finishedNote');
+  });
+
+  it('a game whose web read has fewer messages than GameFeed shows GameFeed\'s too (#313), with no extra read', async () => {
+    const surrender = { playerID: BOB.inGame, message: 'Bob surrendered', date: at(30).toISOString() };
+    const fake = warapp(flagged(), { ...CHATS, 104: () => [] });
+    h = await liveHarness({ feed: [feedGame(104, 'Finished', { chat: [surrender] })], pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: ['104'], mark_seen: true }));
+    expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(1);
+    expect(p.games).toHaveLength(1);
+    expect(p.games[0]).toMatchObject({ id: 104, source: 'gamefeed', newCount: 1, feedFill: { web: 0, gamefeed: 1, added: 1 } });
+    expect(p.games[0]!.messages.map((m) => [m.text, m.channel])).toEqual([['⟦Bob surrendered⟧', 'unknown']]);
+    expect(p.sourceNotes).toHaveProperty('gamefeed');
+    const after = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: ['104'] }));
+    expect(after.quiet).toEqual([104]);
+  });
+
+  it('mark_seen marks every game read on this machine only: war.app gets no read mark (warapp_mark_chat_read sends it)', async () => {
+    const fake = warapp(flagged(), CHATS_311);
+    h = await liveHarness({ feed: FEED_311, pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { mark_seen: true }));
+    expect(fake.marks).toEqual([]);
+    const methods = h.exchanges.map((e) => e.request.method);
+    expect(methods).not.toContain(Method.RegisterChatView);
+    // Only the list read up front.
+    expect(methods.filter((m) => m === Method.GetMyGames)).toHaveLength(1);
+    expect(p).not.toHaveProperty('readOnWarapp');
+    expect(p.games.find((g) => g.id === 101)!.markedSeen).toEqual(['public', 'team', 'private', 'unknown']);
   });
 });

@@ -3,7 +3,9 @@ import { Reader, Writer } from '../src/protocol/codec.js';
 import { Method, MyGamesFilterType, writeGetMyGamesParams } from '../src/protocol/methods.js';
 import { listMyGames, MY_GAMES_WINDOWS } from '../src/tools/my-games.js';
 import {
+  anyUnreadChat,
   briefGameLine,
+  chatGameIds,
   GAME_INFO,
   GAME_INFO_PLAYER,
   MY_GAMES_RETURN,
@@ -11,8 +13,12 @@ import {
   myGamesTeams,
   readMyGames,
   summarizeMyGames,
+  unflaggedFinished,
+  unreadChatOf,
   type MyGame,
 } from '../src/my-games.js';
+import { WarappBundle } from '../src/protocol/bundle.js';
+import { MY_GAMES_BUNDLE } from './protocol/my-games-bundle.js';
 import { EMAIL, liveHarness, payload, textOf, type Harness } from './helpers.js';
 import { writeMyGamesReturn, type SyntheticGame } from './protocol/my-games-bundle.js';
 
@@ -370,7 +376,14 @@ describe('readMyGames / summarizeMyGames', () => {
       reader(true),
     );
     expect(games).toEqual([
-      { id: 77, name: 'N', lastTurn: 0, stateCode: 42, players: [{ id: 9, name: 'Zed', stateCode: 77, committed: false }] },
+      {
+        id: 77,
+        name: 'N',
+        lastTurn: 0,
+        stateCode: 42,
+        players: [{ id: 9, name: 'Zed', stateCode: 77, committed: false }],
+        unreadChat: { group: false, private: false, public: false, team: false },
+      },
     ]);
     const [g] = summarizeMyGames(games, 1);
     expect(g).toMatchObject({ state: '42', turn: 1, players: [{ name: 'Zed', state: '77', committed: false }] });
@@ -418,6 +431,67 @@ describe('readMyGames / summarizeMyGames', () => {
       [2, 1],
     ]);
     expect(myGamesTeams([g!], 78).size).toBe(0);
+  });
+
+  it('reads the four unread-chat flags (fields 8, 17, 18, 23; #311) and leaves them out when one is not a boolean', () => {
+    const [g] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 8: true, 17: false, 18: true, 23: false })], 0])), reader(true));
+    expect(g!.unreadChat).toEqual({ group: true, private: false, public: true, team: false });
+    expect(unreadChatOf([g!], 77)).toEqual(g!.unreadChat);
+    expect(unreadChatOf([g!], 78)).toBeUndefined();
+    expect(anyUnreadChat(g!.unreadChat)).toBe(true);
+    expect(anyUnreadChat({ group: false, private: false, public: false, team: false })).toBe(false);
+    expect(anyUnreadChat(undefined)).toBe(false);
+    // Read loosely: a field that is not a boolean leaves the flags unknown, and the list still reads.
+    const [odd] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 23: 1 })], 0])), reader(true));
+    expect(odd).not.toHaveProperty('unreadChat');
+    expect(odd!.id).toBe(77);
+    // A finished game whose flags did not read is still a chat candidate (#311): the flags are UNVERIFIED live,
+    // and dropping it would hide its chat without a word.
+    expect(chatGameIds([odd!])).toEqual([77]);
+    expect(unflaggedFinished([odd!, g!])).toEqual([77]);
+  });
+
+  it('reads the flags through a bundle by read order (the synthetic GameInfo)', () => {
+    const bundle = new WarappBundle(MY_GAMES_BUNDLE, 'test');
+    const w = new Writer();
+    writeMyGamesReturn(w, [
+      { id: 5, name: 'a', lastTurn: 1, state: PLAYING, players: [], unread: { team: true } },
+      { id: 6, name: 'b', lastTurn: 1, state: PLAYING, players: [], unread: { group: true, private: true, public: true } },
+    ]);
+    const games = readMyGames(bundle, new Reader(w.bytes()));
+    expect(games.map((g) => g.unreadChat)).toEqual([
+      { group: false, private: false, public: false, team: true },
+      { group: true, private: true, public: true, team: false },
+    ]);
+  });
+
+  it('chatGameIds lists a finished game when war.app flags its chat unread, or when its flags do not read (#311)', () => {
+    const flags = (over: Partial<Record<'group' | 'private' | 'public' | 'team', boolean>> = {}) => ({
+      group: false,
+      private: false,
+      public: false,
+      team: false,
+      ...over,
+    });
+    const g = (id: number, stateCode: number, unreadChat?: ReturnType<typeof flags>) => ({
+      id,
+      name: '',
+      lastTurn: 1,
+      stateCode,
+      players: [],
+      ...(unreadChat ? { unreadChat } : {}),
+    });
+    expect(
+      chatGameIds([
+        g(9, FINISHED, flags({ private: true })),
+        g(3, PLAYING),
+        g(8, FINISHED, flags()),
+        g(7, FINISHED),
+        g(4, FINISHED, flags({ group: true })),
+        g(2, 2),
+        g(1, DISTRIBUTING),
+      ]),
+    ).toEqual([1, 2, 3, 4, 7, 9]);
   });
 
   it('treats a null player list as no players and a null name as empty', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { feedChatLines, readGameRefreshChat, readSendChatReply } from '../src/chat.js';
+import { chatViewMarks, feedChatLines, fillFromFeed, readGameRefreshChat, readSendChatReply, type ChatLine } from '../src/chat.js';
 import { Reader, Writer } from '../src/protocol/codec.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
 import { CHAT_BUNDLE, writeGameDetailsAndChat, writeSendChatReply, type SyntheticMessage } from './protocol/chat-bundle.js';
@@ -31,7 +31,7 @@ describe('readGameRefreshChat', () => {
       { id: '2', sender: BOB, text: 'psst', time: at(2).toISOString(), timeMs: at(2).getTime(), turn: 1, channel: 'private', to: ANN },
       { id: '3', sender: BOB, text: 'team plan', time: at(3).toISOString(), timeMs: at(3).getTime(), turn: 2, channel: 'team', team: 4 },
       { id: '4', sender: null, text: 'Bob was booted', time: at(4).toISOString(), timeMs: at(4).getTime(), turn: null, channel: 'public' },
-      { id: '5', sender: ANN, text: 'group line', time: at(5).toISOString(), timeMs: at(5).getTime(), turn: null, channel: 'unknown' },
+      { id: '5', sender: ANN, text: 'group line', time: at(5).toISOString(), timeMs: at(5).getTime(), turn: null, channel: 'unknown', group: 9 },
     ]);
   });
 
@@ -68,6 +68,60 @@ describe('readGameRefreshChat', () => {
       w.bool(false).int32(0);
     });
     expect(readGameRefreshChat(odd, r)).toBeUndefined();
+  });
+});
+
+describe('chatViewMarks (RegisterChatView, #311)', () => {
+  const line = (id: string | undefined, channel: ChatLine['channel'], over: Partial<ChatLine> = {}): ChatLine => ({
+    ...(id === undefined ? {} : { id }),
+    sender: BOB,
+    text: 'x',
+    turn: null,
+    channel,
+    ...over,
+  });
+  const ALL = ['public', 'team', 'private', 'unknown'] as const;
+
+  it('takes the highest id per channel, mine included, compared as numbers', () => {
+    const marks = chatViewMarks(
+      [
+        line('9', 'public'),
+        line('10', 'public', { sender: ANN }),
+        line('3', 'team', { team: 2 }),
+        line('12', 'private', { to: ANN }),
+        line('15', 'private', { sender: ANN, to: BOB }),
+        line('4', 'private', { sender: 555, to: ANN }),
+        line('20', 'unknown', { group: 7 }),
+        line('21', 'unknown', { group: 8 }),
+        line('19', 'unknown', { group: 7 }),
+      ],
+      ANN,
+      ALL,
+    );
+    expect(marks).toEqual({
+      public: '10',
+      team: '3',
+      private: new Map([
+        [BOB, '15'],
+        [555, '4'],
+      ]),
+      groups: new Map([
+        [7, '20'],
+        [8, '21'],
+      ]),
+      channels: ['public', 'team', 'private', 'unknown'],
+    });
+  });
+
+  it('marks only the channels asked for, and nothing a line without a message id carries', () => {
+    const lines = [line('5', 'public'), line('6', 'team'), line(undefined, 'private', { to: ANN }), line('7', 'unknown')];
+    expect(chatViewMarks(lines, ANN, ['public'])).toEqual({ public: '5', private: new Map(), groups: new Map(), channels: ['public'] });
+    // GameFeed's lines (no id) and an `unknown` line with no group give nothing to mark.
+    expect(chatViewMarks(lines, ANN, ['private', 'unknown'])).toBeUndefined();
+    expect(chatViewMarks([], ANN, ALL)).toBeUndefined();
+    expect(chatViewMarks([line('x1', 'public')], ANN, ALL)).toBeUndefined();
+    // A system line in a private channel with no counterpart is skipped.
+    expect(chatViewMarks([line('3', 'private', { sender: ANN })], ANN, ALL)).toBeUndefined();
   });
 });
 
@@ -125,5 +179,50 @@ describe('feedChatLines (GameFeed)', () => {
     expect(feedChatLines([{ odd: 1 }])).toBeUndefined();
     expect(feedChatLines([7])).toBeUndefined();
     expect(feedChatLines('x')).toBeUndefined();
+  });
+});
+
+describe('fillFromFeed (#313)', () => {
+  const web = (sender: number, ms: number, text: string, channel: ChatLine['channel'] = 'public'): ChatLine => ({
+    sender,
+    text,
+    turn: null,
+    channel,
+    timeMs: ms,
+  });
+  const feed = (sender: number | null, text: string, ms?: number): ChatLine => ({
+    sender,
+    text,
+    turn: null,
+    channel: 'unknown',
+    ...(ms !== undefined ? { timeMs: ms } : {}),
+  });
+
+  it('adds the GameFeed lines no web line matches by sender and time (within a second), by time, under unknown', () => {
+    const w = [web(ANN, 1_000_500, 'a'), web(BOB, 3_000_000, 'c', 'team')];
+    const f = [feed(ANN, 'a', 1_000_000), feed(BOB, 'b', 2_000_000), feed(BOB, 'c', 3_000_000), feed(BOB, 'z', 9_000_000)];
+    const { lines, added } = fillFromFeed(w, f);
+    expect(added).toBe(2);
+    expect(lines.map((l) => [l.text, l.channel])).toEqual([
+      ['a', 'public'],
+      ['b', 'unknown'],
+      ['c', 'team'],
+      ['z', 'unknown'],
+    ]);
+  });
+
+  it('matches each web line once; a line without a time matches on sender and text, else goes last', () => {
+    const w = [web(BOB, 1_000_000, 'gg')];
+    const { lines, added } = fillFromFeed(w, [feed(BOB, 'gg'), feed(BOB, 'gg'), feed(null, 'system')]);
+    expect(added).toBe(2);
+    expect(lines.map((l) => [l.sender, l.text])).toEqual([
+      [BOB, 'gg'],
+      [BOB, 'gg'],
+      [null, 'system'],
+    ]);
+  });
+
+  it('a different sender at the same time is another message', () => {
+    expect(fillFromFeed([web(ANN, 5_000, 'x')], [feed(BOB, 'x', 5_000)]).added).toBe(1);
   });
 });

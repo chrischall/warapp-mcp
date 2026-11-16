@@ -35,6 +35,11 @@ const PLAYER_PLAYING = 2;
 
 /** GameInfo field positions in read order, and its whole field count (src/open-games.ts reads the same record). */
 const GI = { gameId: 7, name: 13, lastTurn: 14, players: 16, state: 22 } as const;
+/**
+ * GameInfo's four "unread … messages" flags (#311, docs/WEB-PROTOCOL.md "Marking a game's chat read"): read from
+ * the client bundle, UNVERIFIED live. The read-back for RegisterChatView.
+ */
+const GI_UNREAD = { group: 8, private: 17, public: 18, team: 23 } as const;
 export const GAME_INFO_FIELDS = 27;
 /** GameInfoPlayer field positions in read order, and its whole field count. */
 const GP = { committed: 2, name: 5, id: 6, state: 7, team: 8 } as const;
@@ -49,6 +54,36 @@ export interface RawMyGame {
   stateCode: number;
   /** `team` only when the player carries one (C1: a fallback for GameFeed's unverified team, V1). */
   players: Array<{ id: number; name: string; stateCode: number; committed: boolean; team?: number }>;
+  /** The game's unread-chat flags (#311), only when all four read as booleans: UNVERIFIED live. */
+  unreadChat?: UnreadChatFlags;
+}
+
+/** Which of a game's chats war.app counts unread for the account (GameInfo, #311; UNVERIFIED live). */
+export interface UnreadChatFlags {
+  /** Game-group messages (this server's `unknown` channel from the web client). */
+  group: boolean;
+  private: boolean;
+  public: boolean;
+  team: boolean;
+}
+
+/** Whether any of the flags is set. */
+export const anyUnreadChat = (f: UnreadChatFlags | undefined): boolean =>
+  f !== undefined && (f.group || f.private || f.public || f.team);
+
+/** The game's unread-chat flags in the list, or undefined (not listed, or the flags did not read). */
+export function unreadChatOf(games: readonly RawMyGame[], gameId: number): UnreadChatFlags | undefined {
+  return games.find((g) => g.id === gameId)?.unreadChat;
+}
+
+/** The flags, read loosely: a field that is not a boolean leaves them all unknown, never refuses the list. */
+function unreadFlagsOf(f: readonly unknown[]): UnreadChatFlags | undefined {
+  const group = f[GI_UNREAD.group];
+  const priv = f[GI_UNREAD.private];
+  const pub = f[GI_UNREAD.public];
+  const team = f[GI_UNREAD.team];
+  if (typeof group !== 'boolean' || typeof priv !== 'boolean' || typeof pub !== 'boolean' || typeof team !== 'boolean') return undefined;
+  return { group, private: priv, public: pub, team };
 }
 
 /** One game as the tool reports it. */
@@ -123,12 +158,14 @@ function gameOf(g: unknown): RawMyGame {
   ) {
     throw new MyGamesFormatError('a GameInfo lacks its fields');
   }
+  const unreadChat = unreadFlagsOf(f);
   return {
     id,
     name: name ?? '',
     lastTurn,
     stateCode: state,
     players: (players ?? []).filter((p) => p !== null).map(playerOf),
+    ...(unreadChat ? { unreadChat } : {}),
   };
 }
 
@@ -184,12 +221,29 @@ export function activeGameIds(games: readonly RawMyGame[], myInGameId: number): 
 
 /**
  * Games whose chat is live (#256): lobbies, games being picked and games being played — every
- * game in the list but a finished one, whatever my seat's state. Ascending id order, so a cursor
- * (the last id read) resumes the list even when games join or leave it between calls.
+ * game in the list but a finished one, whatever my seat's state — plus a finished game whose chat
+ * war.app flags unread, or whose flags did not read at all (#311, GameInfo's unread flags: UNVERIFIED
+ * live — a misread position must not hide a finished game's chat without a word; `unflaggedFinished`
+ * names those). Ascending id order, so a cursor (the last id read) resumes the list even when games
+ * join or leave it between calls.
  */
 export function chatGameIds(games: readonly RawMyGame[]): number[] {
   return games
-    .filter((g) => g.stateCode === GAME_WAITING || g.stateCode === GAME_PLAYING || g.stateCode === GAME_DISTRIBUTING)
+    .filter(
+      (g) =>
+        g.stateCode === GAME_WAITING ||
+        g.stateCode === GAME_PLAYING ||
+        g.stateCode === GAME_DISTRIBUTING ||
+        (g.stateCode === GAME_FINISHED && (g.unreadChat === undefined || anyUnreadChat(g.unreadChat))),
+    )
+    .map((g) => g.id)
+    .sort((a, b) => a - b);
+}
+
+/** Finished games whose unread-chat flags did not read (#311): `chatGameIds` keeps them, unjudged. Ascending ids. */
+export function unflaggedFinished(games: readonly RawMyGame[]): number[] {
+  return games
+    .filter((g) => g.stateCode === GAME_FINISHED && g.unreadChat === undefined)
     .map((g) => g.id)
     .sort((a, b) => a - b);
 }
