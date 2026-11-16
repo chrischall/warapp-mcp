@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/chrischall/warapp-mcp/compare/v0.2.0...v0.3.0) (2026-11-16)
+
+
+### Features
+
+* **hosted:** sign in to war.app once with the password and run the hosted connector without the browser bridge ([#334](https://github.com/chrischall/warapp-mcp/issues/334)) ([0fe525d](https://github.com/chrischall/warapp-mcp/commit/0fe525d64cb7b72d6dd0c47acf181aa7aa719ae1))
+
+
+### Bug Fixes
+
+* **hosted:** keep the session status linked field a boolean and say who linked it in linkedBy ([#337](https://github.com/chrischall/warapp-mcp/issues/337)) ([f488aae](https://github.com/chrischall/warapp-mcp/commit/f488aaea639c9d14ec34847342b7867d5883c650))
+
 ## [0.2.0](https://github.com/chrischall/warapp-mcp/compare/v0.1.0...v0.2.0) (2026-11-16)
 
 
