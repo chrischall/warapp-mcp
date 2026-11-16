@@ -12,7 +12,7 @@
         }
       ],
       "title": "Sign in to war.app",
-      "description": "This lets the connector reach war.app directly, without your browser. Your password is sent to war.app once, with your war.app email, and then discarded; what is kept is the session war.app gives back, a full-account credential stored as your own secret on this connection. A refused sign-in is not retried for you, because war.app may count failed attempts."
+      "description": "This lets the connector reach war.app directly, without your browser. Connecting needs this sign-in to succeed: if war.app refuses it (a wrong password, a bot check, an outage, or an account that signs in only through Facebook), the connection is not made. Your password is sent to war.app once, with your war.app email, and then discarded; what is kept is the session war.app gives back, a full-account credential stored as your own secret on this connection. A refused sign-in is not retried for you, because war.app may count failed attempts."
     }
   ],
   "capture": {
