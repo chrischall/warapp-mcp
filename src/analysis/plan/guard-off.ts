@@ -19,9 +19,12 @@
 //       previous board showed mine — its stack took it and moved on — is taken back with one army.
 // Both (2) and (3) run right after #165's breaks (after the holds, before any other capture, every
 // goal), funded as those are: from the neighbour with the most to spare beyond what holds it once the
-// target falls, else deployed on a neighbour not conceded; never one lowering income, a truce's
-// covered territory or one my attacks failed on (#240). Sized for the board as it stands: if the
-// owner deploys there first, the raid or the retake is lost.
+// target falls, else topped up with a deploy on a neighbour not conceded; never one lowering income, a
+// truce's covered territory or one my attacks failed on (#240). On a player's territory each is sized
+// first for what its owner may deploy there before it lands (#120, and the issue's evidence: the one
+// raid tried in a lost guard-off game failed on a territory its owner had reinforced), the raid's
+// second army on top; only when neither spare armies nor the deploy left cover that does it go at its
+// bare size (2, or 1 for a retake), with #120's "assumes its owner does not reinforce" warning.
 import type { BoardState } from '../../board.js';
 import { armiesToTake, type KillRates } from '../combat.js';
 import { neighborsOf } from '../graph.js';
@@ -29,6 +32,7 @@ import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
+import type { Threats } from './threats.js';
 import { byNum } from './util.js';
 
 /** #276: a stack of at least this many times my income within two moves calls for a second line. */
@@ -147,10 +151,13 @@ export function guardOffRaids(
   book: DeployBook,
   hd: Holds,
   tgt: Targets,
+  threats: Pick<Threats, 'reinforcementAt'>,
+  worstCase: Map<number, number>,
   previousBoard: BoardState | undefined,
 ): void {
-  const { g, me, territories: state, reserve, label, bonusName, mineSet, unitsAt, uncounted, guard, chanceOf, noSplit, foe } = pc;
-  const { rationale, avail, spared, captured, moves, survivorsAt, captureOrder, captureUndo } = ps;
+  const { g, me, territories: state, reserve, label, bonusName, mineSet, unitsAt, uncounted, guard, chanceOf, costAt, noSplit, foe } = pc;
+  const { rationale, warnings, avail, spared, captured, moves, survivorsAt, captureOrder, captureUndo } = ps;
+  const { reinforcementAt } = threats;
   const { coverOf, gainWith, deploy, roomAt } = book;
   const { conceded, keepFor, twoStepKeep } = hd;
   const { targets, repulsed } = tgt;
@@ -167,35 +174,55 @@ export function guardOffRaids(
   /** Free to take now: not taken this turn, nothing the plan keeps off, never one lowering income. */
   const takeable = (n: number) =>
     !captured.has(n) && !spared.has(n) && !uncounted(n) && unitsAt(n) === 0 && gainWith([n]) >= 0 && !pc.truce.noTarget(n) && !repulsed.has(n);
-  /** One attack of `armies` on `n` from the neighbour with the most to spare, else deployed. */
+  /**
+   * One attack on `n` of `armies` (its bare size: what takes it at 0, plus what goes on next turn),
+   * from the neighbour with the most to spare, else deployed. On a player's territory it is sized
+   * first for what its owner may deploy there before it lands (#120: the sure size, the extra armies
+   * kept on top), from spare armies, else topped up with a deploy; only when neither covers it does
+   * it go at its bare size, with #120's "assumes its owner does not reinforce" warning.
+   */
   const attack = (n: number, armies: number, reason: string, head: string): boolean => {
     const near = neighborsOf(g, n).filter((x) => mineSet.has(x));
     const spareOf = (x: number) =>
       Math.max(0, avail.get(x)! - Math.max(keepFor(x, (y) => y === n), twoStepKeep(x, (y) => y === n), coverOf(x)));
-    let src = near
-      .map((x) => ({ x, spare: spareOf(x) }))
-      .filter((o) => o.spare >= armies)
-      .sort((a, b) => b.spare - a.spare || a.x - b.x)[0]?.x;
-    let bought = 0;
-    if (src === undefined && ps.budget - reserve >= armies) {
-      src = near
-        .filter((x) => !conceded.has(x) && avail.get(x)! >= 0 && roomAt(x) >= armies)
-        .sort((a, b) => avail.get(b)! - avail.get(a)! || a - b)[0];
-      if (src !== undefined) {
-        deploy(src, armies);
-        bought = armies;
-      }
-    }
-    if (src === undefined) return false;
-    const from = src;
-    avail.set(from, avail.get(from)! - armies);
+    const extra = enemyOf(n) !== undefined ? reinforcementAt(n) : 0;
+    const sureCost = extra > 0 ? costAt(n, extra) : null;
+    const sure = sureCost === null ? null : Math.max(armies, sureCost + armies - 1);
+    const free = Math.max(0, ps.budget - reserve);
+    const bySpare = near.map((x) => ({ x, spare: spareOf(x) })).sort((a, b) => b.spare - a.spare || a.x - b.x);
+    const deployable = (x: number) => !conceded.has(x) && avail.get(x)! >= 0;
+    /** The source, the armies sent and the deploy bought there, for an attack of `size`. */
+    const fund = (size: number): { src: number; bought: number } | undefined => {
+      const spared = bySpare.find((o) => o.spare >= size);
+      if (spared) return { src: spared.x, bought: 0 };
+      // Top up the source with the most to spare (the most standing there on a tie) with a deploy.
+      const top = bySpare
+        .filter((o) => deployable(o.x))
+        .map((o) => ({ ...o, need: size - o.spare }))
+        .filter((o) => o.need <= free && roomAt(o.x) >= o.need)
+        .sort((a, b) => a.need - b.need || avail.get(b.x)! - avail.get(a.x)! || a.x - b.x)[0];
+      return top ? { src: top.x, bought: top.need } : undefined;
+    };
+    const sized = sure !== null ? fund(sure) : undefined;
+    const funded = sized ?? fund(armies);
+    if (!funded) return false;
+    const size = sized ? sure! : armies;
+    const { src: from, bought } = funded;
+    if (bought) deploy(from, bought);
+    avail.set(from, avail.get(from)! - size);
     captured.add(n);
-    survivorsAt.set(n, armies);
+    survivorsAt.set(n, size);
     captureOrder.push(n);
-    captureUndo.set(n, () => avail.set(from, avail.get(from)! + armies));
-    if (!targets.has(n)) targets.set(n, { id: n, cost: armies, enemy: enemyOf(n) !== undefined, sources: near });
-    moves.push({ from, to: n, armies, kind: 'attack', reason, winChance: chanceOf(armies, 0) });
-    rationale.push(`${head} from ${label(from)} with ${armies}${bought ? ` (deploy ${bought} there)` : ''}: ${reason}.`);
+    captureUndo.set(n, () => avail.set(from, avail.get(from)! + size));
+    if (!targets.has(n)) targets.set(n, { id: n, cost: size, enemy: enemyOf(n) !== undefined, sources: near });
+    moves.push({ from, to: n, armies: size, kind: 'attack', reason, winChance: chanceOf(size, 0) });
+    if (sized) worstCase.set(n, extra);
+    else if (extra > 0) warnings.push(`Attack on enemy ${label(n)} assumes its owner does not reinforce it first.`);
+    rationale.push(
+      `${head} from ${label(from)} with ${size}${bought ? ` (deploy ${bought} there)` : ''}${
+        sized ? `, which take it even if player ${enemyOf(n)!} deploys its ~${extra} there first` : ''
+      }: ${reason}.`,
+    );
     return true;
   };
 
@@ -217,7 +244,7 @@ export function guardOffRaids(
       .sort(byNum);
     for (const n of retakes) {
       if (!takeable(n)) continue;
-      const reason = `One Army Must Stand Guard is off and player ${enemyOf(n)!}'s stack left ${label(n)}, taken from me, at 0: one army takes it back unless it deploys there first (#276)`;
+      const reason = `One Army Must Stand Guard is off and player ${enemyOf(n)!}'s stack left ${label(n)}, taken from me, at 0: a retake, one army if it stays empty (#276)`;
       attack(n, 1, reason, `Retake ${label(n)}`);
     }
   }
@@ -251,7 +278,7 @@ export function guardOffRaids(
       .filter((n) => empty(n) && neighborsOf(g, n).some((x) => mineSet.has(x)) && takeable(n))
       .sort(byNum)[0];
     if (step === undefined) continue;
-    const reason = `a raid: One Army Must Stand Guard is off and ${label(step)} stands at 0, behind it ${label(far.id)} too, and taking ${label(far.id)} breaks player ${enemyOf(far.id)!}'s bonus ${bonusName(far.bonus.id)} (+${far.bonus.value}); one army stays on ${label(step)}, one takes ${label(far.id)} next turn if it still stands at 0 (#276)`;
+    const reason = `a raid: One Army Must Stand Guard is off and ${label(step)} stands at 0, behind it ${label(far.id)} too, and taking ${label(far.id)} breaks player ${enemyOf(far.id)!}'s bonus ${bonusName(far.bonus.id)} (+${far.bonus.value}); the survivors hold ${label(step)} and one takes ${label(far.id)} next turn if it still stands at 0 (#276)`;
     attack(step, RAID_ARMIES, reason, `Raid ${label(step)}`);
   }
 }

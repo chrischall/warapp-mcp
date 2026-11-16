@@ -1334,10 +1334,12 @@
 // member of a held bonus within two moves of an enemy stack of at least SECOND_LINE_STACK_INCOMES ×
 // my income keeps `garrisonSize` (what one army cannot take) through `guardAt`, its shortfall deployed
 // before the leftover (`fillSecondLine`); (2) a raid one step deeper — an empty territory beside me
-// taken with RAID_ARMIES when the empty enemy territory behind it breaks its owner's bonus (no
-// Multi-Attack chain: the far one is the one-army break next turn); (3) a free retake — an enemy
-// territory beside me at 0 that `previousBoard` showed mine, taken back with one army. (2) and (3)
-// run right after the one-army breaks, funded as those are.
+// taken when the empty enemy territory behind it breaks its owner's bonus (no Multi-Attack chain:
+// the far one is the one-army break next turn); (3) a free retake — an enemy territory beside me at
+// 0 that `previousBoard` showed mine, taken back. (2) and (3) run right after the one-army breaks,
+// from spare armies, else topped up with a deploy; on a player's territory each is sized for its
+// owner's deploy there (#120; the raid one army more, to go on), and goes at its bare size
+// (RAID_ARMIES, or 1) with #120's "assumes" warning only when nothing covers that.
 // Special units: a commander fights as COMMANDER_STRENGTH (7) armies, attacking and
 // defending, and takes no partial damage (armies die first; it falls to 7 damage left
 // over), so a stack of d armies plus a commander defends exactly as d + 7: every capture
@@ -1564,7 +1566,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- 1e. finish off an opponent, 1s. strike an enemy commander, #165 guard-off breaks (plan/strike.ts) ----
   const { struck } = strikesPhase(pc, ps, book, threats, hd, tgt, caps);
   // ---- #276: guard off — free retakes and raids one step deeper (plan/guard-off.ts) ----
-  guardOffRaids(pc, ps, book, hd, tgt, input.previousBoard);
+  guardOffRaids(pc, ps, book, hd, tgt, threats, worstCase, input.previousBoard);
 
   if (balanced) {
     // ---- balanced: greedy by income per army ----

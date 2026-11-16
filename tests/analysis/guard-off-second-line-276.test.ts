@@ -10,6 +10,7 @@ import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import { garrisonSize, SECOND_LINE_STACK_INCOMES } from '../../src/analysis/plan/guard-off.js';
 import { validateTurn } from '../../src/tools/turn.js';
+import { armiesToTake } from '../../src/analysis/combat.js';
 import type { GameMap } from '../../src/normalize.js';
 import { OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import { board, mine, neutral } from './helpers.js';
@@ -178,7 +179,7 @@ describe('guard off (2): a raid one step deeper (#276)', () => {
     expect(raid!.armies).toBeGreaterThanOrEqual(2);
     expect(raid!.reason).toContain('raid');
     expect(raid!.reason).toContain('T3 (#3)');
-    expect(p.rationale.join('\n')).toContain('Raid T2 (#2) from T1 (#1) with 2:');
+    expect(p.rationale.join('\n')).toContain('Raid T2 (#2) from T1 (#1) with ');
   });
 
   it('is no raid with the guard on', () => {
@@ -201,7 +202,7 @@ describe('guard off (3): a free retake (#276)', () => {
     const retake = p.moves.find((m) => m.to === 5 && m.kind === 'attack');
     expect(retake).toMatchObject({ from: 1 });
     expect(retake!.reason).toContain('taken from me');
-    expect(p.rationale.join('\n')).toContain('Retake T5 (#5) from T1 (#1) with 1:');
+    expect(p.rationale.join('\n')).toContain('Retake T5 (#5) from T1 (#1) with ');
   });
 
   it('needs the previous board to know it was mine', () => {
@@ -215,3 +216,63 @@ describe('guard off (3): a free retake (#276)', () => {
     expect(p.rationale.join('\n')).not.toContain('Retake T5');
   });
 });
+
+// #276 (owner's evidence on the issue): the one raid tried in a lost guard-off game failed because
+// the owner had reinforced the territory first. A raid or retake on a player's territory is sized
+// for that owner's deploy there (#120), from spare armies or a deploy; only when neither covers it
+// does it go at its bare size, with #120's "assumes its owner does not reinforce" warning.
+//
+//   T1 (mine; my +3 bonus {1}) ─ T2 (enemy 0) ─ T3 (enemy 0; enemy's +4 bonus {3, 4}) ─ T4 (enemy 3)
+const RAID_LINE = mapOf(
+  [
+    [1, 2],
+    [2, 3],
+    [3, 4],
+  ],
+  [
+    { id: 102, name: 'B102', value: 4, territoryIds: [3, 4], bonusIds: [] },
+    { id: 103, name: 'B103', value: 0, territoryIds: [2], bonusIds: [] },
+    { id: 101, name: 'B101', value: 3, territoryIds: [1], bonusIds: [] },
+  ],
+);
+const RATES = { offensiveKillRate: 60, defensiveKillRate: 70 };
+/** The armies that take a territory at 0 even if its owner deploys its 5 there first. */
+const SURE = armiesToTake(5, RATES)!;
+
+describe('guard off: a raid or retake is sized for its owner deploy (#276, #120)', () => {
+  it('a retake from a source with armies to spare sends what takes it even if the owner deploys there first', () => {
+    const p = plan(RAID, raidBoard, settings(false), 5, before);
+    const retake = p.moves.find((m) => m.to === 5 && m.kind === 'attack')!;
+    expect(retake.armies).toBeGreaterThanOrEqual(SURE);
+    expect(p.rationale.join('\n')).toContain(`Retake T5 (#5) from T1 (#1) with ${SURE}, which take it even if player 20 deploys its ~5 there first:`);
+    expect(p.warnings.some((w) => w.startsWith('Attack on enemy T5 (#5) assumes'))).toBe(false);
+  });
+
+  it('a raid keeps one army over that size to go on next turn', () => {
+    const p = plan(RAID, raidBoard, settings(false), 5);
+    expect(p.rationale.join('\n')).toContain(`Raid T2 (#2) from T1 (#1) with ${SURE + 1}, which take it even if player 20 deploys its ~5 there first:`);
+  });
+
+  it('a raid from a source with nothing to spare deploys the sure size when the income covers it', () => {
+    const b = board([mine(1, 1), enemy(2, 0), enemy(3, 0), enemy(4, 3)]);
+    const p = plan(RAID_LINE, b, settings(false), 30);
+    valid(RAID_LINE, b, settings(false), 30, p);
+    const raid = p.moves.find((m) => m.to === 2 && m.kind === 'attack')!;
+    expect(raid.reason).toContain('raid');
+    expect(raid.armies).toBeGreaterThanOrEqual(SURE + 1);
+    expect(p.rationale.join('\n')).toMatch(new RegExp(`Raid T2 \\(#2\\) from T1 \\(#1\\) with ${SURE + 1} \\(deploy \\d+ there\\)`));
+    expect(p.warnings.some((w) => w.startsWith('Attack on enemy T2 (#2) assumes'))).toBe(false);
+  });
+
+  it('goes at its bare size with the #120 warning when nothing covers the owner deploy', () => {
+    const b = board([mine(1, 1), enemy(2, 0), enemy(3, 0), enemy(4, 3)]);
+    const p = plan(RAID_LINE, b, settings(false), 2);
+    valid(RAID_LINE, b, settings(false), 2, p);
+    const raid = p.moves.find((m) => m.to === 2 && m.kind === 'attack' && m.reason.includes('raid'));
+    expect(raid?.armies).toBe(2);
+    expect(p.warnings.find((w) => w.startsWith('Attack on enemy T2 (#2) assumes its owner does not reinforce it first'))).toContain(
+      'if player 20 deploys its ~5 there',
+    );
+  });
+});
+

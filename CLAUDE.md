@@ -996,11 +996,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       `SECOND_LINE_STACK_INCOMES` (1) × my income keeps `garrisonSize` (the fewest one army cannot take:
       1 at 60/70) through the deploy book's `guardAt`, the shortfall deployed before the leftover
       (`fillSecondLine`; a warning when the income cannot reach it); #275's breach cost is a separate
-      rule beside it; (2) a **raid one step deeper** — an empty territory beside me is taken with
-      `RAID_ARMIES` (2) when the empty enemy territory behind it breaks its owner's bonus (no
-      Multi-Attack chain: the far one is #165's break next turn); (3) a **free retake** — an enemy
-      territory beside me at 0 that `previousBoard` showed mine is taken back with one army. (2) and (3)
-      run right after #165's breaks, funded as those are
+      rule beside it; (2) a **raid one step deeper** — an empty territory beside me is taken when the
+      empty enemy territory behind it breaks its owner's bonus (no Multi-Attack chain: the far one is
+      #165's break next turn); (3) a **free retake** — an enemy territory beside me at 0 that
+      `previousBoard` showed mine is taken back. (2) and (3) run right after #165's breaks, from spare
+      armies, else topped up with a deploy; on a player's territory each is sized for its owner's deploy
+      there (#120, from the issue's evidence: the one raid tried in a lost guard-off game met a reinforced
+      territory; the raid one army more), and goes at its bare size (`RAID_ARMIES` 2, or 1) with #120's
+      "assumes" warning only when nothing covers that
       (`tests/analysis/guard-off-second-line-276.test.ts`).
 - **The border guess (`src/analysis/guess.ts`, `warapp_plan_turn`'s `guess` / `guessOrders`)** is a
   randomized deploy split against an opponent who would read a fixed one: pure and deterministic like

@@ -1044,8 +1044,8 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     when: on({ guard: false }),
     text:
       'With no guard a stack that moves on can leave the territory behind it at 0. An empty enemy territory in ' +
-      "view whose capture breaks its owner's bonus is the cheapest income swing there is: two or three armies " +
-      'take it. A territory of yours that its stack left empty can be retaken with a single army.',
+      "view whose capture breaks its owner's bonus is a cheap income swing, but its owner may deploy there " +
+      'first: send what takes it through that deploy. One of yours its stack left empty is retaken the same way.',
     source: S.guard,
     basis: 'derived',
   },
