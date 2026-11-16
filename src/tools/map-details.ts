@@ -7,7 +7,7 @@
 import { applyModeTerritories, readMapDetailsModes } from '../map-details.js';
 import type { DistributionMode, GameMap, GameSettings } from '../normalize.js';
 import { Method, writeGetMapDetailsParams } from '../protocol/methods.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, type LiveContext } from './live-context.js';
 
 /** What a caller needs to read map details: the GameFeed client (its map cache) and the web-client channel. */
 export type MapDetailsContext = Pick<LiveContext, 'client' | 'rpc' | 'bundle'>;
@@ -47,7 +47,7 @@ export async function withModeTerritories(ctx: MapDetailsContext, map: GameMap):
     const env = await ctx.rpc.call('GetMapDetails', Method.GetMapDetails, (w) => writeGetMapDetailsParams(w, map.id));
     byMode = readMapDetailsModes(await ctx.bundle(), env.body);
   } catch (e) {
-    return { map: unknownRest(map), warnings: [UNKNOWN(map, e instanceof Error ? e.message : String(e))] };
+    return { map: unknownRest(map), warnings: [UNKNOWN(map, failureText(e))] };
   }
   if (byMode === null) return { map: unknownRest(map), warnings: [UNKNOWN(map, 'the reply carried no result')] };
   const read = applyModeTerritories(map, byMode);

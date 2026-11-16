@@ -4,11 +4,13 @@
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mapStorePath } from '../src/map-store.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
+import { FROZEN_TAB_HINT } from '../src/tools/live-context.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
 import { CHAT_BUNDLE } from './protocol/chat-bundle.js';
 import { LIVE_BUNDLE } from './protocol/live-bundle.js';
@@ -119,6 +121,20 @@ describe('warapp_get_map: distribution modes (#328)', () => {
     ]);
     expect((p.warnings as string[]).join('\n')).toMatch(/could not be read from war\.app's map details/);
     await h.call('warapp_get_map', { game_id: GAME, view: 'full' });
+    expect(fake.asked).toEqual([MAP_ID]);
+  });
+
+  it('a bridged timeout (a frozen tab) says to reload or focus the war.app tab, once', async () => {
+    const fake = warapp();
+    const timingOut = (req: DecodedRequest): Partial<ReplyFrame> => {
+      fake.answer(req);
+      throw new FetchproxyTimeoutError({ url: 'https://war.app/Services?m=GetMapDetails&js=1', timeoutMs: 30000, retrySafe: true });
+    };
+    h = await liveHarness({ feed: [feed()], warapp: timingOut, bundle: bundle() });
+    const p = payload(await h.call('warapp_get_map', { game_id: GAME, view: 'full' }));
+    const why = (p.warnings as string[]).join('\n');
+    expect(why).toMatch(/could not be read from war\.app's map details/);
+    expect(why.split(FROZEN_TAB_HINT)).toHaveLength(2);
     expect(fake.asked).toEqual([MAP_ID]);
   });
 
