@@ -72,6 +72,9 @@
 // (its teammate may have sent armies in; a third may have moved), and a fog stack is not read for a player
 // with a teammate (`teams`), whose armies may have walked in. A Reinforcement card is income: the estimate compared carries it from the turn the
 // card clock says one can be in hand (#164).
+// It carries one card at most, and an opponent may bank several (up to MaxCardsHold) and play them in one
+// turn: a capture or a held attack allows every card it may hold (`banked`, the caller's card clock), and
+// is not read at all when those cannot be counted. The fog-stack stock bound already credits a card a turn.
 // `implied` is the deploy per turn the observation needs: what the estimate should have been.
 // The estimate compared is the one the plan used that turn (`estimateAt`), the caller's to supply.
 
@@ -153,6 +156,12 @@ export interface TripInput {
   estimateKept?: (player: number, turn: number) => boolean;
   /** Gift may be in play: with my card plays not recorded (`orders.cards` absent), no capture of mine is read. */
   gift?: boolean;
+  /**
+   * Reinforcement armies an opponent may have banked and played at once beyond its estimate (which carries
+   * at most one card, #164): added to what a capture or a held attack allows. `Infinity` (the cards cannot
+   * be counted): no capture or held attack is read. A stack out of the fog keeps its own bound.
+   */
+  banked?: number;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -193,6 +202,8 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
   // not recorded and Gift may be in play.
   const gifted = new Set((prev.orders?.cards ?? []).flatMap((c) => (c.card === 'Gift' && c.target !== undefined ? [c.target] : [])));
   const giftUnknown = input.gift === true && prev.orders?.cards === undefined;
+  // Reinforcement cards banked and played at once: the estimate carries at most one.
+  const bank = Math.max(0, input.banked ?? 0);
   const out: TripObservation[] = [];
   const trip = (o: Omit<TripObservation, 'turn'>) => {
     if (o.observed >= TRIP_RATIO * o.allowed && o.observed - o.allowed >= TRIP_MIN_EXCESS) out.push({ ...o, turn: T });
@@ -321,7 +332,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     // capture: it holds what was mine or a visible neutral's.
     const wasOwner = playerOf(was);
     if (wasOwner !== p && (wasOwner === me || was.owner.kind === 'neutral')) {
-      if (chains || input.bomb || !clearAround(id)) continue;
+      if (chains || input.bomb || !Number.isFinite(bank) || !clearAround(id)) continue;
       const third = neighborsOf(graph, id).some((n) => {
         const o = playerOf(visibleState(before.get(n)));
         return o !== undefined && o !== p && o !== me;
@@ -341,7 +352,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       const needed = armiesToTake(defenders, rates);
       if (needed === null) continue;
       const stacks = stacksBeside(id, p);
-      trip({ player: p, kind: 'capture', territory: id, observed: needed, allowed: stacks + est(p, T - 1), implied: needed - stacks });
+      trip({ player: p, kind: 'capture', territory: id, observed: needed, allowed: stacks + est(p, T - 1) + bank, implied: needed - stacks });
       continue;
     }
 
@@ -352,7 +363,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       const o = playerOf(visibleState(before.get(n)));
       return o !== undefined && o !== p && !friend(o);
     });
-    if (wasOwner === p && exact && !chains && !input.bomb && !otherBeside && myOrders && clearAround(id) && !input.peace?.has(p)) {
+    if (wasOwner === p && exact && !chains && !input.bomb && Number.isFinite(bank) && !otherBeside && myOrders && clearAround(id) && !input.peace?.has(p)) {
       const transferOnly = new Set(myOrders.sent!.filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
       const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id && !transferOnly.has(`${m.from}:${id}`)).map((m) => m.from))].sort(byNum);
       let attackers = 0;
@@ -398,7 +409,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
         kind: 'held-attack',
         territory: id,
         observed: defenders,
-        allowed: standing + est(p, T - 1) + stacks,
+        allowed: standing + est(p, T - 1) + stacks + bank,
         implied: defenders - standing - stacks,
       });
     }

@@ -334,6 +334,33 @@ describe('brokenEstimates (#275 b)', () => {
     expect(bomb(fog)).toMatchObject([{ kind: 'fog-stack', territory: 3 }]);
   });
 
+  it('allows the Reinforcement cards an opponent may bank and play at once on a capture or a held attack (#275 review)', () => {
+    const capture = [
+      at(4, [mine(1, 1), mine(2, 10), foe(3, 3), fogged(4)], { deploys: [], moves: [] }),
+      at(5, [mine(1, 1), foe(2, 8), foe(3, 1), fogged(4)]),
+    ];
+    const held = [
+      at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] }),
+      at(5, [mine(1, 1), mine(2, 20), foe(3, 4), foe(4, 1)]),
+    ];
+    const banked = (boards: TripBoard[], b: number) => brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, banked: b, estimateAt: () => 5 });
+    // Two banked cards of 7 more: the capture's 16 against 7 + 14, the held attack's 22 against 10 + 14.
+    expect(banked(capture, 14)).toEqual([]);
+    expect(banked(held, 14)).toEqual([]);
+    // A bank that cannot be counted reads neither.
+    expect(banked(capture, Infinity)).toEqual([]);
+    expect(banked(held, Infinity)).toEqual([]);
+    // None banked: as before.
+    expect(banked(capture, 0)).toMatchObject([{ kind: 'capture', allowed: 7 }]);
+    // A stack out of the fog keeps its own bound (its stock counts every turn's estimate).
+    const fog = [
+      at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)]),
+    ];
+    expect(banked(fog, Infinity)).toMatchObject([{ kind: 'fog-stack', territory: 3 }]);
+  });
+
   it("credits no opponent's armies to another: a held attack beside another player, a fog stack of a player with a teammate", () => {
     const Q = 30;
     const q = (id: number, armies: number): TerritoryState => mine(id, armies, Q);

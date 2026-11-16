@@ -712,7 +712,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   Under Multi-Attack, or when the settings do not say, a chain moves armies many hops in one turn: no capture
   or held attack is read, and a stack out of the fog credits armies that left view at any distance. Nothing is
   read once an opponent may hold an Airlift card (the card clock, `opponentCanHold`): armies it lands look like
-  income; a Reinforcement card is already in the estimate (#164). No capture or held attack is read once one
+  income; a Reinforcement card is already in the estimate (#164), one at most, so a capture or a held attack also
+  allows every card the clock says an opponent can hold (at most `MaxCardsHold`) when that is more than one
+  (`bankedReinforcement`: banked cards played at once), and neither is read when those cannot be counted
+  (pieces a turn unstated, armies not fixed). No capture or held attack is read once one
   may hold a Bomb (it runs before the attacks and halves my source or the territory taken; a stack out of the fog
   still is). A territory my own Gift card gave it (`MyOrders.cards`) is no capture, and with my card plays not
   recorded (an older cache) no capture of mine is read when Gift is in play (`gift`: the settings list it, or

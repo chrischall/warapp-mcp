@@ -9,6 +9,7 @@ import { activeTripwires, brokenEstimates, type Tripwire } from '../analysis/tri
 import type { MapGraph } from '../analysis/graph.js';
 import type { SimSettings } from '../analysis/turn-sim.js';
 import type { GameMap, GameSettings } from '../normalize.js';
+import { reinforcementHand } from '../strategy/card-clock.js';
 import { readSurvival, writeSurvival, type Survival } from '../trend.js';
 import { carriesTeam } from '../teams.js';
 import { opponentCanHold } from './card-advice.js';
@@ -32,11 +33,26 @@ export interface TripwireRead {
 }
 
 /**
+ * #275 review: the Reinforcement armies an opponent may have banked and played at once on the turn before
+ * `turn` (the one my latest board shows the result of), which its estimate (one card at most) leaves out:
+ * every card the clock says it can hold then (at most MaxCardsHold) when that is more than one, else 0; `Infinity`
+ * when Reinforcement is in play and the cards or their armies cannot be counted.
+ */
+export function bankedReinforcement(settings: GameSettings | undefined, turn: number): number {
+  const hand = reinforcementHand(settings, turn - 1);
+  if (!hand) return 0;
+  if (hand.cards === null) return Infinity;
+  if (hand.cards <= 1) return 0;
+  return hand.armiesPerCard === null ? Infinity : hand.cards * hand.armiesPerCard;
+}
+
+/**
  * The tripwires running on `turn`: the marks kept, and one from each observation on my latest two
  * boards that this turn's estimates (or the ones kept for the turns it reads) cannot explain. None while
  * the teams are unknown (`teamsKnown: false`: a game of 3+ seats whose teams could not be read, where an
  * opponent may be a teammate), and no observation once an opponent may hold an Airlift card (the card
- * clock); no capture or held attack once one may hold a Bomb. A static seat (#270) and a player with no
+ * clock); no capture or held attack once one may hold a Bomb, and each allows the Reinforcement cards one
+ * may have banked (`bankedReinforcement`). A static seat (#270) and a player with no
  * estimate this turn or kept are never read. While the teams are unknown the stored marks are kept unchanged (`keep`), never applied. Never throws.
  */
 export async function readTripwires(a: {
@@ -72,6 +88,7 @@ export async function readTripwires(a: {
     // A start only when every player began alike (#275 review): a custom scenario sets each start by
     // hand, and unread distribution may be one, so the settings' territory limit × armies says nothing
     // of what a stack never seen began with — no start, and such a stack is not read.
+    const banked = bankedReinforcement(a.gameSettings, a.turn);
     const start = symmetricStart(a.gameSettings) ? trackGame([], a.gameSettings, a.map).start : undefined;
     fresh = brokenEstimates({
       ...(start ? { start } : {}),
@@ -83,6 +100,7 @@ export async function readTripwires(a: {
       ...(a.peace ? { peace: new Set(a.peace) } : {}),
       ...(opponentCanHold(a.gameSettings, 'Airlift', a.turn) ? { airlift: true } : {}),
       ...(opponentCanHold(a.gameSettings, 'Bomb', a.turn) ? { bomb: true } : {}),
+      ...(banked > 0 ? { banked } : {}),
       ...(a.staticSeats?.size ? { staticSeats: a.staticSeats } : {}),
       // The estimate the plan of that turn used when kept, else a stand-in: the most it was kept at or is
       // now (#275 review: today's figure alone under-counts an opponent whose estimate a bonus break has
