@@ -120,12 +120,13 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
   ];
 
-  async function seeded(): Promise<string> {
+  // My orders as this server caches them (`myOrdersOf`): `sent` lists every move order, here none.
+  async function seeded(orders: { deploys: []; moves: []; sent?: [] } = { deploys: [], moves: [], sent: [] }): Promise<string> {
     const probe = await live(two);
     const dir = probe.dataDir;
     await probe.harness.close();
     await writeBoardCache(dir, GAME, Number(ANN.feed), 2, prev);
-    await writeOrdersCache(dir, GAME, Number(ANN.feed), 2, { deploys: [], moves: [] });
+    await writeOrdersCache(dir, GAME, Number(ANN.feed), 2, orders);
     await writeSurvival(dir, GAME, Number(ANN.feed), 2, { estimates: new Map([[Number(BOB.feed), 5]]), tripwires: [] });
     return dir;
   }
@@ -171,6 +172,14 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     const w = payload<Checked>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [], enemy_deploy: 3 }));
     expect(w.enemyDeploy[0]).toMatchObject({ deploy: 3, source: 'enemy_deploy' });
     expect(w.warnings.some((x) => /untrusted/.test(x))).toBe(false);
+  });
+
+  it('reads nothing from orders cached before `sent` existed: what left my territory is unknown', async () => {
+    const dir = await seeded({ deploys: [], moves: [] });
+    h = await live(now, dir);
+    const p = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.some((x) => /untrusted/.test(x))).toBe(false);
+    expect((await readSurvival(dir, GAME, Number(ANN.feed))).tripwires).toEqual([]);
   });
 
   it('reads nothing when an opponent may hold an Airlift card: armies it lands look like income', async () => {

@@ -12,7 +12,7 @@ import {
   type Tripwire,
 } from '../../src/analysis/tripwire.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine } from './helpers.js';
+import { board, fogged, mine, neutral } from './helpers.js';
 
 const ME = 10;
 const FOE = 20;
@@ -34,10 +34,17 @@ function line(n: number): GameMap {
 }
 const foe = (id: number, armies: number): TerritoryState => mine(id, armies, FOE);
 const G = buildGraph(line(4));
+// Orders given without `sent` carry it as `myOrdersOf` writes it: every move in `moves`, nothing more.
 const at = (turn: number, entries: TerritoryState[], orders?: TripBoard['orders']): TripBoard => ({
   turn,
   board: board(entries),
-  ...(orders ? { orders } : {}),
+  ...(orders ? { orders: { ...orders, sent: orders.sent ?? orders.moves.map(({ from, to }) => ({ from, to })) } } : {}),
+});
+/** A board whose orders were cached before `sent` existed: which orders went is unknown. */
+const oldCache = (turn: number, entries: TerritoryState[], orders: NonNullable<TripBoard['orders']>): TripBoard => ({
+  turn,
+  board: board(entries),
+  orders: { deploys: orders.deploys, moves: orders.moves },
 });
 const START = { territories: 2, armiesPerTerritory: 5 };
 const run = (boards: TripBoard[], estimate = 5, settings: object = STD, start: { territories: number; armiesPerTerritory: number } | null = START) =>
@@ -361,6 +368,41 @@ describe('brokenEstimates (#275 b)', () => {
     expect(brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, staticSeats: new Set([FOE]), estimateAt: () => 5 })).toEqual([]);
     // No estimate for it (the planner neutralizes a static seat): never compared against 0.
     expect(brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, estimateAt: () => undefined })).toEqual([]);
+  });
+
+  it("reads no capture of a territory my Transfer Only, Attack Only or percentage order left: `moves` leaves them out", () => {
+    // 39 of my 40 on 2 go to 1 by Transfer Only; its 12 beside it take the 1 left. Read from `moves`
+    // alone, 40 defenders would have needed 66.
+    const before = [mine(1, 1), mine(2, 40), foe(3, 12), fogged(4)];
+    const after = at(5, [mine(1, 40), foe(2, 10), foe(3, 1), fogged(4)]);
+    expect(run([at(4, before, { deploys: [], moves: [], sent: [{ from: 2, to: 1, transferOnly: true }] }), after])).toEqual([]);
+    // A percentage or Attack Only order out of it is no different.
+    expect(run([at(4, before, { deploys: [], moves: [], sent: [{ from: 2, to: 1 }] }), after])).toEqual([]);
+    // Orders cached before `sent` existed: what went out of 2 is unknown.
+    expect(run([oldCache(4, before, { deploys: [], moves: [] }), after])).toEqual([]);
+    // With nothing sent out of 2, the same capture trips.
+    expect(run([at(4, before, { deploys: [], moves: [] }), after])).toMatchObject([{ kind: 'capture', territory: 2 }]);
+  });
+
+  it('reads no capture of a neutral my Attack Only or percentage order may have worn down first', () => {
+    // Its 3 beside the neutral 10 move 2: with a 5 deploy 7, where 16 were needed.
+    const before = [mine(1, 20), neutral(2, 10), foe(3, 3), fogged(4)];
+    const after = at(5, [mine(1, 10), foe(2, 2), foe(3, 1), fogged(4)]);
+    expect(run([at(4, before, { deploys: [], moves: [] }), after])).toMatchObject([{ kind: 'capture', territory: 2, observed: 16, allowed: 7 }]);
+    expect(run([at(4, before, { deploys: [], moves: [], sent: [{ from: 1, to: 2 }] }), after])).toEqual([]);
+    expect(run([oldCache(4, before, { deploys: [], moves: [] }), after])).toEqual([]);
+  });
+
+  it('reads no held attack from a source an order outside `moves` also left', () => {
+    // A percentage order to 1 listed before the attack on 3 took most of 2: only about 9 attacked.
+    const before = [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)];
+    const after = at(5, [mine(1, 26), mine(2, 6), foe(3, 4), foe(4, 1)]);
+    const moves = [{ from: 2, to: 3, armies: 35 }];
+    expect(run([at(4, before, { deploys: [], moves, sent: [{ from: 2, to: 1 }, { from: 2, to: 3 }] }), after])).toEqual([]);
+    // Orders cached before `sent` existed: unknown, not read.
+    expect(run([oldCache(4, before, { deploys: [], moves }), after])).toEqual([]);
+    // With the attack the only order out of 2, it trips.
+    expect(run([at(4, before, { deploys: [], moves }), after])).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22, allowed: 10 }]);
   });
 
   it('needs the previous board: no reading across a gap', () => {

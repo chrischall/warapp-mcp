@@ -30,7 +30,10 @@
 //                stack of its could have stood there), when a third player stood beside it, under
 //                Multi-Attack or when the settings do not say (a chain lands from further), or when my
 //                orders that turn are unknown
-//                and could have moved armies out of mine (or attacked the neutral) first;
+//                and could have moved armies out of mine (or attacked the neutral) first. My orders are
+//                known only with `sent` (an older cache is unknown): a Transfer Only, Attack Only or
+//                percentage order, which `sent` lists and `moves` leaves out, sends an unknown count, so
+//                none may leave the territory of mine nor go into the neutral;
 //   held-attack  an attack of mine (my cached orders) failed on a territory of its that held: the
 //                defenders it took to hold (one more than my attackers kill) beyond the armies there
 //                (its commander there counted as 7, as on its stacks beside it),
@@ -41,7 +44,9 @@
 //                left, so not from a source another stack could have hit first (a territory beside the
 //                source, the target aside, hidden or holding a movable stack not mine on the previous
 //                board), nor from one that ended with fewer armies than my orders left it; and only what
-//                the source had left after its earlier orders in list order. A Transfer Only order
+//                the source had left after its earlier orders in list order, so not from a source an
+//                order outside `moves` (Transfer Only, Attack Only, percentage) left too, nor with my
+//                orders cached before `sent` existed. A Transfer Only order
 //                (flagged in `sent`) attacks nothing, and a player a Diplomacy card may have kept at
 //                peace with me (`peace`) is not read. The target's own stack attacking my source cannot
 //                fake a trip: what it sends leaves the defence.
@@ -180,7 +185,12 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       const t = visibleState(before.get(x));
       return n + (playerOf(t) === p ? Math.max(0, t!.armies! - guard) + commanders(t, p) : 0);
     }, 0);
-  const myOrders = prev.orders;
+  // My orders, known only with `sent`: `moves` leaves out Transfer Only, Attack Only and percentage
+  // orders (`myOrdersOf`), which `sent` lists. Orders cached before `sent` existed are unknown.
+  const myOrders = prev.orders?.sent ? prev.orders : undefined;
+  /** An order of mine matching `match` that `sent` lists but `moves` lacks: its armies are unknown. */
+  const unlisted = (match: (m: { from: number; to: number }) => boolean): boolean =>
+    myOrders !== undefined && myOrders.sent!.filter(match).length > myOrders.moves.filter(match).length;
   /**
    * #123 lesson 5: the armies of `p` that could have walked into `id` since `since[0]`: per other territory
    * within reach, from its latest sighting among `since` (reach = the turns from that board to now), its
@@ -283,14 +293,14 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       if (third) continue;
       let defenders = was.armies!;
       if (wasOwner === me) {
-        if (!myOrders) continue;
+        if (!myOrders || unlisted((m) => m.from === id)) continue;
         const out = myOrders.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
         const added = myOrders.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
         defenders = Math.max(guard, defenders + added - out);
       } else {
         // My own attack on the neutral would have worn it down first.
         const mineBeside = neighborsOf(graph, id).some((n) => playerOf(before.get(n)) === me);
-        if (mineBeside && (!myOrders || myOrders.moves.some((m) => m.to === id))) continue;
+        if (mineBeside && (!myOrders || myOrders.sent!.some((m) => m.to === id))) continue;
       }
       const needed = armiesToTake(defenders, rates);
       if (needed === null) continue;
@@ -307,13 +317,15 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       return o !== undefined && o !== p && !friend(o);
     });
     if (wasOwner === p && exact && !chains && !input.bomb && !otherBeside && myOrders && clearAround(id) && !input.peace?.has(p)) {
-      const transferOnly = new Set((myOrders.sent ?? []).filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
+      const transferOnly = new Set(myOrders.sent!.filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
       const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id && !transferOnly.has(`${m.from}:${id}`)).map((m) => m.from))].sort(byNum);
       let attackers = 0;
       for (const f of fromIds) {
         const src = visibleState(before.get(f));
         const after = visibleState(cur.get(f));
         if (playerOf(src) !== me || playerOf(after) !== me) continue;
+        // An order out of it that `moves` leaves out took an unknown share first.
+        if (unlisted((m) => m.from === f)) continue;
         const added = myOrders.deploys.filter((d) => d.territoryId === f).reduce((n, d) => n + d.armies, 0);
         // An order sends what is left: in list order, each order out of the source takes from what the
         // earlier ones left (transfers in are not counted: they may land after it).

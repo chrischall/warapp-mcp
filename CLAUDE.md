@@ -699,7 +699,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   sighting and no previous board — the opponent-profile observer skips them too; a held attack is not read from a
   source another stack beside it could have hit first, or that ended below what my orders left it, counts only
   what the source had left after its earlier orders — an order sends what is left —, and is not read from a
-  Transfer Only order or on a player a Diplomacy card in force keeps at peace) for `UNTRUSTED_TURNS` (3).
+  Transfer Only order or on a player a Diplomacy card in force keeps at peace; my orders count as known only with
+  `sent`, an older cache as unknown, and a Transfer Only, Attack Only or percentage order — in `sent`, left out
+  of `moves` — out of my territory, into the neutral or out of my attack's source means that one is not read)
+  for `UNTRUSTED_TURNS` (3).
   Under Multi-Attack, or when the settings do not say, a chain moves armies many hops in one turn: no capture
   or held attack is read, and a stack out of the fog credits armies that left view at any distance. Nothing is
   read once an opponent may hold an Airlift card (the card clock, `opponentCanHold`): armies it lands look like
