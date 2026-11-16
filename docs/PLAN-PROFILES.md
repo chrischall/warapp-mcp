@@ -416,7 +416,7 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   (`src/finished-store.ts`: the key an HMAC of my account and the game under the shared salt; players by
   `playerKey`; 0600, atomic, at most 500, an unparsable file never overwritten), which is a processed
   mark — and so is a lasting one, `<dataDir>/finished/processed.json` (hashed record keys only, at most
-  5000), written once the request is spent, so a game whose record the 500 bound pruned is still never
+  5000), written once the request is spent or the history `warapp_get_game` read with `include_history` is consumed, so a game whose record the 500 bound pruned is still never
   read again (the one exception: a game whose record and mark both aged out). The record keeps: outcome (from the player states) and the turn I was out, my pick list and award,
   every player's income (`boardIncome`), territories, armies and full bonuses on each history board,
   the boards themselves (owners by key, at most the first 30 and the last 30, `boardsOmitted` counting

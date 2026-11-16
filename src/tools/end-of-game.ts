@@ -7,7 +7,7 @@
 // times the record bound) outlives its prune: a game with either is never read again by a trigger,
 // whatever its status — a failed read is recorded and NOT retried automatically; an explicit
 // warapp_get_game with `include_history` re-runs a failed pass from the history that call already read
-// (no further request). A reply showing the game still in play leaves no lasting mark (it may end later).
+// (no further request); a pass from a caller's history leaves the lasting mark too. A reply showing the game still in play leaves no lasting mark (it may end later).
 //
 // Triggers: any read that shows the game finished (warapp_get_game, warapp_wait_for_turn's read), a
 // game-ended in-app notification (warapp_get_notifications, at most `END_OF_GAME_PER_CALL` per call), and
@@ -230,6 +230,8 @@ export async function endOfGame(
       }
       if (game && game.state !== 'Finished') return { status: 'not-finished' };
       if (game && !game.players.some((p) => p.id === me && holdsSeat(p.state))) return { status: 'not-a-player' };
+      // The caller's history read is consumed here too: the lasting mark, so a pruned record is never re-read (P2).
+      if (opts.history) await markProcessed(dataDir, finishedGameKey(salt, me, gameId));
       read = game;
       const shown = game ?? seen;
       const { record, history } = await buildRecord(dataDir, salt, me, gameId, game, shown, failure);

@@ -484,6 +484,25 @@ describe('P2: the one history read asks no map and never refreshes one (#312)', 
     expect(history(calls.map((c) => c.url))).toHaveLength(3);
   });
 
+  it('a first pass from the history the caller read (include_history) leaves the lasting mark too', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const { calls, fetchImpl } = stubFetch(withHistory());
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined });
+    const deps = { client, dataDir: dir, env: {} };
+    const read = await client.getGame(GAME, { history: true, settings: true });
+    const first = await (await freshProcess()).endOfGame(deps, GAME, ANN, read, { history: read, retry: true, keep: 1 });
+    expect(first).toMatchObject({ status: 'captured', turns: 3 });
+    expect(existsSync(join(finishedDir(dir), 'processed.json'))).toBe(true);
+    // Another game's record prunes this one; the mark still says it was processed, in any process.
+    await (await freshProcess()).endOfGame(deps, 3001, ANN, undefined, { keep: 1 });
+    expect(existsSync(finishedPath(dir, (await playerRecordSalt(dir))!, ANN, GAME))).toBe(false);
+    const before = history(calls.map((c) => c.url)).length;
+    const eog = await freshProcess();
+    expect(await eog.needsEndOfGame(dir, {}, GAME, ANN)).toBe(false);
+    expect((await eog.endOfGame(deps, GAME, ANN, undefined, { keep: 1 })).status).toBe('already-processed');
+    expect(history(calls.map((c) => c.url))).toHaveLength(before);
+  });
+
   it('a reply showing the game still in play leaves no lasting mark: a later process reads it once it ends', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
     const { calls, fetchImpl } = stubFetch(finished({ state: 'Playing' }), withHistory());

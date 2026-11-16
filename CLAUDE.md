@@ -1049,7 +1049,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `MAX_PROCESSED_KEYS` (5000, ten times the record bound), the least recently marked dropped; atomic, 0600, under
   the path lock; a marks file that does not parse is never overwritten and marks then rest on the records), written
   as soon as a pass's request is spent (a failed request included; not when the reply shows the game still in
-  play, which may end later), so a game whose record the bound pruned is never read again. **The one remaining
+  play, which may end later) or it consumes the history a caller read (`warapp_get_game` with `include_history`), so a game whose record the bound pruned is never read again. **The one remaining
   exception:** a game whose record and mark have both aged out (5000 later passes) reads again if a trigger names it. `captured` holds
   (`src/analysis/finished-game.ts`, pure) the outcome from my player state (`won`, `lost`, `surrendered`, `eliminated`,
   `booted`, `ended-by-vote`) with the completed turns, the first history board I held no land (`outTurn`) and the

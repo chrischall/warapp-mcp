@@ -11,8 +11,9 @@
 // (with #315's reason) and `read-failed` (the request failed) record a pass whose history did not come,
 // and are never retried automatically (an explicit warapp_get_game with `include_history` may).
 //
-// The record bound would drop a processed mark, so every pass that spent its history read also leaves
-// a mark in `<dataDir>/finished/processed.json` (`markProcessed`): the record keys only (hashed, no id),
+// The record bound would drop a processed mark, so every pass that spent its history read (its own
+// request, or the history a caller read and handed it) also leaves a mark in
+// `<dataDir>/finished/processed.json` (`markProcessed`): the record keys only (hashed, no id),
 // at most `MAX_PROCESSED_KEYS` (ten times the record bound), the least recently marked dropped first. A
 // game with a mark is never read again by a trigger even once its record is pruned (P2). The one
 // remaining exception: a game whose record AND mark have both aged out (over 5000 later passes) reads
