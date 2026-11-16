@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "tool": "warapp_session_status",
+      "args": {},
+      "prompt": [
+        {
+          "name": "password",
+          "label": "war.app password",
+          "type": "password",
+          "help": "Used once to sign in, never stored: it goes to war.app once, with the war.app email you gave above, and only the session war.app gives back is kept. If it stops working (a changed password, say), use Sign in on this connection again, or reconnect it."
+        }
+      ],
+      "title": "Sign in to war.app",
+      "description": "This lets the connector reach war.app directly, without your browser. Connecting needs this sign-in to succeed: if war.app refuses it (a wrong password, a bot check, an outage, or an account that signs in only through Facebook), the connection is not made. Your password is sent to war.app once, with your war.app email, and then discarded; what is kept is the session war.app gives back, a full-account credential stored as your own secret on this connection. A refused sign-in is not retried for you, because war.app may count failed attempts."
+    }
+  ],
+  "capture": {
+    "tool": "warapp_sign_in",
+    "args": {
+      "email": {
+        "from": "WARAPP_EMAIL"
+      },
+      "password": {
+        "from": "password"
+      }
+    },
+    "path": "authToken",
+    "into": "WARAPP_AUTH_TOKEN"
+  }
+}

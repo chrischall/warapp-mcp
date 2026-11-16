@@ -32,7 +32,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   with `loadDotenvSafely` (host env wins). The token and email are scrubbed by value
   from every upstream error string. Never print or commit the real env file.
 - **Hosted per user.** `mint.yaml` uses `identity.perUserChild` + `auth.fields`, because
-  GameFeed answers as the player whose token is presented (fog of war included). Its
+  GameFeed answers as the player whose token is presented (fog of war included), and `auth.flow`
+  (`docs/examples/warapp-auth-flow.json`, a path, so the document ships in the npm package's `files`):
+  the war.app sign-in that captures the hosted direct leg's token (#333, below). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
 - **Thirteen tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
@@ -52,7 +54,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   which callers still read. `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. `warapp_record_agreement`
   also writes, but only the server's own agreement ledger and player record (nothing reaches war.app or a
-  player), so it is not confirm-gated and not counted above. `mark_seen: true` on `warapp_get_chat` and
+  player), so it is not confirm-gated and not counted above. Nor is `warapp_sign_in` (hosted only, the
+  sign-in mcp-host's authFlow calls; see the direct transport below): it starts a war.app session and
+  reaches no player. `mark_seen: true` on `warapp_get_chat` and
   `warapp_chat_inbox` writes only this machine's chat cursor: both stay read-only, and war.app's own read mark is
   `warapp_mark_chat_read` (#311). Chat (owner decisions of 2026-11-14,
   `docs/PLAN-TEAMS.md` §5): D1 every send confirm-gated; D2 automated chat is OFF until the owner
@@ -1507,7 +1511,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   war.app; the owner does live verification.
 - **The in-game player id is the GameFeed id minus two check digits each end**
   (`id.slice(2, -2)`); the digits vary per player.
-- **A chrome-less "direct" transport, LOCAL-ONLY** (`src/direct/`, phase 7 — `docs/PLAN-DIRECT.md`).
+- **A chrome-less "direct" transport** (`src/direct/`, phase 7 — `docs/PLAN-DIRECT.md`; hosted, #333).
   The signed-in session is carried by a durable **`AuthToken`** cookie, and that cookie **alone**
   authenticates both the server-rendered pages and a `/Services` POST (**verified 2026-11-12**).
   So the bridge has a direct-first router wrapped around it (`createDirectFirstBridge` in
@@ -1527,14 +1531,66 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `WARAPP_SESSION_FILE` (default `<dataDir>/session.json`). One injection point: `index.ts` builds
   this one bridge and passes it to `WarappRpc`, the page fetches, the healthcheck and the push
   socket, so they all get direct mode at once. `warapp_link_session` (write, confirm-gated,
-  local-only) captures the cookie once through the bridge; `warapp_session_status` reports the
+  local only) captures the cookie once through the bridge; `warapp_session_status` reports the
   linked state, age and active leg. **The `AuthToken` is a full-account credential:** file `0600`,
   dir `0700` (macOS: no ACL on either), atomic write; scrubbed by value from every upstream error string (mcp-utils
-  `stripBearer` + `scrubToken`); never logged, never in a tool result, never in an error/hint.
-  **Direct mode is local-only, enforced in code:** on a hosted child (`isHosted`, `src/hosted.ts`)
-  `warapp_link_session` is not registered, the session store reads as empty and refuses writes
-  (`src/direct/session.ts`), the router is pinned to the browser bridge whatever `WARAPP_TRANSPORT`
-  says (`createDirectFirstBridge`), and no hint suggests linking; `mint.yaml` keeps the bridge.
+  `stripBearer` + `scrubToken`); never logged, never in a tool result (the one exception is
+  `warapp_sign_in`'s, below), never in an error/hint.
+  **Hosted, the direct leg serves only from the token mcp-host captured (#333, owner choice "token
+  only"), enforced in code:** on a hosted child (`isHosted`, `src/hosted.ts`) `warapp_link_session` is
+  not registered and the session FILE is never read or written (`writeSession` refuses;
+  `src/direct/session.ts`). The war.app password is asked once in an mcp-host `authFlow` and never
+  stored; only war.app's `AuthToken` is captured, as the per-user secret `WARAPP_AUTH_TOKEN`
+  (`HOST_TOKEN_ENV`). `hostedSession` reads it into memory, read-only (trimmed, a leading
+  `AuthToken=` dropped; a value that is not 16–4096 printable characters without `;` `,` `"` `\`
+  is `malformed`, treated as absent and never echoed; `capturedAt` is `HOST_CAPTURED_AT`,
+  `origin: 'host'`). With it, `createDirectFirstBridge` resolves `WARAPP_TRANSPORT` as locally
+  (`auto`: direct first, the bridge its fallback, the non-GET never re-sent) from that token alone
+  (the given store is not consulted); `warapp_session_status` and the healthcheck say
+  `linked: 'host-captured'` (no capture time, no age); a signed-out session's errors, log line and
+  hints say to use "Sign in" on the connection, or reconnect it, and that a paired war.app tab works meanwhile
+  (`HOST_SIGN_IN_ADVICE`; mcp-host runs the login again, the router falls back to the bridge), never
+  `warapp_link_session` (`LiveContext.hostSignIn`, `accountUnknown(ctx)`).
+  Without it a hosted child is byte-identical to before: the store reads as empty, the router is
+  pinned to the browser bridge whatever `WARAPP_TRANSPORT` says, and no hint suggests linking.
+  Locally `WARAPP_AUTH_TOKEN` is ignored: only the session file counts. The flow is
+  `docs/examples/warapp-auth-flow.json` (one masked password prompt on a step that calls the
+  read-only `warapp_session_status`; the capture is the sign-in itself, `warapp_sign_in` with
+  `email` from `WARAPP_EMAIL` and that password, `authToken` into `WARAPP_AUTH_TOKEN`: one war.app
+  attempt, the token never in the gateway-readable bag). No paste-the-cookie fallback ships:
+  `warapp_sign_in` takes no cookie argument, so such a flow would be an `isError` that ends the
+  login (a test keeps the document, the hint and the manifest from offering one until it is built).
+  `mint.yaml` declares the password flow as `auth.flow` (a path inside the package). **Once a
+  registration carries the flow, every new connection needs one successful war.app password sign-in:**
+  mcp-host ends the login with no grant on ANY `isError` from the capture (`credential_rejected`,
+  `edge_blocked`, `transport`, `timeout`, `http`, `unknown`), so a captcha, an outage or a network fault
+  ends it like a wrong password and may clear the fields already entered, and an account with no war.app
+  password (Facebook sign-in) cannot connect. The bridge is the fallback only for a connection made before
+  the flow was added and for a session that expires later. Adding the flow is the owner's decision.
+  `tests/auth-flow-doc.test.ts` checks it against mcp-host's rules offline. **`warapp_sign_in` (part B, `src/direct/sign-in.ts`, `src/tools/sign-in.ts`)
+  is registered ONLY hosted** (locally `warapp_link_session` stays the way). It takes `email` and
+  `password` and makes ONE attempt, never retried (war.app may count failed sign-ins): GET
+  `https://war.app/LogIn` for its cookies (`jses_WS60`, `FirstReferrer`, `AWSELB`; a page without its
+  password form, or a bot check, refuses before any password is sent), then one form POST to the same
+  URL (`Email`, `Password`, `KeepSignedIn=on`, those cookies); redirects are followed by hand, at most 3
+  per phase, every one as a GET (the password is never re-sent, a 307/308 included) and only within
+  the exact origin `https://war.app` (anywhere else is refused unrequested), through netguard's
+  public-only dispatcher, one 30 s deadline, a 2 MiB cap per body. Success is an `AuthToken` set on any
+  hop after the POST (one the page sets alone does not count; a deletion does not count; one that fails
+  `isPlausibleAuthToken`, the hosted child's own shape check, is refused rather than kept). Refusals:
+  `credential_rejected` (the form came back), `edge_blocked` (detectEdgeBlock, captcha markup, 403,
+  429), `transport` / `timeout` (saying whether the POST had gone), `http` / `unknown`; the email (any
+  case), the password and every cookie value of 6+ characters are scrubbed by value and the cause is
+  dropped. **Its result `{ authToken }` is the single documented exception to "never in a tool
+  result":** mcp-host's capture reads the credential from the capture tool's result, and the caller
+  already holds the password, so it grants nothing new; nothing else about the account is returned.
+  Not confirm-gated (the flow sends only the arguments its document declares); annotated not
+  read-only, not destructive, not idempotent, open-world. Hiding it from the
+  menu (`enabledTools` left without it) is an owner choice, off by default: mcp-host never checks a flow's
+  step or capture tool against that allowlist (`wire.ts` `toolCallRequestSchema`), but the gate is
+  fail-closed, so once set the connection's resources (`warapp://strategy`) and prompts are gone, and every
+  tool a later release adds stays hidden until the list is edited by hand. The design, trade-off, registration change
+  and the unbuilt paste fallback are in `docs/PLAN-DIRECT.md`.
 - **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
   needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback;
   #228: the surrender preview reads the game with `settings: true`, which carries it — without them it

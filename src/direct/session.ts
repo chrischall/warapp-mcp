@@ -20,8 +20,12 @@
 // import time, the server boots without a session, and a missing OR corrupt
 // file reads as `null` — never a throw.
 //
-// LOCAL-ONLY: on a hosted child (src/hosted.ts) the store reads as empty — a
-// session file already in the data dir is never read — and refuses to write.
+// Hosted (src/hosted.ts) the FILE is never read or written: a session file
+// already in the data dir is ignored and {@link writeSession} refuses. The one
+// session a hosted child has is the AuthToken mcp-host captured at sign-in and
+// injects as {@link HOST_TOKEN_ENV} (#333): {@link hostedSession} reads it into
+// memory, read-only, never stored. Without it the store reads as empty, as
+// before. Locally the variable is ignored: only the session file counts.
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -41,10 +45,64 @@ export const SESSION_HOST = 'war.app';
 export interface Session {
   /** The `AuthToken` cookie value — a full-account credential. */
   authToken: string;
-  /** When the token was captured, as an ISO-8601 string. */
+  /** When the token was captured, as an ISO-8601 string ({@link HOST_CAPTURED_AT} for the host's). */
   capturedAt: string;
   /** Always {@link SESSION_HOST}; a file for any other host is ignored. */
   host: typeof SESSION_HOST;
+  /** `host`: mcp-host captured it at sign-in ({@link hostedSession}); absent for a linked session file. */
+  origin?: 'host';
+}
+
+/**
+ * The env var mcp-host's sign-in flow captures war.app's AuthToken into on a
+ * hosted child (an `authFlow` `capture`, stored as a per-user secret). Hosted
+ * only; a local process ignores it.
+ */
+export const HOST_TOKEN_ENV = 'WARAPP_AUTH_TOKEN';
+
+/** The `capturedAt` of the host's session: the time is not known to this process. */
+export const HOST_CAPTURED_AT = 'captured by the host';
+
+/** Loose bounds on a captured AuthToken: a cookie value, nothing a header could split on. */
+const HOST_TOKEN_SHAPE = /^[\x21-\x7e]{16,4096}$/;
+const HOST_TOKEN_FORBIDDEN = /[;,"\\]/;
+
+/** The env value as a bare cookie value: trimmed, a leading `AuthToken=` dropped. */
+function hostTokenValue(env: EnvSource): string | undefined {
+  const raw = readEnvVar(HOST_TOKEN_ENV, { env });
+  if (raw === undefined) return undefined;
+  return raw.trim().replace(/^AuthToken=/, '');
+}
+
+/**
+ * Whether a hosted child has a usable host-captured token: `none` (not hosted,
+ * or the variable unset), `ok`, or `malformed` (set, but not a plausible cookie
+ * value — treated as absent, and never echoed).
+ */
+export function hostedTokenState(env: EnvSource = process.env): 'none' | 'ok' | 'malformed' {
+  if (!isHosted(env)) return 'none';
+  const v = hostTokenValue(env);
+  if (v === undefined) return 'none';
+  return isPlausibleAuthToken(v) ? 'ok' : 'malformed';
+}
+
+/**
+ * Whether `v` is a plausible bare AuthToken cookie value (the loose bounds the
+ * hosted child accepts in {@link HOST_TOKEN_ENV}). warapp_sign_in returns only a
+ * token that passes, so a capture never stores one the child would ignore.
+ */
+export function isPlausibleAuthToken(v: string): boolean {
+  return HOST_TOKEN_SHAPE.test(v) && !HOST_TOKEN_FORBIDDEN.test(v);
+}
+
+/**
+ * The hosted child's session: the AuthToken mcp-host captured at sign-in
+ * ({@link HOST_TOKEN_ENV}), in memory and read-only, or `null` when not hosted,
+ * unset or malformed. Never throws, never stores anything.
+ */
+export function hostedSession(env: EnvSource = process.env): Session | null {
+  if (hostedTokenState(env) !== 'ok') return null;
+  return { authToken: hostTokenValue(env)!, capturedAt: HOST_CAPTURED_AT, host: SESSION_HOST, origin: 'host' };
 }
 
 type Rec = Record<string, unknown>;
@@ -72,10 +130,11 @@ function parseSession(raw: unknown): Session | null {
 
 /**
  * The linked session, or `null` when none is linked or the file is missing or
- * unusable (wrong shape, wrong host, not JSON). Never throws.
+ * unusable (wrong shape, wrong host, not JSON). Hosted: {@link hostedSession},
+ * never the file. Never throws.
  */
 export async function readSession(env: EnvSource = process.env): Promise<Session | null> {
-  if (isHosted(env)) return null;
+  if (isHosted(env)) return hostedSession(env);
   try {
     return parseSession(JSON.parse(await readFile(sessionFilePath(env), 'utf8')));
   } catch {
@@ -90,7 +149,7 @@ export async function readSession(env: EnvSource = process.env): Promise<Session
  * Same guarantees: a missing or corrupt file reads as `null`, never a throw.
  */
 export function readSessionSync(env: EnvSource = process.env): Session | null {
-  if (isHosted(env)) return null;
+  if (isHosted(env)) return hostedSession(env);
   try {
     return parseSession(JSON.parse(readFileSync(sessionFilePath(env), 'utf8')));
   } catch {
@@ -173,9 +232,12 @@ export function sessionTmpPath(path: string): string {
  */
 export async function writeSession(session: Session, env: EnvSource = process.env): Promise<void> {
   if (isHosted(env)) {
-    throw new McpToolError('The direct transport is local-only: a hosted server never stores a war.app session.', {
-      kind: 'unknown',
-    });
+    throw new McpToolError(
+      'A hosted server never stores a war.app session: its session is the one mcp-host captured at sign-in.',
+      {
+        kind: 'unknown',
+      },
+    );
   }
   const path = resolve(sessionFilePath(env));
   const dir = dirname(path);

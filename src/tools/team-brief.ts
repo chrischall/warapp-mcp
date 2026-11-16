@@ -80,7 +80,7 @@ export function registerTeamBriefTool(server: McpServer, ctx: LiveContext): void
     async ({ game_id }) => {
       const gameId = parseGameId(game_id);
       const identity = await ctx.myIdentity().catch(() => undefined);
-      if (!identity) throw accountUnknown(ctx.hosted, 'your team brief cannot be read');
+      if (!identity) throw accountUnknown(ctx, 'your team brief cannot be read');
       const feed = await ctx.client.getGame(gameId, { settings: true });
       if (feed.state !== PLAYING && feed.state !== DISTRIBUTING) {
         throw new McpToolError(`Game ${feed.id} is not being picked or played (game state: ${feed.state}), so there is nothing to brief.`, {

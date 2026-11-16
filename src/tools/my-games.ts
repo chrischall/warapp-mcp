@@ -81,7 +81,7 @@ export async function listMyGames(
 async function myInGameId(ctx: LiveContext): Promise<number> {
   const me = await ctx.myInGameId();
   if (me === undefined) {
-    throw accountUnknown(ctx.hosted, 'its games cannot be listed');
+    throw accountUnknown(ctx, 'its games cannot be listed');
   }
   return me;
 }

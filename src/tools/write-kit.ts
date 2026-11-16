@@ -47,6 +47,7 @@ import type { Game, Player } from '../normalize.js';
 import { notSent, WarappServerError } from '../protocol/rpc.js';
 import { respond, untrustedText } from './common.js';
 import { withToolConfig } from './hints.js';
+import { HOST_SIGN_IN_ADVICE } from '../direct/transport.js';
 import { failureText, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
 
@@ -55,8 +56,16 @@ export function refuse(message: string, hint: string): never {
   throw new McpToolError(message, { kind: 'unknown', hint });
 }
 
-/** The hint when the signed-in account cannot be told: linking a session is suggested only locally. */
-function signedInHint(hosted: boolean | undefined): string {
+/** Whether this server is hosted, and signed in to war.app by mcp-host: a bare flag, or a live context. */
+type HostedView = boolean | undefined | { hosted?: boolean | undefined; hostSignIn?: boolean | undefined };
+
+/**
+ * The hint when the signed-in account cannot be told: linking a session is suggested only locally, and a
+ * hosted connection mcp-host signed in to war.app is pointed at its "Sign in" (a paired tab meanwhile).
+ */
+function signedInHint(view: HostedView): string {
+  const { hosted, hostSignIn } = typeof view === 'object' ? view : { hosted: view, hostSignIn: false };
+  if (hosted && hostSignIn) return `${HOST_SIGN_IN_ADVICE} Then retry.`;
   return hosted
     ? 'Make sure a war.app tab signed in to your account is open and paired (reload or focus it if it is frozen), then retry.'
     : 'Make sure a war.app tab signed in to your account is open and paired (reload or focus it if it is frozen), or link ' +
@@ -64,7 +73,7 @@ function signedInHint(hosted: boolean | undefined): string {
 }
 
 /** The one refusal when the signed-in account cannot be read; `consequence` ends the sentence. */
-export function accountUnknown(hosted: boolean | undefined, consequence = 'nothing was sent'): McpToolError {
+export function accountUnknown(hosted: HostedView, consequence = 'nothing was sent'): McpToolError {
   return new McpToolError(`Could not tell which war.app account is signed in, so ${consequence}.`, {
     kind: 'unknown',
     hint: signedInHint(hosted),
@@ -77,11 +86,11 @@ export function accountUnknown(hosted: boolean | undefined, consequence = 'nothi
  * account, so a write never goes ahead without it.
  */
 export async function requireMe(
-  ctx: Pick<LiveContext, 'myInviteToken' | 'hosted'>,
+  ctx: Pick<LiveContext, 'myInviteToken' | 'hosted' | 'hostSignIn'>,
   opts: { fresh?: boolean; consequence?: string } = {},
 ): Promise<number> {
   const token = await ctx.myInviteToken({ fresh: opts.fresh ?? true });
-  if (token === undefined) throw accountUnknown(ctx.hosted, opts.consequence);
+  if (token === undefined) throw accountUnknown(ctx, opts.consequence);
   return token;
 }
 

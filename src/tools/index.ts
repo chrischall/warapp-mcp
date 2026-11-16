@@ -42,6 +42,7 @@ import { pushWebSocketLeg } from '../push/websocket.js';
 import { readSession } from '../direct/session.js';
 import { createDirectFirstBridge, type DirectFetch } from '../direct/transport.js';
 import { isHosted } from '../hosted.js';
+import { registerSignInTool, type SignInToolDeps } from './sign-in.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
 
 type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
@@ -58,6 +59,8 @@ type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCa
   push?: PushListener;
   /** Test seam: the direct leg's HTTPS primitive (default netguard `fetchPublic`). */
   directFetch?: DirectFetch;
+  /** Test seam: warapp_sign_in's sign-in (hosted only; default src/direct/sign-in.ts). */
+  signIn?: SignInToolDeps['signIn'];
 };
 
 /** Every tool this server serves. index.ts and the tests share this list. */
@@ -75,9 +78,10 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   // browser bridge otherwise (WARAPP_TRANSPORT: auto default | direct |
   // fetchproxy). WarappRpc, the page fetches, the healthcheck and the push
   // socket all take this one bridge, so they all gain direct mode at once.
-  // Direct mode is LOCAL-ONLY (src/hosted.ts): on a hosted child the router is
-  // pinned to the browser bridge, the session store reads as empty and
-  // warapp_link_session is not registered.
+  // Hosted (src/hosted.ts) no session file is read or written and
+  // warapp_link_session is not registered: the direct leg serves only from the
+  // AuthToken mcp-host captured at sign-in (WARAPP_AUTH_TOKEN, in memory,
+  // #333), and without one the router is pinned to the browser bridge.
   const hosted = isHosted(env ?? process.env);
   const bridge = createDirectFirstBridge({
     store: { read: () => readSession(deps.env) },
@@ -169,4 +173,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     ...(env ? { env } : {}),
   });
   registerPushTools(server, live, push, deps.env ? { env: deps.env } : {});
+  // Hosted only: the war.app sign-in mcp-host's authFlow captures the AuthToken from (#333 part B).
+  // Locally warapp_link_session stays the way to the direct transport.
+  if (hosted) registerSignInTool(server, deps.signIn ? { signIn: deps.signIn } : {});
 }

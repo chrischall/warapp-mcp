@@ -31,9 +31,12 @@
 // errors are scrubbed BY VALUE ({@link scrubError}: message, hint, stack and
 // cause chain). The direct leg refuses to attach the cookie to any host but
 // war.app itself (no subdomain), so the token can never be sent elsewhere.
-// Direct mode is LOCAL-ONLY, enforced here: on a hosted child (src/hosted.ts)
-// {@link createDirectFirstBridge} pins the router to the browser bridge
-// whatever WARAPP_TRANSPORT says, and its session store reads as empty.
+// Hosted (src/hosted.ts), the direct leg serves only from the AuthToken
+// mcp-host captured at sign-in (WARAPP_AUTH_TOKEN, src/direct/session.ts
+// `hostedSession`, in memory, never stored), with the bridge as its fallback
+// exactly as locally; without that token {@link createDirectFirstBridge} pins
+// the router to the browser bridge whatever WARAPP_TRANSPORT says and its
+// session store reads as empty, as before (#333).
 import { detectEdgeBlock, EdgeBlockedError, McpToolError } from '@chrischall/mcp-utils';
 import {
   createDirectFirstTransport,
@@ -48,7 +51,7 @@ import {
 import { fetchPublic, type PublicFetchResponse, type PublicFetchStopped } from '@chrischall/mcp-utils/netguard';
 import type { WarappBridge } from '../transport-bridge.js';
 import { isHosted } from '../hosted.js';
-import { SESSION_HOST, scrubError, type Session } from './session.js';
+import { hostedSession, SESSION_HOST, scrubError, type Session } from './session.js';
 
 /** The env var pinning the transport: `direct` | `fetchproxy` | `auto` (default). */
 export const TRANSPORT_ENV = 'WARAPP_TRANSPORT';
@@ -74,13 +77,25 @@ export interface SessionStore {
   read(): Promise<Session | null>;
 }
 
+/**
+ * What to do about a signed-out host-captured session: mcp-host runs the sign-in again. Until then the
+ * router falls back to the browser bridge, so a paired war.app tab still serves the connection.
+ */
+export const HOST_SIGN_IN_ADVICE =
+  'Use "Sign in" on this war.app connection, or reconnect it (mcp-host signs in to war.app again and captures a ' +
+  'new session). Meanwhile, a war.app tab signed in and paired with the browser bridge works, since calls fall ' +
+  'back to it.';
+
 /** No war.app session is linked — the router (in `auto`) falls back to the bridge. */
 export class SessionNotLinkedError extends McpToolError {
   override name = 'SessionNotLinkedError';
-  constructor() {
-    super('No war.app session is linked for the direct transport. Run warapp_link_session to capture one.', {
-      kind: 'no_credential',
-    });
+  constructor(opts: { hostSignIn?: boolean } = {}) {
+    super(
+      opts.hostSignIn
+        ? `This connection has no war.app session. ${HOST_SIGN_IN_ADVICE}`
+        : 'No war.app session is linked for the direct transport. Run warapp_link_session to capture one.',
+      { kind: 'no_credential' },
+    );
   }
 }
 
@@ -89,16 +104,22 @@ export class SessionExpiredError extends McpToolError {
   override name = 'SessionExpiredError';
   /** When the expired session was captured (non-secret), so a relink can be told apart. */
   readonly capturedAt: string | undefined;
-  constructor(opts: { capturedAt?: string | undefined; notResent?: boolean } = {}) {
+  /** The session was the one mcp-host captured: the remedy is its Sign in, not warapp_link_session. */
+  readonly hostSignIn: boolean;
+  constructor(opts: { capturedAt?: string | undefined; notResent?: boolean; hostSignIn?: boolean } = {}) {
+    const remedy = opts.hostSignIn ? HOST_SIGN_IN_ADVICE : 'Run warapp_link_session to relink.';
     super(
-      'The linked war.app session is no longer signed in. ' +
+      (opts.hostSignIn
+        ? 'The war.app session this connection signed in with is no longer signed in. '
+        : 'The linked war.app session is no longer signed in. ') +
         (opts.notResent
           ? 'The request had already reached war.app, so it was not re-sent over the browser bridge (a write must ' +
-            'never be sent twice); later calls use the bridge. Retry, or run warapp_link_session to relink.'
-          : 'Run warapp_link_session to relink.'),
+            `never be sent twice); later calls use the bridge. Retry, or: ${remedy}`
+          : remedy),
       { kind: 'session_expired' },
     );
     this.capturedAt = opts.capturedAt;
+    this.hostSignIn = opts.hostSignIn ?? false;
   }
 }
 
@@ -331,11 +352,13 @@ export class DirectBridge {
   constructor(
     private readonly store: SessionStore,
     private readonly fetchImpl: DirectFetch = fetchViaPublic,
+    /** A hosted child signed in by mcp-host: its signed-out errors point at Sign in. */
+    private readonly hostSignIn = false,
   ) {}
 
   async fetch(init: FetchproxyFetchInit, signal?: AbortSignal): Promise<FetchproxyFetchResult> {
     const sess = await this.store.read();
-    if (!sess) throw new SessionNotLinkedError();
+    if (!sess) throw new SessionNotLinkedError(this.hostSignIn ? { hostSignIn: true } : {});
     const token = sess.authToken;
     // warappUrl refuses a non-war.app host BEFORE the cookie is built.
     const url = warappUrl(init.path);
@@ -366,7 +389,9 @@ export class DirectBridge {
         });
       }
     }
-    if (looksSignedOut(url, res)) throw new SessionExpiredError({ capturedAt: sess.capturedAt });
+    if (looksSignedOut(url, res)) {
+      throw new SessionExpiredError({ capturedAt: sess.capturedAt, hostSignIn: this.hostSignIn || sess.origin === 'host' });
+    }
     return { status: res.status, body: res.body, url: res.url };
   }
 }
@@ -409,7 +434,7 @@ interface CreateDirectFirstBridgeOptions {
   store: SessionStore;
   /** Build the existing fetchproxy bridge leg, lazily. */
   makeBridge: () => WarappBridge;
-  /** The transport pin; defaults to {@link TRANSPORT_ENV} read from `env`. Ignored when hosted. */
+  /** The transport pin; defaults to {@link TRANSPORT_ENV} read from `env`. Hosted without a captured token: ignored. */
   mode?: TransportMode;
   /** Env for the default `mode` read and the hosted check (default `process.env`). */
   env?: NodeJS.ProcessEnv;
@@ -439,14 +464,21 @@ type Wall = { kind: 'session'; capturedAt: string | null } | { kind: 'edge' };
  * is lifted when a NEW session is linked, so the direct leg is retried.
  */
 export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): WarappDirectBridge {
-  // LOCAL-ONLY: a hosted child never rides the direct leg nor reads a stored
-  // session, whatever WARAPP_TRANSPORT (or `mode`) says.
-  const hosted = isHosted(opts.env ?? process.env);
-  const mode: TransportMode = hosted
+  // A hosted child never reads a stored session. With the token mcp-host
+  // captured at sign-in it rides the direct leg from that token alone (the
+  // given store is not consulted) and resolves its mode as a local process
+  // does; without one it is pinned to the browser bridge whatever
+  // WARAPP_TRANSPORT (or `mode`) says.
+  const env = opts.env ?? process.env;
+  const hosted = isHosted(env);
+  const hostSession = hosted ? hostedSession(env) : null;
+  const pinned = hosted && !hostSession;
+  const mode: TransportMode = pinned
     ? 'fetchproxy'
     : (opts.mode ?? readTransportMode(TRANSPORT_ENV, opts.env ? { env: opts.env } : {}));
-  const store: SessionStore = hosted ? { read: async () => null } : opts.store;
-  const direct = new DirectBridge(store, opts.directFetch);
+  const store: SessionStore = hosted ? { read: async () => hostSession } : opts.store;
+  const hostSignIn = hostSession !== null;
+  const direct = new DirectBridge(store, opts.directFetch, hostSignIn);
   const log = opts.log ?? ((m: string) => console.error(m));
   const now = opts.now ?? Date.now;
 
@@ -471,7 +503,13 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
     log(
       `[warapp-mcp] Direct transport unavailable (${why}) — switching to the ContextMint Bridge browser bridge. ` +
         `Keep a ${SESSION_HOST} tab open and approve the pairing prompt in the extension if one appears` +
-        (next.kind === 'session' && !hosted ? '; run warapp_link_session to return to the direct transport.' : '.'),
+        (next.kind !== 'session'
+          ? '.'
+          : hostSignIn
+            ? `. ${HOST_SIGN_IN_ADVICE}`
+            : hosted
+              ? '.'
+              : '; run warapp_link_session to return to the direct transport.'),
     );
   };
 
@@ -529,7 +567,9 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
           throw err;
         }
       }
-      if (reached) throw new SessionExpiredError({ capturedAt: reached.capturedAt, notResent: true });
+      if (reached) {
+        throw new SessionExpiredError({ capturedAt: reached.capturedAt, notResent: true, hostSignIn: reached.hostSignIn });
+      }
       return (leg as WarappBridge).ready().then((t) => t.fetch(init));
     });
   };

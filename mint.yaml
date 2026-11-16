@@ -10,14 +10,27 @@ slug: warapp
 # `bridgePortEnv: WARAPP_WS_PORT` (with a runtime that supports a bridge) —
 # registration fields this manifest has no schema for.
 #
-# Direct transport is LOCAL-ONLY. A local install can link the signed-in
-# war.app session (warapp_link_session) and then talk to war.app directly
-# without a browser (WARAPP_TRANSPORT=auto/direct). That stores a full-account
-# AuthToken on the machine, so hosting never uses it: a hosted child keeps the
-# browser bridge above and stores no session token — enforced in code
-# (src/hosted.ts): when hosted, warapp_link_session is not registered, the
-# session store reads as empty and the transport is pinned to the bridge.
-# Nothing in this manifest enables direct mode.
+# Direct transport. A local install can link the signed-in war.app session
+# (warapp_link_session, stored on that machine) and then talk to war.app
+# directly without a browser (WARAPP_TRANSPORT=auto/direct). A hosted child
+# never stores a session and never registers warapp_link_session (src/hosted.ts):
+# it rides the direct leg only from the session captured at sign-in — the
+# AuthToken mcp-host's authFlow (`auth.flow` below) captures into the per-user
+# secret WARAPP_AUTH_TOKEN (#333: the war.app password is asked once and never
+# stored; the token is held in memory) — with the bridge above as its fallback
+# on the same registration. Without that token it is pinned to the bridge, as
+# before. THE TRADE-OFF: once the registration carries the flow, every NEW
+# connection needs one successful war.app password sign-in. mcp-host ends the
+# login with no grant on any warapp_sign_in refusal — a captcha, an outage or
+# a network fault as well as a wrong password — and may clear the fields
+# already entered; an account with no war.app password (Facebook sign-in)
+# cannot connect. The bridge is the fallback only for connections made before
+# the flow was added and for a session that expires later. Adding the flow is
+# the owner's decision (docs/PLAN-DIRECT.md, "Registration change", step 2). The flow is docs/examples/warapp-auth-flow.json (shipped in the npm
+# package): one masked password prompt, then warapp_sign_in with WARAPP_EMAIL
+# and that password as the capture, path authToken into WARAPP_AUTH_TOKEN.
+# WARAPP_AUTH_TOKEN is deliberately not in `env`: a capture into a host-set
+# variable is refused.
 summary: >-
   war.app (Warzone) advisor: games waiting on you, maps, scouting, chat and
   turn plans in your war.app tab. Joining, leaving or surrendering games,
@@ -42,10 +55,11 @@ identity:
   perUserChild: true
 
 auth:
-  # Collected once on the connector's authorize page. There is no `flow`:
-  # GameFeed takes the email + token on every request (form body), with no
-  # login exchange, MFA or session to mint. Every auth field is stored as a
-  # per-user secret (the field schema has no separate `secret` flag).
+  # Collected once on the connector's authorize page: GameFeed takes the email
+  # + token on every request (form body), with no login exchange. Every auth
+  # field is stored as a per-user secret (the field schema has no separate
+  # `secret` flag). The `flow` then signs in to war.app once for the direct
+  # transport (see the header): a path inside the package, read at the pin.
   fields:
     - name: WARAPP_EMAIL
       label: war.app email
@@ -60,6 +74,7 @@ auth:
         Your API token, shown at https://war.app/API/GetAPIToken while signed
         in to war.app. Stored as a per-user secret and never shown again.
         Changing your war.app password rotates it — reconnect with the new one.
+  flow: docs/examples/warapp-auth-flow.json
 
 # WARAPP_EMAIL / WARAPP_API_TOKEN are collected per user above, and an auth
 # field may not name a host-set variable, so they are not in `env`. Set them in
@@ -82,7 +97,9 @@ env:
     help: >-
       How the live-game tools reach war.app on a LOCAL install: auto (default —
       the chrome-less direct transport when a session is linked, else the
-      browser bridge), direct, or fetchproxy. A hosted child keeps the bridge.
+      browser bridge), direct, or fetchproxy. A hosted child keeps the bridge
+      unless mcp-host captured a war.app session at sign-in (WARAPP_AUTH_TOKEN);
+      then it reads this as a local install does.
   - name: WARAPP_PLAYER_RECORD
     required: false
     help: >-
