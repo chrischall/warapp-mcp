@@ -23,8 +23,9 @@ import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { GetGameOptions } from './client.js';
 import { isHosted } from './hosted.js';
-import { readableRecord, recordFromGame, type GameRecord } from './map-stats.js';
+import { RETIRED_LAYOUTS, readableRecord, recordFromGame, type GameRecord } from './map-stats.js';
 import type { Game } from './normalize.js';
+import { historyReport, safeKeys, type HistoryUnreadable } from './trend.js';
 
 // The hosted check is shared (src/hosted.ts); re-exported for existing imports.
 export { HOSTED_MARKERS, isHosted } from './hosted.js';
@@ -36,6 +37,8 @@ export const DEFAULT_NEW_GAMES = 10;
 export const MAX_NEW_GAMES = 50;
 /** The least time between two requests the collector makes. */
 export const MIN_GAP_MS = 1000;
+/** At most this many unreadable games are listed with their reason (#302). */
+export const MAX_UNREADABLE_LISTED = 10;
 /** How long a game seen unfinished is skipped before it is fetched again. */
 export const UNFINISHED_RETRY_MS = 60 * 60 * 1000;
 
@@ -82,6 +85,11 @@ export interface CollectResult {
    * again this process (counted again on each call, with no request).
    */
   unreadable: number;
+  /**
+   * #302: why each unreadable game's history did not read (name-free: key names and counts), at most
+   * {@link MAX_UNREADABLE_LISTED}; absent when none was.
+   */
+  unreadableGames?: Array<{ gameId: number; historyUnreadable: HistoryUnreadable }>;
   /** Feed games still uncollected after this call's budget. */
   remaining: number;
 }
@@ -97,6 +105,7 @@ const isRecord = (v: unknown): v is GameRecord => {
     typeof r.gameId === 'number' &&
     typeof r.mapId === 'number' &&
     typeof r.turnsSeen === 'number' &&
+    (r.layout === undefined || typeof r.layout === 'string') &&
     Array.isArray(r.players) &&
     r.players.every(
       (p: unknown) =>
@@ -203,8 +212,8 @@ export class StatsCollector {
   readonly #unfinished = new Map<number, number>();
   /** Games that failed this process: tried again only after every untried game. */
   readonly #failed = new Set<number>();
-  /** Finished games whose history did not parse this process: not fetched again. */
-  readonly #unreadable = new Set<number>();
+  /** Finished games whose history did not parse this process, with why (#302): not fetched again. */
+  readonly #unreadable = new Map<number, HistoryUnreadable>();
   #last: number | undefined;
   /** The request queue: each throttle waits for the one before it, so overlapping calls never share a slot. */
   #queue: Promise<void> = Promise.resolve();
@@ -253,6 +262,12 @@ export class StatsCollector {
     };
     // Newest first, but a game that already failed this process goes last, so a
     // permanently broken game at the head of the feed cannot eat the budget every call.
+    const listUnreadable = (gameId: number) => {
+      const why = this.#unreadable.get(gameId);
+      if (!why) return;
+      const list = (res.unreadableGames ??= []);
+      if (list.length < MAX_UNREADABLE_LISTED) list.push({ gameId, historyUnreadable: why });
+    };
     const ordered = [...ids.filter((id) => !this.#failed.has(id)), ...ids.filter((id) => this.#failed.has(id))];
     for (const id of ordered) {
       if (index.has(id)) {
@@ -261,6 +276,7 @@ export class StatsCollector {
       }
       if (this.#unreadable.has(id)) {
         res.unreadable++;
+        listUnreadable(id);
         continue;
       }
       const seen = this.#unfinished.get(id);
@@ -292,7 +308,19 @@ export class StatsCollector {
         if (!map) throw new Error('no map');
         const record = recordFromGame(game, map);
         if (!readableRecord(record)) {
-          this.#unreadable.add(id);
+          const report = historyReport(game, { needPlayerLand: true });
+          const keys = safeKeys(game.feedKeys ?? []);
+          this.#unreadable.set(
+            id,
+            'unreadable' in report
+              ? report.unreadable
+              : record.layout !== undefined && RETIRED_LAYOUTS.has(record.layout)
+                ? // Read under a layout the live check found misnumbered (#302).
+                  { reason: 'retired-layout', keys, turns: report.read.turns, layout: record.layout }
+                : // A history with player land that still yields no starts (the first board with land shows none of the game's players).
+                  { reason: 'no-starts', keys, turns: report.read.turns },
+          );
+          listUnreadable(id);
           this.#failed.delete(id);
           res.unreadable++;
           continue;

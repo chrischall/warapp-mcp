@@ -152,8 +152,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   move order, distribution, kill rates, the guard, cards in play, private messaging on or off, and so on), tested against the profile and
   `noteContext(settings)`; a condition on something the game did not state does not hold, and a card condition
   falls back to "any card" when the list is unknown. `docs/STRATEGY.md` names every note id (a test checks it, and
-  another that some game reaches every note). With a game the profile comes from GameFeed alone (`feedProfile`,
-  standing `unknown`) and the answer carries the game's `cardClock` (`src/strategy/card-clock.ts`: per card, the
+  another that some game reaches every note). With a game the profile is `feedProfile` (standing `unknown`) on GameFeed's
+  players and settings, judged for the signed-in account's seat when it is seated and still playing (a seat that is out is ignored: judged for it, every player left would count as an opponent) (#309: GameFeed's board for a game in
+  progress has no standing, so the phase never read contact or late): while the game is played and that seat plays,
+  the phase reads the live board (`loadLiveGame`, as warapp_plan_turn; read-only, nothing kept), else — or on any
+  failure — GameFeed's standing as before; `profile.source` says `live` or `gamefeed`, and a failed live board read is
+  said as `profile.liveError` (a short reason, `FROZEN_TAB_HINT` after a bridged timeout), never dropped. `warapp_plan_turn`'s full view
+  adds `notes`, the ids of `notesFor` its own profile (never compact; the plan never reads them). The answer carries the game's `cardClock` (`src/strategy/card-clock.ts`: per card, the
   capturing turns to the first one, fastest and guaranteed, from the pieces, starting pieces, minimums and pieces
   per turn in the settings; whether a commerce game is on is read from a non-empty `Commerce` object, unverified).
   With no game and no topic the compact answer is the topic index, with `notes` as ids and topics only. A `map_id` alone works only for
@@ -1467,7 +1472,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `WARAPP_STATS=1`, always off when hosted (recognised by mcp-host's child-only variables —
   `HOSTED_MARKERS` in `src/hosted.ts`), and `mint.yaml` never sets `WARAPP_STATS`. GameIDFeed + GameFeed
   `GetHistory=true` through `WarappClient`, ≥ 1 s apart, finished games cached forever as
-  name-free records at `<dataDir>/stats/<mapId>/<gameId>.json`. Each game is read with
+  name-free records at `<dataDir>/stats/<mapId>/<gameId>.json`. #302: the history is read from
+  `history`, else the reply's top-level `standing<N>` / `turn<N>` / `distributionStanding` keys (shape
+  UNVERIFIED, docs/WARAPP-API.md; a `distributionStanding` with no player land is the board before
+  picks, so `standing0` is the start), and an unreadable one says why, name-free (`historyReport` in
+  `src/trend.ts`: a reason and key names only) — `collected.unreadableGames` here, `historyUnreadable` /
+  `historyRead` in `warapp_get_game` with `include_history`. A record keeps the history `layout` it was
+  read in: a layout added to `RETIRED_LAYOUTS` (`src/map-stats.ts`, empty until the live check) makes its
+  records unreadable, never cached and a cached one deleted and fetched again. Each game is read with
   `GetMap=false` (a cached map is attached by its id); only a finished game on an uncached map
   costs one more request, for the map.
 - **All GameFeed traffic goes through `WarappClient` (`src/client.ts`)**, including the

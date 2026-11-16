@@ -205,10 +205,27 @@ describe('feedProfile: a profile from GameFeed alone', () => {
     expect(p.phase).toBe('late');
   });
 
+  it('judges for the signed-in account when given, not the first seated player (#309)', () => {
+    // Player 9 faces 11; player 7, the first seat, holds nothing in view.
+    const players = [{ id: 7 }, { id: 9 }, { id: 11 }];
+    const b = board([[1, 9], [2, 11]]);
+    expect(feedProfile({ graph, players, turn: 5, board: b }).phase).toBe('expansion');
+    expect(feedProfile({ graph, players, turn: 5, board: b, me: 9 }).phase).toBe('contact');
+    // An account not seated in the game is ignored: the first seated player, as before.
+    expect(feedProfile({ graph, players, turn: 5, board: b, me: 99 })).toEqual(feedProfile({ graph, players, turn: 5, board: b }));
+  });
+
   it('players that are out do not count: two of three still playing is a 1v1 late game', () => {
     const p = feedProfile({ graph, players: [{ id: 7 }, { id: 9 }, { id: 11, state: 'Eliminated' }], turn: 9 });
     expect(p.format).toBe('1v1');
     expect(p.phase).toBe('late');
+  });
+
+  it('a signed-in account that is out is ignored: the two still playing are a 1v1, as without it', () => {
+    const players = [{ id: 7 }, { id: 9 }, { id: 11, state: 'Eliminated' }];
+    const p = feedProfile({ graph, players, turn: 9, me: 11 });
+    expect(p.format).toBe('1v1');
+    expect(p).toEqual(feedProfile({ graph, players, turn: 9 }));
   });
 });
 

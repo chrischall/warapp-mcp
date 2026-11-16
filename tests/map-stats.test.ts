@@ -55,6 +55,7 @@ describe('recordFromGame', () => {
       gameId: 5,
       mapId: 777,
       turnsSeen: 3,
+      layout: 'array',
       players: [
         { playerId: A, won: true, starts: [1, 3], anchorBonusId: 1, startBonusIds: [1, 2], firstBonusTurn: 2 },
         { playerId: B, won: false, starts: [4, 5], anchorBonusId: 2, startBonusIds: [2, 3], firstBonusTurn: null },

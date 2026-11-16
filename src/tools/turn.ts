@@ -127,6 +127,7 @@ import { writeGameRecord } from '../replay.js';
 import { gameOutlook } from '../analysis/outlook.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import { cardArmyCeiling, cardClock } from '../strategy/card-clock.js';
+import { hasCostlyBonus, noteContext, notesFor } from '../strategy/notes.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { readPickRecord } from '../pick-list.js';
@@ -1303,7 +1304,7 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
       // Turn k is played on the board after k − 1 completed turns.
       for (let k = Math.max(1, turn - CACHED_TURNS); k < turn; k++) {
         if (byTurn.has(k)) continue;
-        const board = boardFromHistory(withHistory.history, k - 1, game.players);
+        const board = boardFromHistory(withHistory.history, k - 1, game.players, withHistory.numberOfTurns !== undefined ? { numberOfTurns: withHistory.numberOfTurns } : {});
         if (board) byTurn.set(k, { source: 'history', board });
       }
     } catch {
@@ -2459,6 +2460,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 ...(plan.profile.standingSource === 'tracked' ? { standingSource: 'tracked' as const } : {}),
                 ...(plan.profile.endsWith !== null ? { endsWith: plan.profile.endsWith } : {}),
               },
+        // #309: full only — the ids of the strategy notes this plan's own profile matches (warapp_strategy
+        // serves their text). Reported only: the plan never reads them.
+        ...(rung === 'full'
+          ? { notes: notesFor(plan.profile, undefined, { ...noteContext(game.settings), negativeBonus: hasCostlyBonus(graph) }).map((n) => n.id) }
+          : {}),
         // #178: the outlook and its basis; full adds each turn judged.
         // #304: the compact view keeps what the state rests on beside it (`evidence`).
         outlook:

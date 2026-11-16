@@ -319,9 +319,14 @@ not use it yet). Our own model, built on what a player reads from the opening an
 # The rest of the game — `warapp_strategy`
 
 `warapp_strategy(game_id?, map_id?, topic?)` serves the notes below. With a game it picks the
-notes whose condition fits the game's profile (`feedProfile`: format, settings and phase from
-GameFeed alone — the standing needs the board, so notes for ahead and behind both apply until
-`warapp_plan_turn` judges it) and adds map notes; with only a map it gives the map notes; with
+notes whose condition fits the game's profile (`feedProfile`: format and settings from GameFeed,
+and the phase from my own seat on the live board when the signed-in account plays in the game —
+else GameFeed's standing, which for a game in progress carries none, so contact and late notes need
+the live board; `profile.source` says `live` or `gamefeed`, #309, and `profile.liveError` why a live board read
+that was tried failed; a signed-in seat that is out is
+ignored, so the players left are judged as they would be without an account. The standing is left `unknown`, so
+notes for ahead and behind both apply until `warapp_plan_turn` judges it; its full view lists the ids
+of the notes its own profile matches as `notes`) and adds map notes; with only a map it gives the map notes; with
 neither, every note. The general notes are also the MCP resource `warapp://strategy`, and a map
 this process has loaded is `warapp://strategy/map/{mapId}`.
 

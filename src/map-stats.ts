@@ -16,7 +16,7 @@
 // {@link mapStats} leaves it out of every figure and counts it apart (#132).
 import type { BoardState } from './board.js';
 import type { Game, GameMap } from './normalize.js';
-import { historyBoards } from './trend.js';
+import { historyBoards, historyReport } from './trend.js';
 
 /** Below this many games a rate is reported only with a warning. */
 export const MIN_SAMPLE = 5;
@@ -51,8 +51,23 @@ export interface GameRecord {
   mapId: number;
   /** Usable history boards read; 0 when the history did not parse. */
   turnsSeen: number;
+  /**
+   * The history layout the boards were read in (`historyReport`'s `layout`, e.g. `standing-keys+1`).
+   * GameFeed's finished-game shape is UNVERIFIED (#302), so a record keeps it: once the live check
+   * settles a layout as misnumbered, adding it to {@link RETIRED_LAYOUTS} drops every record read
+   * under it (deleted from the cache and fetched again). Absent on a record cached before it existed,
+   * and when the history did not read.
+   */
+  layout?: string;
   players: PlayerRecord[];
 }
+
+/**
+ * History layouts whose records are no longer trusted (#302): a record read under one is not
+ * readable, so it is never cached and a cached one is deleted and fetched again. Empty until the
+ * live check of GameFeed's finished-game history says which numbering is wrong.
+ */
+export const RETIRED_LAYOUTS: ReadonlySet<string> = new Set<string>();
 
 const byId = (a: number, b: number) => a - b;
 
@@ -69,7 +84,7 @@ const scoringBonuses = (map: GameMap) =>
 
 /** Reduce a finished game (with `GetHistory`) to its stats record. Never throws on a bad history. */
 export function recordFromGame(game: Game, map: GameMap): GameRecord {
-  const boards = historyBoards(game.history, game.players);
+  const boards = historyBoards(game.history, game.players, game.numberOfTurns !== undefined ? { numberOfTurns: game.numberOfTurns } : {});
   const start = boards.find(({ board }) => board.territories.some((t) => t.owner.kind === 'player'));
   const later = start ? boards.filter((b) => b.turn >= start.turn) : [];
   const bonuses = scoringBonuses(map);
@@ -99,7 +114,9 @@ export function recordFromGame(game: Game, map: GameMap): GameRecord {
       }
       return { playerId: p.id, won: p.state === 'Won', starts, anchorBonusId, startBonusIds, firstBonusTurn };
     });
-  return { gameId: game.id, mapId: map.id, turnsSeen: boards.length, players };
+  const report = boards.length ? historyReport(game) : undefined;
+  const layout = report && 'read' in report ? { layout: report.read.layout } : {};
+  return { gameId: game.id, mapId: map.id, turnsSeen: boards.length, ...layout, players };
 }
 
 interface PickStat {
@@ -157,11 +174,12 @@ function median(xs: number[]): number | null {
   return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
 }
 
-/** A record the stats can use: its history parsed and some player's starts were read. */
-export const readableRecord = (r: GameRecord): boolean => r.turnsSeen > 0 && r.players.some((p) => p.starts.length > 0);
+/** A record the stats can use: its history parsed, some player's starts were read, and its layout is not retired. */
+export const readableRecord = (r: GameRecord, retired: ReadonlySet<string> = RETIRED_LAYOUTS): boolean =>
+  r.turnsSeen > 0 && r.players.some((p) => p.starts.length > 0) && (r.layout === undefined || !retired.has(r.layout));
 
 function statsFor(mapId: number, all: GameRecord[], top: number): MapStats {
-  const games = all.filter(readableRecord);
+  const games = all.filter((r) => readableRecord(r));
   const unreadable = all.length - games.length;
   const picks = new Map<number, { picks: number; winnerPicks: number }>();
   const anchors = new Map<number, { players: number; wins: number }>();

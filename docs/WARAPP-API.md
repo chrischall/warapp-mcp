@@ -503,7 +503,34 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
     tracker credits each owner-only territory an opponent visibly took (the guard left there and
     the capture's cost), so `unexplained` is not simply everything it earned.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
-  through raw. `GetChat` is passed through raw too, and it is third-party text: `src/chat.ts` reads
+  through raw. **#302 — finished games read as unreadable live:** `warapp_get_game` with
+  `include_history` showed no `history` field in any view, and `warapp_map_stats` read 25 of 25
+  finished games as unreadable. Every view shows the *normalized* game, which kept only a
+  top-level `history` key, so the reply carried none: the history came under another key, or not
+  at all. Which one is UNVERIFIED (no raw reply was kept). The reader now takes, in order:
+  `history` / `History` (a JSON string parsed), else the reply's top-level `standing<N>`,
+  `turn<N>` (orders there: never read as a board when it carries orders, below) and `distributionStanding` gathered into one object
+  (the layout older Warlight-era API clients read; not seen live here), else a per-turn
+  `standings` list (one that does not read as the current board) or `turns` list. Under
+  top-level `standing<N>` keys a `distributionStanding` beside them decides: one on which no
+  player holds land is the board before picks, so `standing0` is the start; one with player land
+  is the start itself, so `standing0` is the board after the first turn. Without one, `standing0`
+  is the start when the last N reaches `numberOfTurns` and the board after the first turn when it
+  is one short — **UNVERIFIED**. Without `standing<N>` keys, turn-numbered keys (`turn<N>` / `<N>`)
+  are read as boards, but an entry that carries orders (an `orders` list with no standing key, or a
+  list of records naming an order `type`) never is, and a `distributionStanding` is entry 0 only
+  when a player holds land on it (a land-free one is the board before picks, never turn 1's
+  previous board). `historyReport` (`src/trend.ts`)
+  says whether it read (`historyRead`: boards, first and last entry, `layout`) or why not
+  (`historyUnreadable`: `reason` — `absent`, `not-json`, `no-turns`, `no-standing`,
+  `no-player-land`, `no-starts`, `retired-layout` — with the reply's top-level key names, and the history's or its
+  first entry's key names and entry count where they apply; identifiers only, never values or
+  owner text). `warapp_get_game` reports it in the compact and full views when the history was
+  asked for (the client keeps the key names, `Game.feedKeys`, only then), and `warapp_map_stats`
+  lists it per game (`collected.unreadableGames`, at most 10). **Live check:** one
+  `warapp_get_game` with `include_history` on a finished game: `historyRead.layout` (or the
+  `historyUnreadable` keys) names the real shape, and `historyRead.last` against
+  `numberOfTurns` settles the `standing<N>` numbering; then record it here and tighten the reader. `GetChat` is passed through raw too, and it is third-party text: `src/chat.ts` reads
   it loosely (`{ playerID, date, turn, message }`, `playerID` the in-game id — verified live 2026-11-14:
   for public messages it matched the web client's `GameRefresh` chat read in count, time, turn and
   sender, `docs/WEB-PROTOCOL.md` "Chat"). **Whether it returns
@@ -523,7 +550,7 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   an array of turns (number from `turnNumber` / `turn` / `number`, else the position), a
   `{ turns: [...] }` wrapper, or an object keyed `turn<N>` / `standing<N>` / `<N>`; each
   entry is a standing itself or carries one under `standing` / `standings` /
-  `latestStanding`. **Assumed:** an entry's number is the count of completed turns its
+  `latestStanding` (a `turn<N>` / `<N>` entry that carries orders is skipped, above). **Assumed:** an entry's number is the count of completed turns its
   standing reflects (so the previous board of turn T is entry T − 2), and owners may be
   GameFeed or in-game player ids (both are mapped). When the feed sends nothing usable
   (or errors), the planner falls back to the board it planned on in the previous turn,
@@ -602,9 +629,14 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   `games`, each a number, a numeric string or `{ id | gameID }`. Distinct, highest id first.
 - Each listed game is then loaded with `GetHistory=true&GetSettings=true` — the history of a
   **finished** game, which the docs say the feed returns. Its shape is as unverified as the
-  in-progress one above: `historyBoards` (`src/trend.ts`) reads it with the same loose parser.
+  in-progress one above: `historyBoards` (`src/trend.ts`) reads it with the same loose parser
+  (#302: every layout listed under "Board state", and each unreadable game's reason in
+  `collected.unreadableGames`).
   **Assumed:** the first board where players hold land is the starting picks, and an entry's
-  number is the count of completed turns.
+  number is the count of completed turns. Each cached record keeps the `layout` it was read in, so
+  once the live check settles a layout as misnumbered, adding it to `RETIRED_LAYOUTS`
+  (`src/map-stats.ts`, empty until then) makes every record read under it unreadable: never cached,
+  and a cached one deleted and fetched again (`retired-layout`).
 - Throttle (ours, not war.app's): at most 50 new games per call (default 10), ≥ 1 s between
   requests, finished games cached forever at `<dataDir>/stats/<mapId>/<gameId>.json` as
   name-free records. A finished game whose history yields no starting board is counted

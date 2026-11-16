@@ -414,8 +414,17 @@ export interface Game {
   map?: GameMap;
   /** Current board, when the feed sends a standing (UNVERIFIED parser). */
   standing?: BoardState;
-  /** Raw `GetHistory` turns, when asked for and sent. */
+  /**
+   * Raw `GetHistory` turns, when asked for and sent: the reply's `history` (or `History`; a JSON string
+   * parsed), else (#302) its history-like top-level keys gathered into one object — `standing<N>`,
+   * `turn<N>`, `distributionStanding`, or a per-turn `standings` / `turns` list. Shape UNVERIFIED.
+   */
   history?: unknown;
+  /**
+   * #302: the GameFeed reply's top-level key names, set by the client only when the history was
+   * asked for, so an unreadable history can say what came instead (`historyReport`, src/trend.ts).
+   */
+  feedKeys?: string[];
   /** Raw `GetChat` messages, when asked for and sent. Third-party text. */
   chat?: unknown;
   /** #178: the end-of-game, boot and AI settings, read from `settings` ({@link parseEndRules}). */
@@ -446,7 +455,8 @@ export function normalizeGame(raw: unknown): Game {
   }
   const standing = boardFromStanding(g.standing ?? g.standings ?? g.latestStanding);
   if (standing) game.standing = standing;
-  if (g.history !== undefined) game.history = g.history;
+  const history = historyOf(g);
+  if (history !== undefined) game.history = history;
   if (g.chat !== undefined) game.chat = g.chat;
   const settings = isRec(g.settings) ? g.settings : undefined;
   const description = [g.description, g.Description, settings?.description, settings?.Description]
@@ -454,6 +464,32 @@ export function normalizeGame(raw: unknown): Game {
     .find((d) => d !== undefined && d.trim() !== '');
   if (description !== undefined) game.description = description;
   return game;
+}
+
+/** A top-level key that carries a turn of the history (#302): `standing<N>`, `turn<N>`, `distributionStanding`. */
+const HISTORY_KEY = /^(?:(?:standing|turn)_?\d+|distributionStanding)$/i;
+
+/**
+ * The game's history as sent (#302): `history` / `History` (a JSON string parsed when it parses), else
+ * the history-like top-level keys gathered into one object, else a per-turn `standings` / `turns` list
+ * — `standings` only when it does not read as the current board. `undefined` when none came.
+ */
+function historyOf(g: Record<string, unknown>): unknown {
+  const named = g.history ?? g.History;
+  if (named !== undefined) {
+    if (typeof named !== 'string') return named;
+    try {
+      return JSON.parse(named) as unknown;
+    } catch {
+      return named;
+    }
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(g)) if (HISTORY_KEY.test(k)) out[k] = v;
+  if (Object.keys(out).length) return out;
+  if (Array.isArray(g.turns)) return { turns: g.turns };
+  if ((Array.isArray(g.standings) || isRec(g.standings)) && !boardFromStanding(g.standings)) return { standings: g.standings };
+  return undefined;
 }
 
 // ---------- end of game: surrender, boot, AI seats (#178) ----------
