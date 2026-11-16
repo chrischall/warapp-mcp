@@ -1,11 +1,13 @@
 // The outlook log (#178): per game, the strength ratio of every turn this server planned and the
-// latest outlook, plus the final result once a game this server logs is seen finished. Local
+// latest outlook, plus the final result once a game this server logs is seen finished and, when
+// it was lost, how (#274: `loss`, read from the cached boards; a log may hold only that). Local
 // only, at `<dataDir>/outlook/<gameId>.json`, and name-free (player ids and figures, no names):
 // it is the data the outlook's thresholds are to be calibrated from (OUTLOOK_RATIO is borrowed).
 // Best effort: never throws.
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import type { HowLost } from './analysis/how-lost.js';
 import type { GameOutlook, OutlookState } from './analysis/outlook.js';
 
 type Rec = Record<string, unknown>;
@@ -34,6 +36,11 @@ interface OutlookLog {
   latest?: { turn: number; state: OutlookState | null; heldTurns: number; basis: string };
   /** My GameFeed state once the game was seen finished (e.g. `Won`, `Eliminated`, `SurrenderAccepted`). */
   result?: string;
+  /**
+   * How the game was lost, read from the cached boards once it was seen finished (#274): ids and
+   * figures only, so it outlives the board cache.
+   */
+  loss?: HowLost;
 }
 
 /** The log of `gameId` as `playerId` played it; `undefined` when absent, another player's, or unusable. */
@@ -88,6 +95,31 @@ export async function recordResult(dir: string, gameId: number, playerId: number
     if (!log) return false;
     if (log.result === result) return true;
     await write(dir, { ...log, result });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The player whose log `gameId` is; `undefined` when there is none. Never throws. */
+export async function readOutlookPlayer(dir: string, gameId: number): Promise<number | undefined> {
+  try {
+    const c: unknown = JSON.parse(await readFile(outlookLogPath(dir, gameId), 'utf8'));
+    return isRec(c) && c.gameId === gameId && typeof c.playerId === 'number' ? c.playerId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Keep how `gameId` was lost (#274) in its log, starting one when this server logged no outlook for
+ * it (the boards were cached by another tool); `true` when written. Name-free: ids and figures. Best effort.
+ */
+export async function recordLoss(dir: string, gameId: number, playerId: number, loss: HowLost): Promise<boolean> {
+  try {
+    const log = (await readOutlookLog(dir, gameId, playerId)) ?? { gameId, playerId, turns: {} };
+    if (JSON.stringify(log.loss) === JSON.stringify(loss)) return true;
+    await write(dir, { ...log, loss });
     return true;
   } catch {
     return false;
