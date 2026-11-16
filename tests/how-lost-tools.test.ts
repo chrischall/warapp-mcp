@@ -104,16 +104,44 @@ describe('warapp_get_game: how the game was lost (#274)', () => {
     expect(p.howLost.line).toMatch(/^Eliminated on turn 3 \(the last turn cached here/);
   });
 
-  it('reports nothing for a game I won, one in progress, or one this server never cached', async () => {
+  it('reports nothing for a game I won, one I am still playing, or one this server never cached', async () => {
     const dir = await seed();
     h = await liveHarness({ feed: [finished('Won')], dataDir: dir });
     expect((payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, unknown>).howLost).toBeUndefined();
     await h.harness.close();
-    h = await liveHarness({ feed: [{ ...finished('Eliminated'), state: 'Playing' }], dataDir: dir });
+    h = await liveHarness({ feed: [{ ...finished('Playing'), state: 'Playing' }], dataDir: dir });
     expect((payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, unknown>).howLost).toBeUndefined();
     await h.harness.close();
     h = await liveHarness({ feed: [finished('Eliminated')] });
     expect((payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, unknown>).howLost).toBeUndefined();
+  });
+
+  it('#283: reads an eliminated seat of mine while the others play on, from the cached boards', async () => {
+    const dir = await seed();
+    const g = finished('Eliminated');
+    const [a, b] = g.players as Array<Record<string, string>>;
+    // Three seats: I am out, the other two play on.
+    const live = { ...g, state: 'Playing', players: [a, { ...b, state: 'Playing' }, { ...b, id: '1002', name: 'Third', state: 'Playing' }] };
+    h = await liveHarness({ feed: [live], dataDir: dir });
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+    // numberOfTurns 3: turn 3 is the newest completed one, so the loss was on it.
+    expect(p.howLost).toMatchObject({ result: 'Eliminated', turn: 3, turnCertain: true, cause: 'commander', commander: { territoryId: 3, armies: 341 } });
+    expect(p.howLost.line).toMatch(/^Eliminated on turn 3: my commander's territory 3 ⟦Thenn⟧ fell to ⟦Rival ʺxʺ⟧/);
+    expect((await readOutlookLog(dir, GAME, ME))?.loss).toMatchObject({ turn: 3, cause: 'commander' });
+  });
+
+  it('#283: names a boot or a surrender of mine while the game is still playing', async () => {
+    for (const state of ['Booted', 'SurrenderAccepted']) {
+      const dir = await seed();
+      const g = finished(state);
+      const [a, b] = g.players as Array<Record<string, string>>;
+      const live = { ...g, state: 'Playing', players: [a, { ...b, state: 'Playing' }, { ...b, id: '1002', name: 'Third', state: 'Playing' }] };
+      h = await liveHarness({ feed: [live], dataDir: dir });
+      const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+      expect(p.howLost).toMatchObject({ result: state, cause: state === 'Booted' ? 'booted' : 'surrendered' });
+      await h.harness.close();
+      h = undefined;
+    }
   });
 
   it('gives a surrender or a boot as the cause without reading the boards', async () => {

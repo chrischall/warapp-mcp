@@ -1,4 +1,4 @@
-// How a lost game was lost (#274 item 5), for warapp_get_game: read from the boards this server
+// How a lost game was lost (#274 item 5), for warapp_get_game (#283: also a seat of mine out of a game still playing): read from the boards this server
 // cached while it played (src/analysis/how-lost.ts), kept name-free in the outlook log so it outlives
 // the board cache, and reported with names through `untrustedText`. No request; never throws.
 
@@ -8,7 +8,10 @@ import { readOutlookLog, readOutlookPlayer, recordLoss } from '../outlook-log.js
 import { readBoardHistory, readCachedOrders, readCachedPlayer } from '../trend.js';
 import { untrustedText } from './common.js';
 
-/** The causes a finished state gives without a board. */
+/** #283: the seat states that put me out of a game, whether or not the others play on. */
+const OUT_STATES: ReadonlySet<string> = new Set(['Eliminated', 'Booted', 'SurrenderAccepted']);
+
+/** The causes a seat's state gives without a board. */
 const STATE_CAUSES: Record<string, { cause: string; line: string }> = {
   SurrenderAccepted: { cause: 'surrendered', line: 'Surrendered (accepted).' },
   Booted: { cause: 'booted', line: 'Booted from the game.' },
@@ -62,17 +65,20 @@ function report(loss: HowLost, game: Game): Record<string, unknown> {
 }
 
 /**
- * How `game` was lost, when it is finished and the account this server cached it for did not win:
- * a surrender or a boot by its state, an elimination from the cached boards (kept in the outlook log
+ * How `game` was lost, when the account this server cached it for did not win it: once it is finished,
+ * or (#283) while it is still playing once my seat is out (eliminated, booted or surrendered). A
+ * surrender or a boot by its state, an elimination from the cached boards (kept in the outlook log
  * the first time, read back from there once the boards are gone). `undefined` otherwise.
  */
 export async function lossReport(dir: string, game: Game): Promise<Record<string, unknown> | undefined> {
-  if (game.state !== 'Finished') return undefined;
   try {
+    const finished = game.state === 'Finished';
+    // #283: a seat of mine that is out is reported while the others play on; no disk read otherwise.
+    if (!finished && !game.players.some((p) => p.state !== undefined && OUT_STATES.has(p.state))) return undefined;
     const me = (await readCachedPlayer(dir, game.id)) ?? (await readOutlookPlayer(dir, game.id));
     if (me === undefined) return undefined;
     const state = game.players.find((p) => p.id === me)?.state;
-    if (state === undefined) return undefined;
+    if (state === undefined || (!finished && !OUT_STATES.has(state))) return undefined;
     const byState = STATE_CAUSES[state];
     if (byState) return { result: state, ...byState };
     if (state !== 'Eliminated') return undefined;

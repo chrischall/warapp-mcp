@@ -3,8 +3,9 @@
 //
 // The board cached for turn T is the board turn T was planned on, before it resolved, and a player
 // eliminated on turn T has no board after it. So the newest cached board on which I hold anything is
-// the turn I was most likely eliminated on: certain only when the game ended on that turn
-// (`turnsCompleted === T`), since otherwise this server may simply have stopped planning. The cause
+// the turn I was most likely eliminated on: certain only when that is the newest completed turn
+// (`turnsCompleted === T`: the game ended on it, or, #283, the others play on and it just resolved),
+// since otherwise this server may simply have stopped planning. The cause
 // is read from that board:
 // - `commander`: my commander stands on it. Losing the commander eliminates a player, and losing every
 //   territory at once on a board where I held more is far less likely, so the commander's territory is
@@ -68,7 +69,7 @@ export interface CommanderLoss {
 export interface HowLost {
   /** The newest turn cached with a territory of mine: the turn the loss was most likely on. */
   turn: number;
-  /** `true` when the game ended on that very turn, so the loss was on it. */
+  /** `true` when that turn is the game's newest completed one (it ended on it, or it plays on from it), so the loss was on it. */
   turnCertain: boolean;
   cause: LossCause;
   /** The territories I held on that board. */

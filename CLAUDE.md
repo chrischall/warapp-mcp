@@ -1197,9 +1197,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
   (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
   **How a lost game was lost (#274, `src/analysis/how-lost.ts` pure, `src/tools/how-lost.ts`):**
-  `warapp_get_game` on a finished game the cached account did not win reports `howLost` — a surrender
-  or boot by its state; an elimination from the newest cached board where it held a territory (the
-  turn, `turnCertain` only when the game ended on it): my commander there → its territory fell
+  `warapp_get_game` on a finished game the cached account did not win reports `howLost`, and (#283) on a
+  game still playing once that account's seat is out (`Eliminated`, `Booted`, `SurrenderAccepted`; no
+  disk read unless some seat is) — a surrender or boot by its state; an elimination from the newest
+  cached board where it held a territory (the turn, `turnCertain` only when it is the game's newest
+  completed turn): my commander there → its territory fell
   (inferred), with what stood there after my cached orders (`low` after my moves out, `high` after my
   moves in) and `armiesToTake(low + 7)` at the game's kill rates (`exact: false` with luck;
   `held.uncertain` when an order `moves` leaves out — kept only in `sent` — or a card play touches it).
