@@ -593,7 +593,7 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
       return [...src.matchAll(/defineGatedWrite\([\s\S]*?name: '(warapp_\w+)'/g)].map((m) => m[1]!);
     })
     .sort();
-  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven'];
   // How the store-facing prose names each write.
   const plain: Record<string, RegExp> = {
     warapp_begin_turn: /\bbegin/i,
@@ -601,6 +601,7 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
     warapp_join_game: /\bjoin/i,
     warapp_leave_game: /\bleav/i,
     warapp_link_session: /\blink/i,
+    warapp_mark_chat_read: /\bchat read\b/i,
     warapp_send_chat: /\bchat/i,
     warapp_submit_picks: /\bpicks\b/i,
     warapp_submit_turn: /\bturn orders\b/i,

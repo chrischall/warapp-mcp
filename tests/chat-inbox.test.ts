@@ -52,14 +52,12 @@ type Mark = { gameId: number; pub: string | null; team: string | null; priv: Arr
 
 /**
  * A fake war.app: GetMyGames lists `games`; GameRefresh answers each game's chat (an error for a game in `fail`);
- * RegisterChatView (#311) is recorded in `marks` and clears the game's unread flags unless `keepUnread`, or answers
- * `markReply` instead when given.
+ * a RegisterChatView (#311) is recorded in `marks`, so a test can show the inbox never sends one.
  */
 function warapp(
   games: SyntheticGame[],
   chats: Record<number, () => SyntheticMessage[]>,
   fail: number[] = [],
-  opts: { keepUnread?: boolean; markReply?: () => Partial<ReplyFrame> | { status: number; body: string; url: string } } = {},
 ) {
   const refreshed: number[] = [];
   const marks: Mark[] = [];
@@ -71,11 +69,7 @@ function warapp(
       if (req.method === Method.GetMyGames) return { body: (w) => writeMyGamesReturn(w, games) };
       if (req.method === Method.RegisterChatView) {
         const r = req.body;
-        const mark: Mark = { gameId: r.int32(), pub: r.string(), team: r.string(), priv: dict(r), groups: dict(r) };
-        marks.push(mark);
-        if (opts.markReply) return opts.markReply() as Partial<ReplyFrame>;
-        const g = games.find((x) => x.id === mark.gameId);
-        if (g && !opts.keepUnread) g.unread = {};
+        marks.push({ gameId: r.int32(), pub: r.string(), team: r.string(), priv: dict(r), groups: dict(r) });
         return { body: (w) => w.bool(false) };
       }
       if (req.method === Method.GameRefresh) {
@@ -265,16 +259,16 @@ describe('warapp_chat_inbox', () => {
     expect(textOf(res)).toMatch(/games cannot be listed/);
   });
 
-  it('is a write by its annotations only for the read mark: never destructive, idempotent; registered hosted too', async () => {
+  it('is read-only by its annotations (mark_seen stays on this machine, #311); registered hosted too', async () => {
     h = await liveHarness({ feed: FEED, pages: SIGNED_IN_ANN, env: { MCP_HOST_METER_FILE: '/tmp/meter' } });
     const tools = await h.harness.client.listTools();
     const t = tools.tools.find((x) => x.name === 'warapp_chat_inbox');
-    expect(t?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    expect(t?.annotations).toMatchObject({ readOnlyHint: true, idempotentHint: true, openWorldHint: true });
   });
 });
 
-describe('warapp_chat_inbox: finished games and war.app read marks (#311)', () => {
-  /** The games, fresh per test (the fake clears their flags on a mark). */
+describe('warapp_chat_inbox: finished games with unread chat (#311)', () => {
+  /** The games, fresh per test. */
   const flagged = (): SyntheticGame[] => [
     { ...myGame(103, WAITING), unread: { public: true } },
     { ...myGame(101, PLAYING), unread: { public: true, private: true } },
@@ -300,76 +294,16 @@ describe('warapp_chat_inbox: finished games and war.app read marks (#311)', () =
     expect(p).not.toHaveProperty('readOnWarapp');
   });
 
-  it('mark_seen sends war.app a read mark per game it shows unread, then reads the list back once: confirmed', async () => {
+  it('mark_seen marks every game read on this machine only: war.app gets no read mark (warapp_mark_chat_read sends it)', async () => {
     const fake = warapp(flagged(), CHATS_311);
     h = await liveHarness({ feed: FEED_311, pages: SIGNED_IN_ANN, warapp: fake.handler });
     const p = payload<Inbox>(await h.call('warapp_chat_inbox', { mark_seen: true }));
-    // 102 shows nothing unread on war.app: no mark sent for it.
-    expect(fake.marks).toEqual([
-      { gameId: 101, pub: '2', team: '-1', priv: [[BOB.inGame, '1']], groups: null },
-      { gameId: 103, pub: '1', team: '-1', priv: null, groups: null },
-      { gameId: 104, pub: '-1', team: '6', priv: null, groups: null },
-    ]);
-    const methods = h.exchanges.map((e) => e.request.method);
-    // The list first, then one read-back after the last mark.
-    expect(methods.filter((m) => m === Method.GetMyGames)).toHaveLength(2);
-    expect(methods.lastIndexOf(Method.GetMyGames)).toBeGreaterThan(methods.lastIndexOf(Method.RegisterChatView));
-    expect(p.readOnWarapp).toEqual([
-      { id: 101, outcome: 'confirmed', channels: ['public', 'private'] },
-      { id: 102, outcome: 'not_applied', channels: [], why: expect.stringMatching(/already shows this chat read/) },
-      { id: 103, outcome: 'confirmed', channels: ['public'] },
-      { id: 104, outcome: 'confirmed', channels: ['team'] },
-    ]);
-    expect(String(p.readOnWarappNote)).toMatch(/UNVERIFIED live/);
-    // The local mark is made too.
-    expect(p.games.find((g) => g.id === 101)!.markedSeen).toEqual(['public', 'team', 'private', 'unknown']);
-  });
-
-  it('a game war.app already shows read gets no mark', async () => {
-    const games = [myGame(101, PLAYING)];
-    const fake = warapp(games, CHATS);
-    h = await liveHarness({ feed: [feedGame(101, 'Playing')], pages: SIGNED_IN_ANN, warapp: fake.handler });
-    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { mark_seen: true }));
     expect(fake.marks).toEqual([]);
-    expect(p.readOnWarapp).toEqual([{ id: 101, outcome: 'not_applied', channels: [], why: expect.stringMatching(/already shows/) }]);
-  });
-
-  it('a list still showing the chat unread after the mark is unconfirmed', async () => {
-    const fake = warapp(flagged().filter((g) => g.id === 101), CHATS, [], { keepUnread: true });
-    h = await liveHarness({ feed: [feedGame(101, 'Playing')], pages: SIGNED_IN_ANN, warapp: fake.handler });
-    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { mark_seen: true }));
-    expect(p.readOnWarapp).toEqual([
-      { id: 101, outcome: 'unconfirmed', channels: ['public', 'private'], why: expect.stringMatching(/still shows unread messages on public, private/) },
-    ]);
-  });
-
-  it('war.app not answering the mark is unknown, never resent, and the read still answers', async () => {
-    const fake = warapp(flagged().filter((g) => g.id === 101), CHATS, [], {
-      markReply: () => ({ status: 502, body: 'bad gateway', url: 'https://war.app/Services' }),
-    });
-    h = await liveHarness({ feed: [feedGame(101, 'Playing')], pages: SIGNED_IN_ANN, warapp: fake.handler });
-    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { mark_seen: true }));
-    expect(fake.marks).toHaveLength(1);
-    expect(p.games.map((g) => g.id)).toEqual([101]);
-    expect(p.readOnWarapp).toEqual([{ id: 101, outcome: 'unknown', channels: ['public', 'private'], why: expect.stringMatching(/not resent/) }]);
-    // Nothing sent went through for sure: no read-back.
-    expect(h.exchanges.filter((e) => e.request.method === Method.GetMyGames)).toHaveLength(1);
-  });
-
-  it('war.app refusing the mark is not applied, and the read still answers', async () => {
-    const fake = warapp(flagged().filter((g) => g.id === 101), CHATS, [], { markReply: () => ({ error: { code: 17, message: 'not in game' } }) });
-    h = await liveHarness({ feed: [feedGame(101, 'Playing')], pages: SIGNED_IN_ANN, warapp: fake.handler });
-    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { mark_seen: true }));
-    expect(p.games.map((g) => g.id)).toEqual([101]);
-    expect(p.readOnWarapp).toEqual([{ id: 101, outcome: 'not_applied', channels: [], why: expect.stringMatching(/refused the read mark/) }]);
-  });
-
-  it('game_ids (no list read up front): marks without the flags, and still reads the list back', async () => {
-    const games = flagged();
-    const fake = warapp(games, CHATS_311);
-    h = await liveHarness({ feed: [feedGame(103, 'WaitingForPlayers')], pages: SIGNED_IN_ANN, warapp: fake.handler });
-    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: [103], mark_seen: true }));
-    expect(fake.marks.map((m) => m.gameId)).toEqual([103]);
-    expect(p.readOnWarapp).toEqual([{ id: 103, outcome: 'confirmed', channels: ['public'] }]);
+    const methods = h.exchanges.map((e) => e.request.method);
+    expect(methods).not.toContain(Method.RegisterChatView);
+    // Only the list read up front.
+    expect(methods.filter((m) => m === Method.GetMyGames)).toHaveLength(1);
+    expect(p).not.toHaveProperty('readOnWarapp');
+    expect(p.games.find((g) => g.id === 101)!.markedSeen).toEqual(['public', 'team', 'private', 'unknown']);
   });
 });

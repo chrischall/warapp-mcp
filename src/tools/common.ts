@@ -17,13 +17,6 @@ import type { Game, GameMap } from '../normalize.js';
 export const readAnnotations = (title: string) =>
   toolAnnotations({ title, readOnly: true, idempotent: true, openWorld: true });
 
-/**
- * A chat read whose `mark_seen` also sets war.app's read mark (#311): a write to the account's own unread
- * state only — reaching no other player, destroying nothing, the same mark twice the same — so not read-only.
- */
-export const markReadAnnotations = (title: string) =>
-  toolAnnotations({ title, readOnly: false, destructive: false, idempotent: true, openWorld: true });
-
 /** A game id: the number after `GameID=` in a game URL. Validated by `parseGameId`. */
 export const gameIdArg = z
   .union([z.number(), z.string()])

@@ -656,17 +656,18 @@ with the auth block first; field orders are the client writers' and readers' rea
   sets all four false. They are the read-back for `RegisterChatView`: after a mark, the game's
   flag for that channel should read false (UNVERIFIED live). `MyGamesFilterType` 5
   (`YourTurnOrPendingChat`) and 7 (`ActiveGameOrPendingChat`) presumably filter on the same state.
-- **How this server uses them (#311, UNVERIFIED live):** `mark_seen: true` on `warapp_get_chat` and
-  `warapp_chat_inbox` sends 43 after the local cursor write (`writeRegisterChatViewParams`, golden-pinned), only
-  from a web read (GameFeed gives no message ids) with the signed-in account known: per channel marked, the
+- **How this server uses them (#311, UNVERIFIED live):** `warapp_mark_chat_read` (confirm-gated) sends 43
+  (`writeRegisterChatViewParams`, golden-pinned) for one game, only from a web read (GameFeed gives no message ids)
+  with the signed-in account known: per channel marked, the
   highest message id among the messages read, mine included (`chatViewMarks`); a private conversation is keyed by
   its counterpart (the recipient of a message I sent, else its sender — field 7 of `GameMessage` is the
   recipient); a game group (this server's `unknown` channel from the web read) by its group id; a channel not
   marked goes as `-1`, an empty dict as absent. The effect is read back from `GetMyGames` (the four flags above,
-  `RawMyGame.unreadChat`): `confirmed` when every marked channel's flag is clear, else `unconfirmed`; no answer is
-  `unknown` and is never resent; a refusal is `not_applied`. The inbox sends no mark for a game its list already
-  shows read, reads the list back once after its last mark, and lists a finished game when one of its flags is
-  set. It reaches no other player and is not confirm-gated (CLAUDE.md).
+  `RawMyGame.unreadChat`): `read` (`confirmed`) when every marked channel's flag is clear, else `unconfirmed`; no
+  answer is `unknown` and is never resent; a refusal is an error (nothing changed). It refuses a game its list
+  already shows read. It reaches no other player and posts nothing. `mark_seen: true` on `warapp_get_chat` and
+  `warapp_chat_inbox` marks only this machine's cursor and sends nothing to war.app. The inbox lists a finished game
+  when one of its flags is set.
 
 ## Open games
 

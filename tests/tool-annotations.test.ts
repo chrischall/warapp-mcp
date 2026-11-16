@@ -10,8 +10,7 @@ import { harnessFor, type Harness } from './helpers.js';
  * direct-transport session (confirm-gated: it stores a cookie locally) and
  * recording an agreement in the local ledger (not confirm-gated) — and one
  * confirm-gated write to war.app that changes only the account's own state:
- * marking notifications read (#311) — and two chat reads whose `mark_seen`
- * also sets war.app's read mark (#311; not confirm-gated, reaching no one).
+ * marking notifications read and marking a game's chat read (#311).
  */
 const WRITES = [
   'warapp_begin_turn',
@@ -25,7 +24,7 @@ const WRITES = [
 ];
 const LOCAL_WRITES = ['warapp_link_session', 'warapp_record_agreement'];
 /** Writes to war.app that change only the account's own state (marking notifications and chat read, #311). */
-const ACCOUNT_WRITES = ['warapp_chat_inbox', 'warapp_dismiss_notification', 'warapp_get_chat'];
+const ACCOUNT_WRITES = ['warapp_dismiss_notification', 'warapp_mark_chat_read'];
 
 interface Ann {
   readOnlyHint?: unknown;
@@ -71,6 +70,7 @@ describe('tool annotations', () => {
       'warapp_list_open_games',
       'warapp_locate_opponents',
       'warapp_map_stats',
+      'warapp_mark_chat_read',
       'warapp_my_games',
       'warapp_plan_picks',
       'warapp_plan_route',

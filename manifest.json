@@ -4,7 +4,7 @@
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
   "version": "0.1.0",
-  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends, marking notifications read and linking a session (local only) are confirm-gated.",
+  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends, marking notifications and chat read and linking a session (local only) are confirm-gated.",
   "author": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com",
@@ -197,11 +197,11 @@
     },
     {
       "name": "warapp_get_chat",
-      "description": "Read a game's chat; mark_seen also marks it read on war.app"
+      "description": "Read a game's chat"
     },
     {
       "name": "warapp_chat_inbox",
-      "description": "Read the unseen chat across all your games in one call; mark_seen also marks it read on war.app"
+      "description": "Read the unseen chat across all your games in one call"
     },
     {
       "name": "warapp_get_notifications",
@@ -210,6 +210,10 @@
     {
       "name": "warapp_dismiss_notification",
       "description": "Mark war.app notifications read by id (confirm-gated)"
+    },
+    {
+      "name": "warapp_mark_chat_read",
+      "description": "Mark a game's chat read on war.app itself (confirm-gated)"
     },
     {
       "name": "warapp_get_team",

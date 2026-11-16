@@ -35,8 +35,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameFeed answers as the player whose token is presented (fog of war included). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Ten tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player) and `warapp_link_session` (local only:
+- **Eleven tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing) and `warapp_link_session` (local only:
   it stores a session cookie on this machine and is not registered hosted), registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
@@ -52,14 +52,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   which callers still read. `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. `warapp_record_agreement`
   also writes, but only the server's own agreement ledger and player record (nothing reaches war.app or a
-  player), so it is not confirm-gated and not counted above. **`mark_seen: true` on `warapp_get_chat` and
-  `warapp_chat_inbox` also writes, and is not confirm-gated either (#311):** after the local cursor write it sends
-  war.app's read mark, `RegisterChatView` (43), which changes only the account's own unread state (nothing reaches a
-  player, nothing is posted: not a chat send, D2), and it is asked for explicitly; so both tools are annotated as
-  non-destructive idempotent writes (`markReadAnnotations`), not read-only, and are not counted above. The write rules
-  still hold (`src/tools/chat-read-mark.ts`): `readOnWarapp.outcome` is read back from GetMyGames' unread flags
-  (`confirmed` / `unconfirmed`), `unknown` when war.app did not answer (never resent), `not_applied` when nothing went
-  out; a failure never fails the read. Chat (owner decisions of 2026-11-14,
+  player), so it is not confirm-gated and not counted above. `mark_seen: true` on `warapp_get_chat` and
+  `warapp_chat_inbox` writes only this machine's chat cursor: both stay read-only, and war.app's own read mark is
+  `warapp_mark_chat_read` (#311). Chat (owner decisions of 2026-11-14,
   `docs/PLAN-TEAMS.md` §5): D1 every send confirm-gated; D2 automated chat is OFF until the owner
   enables it (2026-11-15, superseding the 2026-11-14 answer; the tools stay built, chat is read); D3 the honesty line is the plan's
   default (no false statement of fact, no promise the plan does not intend, withholding is free, never
@@ -244,22 +239,23 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   new. GameFeed chat in a shape no reader knows goes out as `raw` with every string through `untrustedBody`. `warapp_plan_turn` reports `chat.unread` from the GameFeed chat of its own
   game read (no extra request), so every count is under `unknown` (its `note` says so). Third-party names in
   results (sender, recipient, game) go through `untrustedText`.
-  `warapp_chat_inbox` (#256, read-only but for `mark_seen`, hosted too; a tool of its own, since it takes no game and pages a list)
+  `warapp_chat_inbox` (#256, read-only, hosted too; a tool of its own, since it takes no game and pages a list)
   reads exactly `game_ids` when given (#260), else every game `GetMyGames` lists but a finished one (`chatGameIds`:
   lobbies, picking, playing; `gamesFrom`, with `listed`/`complete` and a warning when the list may be partial), in
   ascending id order, one at a time and at most `MAX_INBOX_GAMES` (10) per call (`next` = the last id read,
   passed back as `cursor`), each exactly as `warapp_get_chat` reads it; a game with new messages shows only
   those (`limit` newest, `markedUnshown`), the others are `quiet`, and a failed read is in `failed`, never
   thrown. Only `mark_seen: true` writes the cursor (every channel, `markChatSeen`, shared with `warapp_get_chat`).
-  **Read marks on war.app (#311, UNVERIFIED live):** with `mark_seen: true` both tools then send `RegisterChatView`
-  (43; `writeRegisterChatViewParams`, golden-pinned): per channel the highest message id read (`chatViewMarks`,
-  `src/chat.ts`, mine included; private conversations keyed by the counterpart — the recipient of my message,
-  else the sender; game groups, the web client's `unknown`, by group id; a channel not marked goes as `-1`). Only
-  from the web read (GameFeed gives no message ids) and with the account known, else `not_applied`. It is read back
-  from GetMyGames' GameInfo unread flags (0-based 8 group, 17 private, 18 public, 23 team: `RawMyGame.unreadChat`,
-  read loosely — a non-boolean leaves them unknown, never refuses the list): `confirmed` when every marked channel's
-  flag is clear. The inbox skips a game the list already shows read and reads the list back once after its last
-  mark. The inbox also lists a finished game whose chat GetMyGames flags unread (`chatGameIds`).
+  **Read marks on war.app (#311, UNVERIFIED live) are `warapp_mark_chat_read`, confirm-gated** (`src/tools/chat-read-mark.ts`;
+  one game, every channel or one): it sends `RegisterChatView` (43; `writeRegisterChatViewParams`, golden-pinned): per
+  channel the highest message id read (`chatViewMarks`, `src/chat.ts`, mine included; private conversations keyed by
+  the counterpart — the recipient of my message, else the sender; game groups, the web client's `unknown`, by group
+  id; a channel not marked goes as `-1`). It refuses the account unknown, a chat read only from GameFeed (no message
+  ids), nothing to mark, or a game the list already shows read; the preview names ids only. It is read back from
+  GetMyGames' GameInfo unread flags (0-based 8 group, 17 private, 18 public, 23 team: `RawMyGame.unreadChat`, read
+  loosely — a non-boolean leaves them unknown, never refuses the list): `read` (`confirmed`) when every marked
+  channel's flag is clear, else `unconfirmed` (`stillUnread`); `unknown` when war.app did not answer, never resent.
+  Not a chat send (D2). The inbox also lists a finished game whose chat GetMyGames flags unread (`chatGameIds`).
   `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
   one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id

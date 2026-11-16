@@ -7,6 +7,7 @@ import { registerBeginTurnTool } from './begin-turn.js';
 import { registerBoardTool } from './board.js';
 import { registerChatTools } from './chat.js';
 import { registerChatInboxTool } from './chat-inbox.js';
+import { registerMarkChatReadTool } from './chat-read-mark.js';
 import { registerCheckPlanTool } from './check-plan.js';
 import { registerGameTool } from './game.js';
 import { registerHealthcheckTool } from './healthcheck.js';
@@ -128,6 +129,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerUncommitTool(server, live);
   registerChatTools(server, live, deps.env ? { env: deps.env } : {});
   registerChatInboxTool(server, live);
+  // Local and hosted: war.app's own chat read mark, confirm-gated (#311).
+  registerMarkChatReadTool(server, live);
   // Local and hosted: the account's own notifications, through its war.app tab.
   registerNotificationTools(server, live, deps.env ? { env: deps.env } : {});
   registerTeamTool(server, live);

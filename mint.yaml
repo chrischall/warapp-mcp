@@ -22,7 +22,7 @@ summary: >-
   war.app (Warzone) advisor: games waiting on you, maps, board analysis,
   scouting, chat and turn planning via your war.app tab. Joining, leaving or
   surrendering a game, Begin, picks, turn orders, withdrawing them, chat sends
-  and dismissing notifications happen only after you confirm.
+  and marking notifications and chat read happen only after you confirm.
 examples:
   - prompt: Which of my war.app games are waiting on me?
     note: Lists your games through your war.app tab, the ones waiting on you first.
