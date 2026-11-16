@@ -706,7 +706,17 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     // #235: a leader's border whose joint hold does not pay is sized for each opponent alone.
     const solo = ps.soloHeld.has(t);
     const f = forceAt(t, gone, { trend: true, allPlayers: true, solo });
-    if (!f) return null;
+    // #274 review: under Multi-Attack a stack two moves away can chain through my land onto my
+    // commander's territory (the chains of forceAt never go through it): its worst case sizes it too,
+    // where the commander stays. Not on the step it walks to: a chain onto it runs through the territory
+    // it walks from, whose transit hold (plan/commander.ts) is what stops it.
+    if (!f) {
+      if (!myCommanders.has(t) || s.multiAttack !== true || pc.commanderAt?.retreat?.to === t) return null;
+      const w = commanderWorstAt(t, gone);
+      if (!w) return null;
+      const threat = bombSized(t, w.threat);
+      return { id: t, player: w.players[0]!, movable: w.stacks, growth: 0, deploy: w.deploy, threat, commanderWorst: { deploy: w.deploy, stacks: w.stacks, players: w.players } };
+    }
     // #274: my commander's territory is held against the worst case, never less than the visible threat.
     if (myCommanders.has(t)) {
       const w = commanderWorstAt(t, gone);

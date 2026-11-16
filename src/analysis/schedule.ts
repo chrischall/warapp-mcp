@@ -27,20 +27,23 @@ export interface SchedulableMove {
   from: number;
   to: number;
   kind: 'attack' | 'transfer';
-  /** #274: my commander's walk, which carries what stands on its territory, never what moves in. */
+  /** #274: my commander's walk. */
   commander?: true;
+  /** The armies the move lists (a commander's walk that carries none waits for nothing, #274). */
+  armies?: number;
 }
 
 /**
  * Whether move `j` must stay after move `i` (i listed before j in decision order):
  * - attacks on one target keep their order (softeners before the finisher);
  * - a move out of a territory another move went into earlier (a capture, a transfer) stays
- *   after it (its armies may be the ones moving on) — not my commander's walk (#274);
+ *   after it (its armies may be the ones moving on) — not my commander's walk when it carries no
+ *   armies (#274: nothing it lists can be waiting to arrive);
  * - a transfer into a territory captured this turn stays after the capture.
  */
 function dependsOn(i: SchedulableMove, j: SchedulableMove): boolean {
   if (i.kind === 'attack' && j.kind === 'attack' && i.to === j.to) return true;
-  if (j.from === i.to && j.commander !== true) return true;
+  if (j.from === i.to && !(j.commander === true && j.armies === 0)) return true;
   return i.kind === 'attack' && j.kind === 'transfer' && j.to === i.to;
 }
 

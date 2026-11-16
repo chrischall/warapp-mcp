@@ -327,6 +327,27 @@ describe('warapp_plan_turn commander block (#274)', () => {
     expect(JSON.stringify(preview)).not.toMatch(/accept_commander_risk/);
   });
 
+  it('first_mover me: the walk keeps its transit hold, so warapp_submit_turn takes the plan\'s orders (#274 review)', async () => {
+    // As above, with first_mover me. The submit is not told who moves first and tries Bob first too:
+    // without a deploy, Bob's 15 + 7 attackers kill all 6 + my commander's 7 on 161 before the walk runs.
+    const board: SyntheticTerritory[] = [
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 6, units: [{ kind: 'commander' as const, id: ANN_CMDR, owner: ANN.inGame }] },
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 1567, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 16 },
+    ];
+    const s = server(board);
+    h = await liveHarness({ feed: [feedGame(CMD), feedGame(CMD)], pages: ME_PAGE, warapp: s.warapp });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, first_mover: 'me' }));
+    expect(p.orders.filter((o) => o.commander === true)).toEqual([expect.objectContaining({ kind: 'move', from: 161, to: 1567 })]);
+    expect(p.deploys.filter((d) => d.territory.id === 161).reduce((n, d) => n + d.armies, 0)).toBeGreaterThan(0);
+    expect(p.warnings.join('\n')).not.toMatch(/accept_commander_risk/);
+    const preview = payload<{ confirmToken?: string }>(await h.call('warapp_submit_turn', { game_id: GAME, orders: p.orders }));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    expect(JSON.stringify(preview)).not.toMatch(/accept_commander_risk/);
+  });
+
   it('no block in a game without commanders', async () => {
     h = await liveHarness({ feed: [feedGame({ Commanders: false })], pages: ME_PAGE, warapp: server(BOARD(false)).warapp });
     const p = await plan();

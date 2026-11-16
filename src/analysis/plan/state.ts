@@ -186,6 +186,12 @@ export interface PlanState {
   holdings: ReadonlySet<number>;
   /** The card to play this turn, if any (rule 1s; rule 1b's withdrawals): reassigned as orders are made. */
   cardAdvice: CardAdvice | null;
+  /**
+   * #274 review: my commander walks from a territory the opponent's first attack may take before
+   * the walk runs (the transit hold falls short, or a fogged neighbour): only then is the walk my
+   * first order, for Order Priority (plan/commander.ts `commanderTransit`).
+   */
+  commanderCaught?: true;
   warnings: string[];
   rationale: string[];
   /** Armies deployed on each territory of mine. */

@@ -95,3 +95,19 @@ describe('zigzag position arithmetic, two players (#127)', () => {
     }
   });
 });
+
+describe('scheduleMoves: my commander\'s walk (#274)', () => {
+  type M = SchedulableMove & { name: string };
+  const into: M = { name: 'into', from: 2, to: 1, kind: 'transfer', armies: 5 };
+  const slots = (m: M) => (m.name === 'walk' ? MoveSlot.Early : MoveSlot.Filler);
+
+  it('a walk carrying no armies runs before a move into its territory', () => {
+    const walk: M = { name: 'walk', from: 1, to: 3, kind: 'transfer', commander: true, armies: 0 };
+    expect(scheduleMoves([into, walk], slots).map((m) => m.name)).toEqual(['walk', 'into']);
+  });
+
+  it('a walk carrying armies stays after a move into its territory: they may be the ones it carries (review)', () => {
+    const walk: M = { name: 'walk', from: 1, to: 3, kind: 'transfer', commander: true, armies: 8 };
+    expect(scheduleMoves([into, walk], slots).map((m) => m.name)).toEqual(['into', 'walk']);
+  });
+});

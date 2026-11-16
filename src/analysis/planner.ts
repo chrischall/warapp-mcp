@@ -597,7 +597,8 @@
 //     #274: its threat is the worst case, never less than the visible one: per opponent (a team
 //     together; as the FFA leader every opponent together) its whole deploy, at least my own
 //     income (as warapp_submit_turn sizes its replies; a what-if `enemyDeploy` as given), plus the
-//     movable armies of every stack of its within two moves of it.
+//     movable armies of every stack of its within two moves of it. Under Multi-Attack this holds
+//     even with no enemy beside it: a stack two moves away may chain through my land onto it.
 //  1w. My commander walks (#274, plan/commander.ts). Within COMMANDER_CLEAR_MOVES (3) moves of an
 //     enemy or fogged territory, with a territory of mine strictly farther from all of them
 //     reachable through my land — never onto one nearer an enemy than where it stands, nor onto
@@ -605,17 +606,22 @@
 //     attack) — it walks one step a turn along that path (`commander: true` on a transfer, the
 //     #165 option, encoding unverified live): on the move out of its territory to that step when
 //     the plan has one, else its own transfer carrying no armies (under No-Split, the territory's
-//     one order, entered before any pass plans, with the whole stack). The step, not where it
-//     stood, is my commander's territory for rule 1k this turn; where it stood is held only for
-//     its own worth, its commander's 7 not counted there — except that, unless I am known to move
-//     first, after the strikes and before triage it gets the deploys that survive the opponent's
-//     first order (its strongest stack beside it plus its owner's whole deploy, at least my
-//     income; my commander counted), after the hold the step needs (all that is left when that
-//     falls short, with a warning). The walk is my first order after a strike that protects my
-//     commander or ends a player (Order Priority advised for it when I hold one, whatever it
-//     carries; it never waits behind a move into its territory), and the plan's first warning
-//     says so. With no such territory it stays, rule 1k holds it against the worst case, and a
-//     hold it cannot fund is the first warning. `commanderWalks: false` keeps it where it is.
+//     one order, entered before any pass plans, with the whole stack: it wins over a commander
+//     strike or a kill that territory could have made, which the passes then leave out). The step,
+//     not where it stood, is my commander's territory for rule 1k this turn; where it stood is held
+//     only for its own worth, its commander's 7 not counted there — except that after the strikes
+//     and before triage it gets the deploys that survive the opponent's first order (its strongest
+//     stack beside it plus its owner's whole deploy, at least my income; my commander counted),
+//     after the hold the step needs (all that is left when that falls short, with a warning). It
+//     does so even when I am known to move first: warapp_submit_turn's commander check is not told
+//     who moves first and tries the opponent first too. The walk goes early; it is my first order
+//     after a strike that protects my commander or ends a player only when my commander may be
+//     caught before it runs — the transit hold falls short, or the fog borders where it stands —
+//     and then Order Priority is advised for it when I hold one, whatever it carries; otherwise the
+//     first order is chosen as before. A walk carrying no armies never waits behind a move into its
+//     territory (one carrying armies does: they may be arriving). The plan's first warning says it
+//     walks. With no such territory it stays, rule 1k holds it against the worst case, and a hold it
+//     cannot fund is the first warning. `commanderWalks: false` keeps it where it is.
 //  1s. Commander strike (every goal, before finishing off, triage and any expansion; #61).
 //     A visible enemy commander next to a territory I held at the start of the turn is
 //     attacked first — killing it eliminates its owner — sized for its armies + the

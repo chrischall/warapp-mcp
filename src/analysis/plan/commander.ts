@@ -112,7 +112,8 @@ const stepReason = (r: CommanderRetreat, label: (id: number) => string) =>
 /**
  * #274: under No-Split my commander's territory issues one order, so its walk is that order: it is
  * entered before any pass plans (each sees the territory already ordering) and sized at the end
- * ({@link placeCommanderMove}: the whole stack goes with it).
+ * ({@link placeCommanderMove}: the whole stack goes with it). The walk wins: a commander strike or a
+ * kill that territory could have made is not made (getting the commander out of reach comes first).
  */
 export function reserveCommanderMove(pc: Pick<PlanCtx, 'commanderAt' | 'noSplit' | 'label'>, ps: Pick<PlanState, 'moves'>): void {
   const r = pc.commanderAt?.retreat;
@@ -142,13 +143,17 @@ export function placeCommanderMove(pc: Pick<PlanCtx, 'commanderAt' | 'noSplit' |
 
 /**
  * #274: my commander stays where it stood until my first order runs, and the opponent's first order
- * may come before it: unless I am known to move first, the territory it leaves gets the deploys
- * that make it survive one attack there — the strongest stack beside it with its owner's whole
- * deploy (at least my own income, as warapp_submit_turn sizes its replies; a what-if
- * `enemyDeploy` as given), my commander counted. Nothing more: once it has walked, the territory is
- * held only for its own worth. The hold where it walks to (rule 1k) is reserved first; when what
- * is left cannot make it hold, all of it goes there and a warning says so. Run after the strikes
- * (a territory `gone` — struck or finished off — threatens nothing), before triage.
+ * may come before it: the territory it leaves gets the deploys that make it survive one attack
+ * there — the strongest stack beside it with its owner's whole deploy (at least my own income, as
+ * warapp_submit_turn sizes its replies; a what-if `enemyDeploy` as given), my commander counted.
+ * Even when I am known to move first (#274 review): warapp_submit_turn's commander check is not
+ * told who moves first and tries the opponent first too, so a walk without this hold would be
+ * refused there. Nothing more: once it has walked, the territory is held only for its own worth.
+ * The hold where it walks to (rule 1k) is reserved first; when what is left cannot make it hold, all
+ * of it goes there and a warning says so. That case, or a fogged neighbour (what hides there cannot
+ * be sized), sets `ps.commanderCaught`: only then is Order Priority advised for the walk
+ * (plan/move-order.ts). Run after the strikes (a territory `gone` — struck or finished off —
+ * threatens nothing), before triage.
  */
 export function commanderTransit(
   pc: PlanCtx,
@@ -158,9 +163,15 @@ export function commanderTransit(
   gone: (n: number) => boolean = () => false,
 ): void {
   const r = pc.commanderAt?.retreat;
-  const { opts } = pc;
   if (!r) return;
-  if (opts.movesFirst === true && !opts.movesFirstUnverified && !opts.opponentsMayHoldOrderPriority) return;
+  // A fogged neighbour may hide a stack: no hold can be sized against it.
+  if (
+    neighborsOf(pc.g, r.from).some((n) => {
+      const st = pc.territories.get(n);
+      return !gone(n) && (st === undefined || st.owner.kind === 'unknown' || (st.armies === null && st.owner.kind === 'player' && pc.foe(st.owner.playerId)));
+    })
+  )
+    ps.commanderCaught = true;
   const floor = pc.custom ? 0 : Math.max(0, pc.income - pc.cardArmies);
   let threat = 0;
   let by: number | undefined;
@@ -196,6 +207,7 @@ export function commanderTransit(
     return;
   }
   // Short of it, all that may go there goes there (an attack smaller than the worst case may come).
+  ps.commanderCaught = true;
   book.deploy(r.from, room);
   ps.warnings.push(
     `My commander may be caught on ${label(r.from)} before it walks (#274): if the opponent moves first, player ${by}'s first attack there (~${threat}) lands before my first order, and ${room ? `the ${room} deployed there` : 'nothing more deployed there'} cannot make it hold against that (it needs more). Order Priority, when I hold one, runs the walk first.`,

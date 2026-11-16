@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { BoardSpecialUnit, TerritoryState } from '../../src/board.js';
 import { armiesToTake, COMMANDER_STRENGTH } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
+import { commanderSafety } from '../../src/analysis/commander-safety.js';
 import { COMMANDER_CLEAR_MOVES, commanderPlace } from '../../src/analysis/plan/commander.js';
 import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
@@ -151,16 +152,79 @@ describe('planner: the territory my commander walks from holds it until my first
     );
   });
 
-  it('known to move first, the walk runs before any of the opponent\'s orders: no such deploy', () => {
+  it('known to move first, it still deploys the hold: the submit\'s commander check tries the opponent moving first too (#274 review)', () => {
     const plan = planTurn({ graph: g, board: b, me: ME, income: 30, settings: STD, options: { movesFirst: true } });
+    const unknown = planTurn({ graph: g, board: b, me: ME, income: 30, settings: STD });
     expect(commanderMoves(plan)).toEqual([expect.objectContaining({ from: 1, to: 3 })]);
-    expect(plan.rationale.some((r) => r.includes('until my first order runs'))).toBe(false);
+    expect(deployedTo(plan, 1)).toBe(deployedTo(unknown, 1));
+    expect(deployedTo(plan, 1)).toBeGreaterThan(0);
+    expect(plan.rationale.some((r) => r.includes('until my first order runs'))).toBe(true);
+  });
+
+  it('the review\'s shape: known to move first, the walk leaves no commander the submit\'s check finds killable', () => {
+    // T1 (my commander, 10) beside A's T2 (40), the fog behind it; T3 and T4, mine, lead inland.
+    const g2 = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 5], [1, 3], [3, 4]]));
+    const b2 = board([withCommander(mine(1, 10)), enemy(2, 40), mine(3, 2), mine(4, 2), fogged(5)], true);
+    const first = planTurn({ graph: g2, board: b2, me: ME, income: 30, settings: STD, options: { movesFirst: true } });
+    expect(commanderMoves(first)).toEqual([expect.objectContaining({ from: 1, to: 3 })]);
+    const opponents = [{ id: A, deploy: 30 }];
+    const check = (p: TurnPlan) =>
+      commanderSafety({
+        graph: g2,
+        board: b2,
+        me: ME,
+        deploys: p.deploys,
+        moves: p.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+        opponents,
+        settings: STD,
+        killedBy: false,
+      })!;
+    expect(check(first).killers).toBe(0);
   });
 
   it('says so when the deploy cannot make it hold, and the walk is my first order', () => {
     const plan = planTurn({ graph: g, board: board([withCommander(mine(1, 10)), enemy(2, 200), mine(3, 2), mine(4, 2)], true), me: ME, income: 30, settings: STD });
     expect(plan.moves[0]).toMatchObject({ from: 1, to: 3, commander: true });
     expect(plan.warnings.some((w) => w.startsWith('My commander may be caught on T1 (#1) before it walks (#274)'))).toBe(true);
+  });
+});
+
+describe('planner: Order Priority for the walk only when my commander may be caught (#274 review)', () => {
+  const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [1, 3], [3, 4]]));
+  const opts = { holdsOrderPriority: true } as const;
+
+  it('advised when the transit hold falls short: the walk is my first order', () => {
+    const plan = planTurn({ graph: g, board: board([withCommander(mine(1, 10)), enemy(2, 200), mine(3, 2), mine(4, 2)], true), me: ME, income: 30, settings: STD, options: opts });
+    expect(plan.cardAdvice).toBe('order-priority');
+    expect(plan.moves[0]).toMatchObject({ from: 1, to: 3, commander: true });
+  });
+
+  it('not advised when the transit hold already holds it against the opponent\'s first attack', () => {
+    const plan = planTurn({ graph: g, board: board([withCommander(mine(1, 10)), enemy(2, 20), mine(3, 2), mine(4, 2)], true), me: ME, income: 30, settings: STD, options: opts });
+    expect(commanderMoves(plan)).toEqual([expect.objectContaining({ from: 1, to: 3 })]);
+    expect(plan.cardAdvice).toBeNull();
+  });
+
+  it('not advised when nothing can reach the territory it leaves before it moves', () => {
+    // T5 (my commander) between T1 and T3, both mine: A's T2 is two moves away. It walks 5 → 3, carrying nothing.
+    const g5 = buildGraph(makeMap([1, 2, 3, 4, 5], [[2, 1], [1, 5], [5, 3], [3, 4]]));
+    const plan = planTurn({
+      graph: g5,
+      board: board([mine(1, 5), enemy(2, 5), mine(3, 2), mine(4, 2), withCommander(mine(5, 2))], true),
+      me: ME,
+      income: 10,
+      settings: STD,
+      options: opts,
+    });
+    expect(commanderMoves(plan)).toEqual([expect.objectContaining({ from: 5, to: 3 })]);
+    expect(plan.cardAdvice).toBeNull();
+  });
+
+  it('advised when the territory it leaves borders the fog: no hold can be sized against what is hidden there', () => {
+    const gf = buildGraph(makeMap([1, 3, 4, 5], [[1, 5], [1, 3], [3, 4]]));
+    const plan = planTurn({ graph: gf, board: board([withCommander(mine(1, 10)), mine(3, 2), mine(4, 2), fogged(5)], true), me: ME, income: 10, settings: STD, options: opts });
+    expect(commanderMoves(plan)).toEqual([expect.objectContaining({ from: 1, to: 3 })]);
+    expect(plan.cardAdvice).toBe('order-priority');
   });
 });
 
@@ -190,6 +254,19 @@ describe('planner: my commander\'s territory is held against the worst case (#27
     expect(deployedTo(plan, 1)).toBe(20);
     expect(plan.warnings[0]).toMatch(/^My commander's territory T1 \(#1\) cannot be made safe this turn: .*it cannot walk away\.$/);
     expect(plan.moves.filter((m) => m.from === 1)).toEqual([]);
+  });
+
+  it('under Multi-Attack a stack two moves away through my land sizes its territory too (#274 review)', () => {
+    // T1 (my commander, 3) – T2 (mine, 3) – A's T3 (100) – the fog: A chains through T2 onto T1.
+    const line = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [2, 3], [3, 4]]));
+    const b4 = board([withCommander(mine(1, 3)), mine(2, 3), enemy(3, 100), fogged(4)], true);
+    const plan = planTurn({ graph: line, board: b4, me: ME, income: 10, settings: { ...STD, multiAttack: true } });
+    expect(commanderMoves(plan)).toEqual([]);
+    expect(plan.rationale.some((r) => r.startsWith("My commander's territory T1 (#1) is held against the worst case (#274), ~109"))).toBe(true);
+    expect(plan.warnings[0]).toMatch(/^My commander's territory T1 \(#1\) cannot be made safe this turn: .*it cannot walk away\.$/);
+    // Without Multi-Attack the stack cannot reach it this turn: no border there.
+    const plain = planTurn({ graph: line, board: b4, me: ME, income: 10, settings: STD });
+    expect(plain.rationale.some((r) => r.startsWith("My commander's territory T1 (#1) is held against the worst case"))).toBe(false);
   });
 
   it('a commander three moves clear is no border: nothing is deployed for it and it stays', () => {
