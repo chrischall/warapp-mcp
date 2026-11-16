@@ -53,18 +53,18 @@ describe('holdsBelowPlan (#275 pattern 3)', () => {
   it('names a border the given orders leave below the plan, with the difference', () => {
     // The plan stands 11 on 3; the hand edit deploys 2 there and 3 on the interior 1: 8, short 3.
     expect(diff({ given: { deploys: [{ territoryId: 3, armies: 2 }, { territoryId: 1, armies: 3 }], moves: [] } })).toEqual([
-      { territory: 3, hold: 11, left: 8, short: 3 },
+      { territory: 3, planLeaves: 11, left: 8, short: 3 },
     ]);
   });
 
   it('counts the armies an order sends out of the border', () => {
     // A transfer of 7 out of 3 into the interior leaves 4 of the plan's 11; a failed attack's survivors come back.
     expect(diff({ given: { deploys: [{ territoryId: 3, armies: 5 }], moves: [{ from: 3, to: 2, armies: 7 }] } })).toEqual([
-      { territory: 3, hold: 11, left: 4, short: 7 },
+      { territory: 3, planLeaves: 11, left: 4, short: 7 },
     ]);
     // 7 into the 9 on 4 kill 5 and lose 6 (60/70): the one survivor returns, 5 stand.
     expect(diff({ given: { deploys: [{ territoryId: 3, armies: 5 }], moves: [{ from: 3, to: 4, armies: 7 }] } })).toEqual([
-      { territory: 3, hold: 11, left: 5, short: 6 },
+      { territory: 3, planLeaves: 11, left: 5, short: 6 },
     ]);
   });
 
@@ -76,7 +76,7 @@ describe('holdsBelowPlan (#275 pattern 3)', () => {
 
   it('leaves out a border the plan concedes', () => {
     const given = { deploys: [{ territoryId: 1, armies: 5 }], moves: [] };
-    expect(diff({ given })).toEqual([{ territory: 3, hold: 11, left: 6, short: 5 }]);
+    expect(diff({ given })).toEqual([{ territory: 3, planLeaves: 11, left: 6, short: 5 }]);
     expect(diff({ given, conceded: [3] })).toEqual([]);
   });
 
@@ -88,7 +88,7 @@ describe('holdsBelowPlan (#275 pattern 3)', () => {
     const withCommander = board([mine(1, 8), mine(2, 3), { ...mine(3, 6), specialUnits: [{ kind: 'commander', id: 'c', playerId: ME }] }, foe(4, 9), neutral(5, 2)]);
     expect(
       diff({ board: withCommander, given: { deploys: [{ territoryId: 3, armies: 5 }], moves: [{ from: 3, to: 2, armies: 1, withCommander: true }] } }),
-    ).toEqual([{ territory: 3, hold: 18, left: 10, short: 8 }]);
+    ).toEqual([{ territory: 3, planLeaves: 18, left: 10, short: 8 }]);
   });
 
   it('lists the largest shortfall first, ties by id', () => {
@@ -104,8 +104,17 @@ describe('holdsBelowPlan (#275 pattern 3)', () => {
       given: { deploys: [{ territoryId: 1, armies: 5 }], moves: [] },
     });
     expect(out).toEqual([
-      { territory: 3, hold: 9, left: 6, short: 3 },
-      { territory: 2, hold: 5, left: 3, short: 2 },
+      { territory: 3, planLeaves: 9, left: 6, short: 3 },
+      { territory: 2, planLeaves: 5, left: 3, short: 2 },
+    ]);
+  });
+
+  it('picks borders on the start-of-turn board: one whose enemy the given orders capture is still named', () => {
+    // 10 of 3's 11 take the 2 on 4, so 3 is interior once the turn has run; it is named all the same,
+    // since the attack may fail against a deploy there and leave 3 to face it with 1.
+    const weak = board([mine(1, 8), mine(2, 3), mine(3, 6), foe(4, 2), neutral(5, 2)]);
+    expect(diff({ board: weak, given: { deploys: [{ territoryId: 3, armies: 5 }], moves: [{ from: 3, to: 4, armies: 10 }] } })).toEqual([
+      { territory: 3, planLeaves: 11, left: 1, short: 10 },
     ]);
   });
 });

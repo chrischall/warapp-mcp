@@ -13,6 +13,24 @@ const cached = new Map<string, string>();
 
 export const guessSaltPath = (dir: string) => join(dir, 'guess-salt');
 
+/**
+ * The salt {@link guessSalt} would return, without creating one: `undefined` when none exists yet (no
+ * guess has been drawn with it). For a reader that must write nothing (#275 pattern 3). Never throws.
+ */
+export async function peekGuessSalt(dir: string | undefined): Promise<string | undefined> {
+  if (!dir) return processSalt;
+  const hit = cached.get(dir);
+  if (hit) return hit;
+  try {
+    const text = (await readFile(guessSaltPath(dir), 'utf8')).trim();
+    if (SALT.test(text)) return text;
+  } catch {
+    // Not there.
+  }
+  // A salt that could not be kept falls back to this process's (guessSalt).
+  return processSalt;
+}
+
 /** The salt for `dir` (created on first use), else this process's. Never throws. */
 export async function guessSalt(dir: string | undefined): Promise<string> {
   const fallback = () => (processSalt ??= randomBytes(16).toString('hex'));

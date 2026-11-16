@@ -117,8 +117,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'income). An opponent whose estimate one observation broke (see warapp_plan_turn) is tried at the larger of what it ' +
           'implied and your own income (`enemyDeploy` source `untrusted`), said in the first warning. ' +
           '`belowPlan` compares these orders with the default plan made now on the same board (warapp_plan_turn with no ' +
-          'options): each border they leave below what the plan leaves standing there, with `hold`, `left` and `short`, ' +
-          'the largest shortfall first (empty: none; a hand edit that drains a border the plan sized shows here). ' +
+          'options, the award of picks read as it reads it), or with its border guess when the deploys given are the ' +
+          "guess's (`belowPlanAgainst`: plan or guess): each border they leave below what that plan leaves standing there, " +
+          'with `planLeaves`, `left` and `short`, the largest shortfall first (empty: none). `planLeaves` carries the ' +
+          "plan's surplus, so a border named may still hold (see `headroom`); orders warapp_plan_turn made with options " +
+          'differ from the default plan by design. ' +
           'In a free-for-all with a truce in force (the agreement ledger), its partner is still tried — `safe` is safe ' +
           'against a break too — each reply that attacks a territory a truce covers is marked `breaksTruce`, and ' +
           '`safeIfTruceHolds` is the verdict over the other replies (null when every reply is a break). ' +
@@ -576,7 +579,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         orderPriority,
       });
-      // #275 pattern 3: each border these orders leave below the hold the default plan gives it (one plan per call).
+      // #275 pattern 3: each border these orders leave below what the default plan leaves there (one plan per call).
       const belowPlan = await bordersBelowPlan(ctx, { game, map, me, turn, territories, info, history, teamsKnown, given: { deploys, moves } });
       const warnings = [
         // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
@@ -710,8 +713,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         // #275 pattern 3: absent when the default plan could not be made.
         ...(belowPlan
           ? {
-              belowPlan: belowPlan.slice(0, LIST_MAX).map((r) => ({ territory: name(r.territory), hold: r.hold, left: r.left, short: r.short })),
-              ...(belowPlan.length > LIST_MAX ? { belowPlanMore: belowPlan.length - LIST_MAX } : {}),
+              belowPlan: belowPlan.rows
+                .slice(0, LIST_MAX)
+                .map((r) => ({ territory: name(r.territory), planLeaves: r.planLeaves, left: r.left, short: r.short })),
+              ...(belowPlan.rows.length > LIST_MAX ? { belowPlanMore: belowPlan.rows.length - LIST_MAX } : {}),
+              belowPlanAgainst: belowPlan.against,
               ...(rung === 'full' ? { belowPlanBasis: BELOW_PLAN_BASIS } : {}),
             }
           : {}),
