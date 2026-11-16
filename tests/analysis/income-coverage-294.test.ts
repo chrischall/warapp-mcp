@@ -222,8 +222,9 @@ describe('(2) and (5) the plan says it', () => {
     expect(e).toMatchObject({ coverageFloor: null });
   });
 
-  // T5 grew +12: its T6 in view shrank 5 (a move it could be), the rest beside the fog. T7 grew +4
-  // with no hidden neighbour; T6's shrink is claimed by T5 first, so T7's growth can only be deploy.
+  // T5 grew +12 beside the fog; T7 grew +4 with no hidden neighbour. T6 in view shrank 5, a move into
+  // either. A stack with no hidden neighbour claims a shrink first (its leftover could only be deploy),
+  // so T6→T7 explains all of T7's +4 and T5 gets the 1 left, the rest of it out of the fog.
   const split = buildGraph(
     makeMap(
       [1, 2, 4, 5, 6, 7, 20, 21, 22],
@@ -237,8 +238,8 @@ describe('(2) and (5) the plan says it', () => {
   it('observeDeploy splits each grown stack', () => {
     const o = observeDeploy(split, at(22, 5, 9), at(10, 10, 5), A, STD, { me: ME, expected: 10 });
     expect(o.stacks).toEqual([
-      { territoryId: 5, growth: 12, moved: [{ from: 6, armies: 5 }], fog: 7, deploy: 0 },
-      { territoryId: 7, growth: 4, moved: [], fog: 0, deploy: 4 },
+      { territoryId: 5, growth: 12, moved: [{ from: 6, armies: 1 }], fog: 11, deploy: 0 },
+      { territoryId: 7, growth: 4, moved: [{ from: 6, armies: 4 }], fog: 0, deploy: 0 },
     ]);
   });
 
@@ -255,7 +256,7 @@ describe('(2) and (5) the plan says it', () => {
       options: { adapt: true },
     });
     expect(p.rationale.join('\n')).toMatch(
-      /Player 20's growth by stack, turn 3 → turn 4: T5 \(#5\) \+12 \(5 could be a move from T6 \(#6\) in view, 7 could have come out of the fog\); T7 \(#7\) \+4 \(4 can only be deploy\)\./,
+      /Player 20's growth by stack, turn 3 → turn 4: T5 \(#5\) \+12 \(1 could be a move from T6 \(#6\) in view, 11 could have come out of the fog\); T7 \(#7\) \+4 \(4 could be a move from T6 \(#6\) in view\)\./,
     );
   });
 });

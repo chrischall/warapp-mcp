@@ -681,7 +681,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   income later seen). A tracked figure no higher than its visible income gets no floor. Each observed
   deploy also carries `stacks` (`DeployObservation`): every stack of the opponent held in view on both
   boards that grew, its growth split into what a neighbour in view of its own visibly sent (each shrink
-  claimed once, in id order), then what could have come out of the fog (beside a hidden territory) or can
+  claimed once, first by the stacks with no hidden neighbour, whose rest can only be deploy, then by those
+  beside the fog, each in id order), then what could have come out of the fog (beside a hidden territory) or can
   only be deploy; the plan's rationale has one "growth by stack" line per opponent. A
   free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
   out; a player out is never listed among the opponents beside the fog). The newest observed turn

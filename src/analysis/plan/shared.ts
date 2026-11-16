@@ -1202,8 +1202,9 @@ export function coverageText(c: TrackCoverage): string {
 /**
  * #294: one of an opponent's stacks that grew (held by it, in view with armies on both boards), its
  * growth split: what its neighbours in view, its own on both boards, visibly sent away could have
- * moved in (each shrink claimed once, stacks in id order), then — beside a territory hidden on either
- * board — what could have come out of the fog, else what can only be deploy.
+ * moved in (each shrink claimed once: first by the stacks with no hidden neighbour, then by those beside
+ * the fog, each in id order), then — beside a territory hidden on either board — what could have come
+ * out of the fog, else what can only be deploy.
  */
 export interface StackGrowth {
   territoryId: number;
@@ -1790,11 +1791,20 @@ export function observeSigned(
   /** Not shown with armies on both boards: armies could have left it unseen. */
   const hidden = (id: number) => !visibleState(now.get(id)) || !visibleState(before.get(id));
   // #294: each grown stack's growth split, against its own copy of the shrinks (captures claim theirs below).
+  // The stacks with no hidden neighbour claim first (what they leave can only be deploy, so a shrink
+  // taken by a stack beside the fog would turn a move into a false "can only be deploy"), then those
+  // beside the fog; each in id order, and reported in id order.
   const stacks: StackGrowth[] = [];
   const shrinkForSplit = new Map(shrinkLeft);
-  for (const id of [...shrinkLeft.keys()].sort(byNum)) {
-    const growth = visibleState(now.get(id))!.armies! - visibleState(before.get(id))!.armies! + killsAt(id);
-    if (growth <= 0) continue;
+  const grown = [...shrinkLeft.keys()]
+    .sort(byNum)
+    .map((id) => ({
+      id,
+      growth: visibleState(now.get(id))!.armies! - visibleState(before.get(id))!.armies! + killsAt(id),
+      beside: neighborsOf(g, id).some(hidden),
+    }))
+    .filter((x) => x.growth > 0);
+  for (const { id, growth, beside } of [...grown.filter((x) => !x.beside), ...grown.filter((x) => x.beside)]) {
     let left = growth;
     const moved: StackGrowth['moved'] = [];
     for (const n of [...neighborsOf(g, id)].sort(byNum)) {
@@ -1805,9 +1815,9 @@ export function observeSigned(
       left -= take;
       moved.push({ from: n, armies: take });
     }
-    const beside = neighborsOf(g, id).some(hidden);
     stacks.push({ territoryId: id, growth, moved, fog: beside ? left : 0, deploy: beside ? 0 : left });
   }
+  stacks.sort((a, b) => a.territoryId - b.territoryId);
   /**
    * #271 (3): its territories shown with armies on the earlier board and hidden on the later one: what
    * each could have sent (its armies less the guard), the most a capture beside it can have received
