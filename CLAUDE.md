@@ -1526,7 +1526,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   and a 200 that is a valid frame is war.app's answer, never a challenge, whatever header sits beside
   it. The direct leg sends the cookie to the exact origin `https://war.app` only: a GET follows
   redirects within it, a non-GET follows none. A relink (`warapp_link_session`, or a new `capturedAt` on disk) clears the stale flag
-  and returns `auto` to the direct leg.
+  and returns `auto` to the direct leg. **Hosted, the direct leg and `warapp_sign_in` go through mcp-host's egress proxy**
+  (`src/direct/egress.ts`): with `HTTPS_PROXY` set they send through an undici `ProxyAgent` for it instead of
+  netguard's public-only dispatcher (which ignores the proxy, and a direct socket is dropped there), the war.app-only
+  check kept in our code; an unusable proxy URL is refused, never a direct connection; and the push stays on
+  xhr-polling over the router (no direct WebSocket) while a proxy is set. GameFeed and the bundle use global fetch.
   `WARAPP_TRANSPORT` = `auto` (default) | `direct` | `fetchproxy`; the session is stored at
   `WARAPP_SESSION_FILE` (default `<dataDir>/session.json`). One injection point: `index.ts` builds
   this one bridge and passes it to `WarappRpc`, the page fetches, the healthcheck and the push

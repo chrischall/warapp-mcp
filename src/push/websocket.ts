@@ -17,6 +17,8 @@
 // `warappUrl`, errors scrubbed by value); the socket URL is built only for
 // war.app ({@link websocketUrl}); every error leaving this module is scrubbed.
 import type { DirectFirstStatus } from '@chrischall/mcp-utils/fetchproxy';
+import type { EnvSource } from '@chrischall/mcp-utils';
+import { egressProxyConfigured } from '../direct/egress.js';
 import type { Session } from '../direct/session.js';
 import { scrubToken } from '../direct/session.js';
 import { DirectBridge, type DirectFetch } from '../direct/transport.js';
@@ -89,14 +91,21 @@ export function websocketUrl(sid: string): string {
  * The leg for the process's direct-first bridge: the WebSocket is selected
  * only while the active transport is `direct` (pinned `direct`, or `auto`
  * still on the direct leg); otherwise the push stays on xhr-polling.
+ *
+ * Never with an egress proxy configured (HTTPS_PROXY: mcp-host's only way out,
+ * src/direct/egress.ts). Node's built-in WebSocket opens its own socket, which
+ * the proxy would not carry (a direct socket is silently dropped there), so the
+ * push stays on xhr-polling over the direct-first router, whose direct leg goes
+ * through the proxy. Read on each attempt.
  */
 export function pushWebSocketLeg(
   bridge: { status(): Pick<DirectFirstStatus, 'transport'> },
   readSession: () => Promise<Session | null>,
   seams: Pick<WebSocketLeg, 'fetch' | 'open'> = {},
+  env: EnvSource = process.env,
 ): WebSocketLeg {
   return {
-    select: () => bridge.status().transport === 'direct',
+    select: () => bridge.status().transport === 'direct' && !egressProxyConfigured(env),
     session: readSession,
     ...seams,
   };
