@@ -103,6 +103,23 @@ describe('skill files', () => {
     expect(line).toMatch(/warapp_check_plan/);
   });
 
+  it('the commitments rules stay in the chat bullet and the Notifications bullet follows it (#311)', () => {
+    const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
+    const bulletOf = (marker: string) => {
+      const start = md.indexOf(marker);
+      expect(start).toBeGreaterThan(-1);
+      const lineStart = md.lastIndexOf('\n- **', start) + 1;
+      const end = md.indexOf('\n- **', lineStart + 1);
+      return { lineStart, text: md.slice(lineStart, end === -1 ? undefined : end) };
+    };
+    const commitments = bulletOf('**Every promise a message makes goes in `commitments`');
+    expect(commitments.text).toMatch(/\*\*Automated chat is OFF/);
+    expect(commitments.text).not.toMatch(/warapp_get_notifications/);
+    const notifications = bulletOf('- **Notifications**');
+    expect(notifications.text).not.toMatch(/commitments/);
+    expect(notifications.lineStart).toBeGreaterThan(commitments.lineStart);
+  });
+
   it('the targeted-card bullet marks the Airlift play verified live and every other targeted card unverified (#296)', () => {
     const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
     const start = md.indexOf('**Playing a targeted card yourself**');
