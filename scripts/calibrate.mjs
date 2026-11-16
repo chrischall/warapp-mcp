@@ -7,24 +7,24 @@
 //   node scripts/calibrate.mjs [--data-dir <dir>] [--turns <n>] [--json]
 //   node scripts/calibrate.mjs --fetch [--data-dir <dir>]   # owner only: reads war.app
 //
-// Truth is each finished game's history: the full board after every turn. It is read from
-// `<dataDir>/calibrate/histories/<gameId>.json`, which only `--fetch` writes: for every game with a
-// settings record (`<dataDir>/games`, the games this server planned), one GameFeed read without the
-// history to see whether it is finished, then — for a finished game the cached account played — the
-// history ONCE (owner decision P2; the file, whatever its status, is the mark: a game with one is never
-// read again). The file holds the decoded boards by id (as the board cache does), the seats' final
-// states and the turns; 0600, atomic, one per game with a settings record. A file that does not parse
-// is never overwritten. `--fetch` needs WARAPP_EMAIL / WARAPP_API_TOKEN (or the env file); agents and
-// tests never run it.
-import { readdir, readFile } from 'node:fs/promises';
+// Truth is each finished game's history, as the end-of-game pass (#312 E1, src/tools/end-of-game.ts) kept
+// it: the record `<dataDir>/finished/<hmac>.json` holds the history's boards with owners by `playerKey`
+// (src/finished-store.ts). The harness keeps no store of its own and never reads a history itself: it
+// matches each record's keys against the ids of the game's settings record (`historyOfRecord`, a key is
+// never reversed). So the one history read per finished game (owner decision P2) feeds the profiles, the
+// lessons and this harness alike, under the one bound and the one name-free store (P4).
+// `--fetch` only runs that pass (`fetchFinished`) on the games of `<dataDir>/games` with no record yet:
+// one GameFeed read without the history (is it finished?), then the pass's single history read; a game
+// with a record of any status costs nothing. It needs WARAPP_EMAIL / WARAPP_API_TOKEN (or the env file);
+// agents and tests never run it. With WARAPP_PLAYER_PROFILE=off nothing is read or written, and the
+// measurement reads nothing either. Until a pass has run (the warapp_my_games sweep, warapp_get_game on a
+// finished game, or `--fetch`) there is no truth and the harness has no number to give: it says so.
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const root = new URL('..', import.meta.url);
 const dist = (p) => import(new URL(`dist/${p}`, root).href);
-
-const VERSION = 1;
-const STATUSES = new Set(['captured', 'unreadable', 'not-a-player', 'request-failed']);
 
 function parseArgs(argv) {
   const out = { fetch: false, json: false, turns: undefined, dataDir: undefined };
@@ -39,24 +39,6 @@ function parseArgs(argv) {
   return out;
 }
 
-export const historyPath = (dir, gameId) => join(dir, 'calibrate', 'histories', `${gameId}.json`);
-
-/** The history file: `missing`, `unreadable` (never overwritten), or its body. */
-export async function readHistoryFile(dir, gameId) {
-  let text;
-  try {
-    text = await readFile(historyPath(dir, gameId), 'utf8');
-  } catch (e) {
-    return e.code === 'ENOENT' ? 'missing' : 'unreadable';
-  }
-  try {
-    const v = JSON.parse(text);
-    return v && typeof v === 'object' && v.version === VERSION && STATUSES.has(v.status) ? v : 'unreadable';
-  } catch {
-    return 'unreadable';
-  }
-}
-
 async function gameIds(dir) {
   const names = await readdir(join(dir, 'games')).catch(() => []);
   return names
@@ -65,79 +47,37 @@ async function gameIds(dir) {
     .sort((a, b) => a - b);
 }
 
-// ---- --fetch (owner only) ----
+// ---- --fetch (owner only): the end-of-game pass, nothing else ----
 
 async function fetchHistories(dir) {
   const { loadDotenvSafely } = await import('@chrischall/mcp-utils');
   const { envFilePath } = await dist('config.js');
   await loadDotenvSafely({ path: envFilePath() });
   const { WarappClient } = await dist('client.js');
-  const { historyBoards, historyReport, readCachedPlayer } = await dist('trend.js');
-  const { writeJsonAtomic } = await dist('map-store.js');
-  const { holdsSeat } = await dist('player-states.js');
+  const { readCachedPlayer } = await dist('trend.js');
+  const { fetchFinished } = await dist('tools/end-of-game.js');
   const client = new WarappClient({ env: process.env, dataDir: () => dir });
-  const tally = {};
-  const count = (k) => {
-    tally[k] = (tally[k] ?? 0) + 1;
-  };
-  for (const id of await gameIds(dir)) {
-    if ((await readHistoryFile(dir, id)) !== 'missing') {
-      count('already-kept');
-      continue;
-    }
-    const me = await readCachedPlayer(dir, id);
-    if (me === undefined) {
-      count('no-cached-account');
-      continue;
-    }
-    let shown;
-    try {
-      shown = await client.getGame(id, { map: false });
-    } catch {
-      count('state-read-failed');
-      continue;
-    }
-    if (shown.state !== 'Finished') {
-      count('not-finished');
-      continue;
-    }
-    const write = (body) => writeJsonAtomic(historyPath(dir, id), join(dir, 'calibrate', 'histories'), { version: VERSION, ...body });
-    if (!shown.players.some((p) => p.id === me && holdsSeat(p.state))) {
-      await write({ status: 'not-a-player' });
-      count('not-a-player');
-      continue;
-    }
-    // The one history read (P2): whatever comes of it is kept, so it is never asked again.
-    let game;
-    try {
-      game = await client.getGame(id, { history: true, settings: true });
-    } catch {
-      await write({ status: 'request-failed' });
-      count('request-failed');
-      continue;
-    }
-    const report = historyReport(game);
-    if ('unreadable' in report) {
-      await write({ status: 'unreadable', reason: report.unreadable.reason });
-      count('unreadable');
-      continue;
-    }
-    const boards = historyBoards(game.history, game.players, game.numberOfTurns !== undefined ? { numberOfTurns: game.numberOfTurns } : {});
-    await write({
-      status: 'captured',
-      me,
-      numberOfTurns: game.numberOfTurns ?? null,
-      players: game.players.map((p) => ({
-        id: p.id,
-        ...(p.state !== undefined ? { state: p.state } : {}),
-        ...(p.team !== undefined ? { team: p.team } : {}),
-        ...(p.isAI ? { isAI: true } : {}),
-      })),
-      boards,
-    });
-    count('captured');
+  const games = [];
+  let noAccount = 0;
+  for (const gameId of await gameIds(dir)) {
+    const me = await readCachedPlayer(dir, gameId);
+    if (me === undefined) noAccount++;
+    else games.push({ gameId, me });
   }
-  return tally;
+  const tally = await fetchFinished({ client, dataDir: dir, env: process.env }, games);
+  return noAccount ? { ...tally, 'no-cached-account': noAccount } : tally;
+}
+
+/** The kept history of `id` with its ids put back, or why there is none (a status to count). */
+async function historyOf(dir, id, salt, replay) {
+  const { finishedPath, readFinishedRecord, historyOfRecord } = await dist('finished-store.js');
+  if (replay?.playerId === undefined) return 'no-cached-account';
+  if (!salt) return 'missing';
+  const rec = await readFinishedRecord(finishedPath(dir, salt, replay.playerId, id));
+  if (typeof rec === 'string') return rec;
+  if (rec.status !== 'captured') return rec.status;
+  const h = historyOfRecord(rec, salt, [replay.playerId, ...replay.game.players.map((p) => p.id)]);
+  return typeof h === 'string' ? (h === 'no-boards' ? 'captured-without-boards' : h) : h;
 }
 
 // ---- the measurement ----
@@ -152,18 +92,20 @@ export async function calibrate(dir, opts = {}) {
   const { addCalibration } = await dist('analysis/game-lessons.js');
   const cal = await dist('analysis/calibrate.js');
   const { holdsSeat } = await dist('player-states.js');
+  const { playerRecordSalt } = await dist('player-record-store.js');
+  const salt = await playerRecordSalt(dir).catch(() => undefined);
 
   const counts = { gamesWithSettings: 0, histories: {}, scored: 0, noMap: 0, benchmarked: 0, samples: 0 };
   const byFormat = {};
   const benchByFormat = {};
   for (const id of await gameIds(dir)) {
     counts.gamesWithSettings++;
-    const h = await readHistoryFile(dir, id);
-    const status = typeof h === 'string' ? h : h.status;
-    counts.histories[status] = (counts.histories[status] ?? 0) + 1;
-    if (typeof h === 'string' || h.status !== 'captured') continue;
     const replay = await loadReplay(dir, id);
-    if (!replay?.map) {
+    const h = await historyOf(dir, id, salt, replay);
+    const status = typeof h === 'string' ? h : 'captured';
+    counts.histories[status] = (counts.histories[status] ?? 0) + 1;
+    if (typeof h === 'string') continue;
+    if (!replay.map) {
       counts.noMap++;
       continue;
     }
@@ -226,8 +168,14 @@ const APPROX = [
   'with luck or weighted rounding a battle is resolved at its expectation (counted as inexact).',
 ];
 
+const NO_TRUTH = [
+  'No finished game\'s history is kept yet, so there is nothing to score: the end-of-game pass has to run first',
+  '(the warapp_my_games sweep, warapp_get_game on a finished game, or `--fetch`, which reads war.app: owner only).',
+];
+
 function print(r) {
   const out = [];
+  if (r.off) return 'Profiling is off (WARAPP_PLAYER_PROFILE=off): nothing read.';
   out.push(`Games with settings: ${r.counts.gamesWithSettings}; histories: ${JSON.stringify(r.counts.histories)}`);
   out.push(`Scored: ${r.counts.scored} games, ${r.counts.samples} opponent-turns; benchmarked: ${r.counts.benchmarked}; no map: ${r.counts.noMap}`);
   out.push('', '(a) estimate ÷ truth, by format, estimator and coverage band: n, mean, geometric mean, sd, share < 0.5, share > 1.5');
@@ -242,6 +190,7 @@ function print(r) {
     out.push(`    after turn 4: land without bonuses replay=${b.landWithoutBonuses.replay} real=${b.landWithoutBonuses.real}; an opponent at 1.5x my income replay=${b.outpaced.replay} real=${b.outpaced.real}`);
   }
   out.push('', ...APPROX);
+  if (!r.counts.histories.captured) out.push('', ...NO_TRUTH);
   return out.join('\n');
 }
 
@@ -249,6 +198,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const args = parseArgs(process.argv.slice(2));
   const { dataDir } = await dist('config.js');
   const dir = args.dataDir ?? dataDir(process.env);
+  const { profileEnabled } = await dist('profile-store.js');
+  if (!profileEnabled(process.env)) {
+    console.log(args.json ? JSON.stringify({ off: true }) : print({ off: true }));
+    process.exit(0);
+  }
   if (args.fetch) console.log(`fetch: ${JSON.stringify(await fetchHistories(dir))}`);
   const r = await calibrate(dir, args);
   console.log(args.json ? JSON.stringify(r, null, 2) : print(r));

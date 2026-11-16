@@ -1045,7 +1045,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   winners; my pick list and award (`readPickRecord`); each player's start; per history board (`afterTurn` completed
   turns) each player's income by `boardIncome` (base or per-territory, plus full bonuses; cards and the army cap aside),
   territories, armies and full bonuses; for each target my cached orders attacked and did not take (orders of turn T on
-  boards T − 1 and T) what stood there before and after; the settings shape (`nameFreeSettings`, src/replay.ts) and the
+  boards T − 1 and T) what stood there before and after; the history's boards themselves (`boards`: `[territory,
+  owner, armies]` rows, the owner an index into `boardOwners` (player keys; any other owner unknown, its raw value
+  never kept), a board listing the same territories as the one before kept as its changed rows: the calibration
+  harness's truth, #318); the settings shape (`nameFreeSettings`, src/replay.ts) and the
   map id. A failed request is `read-failed` (the error kind only), an unreadable history `history-unreadable` with
   #315's reason, each with the outcome the read that showed it finished gives; neither is retried by a trigger — only
   `warapp_get_game` with `include_history` re-runs a failed pass, from that call's own read (no further request).
@@ -1661,8 +1664,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   estimate via `planEnemyEstimates`, each ÷ the history's true income, by format and coverage band),
   `openingBenchmark` (my real start replayed 8 turns on `planTurn` + `simulateTurn`, the opponents put back where the
   history shows them by `overlayHistory`: no fog, no attacks on me, no cards — said in the output) and the aggregates.
-  Truth is `<dataDir>/calibrate/histories/<gameId>.json`, written only by the owner's `--fetch` (one history read per
-  finished game, the file the mark, never read again; P2). No planner decision reads any of it (P1). How to run:
+  Truth is the end-of-game record itself (`<dataDir>/finished/<hmac>.json`, which keeps the history's boards, owners
+  by `playerKey`, delta-encoded): the harness keeps no store and never reads a history of its own; it matches the
+  record's keys against the ids of the game's settings record (`historyOfRecord`, a key is never reversed), so one
+  history read per finished game (P2) feeds the profiles, the lessons and the harness under one bound and one
+  name-free store (P4). `--fetch` (owner only) runs only that pass (`fetchFinished`, src/tools/end-of-game.ts) on the
+  settings records' games with no record: one read without the history, then the pass's own. With
+  `WARAPP_PLAYER_PROFILE=off` neither reads nor writes anything. Until a pass has run there is no truth and the
+  harness says so (no number). No planner decision reads any of it (P1). How to run:
   `docs/PLAN-PROFILES.md` "Calibration and the opening benchmark".
 
 ## Commands

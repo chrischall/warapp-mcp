@@ -3,6 +3,8 @@
 // under the one shared salt (`finishedGameKey`, src/player-record-store.ts), so no file name holds an
 // id. NAME-FREE inside too: players by the deal record's `playerKey` under the same salt, never an id
 // or a name; territory, bonus and map ids are the map's own, public data. No clock is kept.
+// A captured record also keeps the history's boards (owners by key, delta-encoded), which the calibration
+// harness (#318, scripts/calibrate.mjs) reads as its truth: it never reads a history of its own.
 //
 // The file is also the "processed" mark: the end-of-game pass (src/tools/end-of-game.ts) runs once per
 // game, and a file of any status means it ran. `captured` holds the history's capture; `history-unreadable`
@@ -24,6 +26,7 @@ import type { Game } from './normalize.js';
 import type { AwardReading } from './analysis/award.js';
 import { finishedGameKey, playerKey } from './player-record-store.js';
 import { holdsSeat } from './player-states.js';
+import type { BoardState, TerritoryOwner, TerritoryState } from './board.js';
 import type { HistoryUnreadable } from './trend.js';
 
 export const MAX_FINISHED_RECORDS = 500;
@@ -69,7 +72,26 @@ export interface FinishedRecord {
   /** Per history board, after `afterTurn` completed turns: each player's income, territories, armies and full bonuses. */
   turns?: { afterTurn: number; players: Record<string, PlayerTurn> }[];
   failedAttacks?: { turn: number; to: number; from: number[]; sent: number; before: Side; after: Side }[];
+  /** The players owning land on `boards`, by key: a board's owner index points in here. */
+  boardOwners?: string[];
+  /**
+   * The history's boards themselves (#318: the calibration harness's truth, so the one history read
+   * feeds it too), after `turn` completed turns: per territory `[id, owner, armies]`, the owner an index
+   * into `boardOwners` or {@link OWNER_NEUTRAL} / {@link OWNER_AVAILABLE} / {@link OWNER_UNKNOWN}, and a
+   * fourth element, the fog level, only when one was sent and is not `Visible`. A board listing the same
+   * territories in the same order as the one before it is kept as its changed rows only (`d`), each
+   * replacing that territory's row whole.
+   */
+  boards?: { turn: number; d?: true; t: StoredTerritory[] }[];
 }
+
+/** A history board's territory as stored: `[territory id, owner, armies]`, then a fog level other than `Visible`. */
+export type StoredTerritory = [number, number, number | null] | [number, number, number | null, string];
+export const OWNER_NEUTRAL = -1;
+export const OWNER_AVAILABLE = -2;
+/** Fogged, or an owner that is no seated player's (its raw value is never kept). */
+export const OWNER_UNKNOWN = -3;
+const FOG_WORD = /^[A-Za-z0-9]{1,20}$/;
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -153,6 +175,8 @@ export interface RecordParts {
   failure?: FinishedFailure | undefined;
   capture?: FinishedCapture | undefined;
   picks?: FinishedRecord['picks'];
+  /** The history's boards (owners by GameFeed id), kept only with `captured`. */
+  boards?: readonly { turn: number; board: BoardState }[] | undefined;
 }
 
 /** The stored record: every player id replaced by its `playerKey`. Pure. */
@@ -164,6 +188,7 @@ export function finishedRecordOf(p: RecordParts): FinishedRecord {
   const c = p.capture;
   // The history's own parts only when it read.
   const h = p.status === 'captured' ? c : undefined;
+  const stored = p.status === 'captured' && p.boards ? storeBoards(p.boards, p.game?.players.map((x) => x.id) ?? [p.me], key) : undefined;
   return {
     version: VERSION,
     status: p.status,
@@ -200,5 +225,108 @@ export function finishedRecordOf(p: RecordParts): FinishedRecord {
           })),
         }
       : {}),
+    ...(stored ?? {}),
   };
+}
+
+/** The boards in their stored shape: owners by key (only the game's players; any other owner is unknown). Pure. */
+function storeBoards(
+  boards: readonly { turn: number; board: BoardState }[],
+  ids: readonly number[],
+  key: (id: number) => string,
+): { boardOwners: string[]; boards: { turn: number; d?: true; t: StoredTerritory[] }[] } {
+  const known = new Set(ids);
+  const index = new Map<number, number>();
+  const owners: string[] = [];
+  const ownerOf = (o: TerritoryOwner): number => {
+    if (o.kind === 'neutral') return OWNER_NEUTRAL;
+    if (o.kind === 'available') return OWNER_AVAILABLE;
+    if (o.kind !== 'player' || !known.has(o.playerId)) return OWNER_UNKNOWN;
+    let i = index.get(o.playerId);
+    if (i === undefined) {
+      i = owners.push(key(o.playerId)) - 1;
+      index.set(o.playerId, i);
+    }
+    return i;
+  };
+  const rowOf = (x: TerritoryState): StoredTerritory => {
+    const row: [number, number, number | null] = [x.territoryId, ownerOf(x.owner), x.armies];
+    return x.fogLevel && x.fogLevel !== 'Visible' && FOG_WORD.test(x.fogLevel) ? [...row, x.fogLevel] : row;
+  };
+  let prev: StoredTerritory[] | undefined;
+  const out: { turn: number; d?: true; t: StoredTerritory[] }[] = [];
+  for (const { turn, board } of boards) {
+    const rows = board.territories.map(rowOf);
+    const before = prev;
+    const sameList = before !== undefined && before.length === rows.length && rows.every((r, i) => r[0] === before[i]![0]);
+    out.push(sameList ? { turn, d: true, t: rows.filter((r, i) => JSON.stringify(r) !== JSON.stringify(before[i])) } : { turn, t: rows });
+    prev = rows;
+  }
+  return { boardOwners: owners, boards: out };
+}
+
+/**
+ * The record at `path`: `missing`, `unreadable` (as {@link readFinishedState}), or the record itself.
+ * Never throws. The harness's reader (scripts/calibrate.mjs); the pass needs only the state.
+ */
+export async function readFinishedRecord(path: string): Promise<'missing' | 'unreadable' | FinishedRecord> {
+  const state = await readFinishedState(path);
+  if (typeof state === 'string') return state;
+  try {
+    return JSON.parse(await readFile(path, 'utf8')) as FinishedRecord;
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/** A captured record's history with the ids put back, for the calibration harness (#318). */
+export interface RecordHistory {
+  me: number;
+  numberOfTurns: number | null;
+  players: { id: number; isAI: boolean; team?: number; state?: string }[];
+  boards: { turn: number; board: BoardState }[];
+}
+
+/**
+ * The history a captured record keeps, its keys matched against `ids` (the players the caller already
+ * knows by id: a key is never reversed). `no-boards`: not captured, or captured without its boards;
+ * `unmatched`: my key is none of `ids`. A seat matching none is left out, and land it owned reads as
+ * an unknown owner. Pure.
+ */
+export function historyOfRecord(rec: FinishedRecord, salt: string, ids: readonly number[]): RecordHistory | 'no-boards' | 'unmatched' {
+  if (rec.status !== 'captured' || !Array.isArray(rec.boards) || !Array.isArray(rec.boardOwners)) return 'no-boards';
+  const byKey = new Map(ids.map((id) => [playerKey(salt, id), id]));
+  const me = byKey.get(rec.me);
+  if (me === undefined) return 'unmatched';
+  const owners = rec.boardOwners.map((k) => byKey.get(k));
+  const ownerOf = (o: number): TerritoryOwner => {
+    if (o === OWNER_NEUTRAL) return { kind: 'neutral' };
+    if (o === OWNER_AVAILABLE) return { kind: 'available' };
+    const id = owners[o];
+    return id === undefined ? { kind: 'unknown' } : { kind: 'player', playerId: id };
+  };
+  const players: RecordHistory['players'] = [];
+  for (const p of rec.players ?? []) {
+    const id = byKey.get(p.key);
+    if (id === undefined) continue;
+    players.push({ id, isAI: p.ai, ...(p.team !== undefined ? { team: p.team } : {}), ...(p.state !== undefined ? { state: p.state } : {}) });
+  }
+  const territoryOf = ([territoryId, owner, armies, fogLevel]: StoredTerritory): TerritoryState => ({
+    territoryId,
+    owner: ownerOf(owner),
+    armies,
+    ...(fogLevel !== undefined ? { fogLevel } : {}),
+  });
+  const boards: RecordHistory['boards'] = [];
+  let prev: TerritoryState[] | undefined;
+  for (const { turn, d, t } of rec.boards) {
+    let territories: TerritoryState[];
+    if (d && prev) {
+      const changed = new Map(t.map((row) => [row[0], territoryOf(row)]));
+      territories = prev.map((x) => changed.get(x.territoryId) ?? { ...x });
+    } else territories = t.map(territoryOf);
+    boards.push({ turn, board: { source: 'gamefeed', verified: false, territories } });
+    prev = territories;
+  }
+  return { me, numberOfTurns: rec.outcome?.turn ?? null, players, boards };
 }

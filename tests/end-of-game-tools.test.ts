@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WarappClient } from '../src/client.js';
-import { finishedDir, finishedPath } from '../src/finished-store.js';
+import { finishedDir, finishedPath, historyOfRecord, type FinishedRecord } from '../src/finished-store.js';
 import { lessonsPath, mapRecordDir, mapRecordPath } from '../src/lessons-store.js';
 import { profilePlayersPath } from '../src/profile-store.js';
 import { playerKey, playerRecordSalt } from '../src/player-record-store.js';
@@ -105,6 +105,13 @@ describe('the end-of-game pass', () => {
       [2, 0, 12],
     ]);
     expect((rec.settings as Record<string, unknown>).Map).toBe('77');
+    // #318: the history's boards are kept too (owners by key), so the calibration harness reads this record, never war.app.
+    const back = historyOfRecord(rec as unknown as FinishedRecord, salt, [ANN, BOB]);
+    expect(typeof back === 'object' && back.boards.map((b) => [b.turn, b.board.territories.map((t) => [t.territoryId, t.owner.kind === 'player' ? t.owner.playerId : t.owner.kind, t.armies])])).toEqual([
+      [0, [[1, ANN, 5], [2, 'neutral', 2], [5, 'neutral', 2], [6, BOB, 5]]],
+      [1, [[1, ANN, 4], [2, ANN, 3], [5, BOB, 4], [6, BOB, 4]]],
+      [2, [[1, BOB, 6], [2, BOB, 1], [5, BOB, 4], [6, BOB, 1]]],
+    ]);
     const path = finishedPath(dir, salt, ANN, GAME);
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const text = readFileSync(path, 'utf8');
@@ -374,5 +381,48 @@ describe('the sweep and the store bound (P2: a processed game is never read agai
     expect(read.length).toBeGreaterThan(0);
     expect(new Set(read).size).toBe(read.length);
     expect(readdirSync(finishedDir(dir)).length).toBeLessThanOrEqual(keep);
+  });
+});
+
+describe('the harness fetch (#318 --fetch): only the end-of-game pass, never a history read of its own', () => {
+  async function freshProcess() {
+    vi.resetModules();
+    return import('../src/tools/end-of-game.js');
+  }
+  const reads = (calls: { url: string }[]) => calls.filter((c) => c.url.includes('GetHistory=true')).length;
+
+  it('runs the pass on a finished game not yet processed, and on a later run reads nothing for it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const { calls, fetchImpl } = stubFetch(finished(), withHistory());
+    const deps = { client: new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }), dataDir: dir, env: {} };
+    const first = await (await freshProcess()).fetchFinished(deps, [{ gameId: GAME, me: ANN }]);
+    expect(first).toEqual({ captured: 1 });
+    expect(reads(calls)).toBe(1);
+    const before = calls.length;
+    const second = await (await freshProcess()).fetchFinished(deps, [{ gameId: GAME, me: ANN }]);
+    expect(second).toEqual({ 'already-processed': 1 });
+    expect(calls.length).toBe(before); // not even the state read
+    // The record the pass keeps is the one the harness reads.
+    const salt = (await playerRecordSalt(dir))!;
+    expect(historyOfRecord((await record(dir)) as unknown as FinishedRecord, salt, [ANN, BOB])).toMatchObject({ me: ANN });
+  });
+
+  it('a game in progress costs one state read and no history read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const { calls, fetchImpl } = stubFetch(finished({ state: 'Playing' }));
+    const deps = { client: new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }), dataDir: dir, env: {} };
+    expect(await (await freshProcess()).fetchFinished(deps, [{ gameId: GAME, me: ANN }])).toEqual({ 'not-finished': 1 });
+    expect(calls).toHaveLength(1);
+    expect(reads(calls)).toBe(0);
+    expect(existsSync(finishedDir(dir))).toBe(false);
+  });
+
+  it('with profiling off it makes no request and writes nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const { calls, fetchImpl } = stubFetch(finished(), withHistory());
+    const deps = { client: new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }), dataDir: dir, env: { WARAPP_PLAYER_PROFILE: 'off' } };
+    expect(await (await freshProcess()).fetchFinished(deps, [{ gameId: GAME, me: ANN }, { gameId: GAME + 1, me: ANN }])).toEqual({ off: 2 });
+    expect(calls).toHaveLength(0);
+    expect(readdirSync(dir)).toEqual([]);
   });
 });

@@ -146,13 +146,20 @@ node scripts/calibrate.mjs --data-dir <dir> --turns 8 --json
 node scripts/calibrate.mjs --fetch              # OWNER ONLY: reads war.app (needs the credentials)
 ```
 
-- **Truth** is each finished game's history, kept at `<dataDir>/calibrate/histories/<gameId>.json`
-  (the decoded boards by id, as the board cache keeps them, the seats' final states and the turns; 0600,
-  atomic, one file per game with a settings record; a file that does not parse is never overwritten).
-  Only `--fetch` writes it: for each game in `<dataDir>/games` whose boards are cached, one GameFeed read
-  without the history (is it finished?), then for a finished game the cached account played the history
-  ONCE (P2): the file, whatever its status (`captured`, `unreadable`, `not-a-player`, `request-failed`),
-  is the mark, and a game with one is never read again. Agents and tests never run `--fetch`.
+- **Truth** is each finished game's history as the end-of-game pass kept it: the record
+  `<dataDir>/finished/<hmac>.json` (E1, `src/finished-store.ts`) holds the history's boards, owners by
+  `playerKey`, a board that lists the same territories as the one before kept as its changes. The
+  harness keeps no store of its own and never reads a history itself: for each game in `<dataDir>/games`
+  it opens that game's record and matches its keys against the ids the settings record holds
+  (`historyOfRecord`; a key is never reversed). One history read per finished game (P2) so feeds the
+  profiles, the lessons and the harness, under one bound (500 records) and one name-free store (P4).
+  `--fetch` only runs the pass (`fetchFinished`) on those games with no record yet: one GameFeed read
+  without the history (is it finished?), then the pass's single history read; a game with a record of
+  any status costs nothing. With `WARAPP_PLAYER_PROFILE=off` nothing is read or written, the measurement
+  included. **Until a pass has run there is no truth and no number:** the harness says so. Run on a data
+  dir where no pass has run yet (no `finished/`), it prints `histories: {"missing": N}` and nothing
+  scored: the numbers need the warapp_my_games sweep, warapp_get_game on finished games, or the owner's
+  `--fetch` first. Agents and tests never run `--fetch`.
 - **(a) Calibration.** On every turn T with a cached board whose history board T − 1 is kept, per
   opponent with land there: the tracker's income (`calibrationSamples`, E2), the fog prior (#119, before
   #235's blend) and the plan's estimate (`planEnemyEstimates`, as `warapp_plan_turn` calls it: my income,
@@ -401,6 +408,7 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   `playerKey`; 0600, atomic, at most 500, an unparsable file never overwritten), which is also the
   processed mark: outcome (from the player states) and the turn I was out, my pick list and award,
   every player's income (`boardIncome`), territories, armies and full bonuses on each history board,
+  the boards themselves (owners by key; the calibration harness's truth, #318),
   what stood on each target my cached orders failed to take, the settings shape and the map id
   (`src/analysis/finished-game.ts`, pure). A failed request is `read-failed`, an unreadable history
   `history-unreadable` with #315's reason; neither is retried by a trigger, only by an explicit

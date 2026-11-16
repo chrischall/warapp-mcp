@@ -268,7 +268,7 @@ async function buildRecord(
   const graph = map ? graphOf(map) : undefined;
   const captured = capture(read, me, boards, orders, graph)!;
   return {
-    record: finishedRecordOf({ ...common, status: 'captured', layout: report.read.layout, noMap: !map, capture: captured }),
+    record: finishedRecordOf({ ...common, status: 'captured', layout: report.read.layout, noMap: !map, capture: captured, boards }),
     history: { capture: captured, boards, orders, graph },
   };
 }
@@ -469,4 +469,43 @@ async function refreshProcessed(deps: EndOfGameDeps, me: number, window: readonl
   const salt = await playerRecordSalt(dataDir);
   if (!salt) return;
   for (const id of window) await touchFinished(finishedPath(dataDir, salt, me, id));
+}
+
+/**
+ * The calibration harness's `--fetch` (#318, scripts/calibrate.mjs; owner only): the end-of-game pass on
+ * each of `games` not yet processed, and nothing else. It never reads a history of its own: a game with
+ * a record (any status) costs no request, and any other one GameFeed read without the history (is it
+ * finished?) before the pass's own single read. So the harness and every trigger share one history read
+ * per game (P2) and one name-free store (P4). With profiling off nothing is read or written. Returns a
+ * tally of statuses (no id). Never throws.
+ */
+export async function fetchFinished(deps: EndOfGameDeps, games: readonly { gameId: number; me: number }[]): Promise<Record<string, number>> {
+  const tally: Record<string, number> = {};
+  const count = (k: string) => {
+    tally[k] = (tally[k] ?? 0) + 1;
+  };
+  for (const { gameId, me } of games) {
+    if (!profileEnabled(deps.env)) {
+      count('off');
+      continue;
+    }
+    // A record of any status (or one that does not parse, which is never overwritten): nothing to do.
+    if (!(await needsEndOfGame(deps.dataDir, deps.env, gameId, me))) {
+      count('already-processed');
+      continue;
+    }
+    let shown: Game;
+    try {
+      shown = await deps.client.getGame(gameId, { map: false });
+    } catch {
+      count('state-read-failed');
+      continue;
+    }
+    if (shown.state !== 'Finished') {
+      count('not-finished');
+      continue;
+    }
+    count((await endOfGame(deps, gameId, me, shown, { fold: true })).status);
+  }
+  return tally;
 }
