@@ -127,6 +127,12 @@ export type PriorWhy = 'unseen' | 'unmeasured';
 
 export type OutlookState = 'winning' | 'losing' | 'even' | 'stalemate';
 
+/** #283: a side's armies on the board and its board income (strength = armies + k × income). */
+export interface OutlookFigures {
+  armies: number;
+  income: number;
+}
+
 export interface OutlookTurn {
   turn: number;
   /** My strength: armies + k × income; in a team game my team's (PLAN-TEAMS C3). */
@@ -168,6 +174,12 @@ export interface OutlookTurn {
    * none measured), whether the main front grinds me down, and whether that corroborated a loss.
    */
   lowLikely?: { myIncome: number; mostTracked: number; groundDown: boolean; losing: boolean };
+  /**
+   * #283: the armies and income behind `mine` and `strongest.low`, as the board shows them (an opponent's
+   * in view only: a lower bound under fog); each side's summed in a team game. Kept in the outlook log,
+   * so a surrender report can say what the position was.
+   */
+  figures?: { mine: OutlookFigures; strongest: OutlookFigures | null };
   /** Territories in view on this board and the one before that changed owner (`null` without the board before). */
   changed: number | null;
   /**
@@ -425,6 +437,11 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       : [];
     const strengthOf = (p: number) => (armies.get(p) ?? 0) + k * boardIncome(g, held.get(p) ?? new Set(), rules).total;
     const mine = mates.reduce((n, p) => n + strengthOf(p), strengthOf(me));
+    // #283: what `mine` is made of.
+    const mineFigures: OutlookFigures = [me, ...mates].reduce(
+      (f, p) => ({ armies: f.armies + (armies.get(p) ?? 0), income: f.income + boardIncome(g, held.get(p) ?? new Set(), rules).total }),
+      { armies: 0, income: 0 },
+    );
     const open = fullyVisible(g, board);
     const ids = new Set<number>([...held.keys()].filter((p) => !ally(p)));
     for (const p of players) if (!ally(p.id) && stillPlaying(p.id)) ids.add(p.id);
@@ -435,9 +452,10 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         const a = armies.get(playerId) ?? 0;
         const income = boardIncome(g, held.get(playerId) ?? new Set(), rules).total;
         const low = a + k * income;
+        const seen = { armies: a, income };
         const none = { likely: undefined as number | undefined, source: undefined as LikelySource | undefined, why: undefined as PriorWhy | undefined };
-        if (open) return { playerId, low, high: low as number | null, ...none };
-        if (start === null || likelyStart === null || cardsBound === undefined) return { playerId, low, high: null, ...none };
+        if (open) return { playerId, low, high: low as number | null, seen, ...none };
+        if (start === null || likelyStart === null || cardsBound === undefined) return { playerId, low, high: null, seen, ...none };
         // Each turn's could-earn cap: from that turn's board when I have it, else the ceiling.
         let received = start;
         for (let t = 1; t <= turn; t++) received += turnCap(t, playerId);
@@ -470,7 +488,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         if (last) for (let t = last.turn + 1; t <= turn; t++) since += Math.min(turnCap(t, playerId), paceAt(t));
         const likely =
           Math.max(a, likelyReceived + now, since) + k * Math.max(income, last?.income ?? 0, Math.min(cap, pace)) + ahead;
-        return { playerId, low, high, likely: Math.min(high, Math.max(low, likely)), source, why };
+        return { playerId, low, high, seen, likely: Math.min(high, Math.max(low, likely)), source, why };
       });
     // PLAN-TEAMS C3: an enemy team is one side, its figures summed; elsewhere a side is a player.
     const teamOf = (p: number) => {
@@ -483,9 +501,11 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       const t = teamOf(r.playerId);
       const side = t === undefined ? undefined : sides.find((x) => x.team === t);
       if (t === undefined) sides.push(r);
-      else if (!side) sides.push({ ...r, team: t, players: [r.playerId] });
+      else if (!side) sides.push({ ...r, seen: { ...r.seen }, team: t, players: [r.playerId] });
       else {
         side.low += r.low;
+        side.seen.armies += r.seen.armies;
+        side.seen.income += r.seen.income;
         side.high = side.high === null || r.high === null ? null : side.high + r.high;
         side.likely = side.likely === undefined || r.likely === undefined ? undefined : side.likely + r.likely;
         if (r.source === 'prior' && side.source !== 'prior') {
@@ -644,6 +664,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       strongest,
       ratio,
       ...(likely ? { likely } : {}),
+      figures: { mine: mineFigures, strongest: top ? { ...top.seen } : null },
       changed,
       ...(forecast ? { front: forecast } : {}),
       state,

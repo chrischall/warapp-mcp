@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../src/board.js';
 import type { Game } from '../src/normalize.js';
-import { outlookLogPath, readOutlookLog, recordLoss } from '../src/outlook-log.js';
+import { outlookLogPath, readOutlookLog, recordLoss, recordOutlook } from '../src/outlook-log.js';
 import { lossReport } from '../src/tools/how-lost.js';
 import { myOrdersOf } from '../src/tools/turn.js';
 import { readCachedOrders, writeBoardCache, writeOrdersCache } from '../src/trend.js';
@@ -144,11 +144,60 @@ describe('warapp_get_game: how the game was lost (#274)', () => {
     }
   });
 
-  it('gives a surrender or a boot as the cause without reading the boards', async () => {
+  it('gives a surrender by its state, with the last turn played here when no outlook was logged', async () => {
     const dir = await seed();
     h = await liveHarness({ feed: [finished('SurrenderAccepted')], dataDir: dir });
     const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
-    expect(p.howLost).toEqual({ result: 'SurrenderAccepted', cause: 'surrendered', line: 'Surrendered (accepted).' });
+    expect(p.howLost).toEqual({
+      result: 'SurrenderAccepted',
+      cause: 'surrendered',
+      turn: 3,
+      line: 'Surrendered (accepted). The last turn played here was turn 3; no outlook was logged for it.',
+    });
+  });
+
+  it('#283: a surrender gives the turn and the last logged outlook: my income and armies against the strongest opponent\'s, and its state', async () => {
+    const dir = await seed();
+    const turn = (n: number, state: 'even' | 'losing', armies: number, income: number) => ({
+      turn: n,
+      mine: armies + 3 * income,
+      strongest: { playerId: OPP, low: 160 + 3 * 25, high: null },
+      ratio: { low: 0, high: 0.4 },
+      changed: 2,
+      state,
+      figures: { mine: { armies, income }, strongest: { armies: 160, income: 25 } },
+    });
+    await recordOutlook(dir, GAME, ME, { state: 'losing', heldTurns: 2, k: 3, threshold: 2.4, basis: 'b', turns: [turn(2, 'losing', 50, 9), turn(3, 'losing', 40, 8)] });
+    h = await liveHarness({ feed: [finished('SurrenderAccepted')], dataDir: dir });
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+    expect(p.howLost).toEqual({
+      result: 'SurrenderAccepted',
+      cause: 'surrendered',
+      turn: 3,
+      outlook: {
+        turn: 3,
+        state: 'losing',
+        held: { state: 'losing', turns: 2 },
+        mine: { armies: 40, income: 8 },
+        strongest: { id: OPP, name: '⟦Rival ʺxʺ⟧', armies: 160, income: 25 },
+      },
+      line:
+        "Surrendered (accepted). The last turn played here was turn 3; its outlook read losing (held 2 turns): my income 8 and 40 armies against ⟦Rival ʺxʺ⟧'s 25 and 160 in view.",
+    });
+    // The log stays name-free.
+    expect(readFileSync(outlookLogPath(dir, GAME), 'utf8')).not.toContain('Rival');
+  });
+
+  it('#283: an outlook logged before the figures were kept still gives the turn and the state', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-howlost-'));
+    mkdirSync(join(dir, 'outlook'), { recursive: true });
+    const old = { gameId: GAME, playerId: ME, turns: { '5': { mine: 50, low: 90, high: null, ratio: { low: 0, high: 0.55 }, state: 'even' } }, latest: { turn: 5, state: null, heldTurns: 1, basis: 'b' } };
+    writeFileSync(outlookLogPath(dir, GAME), JSON.stringify(old));
+    h = await liveHarness({ feed: [finished('SurrenderAccepted', '5')], dataDir: dir });
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+    expect(p.howLost).toMatchObject({ turn: 5, outlook: { turn: 5, state: 'even' } });
+    expect(p.howLost.outlook.mine).toBeUndefined();
+    expect(p.howLost.line).toBe('Surrendered (accepted). The last turn played here was turn 5; its outlook read even (the armies and income behind it were not logged then).');
   });
 
   it('without my orders gives what stood at the start, and without a commander names the last territories', async () => {

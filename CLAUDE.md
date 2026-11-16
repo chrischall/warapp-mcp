@@ -1194,12 +1194,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   #228: the surrender preview reads the game with `settings: true`, which carries it — without them it
   always fell back — and unread with more than two players `acceptance.needed` is `null`: it MAY be
   needed, the result reading unchanged).
-  `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
-  (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
+  `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json` (per turn
+  the strengths, ratio and state, and since #283 the armies and income behind them, `figures`, with the
+  strongest side's id; `warapp_get_game` adds the final result); the surrender preview reads the latest from there.
   **How a lost game was lost (#274, `src/analysis/how-lost.ts` pure, `src/tools/how-lost.ts`):**
   `warapp_get_game` on a finished game the cached account did not win reports `howLost`, and (#283) on a
   game still playing once that account's seat is out (`Eliminated`, `Booted`, `SurrenderAccepted`; no
-  disk read unless some seat is) — a surrender or boot by its state; an elimination from the newest
+  disk read unless some seat is) — a surrender or boot by its state, with (#283) `turn` (the last turn
+  played here: the newest cached board where it held land, or logged outlook) and `outlook`, the newest
+  logged one up to then (its state, `held` when the log's latest state held, and `mine` / `strongest`:
+  armies and board income, the strongest side's in view, from the log's per-turn `figures` —
+  `OutlookTurn.figures`, absent on turns logged before #283), all in its `line`; an elimination from the newest
   cached board where it held a territory (the turn, `turnCertain` only when it is the game's newest
   completed turn): my commander there → its territory fell
   (inferred), with what stood there after my cached orders (`low` after my moves out, `high` after my

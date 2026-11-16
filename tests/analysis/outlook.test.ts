@@ -737,4 +737,15 @@ describe('gameOutlook: team strength is summed (PLAN-TEAMS C3)', () => {
     expect(o.turns.at(-1)!.minePlayers).toBeUndefined();
     expect(o.turns.at(-1)!.strongest).toEqual({ playerId: FOE, low: 30, high: 30 });
   });
+
+  it('#283: each turn carries the armies and income behind its strengths: mine and the strongest side in view', () => {
+    const o = gameOutlook({ graph: g, me: ME, boards: turns(4, [apart(20, 5), apart(20, 5), apart(20, 5)]), game });
+    for (const t of o.turns) {
+      expect(t.figures!.mine.armies + o.k * t.figures!.mine.income).toBe(t.mine);
+      expect(t.figures!.strongest!.armies + o.k * t.figures!.strongest!.income).toBe(t.strongest!.low);
+    }
+    // By team, each side's summed: my team 20 + 20 + 40 armies on +5 and +5, team 2's 10 + 5 on +5 and +5.
+    const team = gameOutlook({ graph: g, me: ME, boards: turns(4, [teams(20, 40, 5, 5), teams(20, 40, 5, 5), teams(20, 40, 5, 5)]), game: { players } });
+    expect(team.turns.at(-1)!.figures).toEqual({ mine: { armies: 80, income: 10 }, strongest: { armies: 15, income: 10 } });
+  });
 });

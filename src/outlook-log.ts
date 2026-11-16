@@ -18,7 +18,7 @@ const OUTLOOK_LOG_TURNS = 500;
 
 export const outlookLogPath = (dir: string, gameId: number) => join(dir, 'outlook', `${gameId}.json`);
 
-interface OutlookLogTurn {
+export interface OutlookLogTurn {
   /** My strength. */
   mine: number;
   /** The strongest opponent's strength range (`high` `null`: unbounded). */
@@ -26,9 +26,18 @@ interface OutlookLogTurn {
   high: number | null;
   ratio: { low: number; high: number | null };
   state: OutlookState;
+  /**
+   * #283: the armies and income behind the strengths (an opponent's in view only), and which side the
+   * strongest was (its lowest player id; `team` in a team game). Absent on turns logged before #283.
+   */
+  figures?: {
+    mine: { armies: number; income: number };
+    strongest: { playerId: number; team?: number; armies: number; income: number } | null;
+  };
 }
 
-interface OutlookLog {
+/** The log as read back: the outlook log's turns and latest outlook, the result and the loss. */
+export interface OutlookLog {
   gameId: number;
   playerId: number;
   turns: Record<string, OutlookLogTurn>;
@@ -74,6 +83,21 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
         high: t.strongest?.high ?? null,
         ratio: t.ratio,
         state: t.state,
+        ...(t.figures
+          ? {
+              figures: {
+                mine: { ...t.figures.mine },
+                strongest:
+                  t.figures.strongest && t.strongest
+                    ? {
+                        playerId: t.strongest.playerId,
+                        ...(t.strongest.team !== undefined ? { team: t.strongest.team } : {}),
+                        ...t.figures.strongest,
+                      }
+                    : null,
+              },
+            }
+          : {}),
       };
     const keep = Object.keys(log.turns)
       .map(Number)

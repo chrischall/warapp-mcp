@@ -4,14 +4,14 @@
 
 import { howLost, type HowLost } from '../analysis/how-lost.js';
 import type { Game } from '../normalize.js';
-import { readOutlookLog, readOutlookPlayer, recordLoss } from '../outlook-log.js';
+import { readOutlookLog, readOutlookPlayer, recordLoss, type OutlookLog } from '../outlook-log.js';
 import { readBoardHistory, readCachedOrders, readCachedPlayer } from '../trend.js';
 import { untrustedText } from './common.js';
 
 /** #283: the seat states that put me out of a game, whether or not the others play on. */
 const OUT_STATES: ReadonlySet<string> = new Set(['Eliminated', 'Booted', 'SurrenderAccepted']);
 
-/** The causes a seat's state gives without a board. */
+/** The causes a seat's state gives without a board (#283: `seatOut` adds the last turn and outlook). */
 const STATE_CAUSES: Record<string, { cause: string; line: string }> = {
   SurrenderAccepted: { cause: 'surrendered', line: 'Surrendered (accepted).' },
   Booted: { cause: 'booted', line: 'Booted from the game.' },
@@ -64,6 +64,56 @@ function report(loss: HowLost, game: Game): Record<string, unknown> {
   };
 }
 
+/** The newest turn this server played `gameId` on: a cached board where I held land, or a logged outlook. */
+async function lastPlayed(dir: string, gameId: number, me: number): Promise<{ turn: number; log: OutlookLog | undefined } | undefined> {
+  const log = await readOutlookLog(dir, gameId, me);
+  const boards = await readBoardHistory(dir, gameId, me);
+  const held = boards
+    .filter((b) => b.board.territories.some((t) => t.owner.kind === 'player' && t.owner.playerId === me))
+    .map((b) => b.turn);
+  const logged = Object.keys(log?.turns ?? {}).map(Number).filter(Number.isInteger);
+  const all = [...held, ...logged];
+  return all.length ? { turn: Math.max(...all), log } : undefined;
+}
+
+/**
+ * #283: a surrender or a boot, by my seat's state, with the last turn played here and the outlook logged
+ * last (its state, and my armies and income against the strongest side's in view, when logged).
+ */
+function seatOut(
+  result: string,
+  byState: { cause: string; line: string },
+  last: { turn: number; log: OutlookLog | undefined } | undefined,
+  game: Game,
+): Record<string, unknown> {
+  if (!last) return { result, ...byState };
+  const { turn, log } = last;
+  const loggedTurn = Math.max(...Object.keys(log?.turns ?? {}).map(Number).filter(Number.isInteger).filter((t) => t <= turn));
+  const entry = Number.isFinite(loggedTurn) ? log!.turns[String(loggedTurn)] : undefined;
+  const head = `${byState.line} The last turn played here was turn ${turn}`;
+  if (!entry) return { result, ...byState, turn, line: `${head}; no outlook was logged for it.` };
+  const held = log!.latest && log!.latest.turn === loggedTurn && log!.latest.state !== null ? { state: log!.latest.state, turns: log!.latest.heldTurns } : undefined;
+  const f = entry.figures;
+  const s = f?.strongest;
+  const who = s
+    ? s.team !== undefined
+      ? `team ${s.team}`
+      : untrustedText(game.players.find((p) => p.id === s.playerId)?.name ?? s.playerId)
+    : undefined;
+  const outlook = {
+    turn: loggedTurn,
+    state: entry.state,
+    ...(held ? { held } : {}),
+    ...(f ? { mine: f.mine } : {}),
+    ...(s ? { strongest: { id: s.playerId, ...(s.team !== undefined ? { team: s.team } : {}), name: who, armies: s.armies, income: s.income } } : {}),
+  };
+  const read = `${loggedTurn === turn ? 'its outlook' : `the last outlook logged (turn ${loggedTurn})`} read ${entry.state}${held ? ` (held ${held.turns} turn${held.turns === 1 ? '' : 's'})` : ''}`;
+  const figures = !f
+    ? ' (the armies and income behind it were not logged then)'
+    : `: my income ${f.mine.income} and ${f.mine.armies} armies${s ? ` against ${who}'s ${s.income} and ${s.armies} in view` : ', no opponent in view'}`;
+  return { result, ...byState, turn, outlook, line: `${head}; ${read}${figures}.` };
+}
+
 /**
  * How `game` was lost, when the account this server cached it for did not win it: once it is finished,
  * or (#283) while it is still playing once my seat is out (eliminated, booted or surrendered). A
@@ -80,7 +130,7 @@ export async function lossReport(dir: string, game: Game): Promise<Record<string
     const state = game.players.find((p) => p.id === me)?.state;
     if (state === undefined || (!finished && !OUT_STATES.has(state))) return undefined;
     const byState = STATE_CAUSES[state];
-    if (byState) return { result: state, ...byState };
+    if (byState) return seatOut(state, byState, await lastPlayed(dir, game.id, me), game);
     if (state !== 'Eliminated') return undefined;
     const boards = await readBoardHistory(dir, game.id, me);
     const s = game.settings;
