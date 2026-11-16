@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0](https://github.com/chrischall/warapp-mcp/compare/v0.1.0...v0.2.0) (2026-11-16)
+
+
+### Features
+
+* **map:** read each distribution mode's territories from war.app's map details, and use them as the start candidates of an automatically dealt game ([#330](https://github.com/chrischall/warapp-mcp/issues/330)) ([6f1785b](https://github.com/chrischall/warapp-mcp/commit/6f1785b31c29859c1e6fdeed8441cb6aaf4804af))
+* **notifications:** list, acknowledge and delete war.app's in-app notifications, mark a game's chat read on war.app, and read finished games' chat in the inbox ([#320](https://github.com/chrischall/warapp-mcp/issues/320)) ([b0878db](https://github.com/chrischall/warapp-mcp/commit/b0878db9acf6990196922c2f606eb130d49feeca))
+* **profiles:** capture and process every finished game once — history, outcome, incomes, per-map record and lessons — and add a local calibration harness ([#329](https://github.com/chrischall/warapp-mcp/issues/329)) ([72b72a3](https://github.com/chrischall/warapp-mcp/commit/72b72a34c10559c08ff98c4e07dfe443afc1ef71))
+* **skill:** the lessons from the lost 1v1s in the skill and strategy notes, an arrived army as the guard, and Airlift and Blockade verified live ([#307](https://github.com/chrischall/warapp-mcp/issues/307)) ([cdb1d56](https://github.com/chrischall/warapp-mcp/commit/cdb1d5679b67560dad94d45a2a6b0204b1ca4313))
+* **surrender:** see a pending surrender, say when it waits on me, and accept it with warapp_accept_surrender ([#325](https://github.com/chrischall/warapp-mcp/issues/325)) ([6c478a2](https://github.com/chrischall/warapp-mcp/commit/6c478a21a28dd866cd297070dd96865a5066bb46))
+
+
+### Bug Fixes
+
+* **chat:** keep the chat source field to web or gamefeed, report a partly sent delete truthfully, and mark the notification and chat read calls verified live ([#324](https://github.com/chrischall/warapp-mcp/issues/324)) ([9ef74fa](https://github.com/chrischall/warapp-mcp/commit/9ef74fa37641cfd599fbe7d4c8f0a83e379386cc))
+* **locate:** name the distribution mode the start candidates came from, and mark the map details decode verified live ([#331](https://github.com/chrischall/warapp-mcp/issues/331)) ([9168c62](https://github.com/chrischall/warapp-mcp/commit/9168c62cb647b043c36e47f3fca7c62b4b6af320))
+* **planner:** say how much of an opponent's frontier its income was read from, show the outlook's evidence, and size Local Deployment borders on what can land there ([#316](https://github.com/chrischall/warapp-mcp/issues/316)) ([0b572c5](https://github.com/chrischall/warapp-mcp/commit/0b572c5586965c6bef75852df768847d368f5763))
+* **strategy:** read the game's phase from the live board so contact and late notes are served, and say why a finished game's history does not read ([#315](https://github.com/chrischall/warapp-mcp/issues/315)) ([b61fd8a](https://github.com/chrischall/warapp-mcp/commit/b61fd8a52321918813ec516f2dd83d853d5f4644))
+
 ## 0.1.0 (2026-11-16)
 
 

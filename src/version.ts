@@ -1,4 +1,4 @@
 // Single source of truth for the server version. release-please bumps the
 // literal on the marked line (registered in release-please-config.json
 // extra-files); every other module imports VERSION from here.
-export const VERSION = '0.1.0'; // x-release-please-version
+export const VERSION = '0.2.0'; // x-release-please-version
