@@ -87,6 +87,7 @@ export function commanderCheckOn(a: CommanderCheckInput): CommanderCheck | undef
     ...(so.teams.size ? { teams: so.teams } : {}),
     orderPriority: a.orderPriority,
     ...(a.settings.localDeployments ? { localDeployments: true } : {}),
+    ...(a.settings.localDeployments && (a.settings.bonusArmyPer ?? 0) > 0 ? { perTerritoryIncome: true } : {}),
     leader: so.leader,
     killedBy: a.killedBy ?? false,
     ...(a.airlifts?.length ? { airlifts: a.airlifts } : {}),

@@ -48,8 +48,8 @@
 // Local Deployment (#180, `localDeployments`): every reply's deploy is bounded as the planner
 // bounds it (#128, #293; local-deploy.ts `enemyDeployReaching`): the opponent's free income plus the
 // pools of the bonuses it could hold (no member shown with another owner) that contain the territory
-// deployed on; a deploy figure above that lands on one territory only as far as no bonus it could
-// hold carries it.
+// deployed on; a deploy figure above that never lands on one territory, except with per-territory
+// income (`perTerritoryIncome`), where what no bonus it could hold carries may land anywhere.
 //
 // One turn ahead (`exposedNextTurn`, computed by lookahead.ts, which the planner shares): a territory of mine that no enemy stack touches today can
 // be a border tomorrow. For each stack, each territory beside it that it can take this turn (mine
@@ -123,6 +123,11 @@ export interface StressInput {
   lookAhead?: boolean;
   /** The game has Local Deployment: each opponent's deploy is bounded by where it lands (#180). */
   localDeployments?: boolean;
+  /**
+   * #293 review: the game has per-territory income (`BonusArmyPer`): under Local Deployment what an
+   * opponent's deploy holds beyond every bonus it could hold may land anywhere ({@link enemyDeployReaching}).
+   */
+  perTerritoryIncome?: boolean;
   /** I lead a free-for-all: any two opponents may strike one territory of mine together (#180). */
   leader?: boolean;
   /**
@@ -376,7 +381,7 @@ export function stressPlan(input: StressInput): StressReport {
   const pools = input.localDeployments ? couldHoldBonusPools(graph, input.opponents.map((o) => o.id), shownOwner) : undefined;
   const deployOn = (opp: StressOpponent, on: number): number => {
     const all = Math.max(0, Math.floor(opp.deploy));
-    return pools ? enemyDeployReaching(all, freeIncome(opp.base ?? 0, DEFAULT_BASE_INCOME, opp.card ?? 0), pools.get(opp.id) ?? [], [on]) : all;
+    return pools ? enemyDeployReaching(all, freeIncome(opp.base ?? 0, DEFAULT_BASE_INCOME, opp.card ?? 0), pools.get(opp.id) ?? [], [on], input.perTerritoryIncome === true) : all;
   };
 
   /** Luck-free: `sent` armies (and a commander, when it goes along) take `t` as it stands. */

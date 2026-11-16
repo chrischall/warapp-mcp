@@ -294,8 +294,9 @@ describe('the strike stack never lowers income, even jointly', () => {
 
 // A stack that got no deploys still attacks. Under Local Deployment all 3 income is B700's pool
 // (+3, my interior T8), which can go nowhere else; the stack T1 (60) gets none and still takes the
-// adjacent T2 (5): with 18, sized for its 5 defenders plus the opponent's ~6 deploy landing there
-// first (#120). Its own offence entry reports the attack at cost 0.
+// adjacent T2 (5): with 16, sized for its 5 defenders plus the opponent's deploy landing there first
+// (#120) — its free income 5, since it could hold no bonus and its tracked 6 never lands on one
+// territory outside per-territory income (#293 review). Its own offence entry reports the attack at cost 0.
 describe('a strike stack with no deploys this turn is still spent', () => {
   const g = buildGraph(makeMap([1, 2, 8, 9], [[1, 2], [1, 8], [2, 9]], [[700, 3, [8]]]));
   const input: PlanInput = {
@@ -312,7 +313,7 @@ describe('a strike stack with no deploys this turn is still spent', () => {
   it('attacks from the stack and reports its entry with cost 0', () => {
     const p = planTurn(input);
     expect(p.deploys).toEqual([{ territoryId: 8, armies: 3 }]);
-    expect(attacks(p).filter((m) => m.from === 1).map((m) => [m.to, m.armies])).toEqual([[2, 18]]);
+    expect(attacks(p).filter((m) => m.from === 1).map((m) => [m.to, m.armies])).toEqual([[2, 16]]);
     expect(p.offence.find((o) => o.kind === 'strike' && o.target === 1)).toMatchObject({ taken: true, cost: 0 });
     valid(input, p);
   });

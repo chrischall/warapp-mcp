@@ -210,13 +210,26 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
   const enemyPools = new Map<number, { value: number; members: ReadonlySet<number> }[]>();
   // #199: the one Local Deployment bound (local-deploy.ts), shared with check_plan's stress test.
   // A what-if `enemyDeploy` is taken as it stands: no pool bounds it.
+  // #293 review: with per-territory income, income no pool carries (territories the fog hides) may land
+  // anywhere, so what an estimate holds beyond every bonus it could hold counts as free; without it, a
+  // border faces only the free income and the pools there.
+  const perTerritory = (s.bonusArmyPer ?? 0) > 0;
   if (s.localDeployments && !custom) {
     const foes = [...new Set([...state.values()].flatMap((t) => (t.owner.kind === 'player' && foe(t.owner.playerId) ? [t.owner.playerId] : [])))].sort(byNum);
     for (const [p, pools] of couldHoldBonusPools(g, foes, (t) => {
       const o = ownerShown(state.get(t))?.owner;
       return o === undefined ? undefined : o.kind === 'player' ? o.playerId : null;
-    }))
+    })) {
       enemyPools.set(p, pools);
+      const e = estimates.get(p);
+      const free = freeIncome(e?.base ?? 0, MIN_ENEMY_DEPLOY, e?.card?.armies ?? 0);
+      const pooled = pools.reduce((n, q) => n + q.value, 0);
+      const figure = deployOf(p);
+      if (perTerritory && figure - pooled > free)
+        warnings.push(
+          `Local Deployment with per-territory income: player ${p}'s estimate of ~${figure} is more than its free income +${free} and the +${pooled} of bonuses it could hold, so the ${figure - pooled - free} beyond them is taken as per-territory income the fog hides, which may be deployed anywhere: every border faces it.`,
+        );
+    }
   }
   /**
    * What `player` may deploy on any of `on` (#128, #293): its whole estimate, except under Local
@@ -226,8 +239,10 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
    * that never lands on one border. `figure` replaces the estimate (an untrusted opponent's, #275).
    */
   const deployReaching = (player: number, on: readonly number[], figure = deployOf(player)): number => {
+    const pools = enemyPools.get(player);
+    if (!pools) return figure;
     const e = estimates.get(player);
-    return enemyDeployReaching(figure, freeIncome(e?.base ?? 0, MIN_ENEMY_DEPLOY, e?.card?.armies ?? 0), enemyPools.get(player) ?? [], on);
+    return enemyDeployReaching(figure, freeIncome(e?.base ?? 0, MIN_ENEMY_DEPLOY, e?.card?.armies ?? 0), pools, on, perTerritory);
   };
   /**
    * #120: what the owner of enemy territory `t` may add there before my attack lands — its deploy

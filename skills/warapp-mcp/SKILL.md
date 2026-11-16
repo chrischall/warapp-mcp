@@ -947,7 +947,8 @@ do not send a backlog of turns unread. Override it when one of these shows up:
      uncontested bonuses first (#297).
    - *Local Deployment.* A front receives his free income, the pool of a bonus he could hold that it
      stands in, and next turn what walks up from behind it. The planner and `warapp_check_plan` now size
-     each border so (#293); check that the warnings' "~D deploy" at a gate is free + local pool, not his total.
+     each border so (#293); check that the warnings' "~D deploy" at a gate is free + local pool, not his total
+     (with per-territory income a warning says when more of his estimate is let land anywhere).
    - *A contested bonus fed piecemeal.* A bonus whose last member or two his stack keeps retaking
      will not fall to your free income each turn: mass for one turn (his stack + his deploy on every
      missing member) or leave it. While his stack roams inside it, garrison the members it can reach

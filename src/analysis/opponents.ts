@@ -105,12 +105,14 @@ import {
   failedAttackKills,
   frontierCoverage,
   holdLosses,
+  localFreeOn,
   observeSigned,
   ownerShown,
   repelledFloor,
   coverageText,
   LOW_COVERAGE,
   LOW_COVERAGE_FACTOR,
+  TRACKED_MIN_TURNS,
   trackCoverage,
   visibleState,
   type FrontierCoverage,
@@ -1418,7 +1420,7 @@ export function trackOpponents(
       // about its deploy (every stack would read as a reveal, or there is no estimate at all):
       // skip it with a note rather than observe 0 or throw (#83).
       const e = seesPlayer(before, g, playerId)
-        ? enemyDeployEstimates(g, after, me, settings, before).find((x) => x.playerId === playerId)
+        ? enemyDeployEstimates(g, after, me, settings, before, undefined, undefined, { turn: to }).find((x) => x.playerId === playerId)
         : undefined;
       if (!e?.observation) {
         unseen.push(seesPlayer(before, g, playerId) ? to : from);
@@ -1444,7 +1446,7 @@ export function trackOpponents(
         most: e.observedCap!,
         ...(expected !== null ? { expected: Math.max(expected, carriedSoFar) } : {}),
         // #293: the same Local Deployment reading the board-only observation used.
-        ...(settings.localDeployments ? { localFree: Math.max(DEFAULT_BASE_INCOME, e.base) } : {}),
+        ...(settings.localDeployments ? { localFree: localFreeOn(e.base, DEFAULT_BASE_INCOME, settings.opponentReinforcement, from) } : {}),
       };
       const { signed, ...o } =
         expected !== null && carriedSoFar > expected
@@ -1847,7 +1849,7 @@ export function trackOpponents(
     const covered = estimate ? trackCoverage(incomeWindow) : null;
     if (covered && covered.share < 1)
       notes.push(
-        `Income read from ${coverageText(covered)}: the rest of where it can deploy was out of view, so the figure is a lower bound${covered.share < LOW_COVERAGE && income! > visibleIncome ? `, and the planner keeps at least ${LOW_COVERAGE_FACTOR} × it` : ''}.`,
+        `Income read from ${coverageText(covered)}: the rest of where it can deploy was out of view, so the figure is a lower bound${covered.share < LOW_COVERAGE && income! > visibleIncome && observed.length >= TRACKED_MIN_TURNS ? `, and the planner keeps at least ${LOW_COVERAGE_FACTOR} × it` : ''}.`,
       );
     notes.push(...warnings);
     return {

@@ -485,8 +485,10 @@ delays the orders listed after it; under No-Split the whole stack moves).
   income, the pool of a bonus it holds that the front stands in, and next turn what walks up from a
   pooled bonus behind it; size each border on that, not on its total income (contact and after).
   **Encoded** (#293): each border faces the free income plus the pools of the bonuses the opponent could
-  hold that contain its stacks there (`enemyDeployReaching`, planner and `warapp_check_plan` alike), and a
-  next-turn judgement adds its visible stacks one step behind the front; derived, from the lost 1v1s of #300.
+  hold that contain its stacks there (`enemyDeployReaching`, planner and `warapp_check_plan` alike; with
+  per-territory income, what its estimate holds beyond every such bonus may land anywhere too, said in a
+  warning), and a next-turn judgement adds its visible stacks one step behind the front; derived, from the
+  lost 1v1s of #300.
   Source: <https://war.app/wiki/Local_deployments>
 - `settings-no-split` — a territory that moves sends everything, once a turn; stage armies
   ahead and do not move a territory that must hold. **Encoded:** one move per source, each sending

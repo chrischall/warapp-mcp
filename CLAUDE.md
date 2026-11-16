@@ -631,14 +631,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   replies) a border faces the opponent's free income (base, never below the floor, plus a Reinforcement
   card: `freeIncome`) plus the pools of the bonuses it could hold (`couldHoldBonusPools`: no member shown
   with another owner, fogged ones included) that contain its stacks there, never above the estimate: a
-  tracked total or prior above that never lands on one border (only what the estimate holds beyond every
-  bonus it could hold together, per-territory income in the fog, counts as free too); the same bounds an
-  untrusted figure (#275). A next-turn judgement (`nextTurnAt`: R3's defensibility, rule 4d's frontier
+  tracked total or prior above that never lands on one border; the same bounds an untrusted figure (#275).
+  Only with per-territory income (`BonusArmyPer`; check_plan's `perTerritoryIncome`) does what the estimate
+  holds beyond every bonus it could hold together count as free too (per-territory income in the fog may
+  land anywhere), and a warning says so whenever that slack is used. A next-turn judgement (`nextTurnAt`: R3's defensibility, rule 4d's frontier
   cost, `exposure`) also adds its visible stacks one step behind its front (beside a stack next to the
   border, not next to it), which can walk up this turn, and their pools. In the observed deploy
-  (`ObserveContext.localFree`, planner and tracker alike), growth beside the fog on a territory in no bonus
-  it could hold on the earlier board is a walk as far as the growth split says a neighbour in view sent it,
-  and deploy only up to its free income (shared), the rest a move out of the fog (`localCut`, named in the
+  (`ObserveContext.localFree`, planner and tracker alike: `localFreeOn`, base plus a Reinforcement card the
+  clock lets it hold on the turn read — the planner's game clock, else `PlannerSettings.opponentReinforcement`,
+  a fixed card from `plannerSettings`), growth beside the fog on a territory in no bonus it could hold on the
+  earlier board is a walk only as far as a neighbour in view's shrink is left once the captures and the other
+  grown stacks have claimed theirs (one claim pass: a shrink never offsets a capture and a walk both), and
+  deploy only up to its free income (shared), the rest a move out of the fog (`localCut`, named in the
   rationale). A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
   *observed* (`observedDeploy`, #57): the *net* change of its armies on territories visible

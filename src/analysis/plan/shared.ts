@@ -219,6 +219,24 @@ export interface PlannerSettings {
    * one may have been played {@link repelledFloor} leaves out the half it could take ({@link bombPossibleOn}).
    */
   bombFrom?: number;
+  /**
+   * #293 review: an opponent's Reinforcement card on the card clock (a fixed card's armies; set by
+   * `plannerSettings` without a hand), when one is in play. Read only under Local Deployment, where
+   * the observed deploy counts it in the free income ({@link localFreeOn}); the planner prefers the
+   * game context's clock (`PlanGameContext.reinforcement`, which can value a progressive card).
+   */
+  opponentReinforcement?: ReinforcementClock;
+}
+
+/**
+ * #293 review: an opponent's free income under Local Deployment on the turn read (`turn`), for
+ * {@link ObserveContext.localFree}: its base (never below `floor`) plus a Reinforcement card's armies
+ * when the clock says one can be in hand by then (unknown turn: yes, when one is in play). A card
+ * play is income it may deploy anywhere.
+ */
+export function localFreeOn(base: number, floor: number, clock: ReinforcementClock | undefined, turn: number | null | undefined): number {
+  const card = clock && clock.armies > 0 && (turn === null || turn === undefined || turn >= clock.firstTurn) ? clock.armies : 0;
+  return Math.max(floor, base) + card;
 }
 
 /** #271 review: whether an opponent may have played a Bomb on `turn` (unknown turn: yes, when one is in play). */
@@ -1349,7 +1367,8 @@ export interface ObserveContext {
   myOrders?: MyOrders;
   /**
    * #293: under Local Deployment (`localDeployments` in the settings), its free income on the turn read
-   * (base, never below {@link MIN_ENEMY_DEPLOY}, plus a Reinforcement card). Growth beside the fog on a
+   * (base, never below {@link MIN_ENEMY_DEPLOY}, plus a Reinforcement card the clock lets it hold by
+   * then: {@link localFreeOn}). Growth beside the fog on a
    * territory in no bonus it could hold on the earlier board (none of its territories shown with another
    * owner) could only be deployed from that free income: what a neighbour in view visibly sent there (the
    * growth split, `stacks`) is a walk, and the rest reads as deploy only up to this figure, shared by all
@@ -1966,6 +1985,17 @@ export function observeSigned(
     }
   let freeLeft = Math.max(0, context.localFree ?? 0);
   const localCut: number[] = [];
+  // #293 review: a walled growth's walk draws on the shrink the captures left (`shrinkLeft`, after
+  // the capture loop), less what the other grown stacks' splits took (their growth already nets it),
+  // in ascending ids: one claim pass, so one neighbour's shrink never offsets a capture and a walk both.
+  const walled = (x: (typeof ambiguous)[number]) => local && x.kind === 'growth' && !pooledOn.has(x.id);
+  const walkLeft = new Map(shrinkLeft);
+  if (local) {
+    const walledIds = new Set(ambiguous.filter(walled).map((x) => x.id));
+    for (const st of stacks)
+      if (!walledIds.has(st.territoryId))
+        for (const m of st.moved) walkLeft.set(m.from, Math.max(0, (walkLeft.get(m.from) ?? 0) - m.armies));
+  }
   for (const x of [...ambiguous].sort((a, b) => a.id - b.id)) {
     if (bound === null && x.kind === 'growth') {
       lowExtra -= x.armies;
@@ -1973,17 +2003,25 @@ export function observeSigned(
     }
     // #293: a walk from a neighbour in view (the growth split) nets its shrink; the rest is deploy only
     // as far as the free income still reaches.
-    const walled = local && x.kind === 'growth' && !pooledOn.has(x.id);
-    const walk = walled ? Math.min(x.armies, (stacks.find((st) => st.territoryId === x.id)?.moved ?? []).reduce((n, m) => n + m.armies, 0)) : 0;
+    const isWalled = walled(x);
+    let walk = 0;
+    if (isWalled)
+      for (const n of [...neighborsOf(g, x.id)].sort(byNum)) {
+        const can = walkLeft.get(n);
+        if (!can || walk >= x.armies) continue;
+        const take = Math.min(can, x.armies - walk);
+        walkLeft.set(n, can - take);
+        walk += take;
+      }
     total += walk;
     room = Math.max(0, room - walk);
-    const deployed = Math.min(x.armies - walk, room, walled ? freeLeft : Infinity);
-    if (walled) freeLeft -= deployed;
+    const deployed = Math.min(x.armies - walk, room, isWalled ? freeLeft : Infinity);
+    if (isWalled) freeLeft -= deployed;
     room -= deployed;
     total += deployed;
     lowExtra -= deployed;
     const moved = x.armies - walk - deployed;
-    if (walled && moved > 0) localCut.push(x.id);
+    if (isWalled && moved > 0) localCut.push(x.id);
     highExtra += moved;
     if (x.kind === 'capture') {
       if (deployed > 0) reinforced.push(x.id);
@@ -2218,7 +2256,9 @@ export function enemyDeployEstimates(
           most: couldEarn,
           // #293: under Local Deployment, growth beside the fog outside every bonus it could hold is
           // deploy only up to its free income.
-          ...(settings.localDeployments ? { localFree: Math.max(MIN_ENEMY_DEPLOY, base) } : {}),
+          ...(settings.localDeployments
+            ? { localFree: localFreeOn(base, MIN_ENEMY_DEPLOY, when.reinforcement ?? settings.opponentReinforcement, when.turn == null ? null : when.turn - 1) }
+            : {}),
           ...(when.previousOrders ? { myOrders: when.previousOrders } : {}),
           // #271 review: the turn read is the one before the turn planned.
           ...(bombPossibleOn(settings, when.turn == null ? null : when.turn - 1) ? { bomb: true } : {}),

@@ -235,9 +235,11 @@
 //     without that bonus — the judgement it gets with no bonus. A rationale line says so ("… as FFA players attack alone (#235)") when the plan
 //     keeps it (live: a 23-stack that held against each neighbour alone, even at a 40 deploy, was
 //     conceded on the two together and withdrawn as the first order). Teammates (the game's team list) are never a threat, an
-//     estimate or a target. Under Local Deployment an opponent's visibly held bonus pays
-//     only into its own territories: what reaches T is its estimate less its visible pools
-//     plus the pools that contain one of its stacks next to T. An enemy commander counts in
+//     estimate or a target. Under Local Deployment a bonus an opponent could hold pays only
+//     into its own territories (#293, `enemyDeployReaching`): what reaches T is its free income
+//     plus the pools that contain one of its stacks next to T, never above its estimate (with
+//     per-territory income, plus what the estimate holds beyond every such pool, with a
+//     warning). An enemy commander counts in
 //     the expected attack too (rule 1h's near miss, kept garrisons).
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
 //     income (the larger of MinimumArmyBonus and, with BonusArmyPer on, its

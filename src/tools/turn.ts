@@ -305,6 +305,10 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   // #271 review: the first turn an opponent may play a Bomb (a bomb reads as a failed attack on my hold).
   const bombFrom = cardClock(s)?.cards.find((c) => c.card === 'Bomb')?.firstPlayableTurn.fastest;
   if (bombFrom !== undefined && bombFrom !== null) out.bombFrom = bombFrom;
+  // #293 review: an opponent's fixed Reinforcement card on the clock (no hand here: a progressive one
+  // is unknown), which the observed deploy counts in its free income under Local Deployment.
+  const reinforcement = opponentReinforcement(s, []);
+  if (reinforcement) out.opponentReinforcement = reinforcement;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game. The

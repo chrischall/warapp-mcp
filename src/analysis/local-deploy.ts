@@ -157,21 +157,23 @@ export function freeIncome(base: number, floor: number, card = 0): number {
  * An opponent's deploy under Local Deployment on `on` (#180, #293), as the planner bounds it (#128)
  * and warapp_check_plan's stress test does: its free income ({@link freeIncome}) plus the pools of the
  * bonuses it could hold ({@link couldHoldBonusPools}) that contain one of `on`, never above the
- * estimate. A total read above that (a tracked figure, the fog prior) never lands on one border: only
- * what its estimate holds beyond every bonus it could hold together (income no pool can carry, such as
- * per-territory income on territories the fog hides) counts as free too. With no pools the whole
- * estimate reaches.
+ * estimate. A total read above that (a tracked figure, the fog prior) never lands on one border.
+ * With per-territory income (`perTerritory`) the income no pool can carry (per-territory income on
+ * territories the fog hides) may land anywhere too: what the estimate holds beyond every bonus it
+ * could hold together counts as free (with no pools, the whole estimate reaches). Without it, nothing
+ * beyond the free income and those pools does.
  */
 export function enemyDeployReaching(
   estimate: number,
   free: number,
   pools: readonly { value: number; members: ReadonlySet<number> }[],
   on: readonly number[],
+  perTerritory: boolean,
 ): number {
-  if (!pools.length) return estimate;
   const pooled = pools.reduce((n, q) => n + q.value, 0);
   const here = pools.reduce((n, q) => n + (on.some((t) => q.members.has(t)) ? q.value : 0), 0);
-  return Math.min(estimate, Math.max(Math.min(estimate, free), estimate - pooled) + here);
+  const anywhere = perTerritory ? Math.max(Math.min(estimate, free), estimate - pooled) : free;
+  return Math.min(estimate, anywhere + here);
 }
 
 /**

@@ -481,11 +481,14 @@ describe('enemyDeployReaching / couldHoldBonusPools (#180, #293)', () => {
 
   it('bounds a deploy by its free income plus the pools that contain the territory', () => {
     const pool = [{ value: 5, members: new Set([4, 5]) }];
-    expect(enemyDeployReaching(10, 5, pool, [3])).toBe(5);
-    expect(enemyDeployReaching(10, 5, pool, [4])).toBe(10);
-    // Income beyond every pool it could hold can only be free: it lands anywhere.
-    expect(enemyDeployReaching(14, 5, pool, [3])).toBe(9);
-    expect(enemyDeployReaching(10, 5, [], [3])).toBe(10);
+    expect(enemyDeployReaching(10, 5, pool, [3], false)).toBe(5);
+    expect(enemyDeployReaching(10, 5, pool, [4], false)).toBe(10);
+    // Outside per-territory income nothing beyond the free income and the pools there lands (#293 review).
+    expect(enemyDeployReaching(14, 5, pool, [3], false)).toBe(5);
+    expect(enemyDeployReaching(10, 5, [], [3], false)).toBe(5);
+    // With it, income beyond every pool it could hold can only be free: it lands anywhere.
+    expect(enemyDeployReaching(14, 5, pool, [3], true)).toBe(9);
+    expect(enemyDeployReaching(10, 5, [], [3], true)).toBe(10);
   });
 
   it('#293: a total read above free income and its local pool never lands on one border', () => {
@@ -495,8 +498,8 @@ describe('enemyDeployReaching / couldHoldBonusPools (#180, #293)', () => {
       { value: 30, members: new Set([12, 13]) },
       { value: 6, members: new Set([3, 4]) },
     ];
-    expect(enemyDeployReaching(76, 11, pools, [1])).toBe(11);
-    expect(enemyDeployReaching(76, 11, pools, [3])).toBe(17);
+    expect(enemyDeployReaching(76, 11, pools, [1], false)).toBe(11);
+    expect(enemyDeployReaching(76, 11, pools, [3], false)).toBe(17);
     expect(freeIncome(8, 5, 3)).toBe(11);
     expect(freeIncome(2, 5)).toBe(5);
   });
