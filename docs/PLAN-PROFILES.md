@@ -363,8 +363,10 @@ confidence = n / (n + K)
 - **The per-game file after a fold:** marked `folded: 'live'` and kept until part C has tried the
   game's history once (or P2 is off), then deleted. A file untouched for `BOARD_CACHE_MAX_AGE_MS` is
   folded with `ending: unknown` and deleted, so no id-bearing file outlives the board cache.
-  *As built in part B (C not built yet):* a folded file is kept until that age rule deletes it; the
+  *As built in part B:* a folded file is kept until that age rule deletes it; the
   file keeps the game's seats (format, seat count, AI seats) so the age rule can fold it unread.
+  *As built, #312 (part C):* the end-of-game pass reads each finished game's history once and folds it over the
+  live counts (`source: 'history'`), marking the per-game file `folded: 'history'`.
   *As built, #264 (backfill):* a finished game with cached boards but no per-game file (it finished
   before #263) is observed once from those boards and my cached orders and folded as `live`, the file
   marked `backfill` and dated as the board cache so it is deleted with it. It runs in `warapp_get_game`

@@ -1015,7 +1015,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the reverse), and a game new to a player first fades its totals and entry weights by `PROFILE_DECAY` (0.9). AI
   seats reach the pool only; a human who became an AI is left out of the game. `foldFinishedGame` runs on the first
   read showing the game `Finished` (warapp_get_game, warapp_wait_for_turn's read; no request) and marks the per-game
-  file `folded: 'live'`; part C is not built, so the file then goes by the 60-day age rule, and one reaching it (or the
+  file `folded: 'live'`; the end-of-game pass (#312, part C) then folds the game's history over it and marks it
+  `folded: 'history'`. Otherwise the file goes by the 60-day age rule, and one reaching it (or the
   200-file bound) unfolded is folded with every ending `unknown` from the seats it kept, then deleted. **Backfill
   (#264, `foldFinished` in `src/tools/profile-hook.ts`):** a finished game with no per-game file (finished before
   #263, or never planned on this build) is observed once from the boards and orders the board cache holds for it
