@@ -358,7 +358,9 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   makes the one read, on the first read that shows the game finished — `warapp_get_game`, and (owner
   request of 2026-11-16, superseding "not inside the wait") `warapp_wait_for_turn`'s read — and in the
   `warapp_my_games` sweep over the account's finished games not yet processed (`END_OF_GAME_PER_CALL`,
-  2, per call, newest first). It keeps the capture name-free at `<dataDir>/finished/<hmac>.json`
+  2, per call, newest first, among the newest 250 only: half the store bound, their records refreshed
+  each call and never pruned by the sweep's writes, so a processed mark it relies on is never dropped
+  and no game's history is read twice). It keeps the capture name-free at `<dataDir>/finished/<hmac>.json`
   (`src/finished-store.ts`: the key an HMAC of my account and the game under the shared salt; players by
   `playerKey`; 0600, atomic, at most 500, an unparsable file never overwritten), which is also the
   processed mark: outcome (from the player states) and the turn I was out, my pick list and award,

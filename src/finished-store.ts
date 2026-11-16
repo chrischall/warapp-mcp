@@ -10,10 +10,12 @@
 // and are never retried automatically (an explicit warapp_get_game with `include_history` may).
 //
 // Same guarantees as the profile stores: 0600 files in a 0700 folder, atomic writes, best effort; at
-// most `MAX_FINISHED_RECORDS` files, the least recently written dropped first; a file that exists but
+// most `MAX_FINISHED_RECORDS` files, the least recently written (or refreshed by the sweep) dropped first, never
+// one the writer protects (the sweep's window: its newest finished games, half the bound, so a processed
+// game it lists never loses its mark and is never read again); a file that exists but
 // does not parse (not JSON, not an object, another version) is never overwritten. `WARAPP_PLAYER_PROFILE=off`
 // switches the pass off (nothing read or written).
-import { readdir, readFile, stat, unlink } from 'node:fs/promises';
+import { readdir, readFile, stat, unlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FinishedCapture, FinishedOutcome, PlayerTurn } from './analysis/finished-game.js';
 import { profileFormatOf, type ProfileFormat } from './analysis/opponent-profile.js';
@@ -93,13 +95,28 @@ export async function readFinishedState(path: string): Promise<'missing' | 'unre
   }
 }
 
-/** Write a record atomically (0600), then keep the newest {@link MAX_FINISHED_RECORDS}. Throws on a failed write. */
-export async function writeFinishedRecord(dir: string, path: string, body: FinishedRecord, keep = MAX_FINISHED_RECORDS): Promise<void> {
+/**
+ * Write a record atomically (0600), then keep the newest {@link MAX_FINISHED_RECORDS}: never a path in
+ * `protect` (the sweep's window, src/tools/end-of-game.ts), nor the one just written. Throws on a failed write.
+ */
+export async function writeFinishedRecord(
+  dir: string,
+  path: string,
+  body: FinishedRecord,
+  keep = MAX_FINISHED_RECORDS,
+  protect?: ReadonlySet<string>,
+): Promise<void> {
   await writeJsonAtomic(path, finishedDir(dir), body);
-  await pruneFinished(dir, keep).catch(() => undefined);
+  await pruneFinished(dir, keep, new Set([...(protect ?? []), path])).catch(() => undefined);
 }
 
-async function pruneFinished(dir: string, keep: number): Promise<void> {
+/** Mark a record most recently used (a prune drops the least recently written or touched first). Never throws. */
+export async function touchFinished(path: string): Promise<void> {
+  const now = new Date();
+  await utimes(path, now, now).catch(() => undefined);
+}
+
+async function pruneFinished(dir: string, keep: number, protect: ReadonlySet<string>): Promise<void> {
   const folder = finishedDir(dir);
   const files: { path: string; at: number }[] = [];
   for (const name of await readdir(folder)) {
@@ -113,7 +130,13 @@ async function pruneFinished(dir: string, keep: number): Promise<void> {
   }
   if (files.length <= keep) return;
   files.sort((a, b) => b.at - a.at || a.path.localeCompare(b.path));
-  for (const f of files.slice(keep)) await unlink(f.path).catch(() => undefined);
+  let over = files.length - keep;
+  for (const f of [...files].reverse()) {
+    if (over <= 0) break;
+    if (protect.has(f.path)) continue;
+    await unlink(f.path).catch(() => undefined);
+    over--;
+  }
 }
 
 /** What {@link finishedRecordOf} keys and keeps beside the capture. */

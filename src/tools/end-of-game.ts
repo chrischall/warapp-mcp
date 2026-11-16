@@ -16,7 +16,7 @@
 import type { EnvSource } from '@chrischall/mcp-utils';
 import { captureFinished, type FinishedCapture } from '../analysis/finished-game.js';
 import type { WarappClient } from '../client.js';
-import { finishedPath, finishedRecordOf, readFinishedState, writeFinishedRecord, type FinishedFailure, type FinishedRecord, type FinishedStatus } from '../finished-store.js';
+import { MAX_FINISHED_RECORDS, finishedPath, finishedRecordOf, readFinishedState, touchFinished, writeFinishedRecord, type FinishedFailure, type FinishedRecord, type FinishedStatus } from '../finished-store.js';
 import type { Game } from '../normalize.js';
 import { withPathLock } from '../path-lock.js';
 import { readPickRecord } from '../pick-list.js';
@@ -76,6 +76,10 @@ export interface EndOfGameOptions {
   retry?: boolean;
   /** Also fold the game's opponent profiles (`foldFinished`; the sweep, whose callers do not fold). */
   fold?: boolean;
+  /** The store bound (tests; default `MAX_FINISHED_RECORDS`). */
+  keep?: number;
+  /** Games whose records this pass's prune must keep (the sweep's window). */
+  protectIds?: readonly number[];
 }
 
 const SAFE = /^[a-z_]{1,40}$/;
@@ -163,7 +167,8 @@ export async function endOfGame(
       const shown = game ?? seen;
       const record = await buildRecord(dataDir, salt, me, gameId, game, shown, failure);
       try {
-        await writeFinishedRecord(dataDir, path, record);
+        const protect = opts.protectIds ? new Set(opts.protectIds.map((id) => finishedPath(dataDir, salt, me, id))) : undefined;
+        await writeFinishedRecord(dataDir, path, record, opts.keep, protect);
       } catch {
         return { status: 'failed' };
       }
@@ -273,23 +278,43 @@ export async function finishedAccount(
   return me;
 }
 
+/** How many of the newest finished games the sweep considers: half the store bound, so their records always fit. */
+export const sweepWindow = (keep: number = MAX_FINISHED_RECORDS): number => Math.max(1, Math.floor(keep / 2));
+
 /**
  * The sweep (warapp_my_games): of `gameIds` (finished games of mine, newest first), process at most
  * `limit` not yet processed, one at a time, each folding its profiles too. `pending` counts those
  * left for a later call. Never throws.
+ *
+ * The record is the "processed" mark and the store is bounded, so the sweep looks only at the newest
+ * {@link sweepWindow} games (half the bound): older ones are never its candidates, whatever the store
+ * dropped. Its writes never prune a record of a game in that window (`protectIds`), and each call
+ * refreshes the window's records, so another trigger's write (warapp_get_game on an old game) drops
+ * a record outside it first. A game the sweep processed is so never read again (P2).
  */
 export async function sweepFinished(
   deps: EndOfGameDeps,
   me: number,
   gameIds: readonly number[],
-  limit = END_OF_GAME_PER_CALL,
+  { limit = END_OF_GAME_PER_CALL, keep = MAX_FINISHED_RECORDS }: { limit?: number; keep?: number } = {},
 ): Promise<{ processed: { gameId: number; status: EndOfGameStatus; turns?: number }[]; pending: number }> {
+  const window = gameIds.slice(0, sweepWindow(keep));
   const todo: number[] = [];
-  for (const id of gameIds) if (await needsEndOfGame(deps.dataDir, deps.env, id, me)) todo.push(id);
+  for (const id of window) if (await needsEndOfGame(deps.dataDir, deps.env, id, me)) todo.push(id);
+  await refreshProcessed(deps, me, window).catch(() => undefined);
   const processed: { gameId: number; status: EndOfGameStatus; turns?: number }[] = [];
   for (const id of todo.slice(0, limit)) {
-    const r = await endOfGame(deps, id, me, undefined, { fold: true });
+    const r = await endOfGame(deps, id, me, undefined, { fold: true, keep, protectIds: window });
     processed.push({ gameId: id, status: r.status, ...(r.turns !== undefined ? { turns: r.turns } : {}) });
   }
   return { processed, pending: Math.max(0, todo.length - limit) };
+}
+
+/** Mark the window's records most recently used, so a prune drops a record outside the window first. */
+async function refreshProcessed(deps: EndOfGameDeps, me: number, window: readonly number[]): Promise<void> {
+  const { dataDir, env } = deps;
+  if (!dataDir || !profileEnabled(env)) return;
+  const salt = await playerRecordSalt(dataDir);
+  if (!salt) return;
+  for (const id of window) await touchFinished(finishedPath(dataDir, salt, me, id));
 }

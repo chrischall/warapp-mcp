@@ -166,7 +166,7 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
           'Finished games are left out unless ' +
           '`include_finished` (`finishedLeftOut` counts them). `listed` is how many games war.app returned and ' +
           '`complete` false (with a `warning`) means the list may be partial. Use the id with the other warapp tools. ' +
-          'Each call also gives up to two of your finished games not yet processed their end-of-game pass (`endOfGame`: ' +
+          'Each call also gives up to two of your newest 250 finished games not yet processed their end-of-game pass (`endOfGame`: ' +
           'each game\'s history read once from GameFeed and kept name-free for later games; `pending` counts the rest). ' +
           `${BRIDGE_NOTE} Read-only.`,
       ),

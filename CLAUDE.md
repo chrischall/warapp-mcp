@@ -1038,7 +1038,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   settings; the map from the cache when the game's map is known, else in the same reply), never retried, and keeps the
   capture name-free at `<dataDir>/finished/<hmac>.json` (`src/finished-store.ts`: the file name `finishedGameKey`, an
   HMAC of my account and the game under the ONE shared salt; players inside by `playerKey`; no clock; 0600, atomic, at
-  most `MAX_FINISHED_RECORDS` (500) by last write; a file that does not parse is never overwritten and blocks the pass,
+  most `MAX_FINISHED_RECORDS` (500) by last write or the sweep's refresh, never one the writer protects; a file that does not parse is never overwritten and blocks the pass,
   `record-unreadable`). The file IS the processed mark: any status stops every trigger. `captured` holds
   (`src/analysis/finished-game.ts`, pure) the outcome from my player state (`won`, `lost`, `surrendered`, `eliminated`,
   `booted`, `ended-by-vote`) with the completed turns, the first history board I held no land (`outTurn`) and the
@@ -1052,7 +1052,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   Triggers: `warapp_get_game` (the account: the board cache's, else the signed-in one), `warapp_wait_for_turn`'s read,
   and the `warapp_my_games` sweep over its finished games (my seat held) not yet processed, newest first, at most
   `END_OF_GAME_PER_CALL` (2) per call, each also folding its live profile (`foldFinished`, #273); the records are the
-  sweep's cursor (`endOfGame: { processed, pending }`). A pass that spent its request but left no record (the write
+  sweep's cursor (`endOfGame: { processed, pending }`). Since the record is the mark and the store is bounded, the sweep
+  looks only at the newest `sweepWindow` (half the bound: 250) finished games, refreshes their records each call and
+  protects them from its own writes' prune, so a mark it relies on is never dropped and no game is read twice (P2). A pass that spent its request but left no record (the write
   failed, or the reply showed the game not finished or not mine) is remembered in-process (`attempted`, bounded), so no
   trigger reads that game's history again in this process (`attempted` status). Only a seat of mine (P3);
   `WARAPP_PLAYER_PROFILE=off` or no data dir: nothing — not even the signed-in account is read (`finishedAccount` checks

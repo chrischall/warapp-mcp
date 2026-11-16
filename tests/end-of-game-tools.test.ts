@@ -4,13 +4,14 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WarappClient } from '../src/client.js';
 import { finishedDir, finishedPath } from '../src/finished-store.js';
 import { playerKey, playerRecordSalt } from '../src/player-record-store.js';
 import { Method } from '../src/protocol/methods.js';
 import type { Writer } from '../src/protocol/codec.js';
 import { writePickList } from '../src/pick-list.js';
-import { liveHarness, payload, type Harness } from './helpers.js';
+import { CREDS, liveHarness, payload, stubFetch, type Harness } from './helpers.js';
 import { fakeSocketIo, type FakeSocketIo } from './push/fake-socket.js';
 import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
 
@@ -278,5 +279,36 @@ describe('the end-of-game pass', () => {
     expect(payload(await h.call('warapp_get_game', { game_id: GAME })).endOfGame).toEqual({ status: 'account-unknown' });
     expect(invite()).toBe(asked);
     expect(historyCalls(h)).toBe(0);
+  });
+});
+
+describe('the sweep and the store bound (P2: a processed game is never read again)', () => {
+  /** A fresh copy of the module, as a new process (a restart, another hosted child) sees it: no memo. */
+  async function freshProcess() {
+    vi.resetModules();
+    return import('../src/tools/end-of-game.js');
+  }
+
+  it('with more finished games than the store keeps, no game is read twice, whatever else is written', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const { calls, fetchImpl } = stubFetch(withHistory());
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined });
+    const deps = { client, dataDir: dir, env: {} };
+    const keep = 4;
+    const games = [1006, 1005, 1004, 1003, 1002, 1001]; // newest first, more than the store keeps
+    const reads = () => calls.filter((c) => c.url.includes('GetHistory=true')).map((c) => Number(/GameID=(\d+)/.exec(c.url)![1]));
+    for (let round = 0; round < 8; round++) {
+      const eog = await freshProcess();
+      await eog.sweepFinished(deps, ANN, games, { keep });
+      // Records for games the sweep does not list (warapp_get_game on an old game) land in the same store.
+      if (round >= 3 && round <= 5) {
+        const fresh = await freshProcess();
+        await fresh.endOfGame(deps, 500 + round, ANN, undefined, { keep });
+      }
+    }
+    const read = reads();
+    expect(read.length).toBeGreaterThan(0);
+    expect(new Set(read).size).toBe(read.length);
+    expect(readdirSync(finishedDir(dir)).length).toBeLessThanOrEqual(keep);
   });
 });
