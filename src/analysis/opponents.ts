@@ -1443,6 +1443,8 @@ export function trackOpponents(
         guard,
         most: e.observedCap!,
         ...(expected !== null ? { expected: Math.max(expected, carriedSoFar) } : {}),
+        // #293: the same Local Deployment reading the board-only observation used.
+        ...(settings.localDeployments ? { localFree: Math.max(DEFAULT_BASE_INCOME, e.base) } : {}),
       };
       const { signed, ...o } =
         expected !== null && carriedSoFar > expected

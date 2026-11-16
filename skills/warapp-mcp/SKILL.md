@@ -945,9 +945,9 @@ do not send a backlog of turns unread. Override it when one of these shows up:
      more than (the stack beside it + his whole deploy) × the game's offensive kill rate, and every gate costs
      that again. Two may fit your income; a third can leave you short every turn. Take cheap
      uncontested bonuses first (#297).
-   - *Local Deployment.* A front receives his free income, the pool of a bonus he holds that it stands
-     in, and next turn what walks up from a pooled bonus behind it. Size a border on that, not on his
-     tracked total, and hold by hand a border the plan concedes on the total (#293).
+   - *Local Deployment.* A front receives his free income, the pool of a bonus he could hold that it
+     stands in, and next turn what walks up from behind it. The planner and `warapp_check_plan` now size
+     each border so (#293); check that the warnings' "~D deploy" at a gate is free + local pool, not his total.
    - *A contested bonus fed piecemeal.* A bonus whose last member or two his stack keeps retaking
      will not fall to your free income each turn: mass for one turn (his stack + his deploy on every
      missing member) or leave it. While his stack roams inside it, garrison the members it can reach

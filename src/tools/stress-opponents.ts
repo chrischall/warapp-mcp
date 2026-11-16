@@ -99,7 +99,7 @@ export function stressOpponents(input: StressOpponentsInput) {
     .sort((a, b) => a - b)
     .map((id) => {
       const e = estimates.find((x) => x.playerId === id);
-      return { id, deploy: input.enemyDeploy ?? e?.estimate ?? base, base: e?.base ?? base };
+      return { id, deploy: input.enemyDeploy ?? e?.estimate ?? base, base: e?.base ?? base, ...(e?.card ? { card: e.card.armies } : {}) };
     });
   const teams = new Map<number, number>();
   for (const p of game.players) if (carriesTeam(p.team)) teams.set(p.id, p.team);

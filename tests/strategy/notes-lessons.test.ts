@@ -38,7 +38,9 @@ describe('lesson notes (#300): the data', () => {
       expect(n!.topic, id).toBe(want.topic);
       expect(n!.source, id).toBe(want.source);
       expect(n!.basis, id).toBe('derived');
-      expect(n!.encoded, id).toBeUndefined();
+      // #293 encoded the Local Deployment front; the other lessons are still advice.
+      if (id === 'settings-local-deploy-front') expect(n!.encoded, id).toMatch(/#293/);
+      else expect(n!.encoded, id).toBeUndefined();
     }
   });
 

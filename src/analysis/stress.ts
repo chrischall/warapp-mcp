@@ -46,8 +46,10 @@
 // is known; runs that end the same are reported once.
 //
 // Local Deployment (#180, `localDeployments`): every reply's deploy is bounded as the planner
-// bounds it (#128; local-deploy.ts `enemyDeployReaching`): the opponent's free income plus the
-// pools of the bonuses it holds that contain the territory deployed on.
+// bounds it (#128, #293; local-deploy.ts `enemyDeployReaching`): the opponent's free income plus the
+// pools of the bonuses it could hold (no member shown with another owner) that contain the territory
+// deployed on; a deploy figure above that lands on one territory only as far as no bonus it could
+// hold carries it.
 //
 // One turn ahead (`exposedNextTurn`, computed by lookahead.ts, which the planner shares): a territory of mine that no enemy stack touches today can
 // be a border tomorrow. For each stack, each territory beside it that it can take this turn (mine
@@ -76,9 +78,10 @@ import { breaksLuckFree, searchChains } from './chains.js';
 import { COMMANDER_STRENGTH, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';
-import { enemyDeployReaching, heldBonusPools } from './local-deploy.js';
+import { couldHoldBonusPools, enemyDeployReaching, freeIncome } from './local-deploy.js';
 import { twoStepReaches } from './lookahead.js';
 import { DEFAULT_BASE_INCOME } from './player.js';
+import { ownerShown } from './plan/shared.js';
 import {
   simTerritories,
   simulateTurn,
@@ -96,6 +99,8 @@ interface StressOpponent {
   deploy: number;
   /** Its base income: under Local Deployment, what it may deploy anywhere (never below {@link DEFAULT_BASE_INCOME}). */
   base?: number;
+  /** #293: the Reinforcement card armies its deploy counts: under Local Deployment, free like the base. */
+  card?: number;
 }
 
 export interface StressInput {
@@ -362,12 +367,16 @@ export function stressPlan(input: StressInput): StressReport {
 
   const blindBorders = [...mineEither].filter((id) => neighborsOf(graph, id).some((n) => start.get(n)?.owner === 'unknown')).sort(byNum);
 
-  // Local Deployment (#180): each opponent's held bonuses pay only into their own territories.
-  const shownOwner = new Map(board.territories.flatMap((t) => (t.owner.kind === 'player' ? [[t.territoryId, t.owner.playerId] as const] : [])));
-  const pools = input.localDeployments ? heldBonusPools(graph, (t) => shownOwner.get(t)) : undefined;
+  // Local Deployment (#180, #293): each opponent's bonuses it could hold pay only into their own territories.
+  const onBoard = new Map(board.territories.map((t) => [t.territoryId, t]));
+  const shownOwner = (t: number): number | null | undefined => {
+    const o = ownerShown(onBoard.get(t))?.owner;
+    return o === undefined ? undefined : o.kind === 'player' ? o.playerId : null;
+  };
+  const pools = input.localDeployments ? couldHoldBonusPools(graph, input.opponents.map((o) => o.id), shownOwner) : undefined;
   const deployOn = (opp: StressOpponent, on: number): number => {
     const all = Math.max(0, Math.floor(opp.deploy));
-    return pools ? enemyDeployReaching(all, opp.base ?? 0, DEFAULT_BASE_INCOME, pools.get(opp.id) ?? [], [on]) : all;
+    return pools ? enemyDeployReaching(all, freeIncome(opp.base ?? 0, DEFAULT_BASE_INCOME, opp.card ?? 0), pools.get(opp.id) ?? [], [on]) : all;
   };
 
   /** Luck-free: `sent` armies (and a commander, when it goes along) take `t` as it stands. */

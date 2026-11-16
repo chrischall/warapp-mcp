@@ -1259,6 +1259,12 @@ export interface DeployObservation {
   grewFromFog: number[];
   /** The armies of that growth read as moves (part of `fogArmies`). */
   fogGrowth: number;
+  /**
+   * #293: under Local Deployment ({@link ObserveContext.localFree}), the territories of `grewFromFog`
+   * in no bonus it could hold, whose growth the free income `free` capped (a walk from a neighbour in
+   * view never counted). Absent when none.
+   */
+  localCut?: { free: number; territories: number[] };
   /** {@link ObserveContext.expected}, when given. */
   expected: number | null;
   /**
@@ -1341,6 +1347,15 @@ export interface ObserveContext {
    * a shrink, so they count back ({@link failedAttackKills}). Requires `me`.
    */
   myOrders?: MyOrders;
+  /**
+   * #293: under Local Deployment (`localDeployments` in the settings), its free income on the turn read
+   * (base, never below {@link MIN_ENEMY_DEPLOY}, plus a Reinforcement card). Growth beside the fog on a
+   * territory in no bonus it could hold on the earlier board (none of its territories shown with another
+   * owner) could only be deployed from that free income: what a neighbour in view visibly sent there (the
+   * growth split, `stacks`) is a walk, and the rest reads as deploy only up to this figure, shared by all
+   * such growth; beyond it the armies came out of the fog. Ignored without an expected figure.
+   */
+  localFree?: number;
   /**
    * #271 review: an opponent may have played a Bomb card on the turn read ({@link bombPossibleOn}):
    * {@link repelledFloor} leaves out the half of a hold a bomb could take. Default false.
@@ -1935,16 +1950,40 @@ export function observeSigned(
   // A board-only reading (neither `expected` nor `most`) has no room at all: a negative total (a
   // stack of its own that shrank into the fog) must not make room for a capture's surplus.
   let room = bound === null && context.most === undefined ? 0 : Math.max(0, (bound ?? Math.max(0, context.most!)) - total);
+  // #293: under Local Deployment, the territories a bonus pool could have paid into on the turn read
+  // (the bonuses it could hold on the earlier board); growth beside the fog elsewhere draws on `freeLeft`.
+  const local = rates.localDeployments === true && bound !== null && context.localFree !== undefined;
+  const pooledOn = new Set<number>();
+  if (local)
+    for (const b of g.map.bonuses) {
+      if (b.value <= 0) continue;
+      const ts = bonusTerritories(g, b.id);
+      const possible = ts.every((t) => {
+        const o = ownerShown(before.get(t))?.owner;
+        return o === undefined || (o.kind === 'player' && o.playerId === playerId);
+      });
+      if (possible) for (const t of ts) pooledOn.add(t);
+    }
+  let freeLeft = Math.max(0, context.localFree ?? 0);
+  const localCut: number[] = [];
   for (const x of [...ambiguous].sort((a, b) => a.id - b.id)) {
     if (bound === null && x.kind === 'growth') {
       lowExtra -= x.armies;
       continue;
     }
-    const deployed = Math.min(x.armies, room);
+    // #293: a walk from a neighbour in view (the growth split) nets its shrink; the rest is deploy only
+    // as far as the free income still reaches.
+    const walled = local && x.kind === 'growth' && !pooledOn.has(x.id);
+    const walk = walled ? Math.min(x.armies, (stacks.find((st) => st.territoryId === x.id)?.moved ?? []).reduce((n, m) => n + m.armies, 0)) : 0;
+    total += walk;
+    room = Math.max(0, room - walk);
+    const deployed = Math.min(x.armies - walk, room, walled ? freeLeft : Infinity);
+    if (walled) freeLeft -= deployed;
     room -= deployed;
     total += deployed;
     lowExtra -= deployed;
-    const moved = x.armies - deployed;
+    const moved = x.armies - walk - deployed;
+    if (walled && moved > 0) localCut.push(x.id);
     highExtra += moved;
     if (x.kind === 'capture') {
       if (deployed > 0) reinforced.push(x.id);
@@ -1976,6 +2015,7 @@ export function observeSigned(
     reinforced,
     grewFromFog,
     fogGrowth,
+    ...(localCut.length ? { localCut: { free: Math.max(0, context.localFree ?? 0), territories: localCut } } : {}),
     expected: context.expected ?? null,
     attacked: [...kills.keys()].sort(byNum),
     attackKills: [...kills.values()].reduce((n, k) => n + k, 0),
@@ -2176,6 +2216,9 @@ export function enemyDeployEstimates(
           guard: (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
           expected: Math.max(visible, trackBound ?? tracked ?? priorFigure ?? 0),
           most: couldEarn,
+          // #293: under Local Deployment, growth beside the fog outside every bonus it could hold is
+          // deploy only up to its free income.
+          ...(settings.localDeployments ? { localFree: Math.max(MIN_ENEMY_DEPLOY, base) } : {}),
           ...(when.previousOrders ? { myOrders: when.previousOrders } : {}),
           // #271 review: the turn read is the one before the turn planned.
           ...(bombPossibleOn(settings, when.turn == null ? null : when.turn - 1) ? { bomb: true } : {}),

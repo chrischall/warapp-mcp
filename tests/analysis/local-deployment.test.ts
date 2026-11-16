@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { chargeDeploys, deployPools, enemyDeployReaching, heldBonusPools, type DeployPools } from '../../src/analysis/local-deploy.js';
+import { chargeDeploys, couldHoldBonusPools, deployPools, enemyDeployReaching, freeIncome, type DeployPools } from '../../src/analysis/local-deploy.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
@@ -464,21 +464,40 @@ describe('planTurn — Local Deployment over overlapping bonuses (property, G2)'
   });
 });
 
-describe('enemyDeployReaching / heldBonusPools (#180)', () => {
-  it('finds the bonuses each player is shown to hold in full', () => {
+describe('enemyDeployReaching / couldHoldBonusPools (#180, #293)', () => {
+  it('finds the bonuses each player could hold: none of their territories shown with another owner', () => {
     const g = buildGraph(tinyMap());
-    const owner = new Map([[1, 20], [2, 20], [3, 20], [4, 30], [5, 20]]);
-    const pools = heldBonusPools(g, (t) => owner.get(t));
-    expect([...pools.keys()]).toEqual([20]);
+    // tinyMap: bonus 101 = 1 2 3, bonus 102 = 4 5.
+    const owner = new Map<number, number | null>([[1, 20], [2, 20], [3, 20], [4, 30], [5, 20]]);
+    const pools = couldHoldBonusPools(g, [20, 30], (t) => owner.get(t));
     expect(pools.get(20)!.map((p) => p.bonusId)).toEqual([101]);
+    expect(pools.get(30)).toEqual([]);
+    // Hidden owners (undefined) leave a bonus possible; a neutral (null) shown in it does not.
+    const fogged = new Map<number, number | null>([[1, 20], [4, null]]);
+    const maybe = couldHoldBonusPools(g, [20, 30], (t) => fogged.get(t));
+    expect(maybe.get(20)!.map((p) => p.bonusId)).toEqual([101]);
+    expect(maybe.get(30)!.map((p) => p.bonusId)).toEqual([]);
   });
 
   it('bounds a deploy by its free income plus the pools that contain the territory', () => {
     const pool = [{ value: 5, members: new Set([4, 5]) }];
-    expect(enemyDeployReaching(10, 5, 5, pool, [3])).toBe(5);
-    expect(enemyDeployReaching(10, 5, 5, pool, [4])).toBe(10);
-    // Unseen income counts as free: an estimate above base plus pools lands anywhere.
-    expect(enemyDeployReaching(14, 5, 5, pool, [3])).toBe(9);
-    expect(enemyDeployReaching(10, 5, 5, [], [3])).toBe(10);
+    expect(enemyDeployReaching(10, 5, pool, [3])).toBe(5);
+    expect(enemyDeployReaching(10, 5, pool, [4])).toBe(10);
+    // Income beyond every pool it could hold can only be free: it lands anywhere.
+    expect(enemyDeployReaching(14, 5, pool, [3])).toBe(9);
+    expect(enemyDeployReaching(10, 5, [], [3])).toBe(10);
+  });
+
+  it('#293: a total read above free income and its local pool never lands on one border', () => {
+    // A tracked 76 with +60 of bonuses it could hold out of sight: a gate outside them gets the free 11.
+    const pools = [
+      { value: 30, members: new Set([10, 11]) },
+      { value: 30, members: new Set([12, 13]) },
+      { value: 6, members: new Set([3, 4]) },
+    ];
+    expect(enemyDeployReaching(76, 11, pools, [1])).toBe(11);
+    expect(enemyDeployReaching(76, 11, pools, [3])).toBe(17);
+    expect(freeIncome(8, 5, 3)).toBe(11);
+    expect(freeIncome(2, 5)).toBe(5);
   });
 });

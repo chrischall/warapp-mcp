@@ -76,7 +76,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   orders against each opponent's single-deploy replies (attack from one stack with its commander,
   sit on a territory I attack, every stack at once, spread and concentrated; #180: a struck stack
   dodging first, two opponents on one territory — teammates, or any two when I lead a free-for-all
-  — and under Multi-Attack each stack's best chain; Local Deployment bounds each deploy), under both move
+  — and under Multi-Attack each stack's best chain; Local Deployment bounds each deploy as the planner does, #293), under both move
   orders unless `first_mover` is given, with the same per-opponent deploy estimates as the
   planner; the opponents are whoever holds a stack on the board, not only players GameFeed calls
   `Playing`. "Safe" means safe against those replies only: fog-hidden stacks (`blindBorders`,
@@ -626,9 +626,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   passes is sized for that opponent, never conceded on the two together, #235; a held bonus is judged whole: its
   members are sized so when its joint unit costs more than the income and its single-opponent unit pays, and a
   bonus funded neither so nor whole up front leaves each member the per-border test on its value without that
-  bonus — the judgement it gets with no bonus); teammates are never a threat or a target; under Local Deployment an opponent's
-  visible bonus pools reach only their own territories (its free base income still lands anywhere,
-  even when its estimate leaves the pools out). A warning
+  bonus — the judgement it gets with no bonus); teammates are never a threat or a target; under Local Deployment (#293, `enemyDeployReaching` in
+  `src/analysis/local-deploy.ts`, one bound for the planner's `deployReaching` and `warapp_check_plan`'s
+  replies) a border faces the opponent's free income (base, never below the floor, plus a Reinforcement
+  card: `freeIncome`) plus the pools of the bonuses it could hold (`couldHoldBonusPools`: no member shown
+  with another owner, fogged ones included) that contain its stacks there, never above the estimate: a
+  tracked total or prior above that never lands on one border (only what the estimate holds beyond every
+  bonus it could hold together, per-territory income in the fog, counts as free too); the same bounds an
+  untrusted figure (#275). A next-turn judgement (`nextTurnAt`: R3's defensibility, rule 4d's frontier
+  cost, `exposure`) also adds its visible stacks one step behind its front (beside a stack next to the
+  border, not next to it), which can walk up this turn, and their pools. In the observed deploy
+  (`ObserveContext.localFree`, planner and tracker alike), growth beside the fog on a territory in no bonus
+  it could hold on the earlier board is a walk as far as the growth split says a neighbour in view sent it,
+  and deploy only up to its free income (shared), the rest a move out of the fog (`localCut`, named in the
+  rationale). A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
   *observed* (`observedDeploy`, #57): the *net* change of its armies on territories visible
   both times (shrinks included — a transfer between its own territories is not deploy; counting
@@ -781,8 +792,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the boards' ten, since the stock reads every turn's), written by `warapp_plan_turn` only. While untrusted, the
   planner sizes borders of bonuses held in full at the start for max(estimate, the figure) where the figure
   is max(implied, my income) (`PlanInput.untrusted`, forceAt; not under `enemyDeploy`; under Local Deployment that
-  figure is not bounded by where the opponent's bonus pools can land, as `deployReaching` bounds the estimate:
-  such a border is over-sized, the conservative direction; the guard-off breach price, `breachAt`, sizes the stack
+  figure is bounded like the estimate, by where the pools it could hold can land (#293, `deployReaching`), as
+  `warapp_check_plan` bounds it; the guard-off breach price, `breachAt`, sizes the stack
   that would come through on the same figure; a held bonus contested on that sizing, #118, whose border faces it
   is held whole before any capture when what is left covers it, `settleContested('untrusted')`, so no expansion
   goes ahead of the gate — and one it cannot cover, or one triage conceded beside that opponent's stack, gets
