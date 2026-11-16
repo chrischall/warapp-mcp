@@ -92,7 +92,8 @@ export function registerMarkChatReadTool(server: McpServer, ctx: LiveContext): v
         const me = await ctx.myIdentity({ fresh: true }).catch(() => undefined);
         if (!me) throw accountUnknown(ctx.hosted);
         const read = await readChat(ctx, game, me);
-        if (read?.source !== 'web') {
+        // A merged read (#313) still carries the web messages' ids; GameFeed's added lines carry none and mark nothing.
+        if (!read || read.source === 'gamefeed') {
           refuse(
             `The chat of game ${game.id} could be read only from GameFeed, which gives no message ids, so nothing was sent.`,
             'Make sure your war.app tab is open and signed in (reload or focus it if it is frozen), then retry.',

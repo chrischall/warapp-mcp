@@ -26,7 +26,7 @@ const link = (id: number) => ({ Url: `https://war.app/MultiPlayer?GameID=${id}`,
 /** A fake war.app holding `items`: lists them by page, marks read on acknowledge (unless `ackWorks` is false). */
 function notificationServer(
   items: SyntheticNotification[],
-  opts: { ackWorks?: boolean; ackDeletes?: boolean; ack?: Partial<ReplyFrame> } = {},
+  opts: { ackWorks?: boolean; ackDeletes?: boolean; ackPrepends?: number; ack?: Partial<ReplyFrame> } = {},
 ) {
   const state = items.map((n) => ({ ...n }));
   const lists: Array<{ start: number; count: number }> = [];
@@ -43,6 +43,7 @@ function notificationServer(
       const ids = r.bool() ? (r.list((rr) => rr.string() ?? '') ?? []) : [];
       acks.push(ids);
       if (opts.ack) return opts.ack;
+      if (opts.ackPrepends) state.unshift(...Array.from({ length: opts.ackPrepends }, (_, i) => ({ id: String(800_000 + i) })));
       if (opts.ackDeletes) state.splice(0, state.length, ...state.filter((n) => !ids.includes(n.id)));
       else if (opts.ackWorks !== false) for (const n of state) if (ids.includes(n.id)) n.unread = false;
       return { body: () => {} };
@@ -76,22 +77,22 @@ describe('warapp_get_notifications', () => {
     expect(tool.description).toMatch(/GetInAppNotifications/);
   });
 
-  it('lists the first page name-free: id, kind, type, game id, time, unread — never the title or body', async () => {
+  it('lists the first page name-free: id, kind, game id, time, unread — never the title, body or type field', async () => {
     const s = notificationServer([
-      { id: '9001', title: 'Game "Bob\'s war" has ended', data: link(GAME), unread: true },
+      { id: '9001', title: 'Game "Bob\'s war" has ended. You can now view its history', data: link(GAME), unread: true },
       { id: '9002', title: 'Player Somebody invited you', data: { Body: 'Somebody wrote this' }, unread: false, n4: 'GroupInvite' },
     ]);
     h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
     const p = payload(await h.call('warapp_get_notifications', {}));
     expect(s.lists).toEqual([{ start: 0, count: 30 }]);
     expect(p.notifications).toEqual([
-      { id: '9001', kind: 'game-ended', type: null, gameId: GAME, time: '2026-11-15T12:00:00.000Z', unread: true },
-      { id: '9002', kind: 'other', type: 'GroupInvite', gameId: null, time: '2026-11-15T12:00:00.000Z', unread: false },
+      { id: '9001', kind: 'game-ended', gameId: GAME, time: '2026-11-15T12:00:00.000Z', unread: true },
+      { id: '9002', kind: 'other', gameId: null, time: '2026-11-15T12:00:00.000Z', unread: false },
     ]);
     expect(p).toMatchObject({ count: 2, unread: 1, total: 2 });
     expect(p.next).toBeUndefined();
     const text = JSON.stringify(p);
-    expect(text).not.toMatch(/Somebody|Bob|invited/);
+    expect(text).not.toMatch(/Somebody|Bob|invited|GroupInvite/);
     expect(text).toMatch(/UNVERIFIED/);
   });
 
@@ -115,7 +116,7 @@ describe('warapp_get_notifications', () => {
       profileGamePath(dir, GAME, Number(ME.feed)),
       JSON.stringify({ version: 1, gameId: GAME, playerId: Number(ME.feed), turns: { 1: { [BOB]: turn } } }),
     );
-    const s = notificationServer([{ id: '9001', title: 'Your game has ended', data: link(GAME) }]);
+    const s = notificationServer([{ id: '9001', title: 'Game "g" has ended. You can now view its history', data: link(GAME) }]);
     h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp, feed: [finishedGame()], dataDir: dir });
     const p = payload(await h.call('warapp_get_notifications', {}));
     expect(p.profilesFolded).toEqual([{ gameId: GAME, files: 1 }]);
@@ -128,7 +129,7 @@ describe('warapp_get_notifications', () => {
   });
 
   it('asks GameFeed nothing for a game-ended notification with no kept profile, or with profiling off', async () => {
-    const s = notificationServer([{ id: '9001', title: 'Your game has ended', data: link(GAME) }]);
+    const s = notificationServer([{ id: '9001', title: 'Game "g" has ended. You can now view its history', data: link(GAME) }]);
     h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp, feed: [finishedGame()] });
     const p = payload(await h.call('warapp_get_notifications', {}));
     expect(p.profilesFolded).toBeUndefined();
@@ -176,11 +177,32 @@ describe('warapp_dismiss_notification', () => {
     expect(p).toMatchObject({ status: 'dismissed', outcome: 'confirmed', dismissed: ['9001', '9002'], alreadyRead: ['9003'] });
   });
 
-  it('a notification gone from the list on read-back counts as dismissed', async () => {
+  it('a notification gone from the list on read-back counts as dismissed when the whole list was read', async () => {
     const s = notificationServer([{ id: '9001' }], { ackDeletes: true });
     h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
     const p = payload(await confirmed({ ids: ['9001'] }));
-    expect(p).toMatchObject({ status: 'dismissed', outcome: 'confirmed' });
+    expect(p).toMatchObject({ status: 'dismissed', outcome: 'confirmed', gone: ['9001'] });
+  });
+
+  it('gone from a long list counts as dismissed when the pages read cover where it was', async () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({ id: String(100 + i) }));
+    const s = notificationServer(many, { ackDeletes: true });
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const p = payload(await confirmed({ ids: ['110'] }));
+    expect(p).toMatchObject({ status: 'dismissed', outcome: 'confirmed', gone: ['110'] });
+  });
+
+  it('an id the read-back does not reach is unconfirmed, "not seen in the pages read", never confirmed', async () => {
+    // 200 notifications, the one dismissed at index 140 (inside the pages a plan reads); the
+    // acknowledge brings 50 new ones in on top, pushing it past the pages the read-back reads.
+    const many = Array.from({ length: 200 }, (_, i) => ({ id: String(100 + i) }));
+    const s = notificationServer(many, { ackPrepends: 50 });
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const p = payload(await confirmed({ ids: ['240'] }));
+    expect(s.acks).toEqual([['240']]);
+    expect(p).toMatchObject({ status: 'unconfirmed', outcome: 'unconfirmed', notSeen: ['240'] });
+    expect(p.warning).toMatch(/not seen in the pages read/);
+    expect(p.dismissed).toBeUndefined();
   });
 
   it('is unconfirmed when the list still shows an id unread', async () => {

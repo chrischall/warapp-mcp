@@ -7,7 +7,8 @@
 // games being picked or played, and a finished game only when war.app flags its chat unread, #311; the whole
 // list, `fetchMyGames`), in ascending id
 // order; the answer says which (`gamesFrom`) and, from the list, whether it may be partial; each is read as warapp_get_chat reads it (GameFeed with its chat, then
-// GameRefresh while the account is known, else GameFeed's list), one game at a time — never in
+// GameRefresh while the account is known, else GameFeed's list; a web read shorter than GameFeed's list is
+// filled from it, #313), one game at a time — never in
 // parallel — and at most `max_games` per call, the rest behind `next`. A game whose read fails is
 // listed in `failed`, never thrown. Nothing is marked seen unless `mark_seen: true`, and then only on this
 // machine (the cursor): war.app's own read mark is the confirm-gated warapp_mark_chat_read (#311).
@@ -136,6 +137,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
             name: game.name === undefined ? null : untrustedText(game.name),
             state: game.state,
             source: read.source,
+            ...(read.feedFill ? { feedFill: read.feedFill } : {}),
             unread,
             newCount: fresh_.length,
             messages,

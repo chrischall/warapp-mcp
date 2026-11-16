@@ -113,29 +113,44 @@ describe('gameIdFromData', () => {
 });
 
 describe('classifyNotification', () => {
-  it('reports ids, time, unread and kind only: never the title or the body', () => {
-    const n = classifyNotification(raw({ title: 'Player Somebody beat you', data: JSON.stringify({ Body: 'secret words' }) }));
-    expect(n).toEqual({ id: '501', kind: 'other', type: null, gameId: null, time: '2026-11-15T12:00:00.000Z', unread: true });
+  it('reports ids, time, unread and kind only: never the title, the body or the unverified type field', () => {
+    const n = classifyNotification(
+      raw({ title: 'Player Somebody beat you', data: JSON.stringify({ Body: 'secret words' }), n4: 'Somebody' }),
+    );
+    expect(n).toEqual({ id: '501', kind: 'other', gameId: null, time: '2026-11-15T12:00:00.000Z', unread: true });
     expect(JSON.stringify(n)).not.toMatch(/Somebody|secret/);
   });
 
-  it('a game link with an ending title is game-ended', () => {
+  it("game-ended only on the client's own wording: Game \"<name>\" has ended.", () => {
     const data = JSON.stringify({ Url: 'https://war.app/MultiPlayer?GameID=4017' });
-    for (const title of ['Game "x" has ended', 'You won the game', 'You lost a game', 'Your game is over', 'Game finished']) {
+    for (const title of [
+      'Game "Bob\'s war" has ended. You can now view its history',
+      'Game "x" has ended.',
+      'Game "a "quoted" name" has ended. You can now view its history',
+    ]) {
       expect(classifyNotification(raw({ title, data })), title).toMatchObject({ kind: 'game-ended', gameId: 4017 });
     }
-    expect(classifyNotification(raw({ title: 'It is your turn', data }))).toMatchObject({ kind: 'other', gameId: 4017 });
+    for (const title of [
+      'It is your turn',
+      'You won the game',
+      'You lost a game',
+      'Your game is over',
+      'Game finished',
+      'Game has ended',
+      'The tournament has ended',
+      'Player Somebody wrote: Game "x" has ended.',
+      'Game "x" has ended without the period',
+    ]) {
+      expect(classifyNotification(raw({ title, data })), title).toMatchObject({ kind: 'other', gameId: 4017 });
+    }
   });
 
-  it('the unread string field names the type when it is a plain word, and an ending type marks game-ended', () => {
+  it('the unverified type field never marks a notification game-ended', () => {
     const data = JSON.stringify({ Url: 'https://war.app/MultiPlayer?GameID=4017' });
-    expect(classifyNotification(raw({ n4: 'GameEnded', title: 'x', data }))).toMatchObject({ kind: 'game-ended', type: 'GameEnded' });
-    expect(classifyNotification(raw({ n4: 'TournamentInvite' }))).toMatchObject({ kind: 'other', type: 'TournamentInvite' });
-    // Free text is never echoed as a type.
-    expect(classifyNotification(raw({ n4: 'hello there, Somebody' })).type).toBeNull();
+    expect(classifyNotification(raw({ n4: 'GameEnded', title: 'x', data })).kind).toBe('other');
   });
 
   it('a game-ended title with no game link is game-ended with no game id (nothing to fold)', () => {
-    expect(classifyNotification(raw({ title: 'Game has ended' }))).toMatchObject({ kind: 'game-ended', gameId: null });
+    expect(classifyNotification(raw({ title: 'Game "x" has ended.' }))).toMatchObject({ kind: 'game-ended', gameId: null });
   });
 });

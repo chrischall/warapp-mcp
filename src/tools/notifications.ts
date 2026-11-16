@@ -46,17 +46,55 @@ async function listPage(ctx: LiveContext, start: number): Promise<{ items: RawNo
   return readInAppNotifications(await ctx.bundle(), env.body);
 }
 
+/** What a search of the list found, and how much of the list it read. */
+interface Found {
+  found: Map<string, RawNotification>;
+  /** Each found id's index in the list as read. */
+  positions: Map<string, number>;
+  /** How many notifications the pages read held (the list read from the top, to this index). */
+  readTo: number;
+  /** The list's length as war.app gave it on the last page read. */
+  total: number;
+  /** The pages read covered the whole list. */
+  complete: boolean;
+}
+
 /** The notifications among `ids` the list holds, read page by page until all are found (at most MAX_FIND_PAGES). */
-async function findNotifications(ctx: LiveContext, ids: readonly string[]): Promise<Map<string, RawNotification>> {
+async function findNotifications(ctx: LiveContext, ids: readonly string[]): Promise<Found> {
   const want = new Set(ids);
   const found = new Map<string, RawNotification>();
-  for (let page = 0, start = 0; page < MAX_FIND_PAGES; page++) {
-    const { items, total } = await listPage(ctx, start);
-    for (const n of items) if (want.has(n.id)) found.set(n.id, n);
-    start += items.length;
-    if (found.size === want.size || items.length === 0 || start >= total) break;
+  const positions = new Map<string, number>();
+  let start = 0;
+  let total = 0;
+  let complete = false;
+  for (let page = 0; page < MAX_FIND_PAGES; page++) {
+    const listed = await listPage(ctx, start);
+    total = listed.total;
+    listed.items.forEach((n, i) => {
+      if (want.has(n.id) && !found.has(n.id)) {
+        found.set(n.id, n);
+        positions.set(n.id, start + i);
+      }
+    });
+    start += listed.items.length;
+    if (listed.items.length === 0 || start >= total) {
+      complete = true;
+      break;
+    }
+    if (found.size === want.size) break;
   }
-  return found;
+  return { found, positions, readTo: start, total, complete };
+}
+
+/**
+ * An id the read-back did not find is seen gone only when the pages read cover the whole list, or
+ * reach past where it stood when planned by as many notifications as the list has grown since (new
+ * ones arrive at the top and push it down). Otherwise it is simply not seen: never confirmed.
+ */
+export function seenGone(after: Pick<Found, 'readTo' | 'total' | 'complete'>, position: number | undefined, totalBefore: number): boolean {
+  if (after.complete) return true;
+  if (position === undefined) return false;
+  return after.readTo > position + Math.max(0, after.total - totalBefore);
 }
 
 /**
@@ -65,6 +103,9 @@ async function findNotifications(ctx: LiveContext, ids: readonly string[]): Prom
  * Best effort: a failed read folds nothing and is never an error.
  */
 async function foldEndedGames(ctx: LiveContext, env: EnvSource, notes: readonly Notification[]): Promise<Array<{ gameId: number; files: number }>> {
+  // TODO(#312): a game-ended notification is one of the end-of-game pass's triggers. That pass does not
+  // exist yet (batch 24 builds it); when it lands, call it here for each game-ended `gameId` (it is
+  // idempotent through its per-game "processed" record), in place of or beside this profile fold.
   const dir = ctx.dataDir;
   if (!dir || !profileEnabled(env)) return [];
   const games = [...new Set(notes.filter((n) => n.kind === 'game-ended' && n.gameId !== null).map((n) => n.gameId!))];
@@ -91,6 +132,9 @@ interface DismissState {
   me: number;
   ids: string[];
   alreadyRead: string[];
+  /** Where each id stood in the list when planned, and the list's length then. */
+  positions: Record<string, number>;
+  totalBefore: number;
 }
 
 export function registerNotificationTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
@@ -103,8 +147,9 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
       description: untrustedDescription(
         "Your war.app (Warzone) in-app notifications (the client's notifications screen, war.app's " +
           'GetInAppNotifications), 30 per page, by id only: each with `id` (what warapp_dismiss_notification takes), ' +
-          '`kind` (`game-ended`, or `other` with `type` when war.app names one), `gameId` (the game its link names, ' +
-          'or null), `time` and `unread`. The title and body are never shown (they carry other players\' names). ' +
+          '`kind` (`game-ended` when the title is war.app\'s "Game … has ended." line, else `other`), `gameId` (the ' +
+          'game its link names, or null), `time` and `unread`. The title and body are never shown (they carry other ' +
+          "players' names). " +
           '`total` is how many notifications war.app holds; pass `next` back as `start` for the next page; ' +
           '`unread_only` keeps the unread ones of the page. A game-ended notification folds the opponent profile kept ' +
           'for that game (`profilesFolded`). Chat is not here: warapp_chat_inbox reads it. ' +
@@ -148,7 +193,8 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
         'Mark one or several war.app (Warzone) in-app notifications read (war.app\'s AcknowledgeInAppNotifications), ' +
         'by the ids warapp_get_notifications lists. It never deletes a notification and sends nothing to any player. ' +
         'Refuses ids war.app does not list and ids already read. Always as the signed-in war.app account; the outcome ' +
-        'is read back by listing again (`dismissed`, `unconfirmed` while one still reads unread, or `unknown` when ' +
+        'is read back by listing again (`dismissed`; `unconfirmed` while one still reads unread or was not seen in the ' +
+        'pages read back; or `unknown` when ' +
         `war.app did not answer — never resend blindly). ${NOTIFICATIONS_UNVERIFIED} ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Mark war.app notifications read',
@@ -171,7 +217,7 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
           refuse(`Not a notification id: ${bad.slice(0, 5).join(', ')}. Nothing was sent.`, 'Use the ids warapp_get_notifications lists.');
         }
         const me = await requireMe(ctx);
-        const found = await findNotifications(ctx, asked);
+        const { found, positions, total } = await findNotifications(ctx, asked);
         const missing = asked.filter((id) => !found.has(id));
         if (missing.length) {
           refuse(
@@ -206,10 +252,16 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
               unverified: NOTIFICATIONS_UNVERIFIED,
             },
           },
-          state: { me, ids: unread, alreadyRead } satisfies DismissState,
+          state: {
+            me,
+            ids: unread,
+            alreadyRead,
+            positions: Object.fromEntries(unread.map((id) => [id, positions.get(id)!])),
+            totalBefore: total,
+          } satisfies DismissState,
         };
       },
-      async execute({ me, ids, alreadyRead }: DismissState) {
+      async execute({ me, ids, alreadyRead, positions, totalBefore }: DismissState) {
         await requireApprovedAccount(ctx, writeAccount(me));
         const base = { ids, ...(alreadyRead.length ? { alreadyRead } : {}) };
         const check = 'Check warapp_get_notifications before doing anything else.';
@@ -233,19 +285,34 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
             warning: `war.app accepted the request, but the list could not be read back (${failure}). ${check}`,
           }),
           classify: (after) => {
-            // Gone from the list (deleted, or past the pages read) or read: either way no longer unread.
-            const stillUnread = ids.filter((id) => after.get(id)?.unread === true);
-            const dismissed = ids.filter((id) => !stillUnread.includes(id));
-            if (!stillUnread.length) {
-              return { status: 'dismissed' as const, outcome: 'confirmed' as const, ...base, dismissed };
+            // Read on the list, or seen gone from it (deleted): no longer unread. Not found where the pages
+            // read could not tell: not seen, so never confirmed.
+            const stillUnread = ids.filter((id) => after.found.get(id)?.unread === true);
+            const dismissed = ids.filter((id) => after.found.get(id)?.unread === false);
+            const missing = ids.filter((id) => !after.found.has(id));
+            const gone = missing.filter((id) => seenGone(after, positions[id], totalBefore));
+            const notSeen = missing.filter((id) => !gone.includes(id));
+            const parts = {
+              ...(dismissed.length ? { dismissed } : {}),
+              ...(gone.length ? { gone } : {}),
+            };
+            if (!stillUnread.length && !notSeen.length) {
+              return { status: 'dismissed' as const, outcome: 'confirmed' as const, ...base, ...parts };
             }
+            const problems = [
+              ...(stillUnread.length ? [`the list still shows ${stillUnread.join(', ')} unread`] : []),
+              ...(notSeen.length
+                ? [`${notSeen.join(', ')} ${notSeen.length === 1 ? 'was' : 'were'} not seen in the pages read (${after.readTo} of ${after.total})`]
+                : []),
+            ];
             return {
               status: 'unconfirmed' as const,
               outcome: 'unconfirmed' as const,
               ...base,
-              dismissed,
-              stillUnread,
-              warning: `war.app accepted the request, but the list still shows ${stillUnread.join(', ')} unread. ${check}`,
+              ...parts,
+              ...(stillUnread.length ? { stillUnread } : {}),
+              ...(notSeen.length ? { notSeen } : {}),
+              warning: `war.app accepted the request, but ${problems.join(', and ')}. ${check}`,
             };
           },
         });

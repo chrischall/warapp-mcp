@@ -294,6 +294,20 @@ describe('warapp_chat_inbox: finished games with unread chat (#311)', () => {
     expect(p).not.toHaveProperty('readOnWarapp');
   });
 
+  it('a game whose web read has fewer messages than GameFeed shows GameFeed\'s too (#313), with no extra read', async () => {
+    const surrender = { playerID: BOB.inGame, message: 'Bob surrendered', date: at(30).toISOString() };
+    const fake = warapp(flagged(), { ...CHATS, 104: () => [] });
+    h = await liveHarness({ feed: [feedGame(104, 'Finished', { chat: [surrender] })], pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: ['104'], mark_seen: true }));
+    expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(1);
+    expect(p.games).toHaveLength(1);
+    expect(p.games[0]).toMatchObject({ id: 104, source: 'gamefeed', newCount: 1, feedFill: { web: 0, gamefeed: 1, added: 1 } });
+    expect(p.games[0]!.messages.map((m) => [m.text, m.channel])).toEqual([['⟦Bob surrendered⟧', 'unknown']]);
+    expect(p.sourceNotes).toHaveProperty('gamefeed');
+    const after = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: ['104'] }));
+    expect(after.quiet).toEqual([104]);
+  });
+
   it('mark_seen marks every game read on this machine only: war.app gets no read mark (warapp_mark_chat_read sends it)', async () => {
     const fake = warapp(flagged(), CHATS_311);
     h = await liveHarness({ feed: FEED_311, pages: SIGNED_IN_ANN, warapp: fake.handler });

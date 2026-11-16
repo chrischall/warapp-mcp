@@ -5,7 +5,8 @@
 //
 // What a tool reports is name-free beyond ids: a notification's id, time, unread flag, a kind and the
 // game id its link names. Its title and data are text war.app writes (with other players' names in
-// them): they are read only to classify it, never passed on.
+// them): they are read only to classify it, never passed on. The record's fourth field, a string the
+// client never reads (perhaps a type name), is unverified free text: it is neither reported nor used.
 
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { ClassReader } from './live.js';
@@ -31,7 +32,7 @@ export interface RawNotification {
   data: string | null;
   /** An int32 the client never reads. */
   n3: number;
-  /** A string the client never reads. */
+  /** A string the client never reads: unverified free text, never reported or used to classify. */
   n4: string | null;
   /** The one line the client lists (war.app's text, other players' names included). */
   title: string | null;
@@ -44,8 +45,6 @@ export type NotificationKind = 'game-ended' | 'other';
 export interface Notification {
   id: string;
   kind: NotificationKind;
-  /** The record's otherwise unread string field, only when it is one plain word (a type name). */
-  type: string | null;
   /** The game the notification's war.app link names, when it names one. */
   gameId: number | null;
   /** ISO time it was sent, when the reply gave one. */
@@ -148,24 +147,23 @@ export function gameIdFromData(data: string | null): number | null {
   return null;
 }
 
-/** A plain type word (never free text). */
-const TYPE_WORD = /^[A-Za-z][A-Za-z0-9_.]{0,63}$/;
-/** A type word that says a game ended. */
-const ENDED_TYPE = /game.?(end|finish|over)|game.?(won|lost)/i;
 /**
- * A title that says a game ended (UNVERIFIED: war.app's wording is not known; the client shows the
- * title as it comes).
+ * The title of a game-ended notification, in the client's own wording (an owner's screenshot,
+ * 2026-11-16): `Game "<name>" has ended. You can now view its history`. Matched on that structure,
+ * anchored at both the leading `Game "` and the `" has ended.` after the name, never on a bare
+ * "ended" or "finished" anywhere in the text (another notification can quote a player's words).
+ * The name may itself hold quotes, so it is matched greedily up to the last `" has ended.`.
  */
-const ENDED_TITLE = /\b(has ended|ended|is over|finished|you (have )?(won|lost)|won the game|lost the game)\b/i;
+const ENDED_TITLE = /^Game ".*" has ended\.(\s|$)/s;
+/** The longest title looked at. */
+const MAX_TITLE = 500;
 
 /** A notification as a tool reports it: ids, time, flags and its kind, never its text. */
 export function classifyNotification(n: RawNotification): Notification {
-  const type = n.n4 !== null && TYPE_WORD.test(n.n4) ? n.n4 : null;
-  const ended = (type !== null && ENDED_TYPE.test(type)) || (n.title !== null && ENDED_TITLE.test(n.title.slice(0, 500)));
+  const ended = n.title !== null && n.title.length <= MAX_TITLE && ENDED_TITLE.test(n.title);
   return {
     id: n.id,
     kind: ended ? 'game-ended' : 'other',
-    type,
     gameId: gameIdFromData(n.data),
     time: n.sent ? n.sent.toISOString() : null,
     unread: n.unread,

@@ -230,7 +230,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `GameRefresh` (39, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
   fields by read order, a private counterpart first, then a game group (`unknown`), then the channel,
   -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
-  failure, GameFeed's `chat` (no channel: `unknown`). Bodies go out through `untrustedBody` (the
+  failure, GameFeed's `chat` (no channel: `unknown`). **A web read with fewer messages than GameFeed's chat (#313:
+  a finished game's surrender line was missing) uses GameFeed's too**, from the GameFeed read the tool already made
+  (`readChat` in `src/tools/chat.ts`, no extra request): with no web message GameFeed's list stands in (`source:
+  gamefeed`), else the GameFeed messages no web message matches (same sender, times within a second, or the same
+  text when either has no time; `fillFromFeed` in `src/chat.ts`) are added under `unknown` by time (`source:
+  merged`, whose mark records the named channels too); `feedFill` gives the counts and a note. `warapp_mark_chat_read`
+  takes a merged read (its web ids). Bodies go out through `untrustedBody` (the
   `untrustedText` cleaning, capped at 2,000). "New" is a name-free cursor at `<dataDir>/chat/<gameId>.json`
   (`src/chat-cursor.ts`: per channel the count and newest time marked seen, plus the whole chat, against
   which every message is judged too — a named channel by time only: seen by either mark is not new); only
@@ -264,15 +270,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **In-app notifications (#311) are `GetInAppNotifications` (317) via `warapp_get_notifications`** (read-only,
   hosted too; `src/notifications.ts`, the reply decoded by the bundle's readers by type name —
   `GetInAppNotificationsReturn` / `InAppNotification`, 7 fields by read order — like GetMyGames). Name-free
-  beyond ids: `id` (decimal text), `kind` (`game-ended` from a type word or the title, else `other`; `type` only
-  when the record's unread string field is one plain word), `gameId` (from a war.app `GameID=` link in the data
-  JSON), `time`, `unread`; the title and body are read only to classify, never shown. A game-ended notification
+  beyond ids: `id` (decimal text), `kind` (`game-ended` only on the client's own title wording, `Game "<name>" has
+  ended.` — the owner's screenshot: `ENDED_TITLE`, anchored on that structure, never a bare "ended"/"finished";
+  else `other`), `gameId` (from a war.app `GameID=` link in the data JSON), `time`, `unread`; the title and body
+  are read only to classify, never shown, and the record's field 4 (an unverified free-text string) is neither
+  reported nor used. A game-ended notification
   folds the game's opponent profile through `foldFinishedGame` only when a per-game file is kept unfolded
-  (`hasUnfoldedProfile`): then one GameFeed read (no map), at most `FOLD_LOOKUPS` (5) per call, else no request.
+  (`hasUnfoldedProfile`): then one GameFeed read (no map), at most `FOLD_LOOKUPS` (5) per call, else no request
+  (it is also where #312's end-of-game pass is to be triggered: a TODO in `foldEndedGames` until that exists).
   `warapp_dismiss_notification` (confirm-gated) sends `AcknowledgeInAppNotifications` (319: marks read; delete,
-  318, is not used) for the listed unread ids; the preview names ids and game ids only; `dismissed` /
-  `unconfirmed` read back by listing again (up to `MAX_FIND_PAGES` pages; gone from the list counts as
-  dismissed), `unknown` never resent. Encoders golden-pinned; everything UNVERIFIED live. Not a chat send (D2).
+  318, is not used) for the listed unread ids; the preview names ids and game ids only; read back by listing
+  again (up to `MAX_FIND_PAGES` pages): `dismissed` (`confirmed`) only when every id reads read or is seen gone —
+  the pages read cover the whole list, or reach past where it stood in the plan by as many as the list has grown
+  (`seenGone`); an id not found otherwise is `notSeen` ("not seen in the pages read") and the outcome
+  `unconfirmed`, as is one still unread; `unknown` never resent. Encoders golden-pinned; everything UNVERIFIED live. Not a chat send (D2).
 - **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
   `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
   (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only

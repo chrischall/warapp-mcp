@@ -136,6 +136,18 @@ describe('warapp_mark_chat_read (#311)', () => {
     expect(String(p.unverified)).toMatch(/UNVERIFIED live/);
   });
 
+  it('a web read GameFeed filled (#313) still marks by the web ids; GameFeed\'s added lines mark nothing', async () => {
+    const fake = warapp({ chat: CHAT.slice(0, 1) });
+    const chat = [
+      { playerID: ANN.inGame, message: 'gl hf', date: at(1).toISOString() },
+      { playerID: BOB.inGame, message: 'Bob surrendered', date: at(9).toISOString() },
+    ];
+    h = await liveHarness({ feed: [feedGame({ chat })], pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload(await confirmed({ game_id: GAME }));
+    expect(fake.marks).toEqual([{ gameId: GAME, pub: '1', team: '-1', priv: null, groups: null }]);
+    expect(p).toMatchObject({ outcome: 'confirmed', channels: ['public'] });
+  });
+
   it('one channel marks only that channel, the others sent as -1, and is judged on its own flag', async () => {
     const fake = warapp({ keepUnread: true });
     h = await liveHarness({ feed: [feedGame()], pages: SIGNED_IN_ANN, warapp: fake.handler });

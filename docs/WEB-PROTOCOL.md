@@ -543,7 +543,11 @@ private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `wara
   It names no channel or recipient, and whether it returns team or private messages is unknown: a
   message there is `unknown` unless it carries a channel or recipient field. `warapp_get_chat`
   uses it when GameRefresh cannot be read (no signed-in account readable, a refusal, a reply it
-  does not understand); `warapp_plan_turn` counts unread chat from it (the game read carries it).
+  does not understand), and beside it when GameRefresh returns fewer messages (#313: on one finished
+  game ended by surrender GameRefresh returned none while GameFeed held the surrender line; why is not
+  known — GameRefresh may not carry a finished game's or a surrender turn's messages): GameFeed's list
+  stands in when the web read is empty, else its messages no web message matches (sender, time within a
+  second) are added as `unknown`; `warapp_plan_turn` counts unread chat from it (the game read carries it).
 - **Send:** `SendChat` (42): auth, int32 gameId, string text, int32 channel (`-1` = public,
   otherwise the sender's team: the client sends its own player's team), optional int32 private
   recipient (the client then sends channel `-1`; server error 201 is "cannot specify team in a
@@ -610,10 +614,13 @@ with the auth block first; field orders are the client writers' and readers' rea
   and decodes the reply by type name (`src/notifications.ts`: the record must have its 7 fields; the interpreter
   hands the id back as the decimal text it parsed). It reports ids, the sent time and the unread flag, a `gameId`
   taken from a war.app link (`Url`, else the first of `Urls`, with `GameID=`) in the data JSON, and a kind:
-  `game-ended` when field 4 is a plain word naming a game end or the title reads as one (war.app's wording is
-  not known: a guess), else `other`; field 4 is shown as `type` only when it is one plain word. The title and the
-  body are never passed on. `warapp_dismiss_notification` sends 319 with the unread ids the list holds and reads
-  the effect back by listing again. 318 is not sent.
+  `game-ended` only when the title has the client's own wording, `Game "<name>" has ended. You can now view its
+  history` (from an owner's screenshot, 2026-11-16; matched on that structure, anchored at `Game "` and
+  `" has ended.`), else `other`. Field 4, a string the client never reads, is unverified free text: it is neither
+  reported nor used to classify. The title and the body are never passed on. `warapp_dismiss_notification` sends
+  319 with the unread ids the list holds and reads the effect back by listing again (at most 5 pages): an id read
+  back read, or seen gone (the pages cover the whole list, or reach past where it stood by as many as the list
+  grew), confirms it; an id not found otherwise is "not seen in the pages read", `unconfirmed`. 318 is not sent.
 - **The unread badge** comes with every reply: `warlight.shared.MessageExtrasDown`'s last optional
   field is **`warlight.shared.UnreadMailCheckResults`** — `bool`, `datetime`, `bool` (`src/protocol/codec.ts`
   already decodes it as `unreadMail`). The datetime is what the next request echoes as

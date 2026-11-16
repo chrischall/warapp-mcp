@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatViewMarks, feedChatLines, readGameRefreshChat, readSendChatReply, type ChatLine } from '../src/chat.js';
+import { chatViewMarks, feedChatLines, fillFromFeed, readGameRefreshChat, readSendChatReply, type ChatLine } from '../src/chat.js';
 import { Reader, Writer } from '../src/protocol/codec.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
 import { CHAT_BUNDLE, writeGameDetailsAndChat, writeSendChatReply, type SyntheticMessage } from './protocol/chat-bundle.js';
@@ -179,5 +179,50 @@ describe('feedChatLines (GameFeed)', () => {
     expect(feedChatLines([{ odd: 1 }])).toBeUndefined();
     expect(feedChatLines([7])).toBeUndefined();
     expect(feedChatLines('x')).toBeUndefined();
+  });
+});
+
+describe('fillFromFeed (#313)', () => {
+  const web = (sender: number, ms: number, text: string, channel: ChatLine['channel'] = 'public'): ChatLine => ({
+    sender,
+    text,
+    turn: null,
+    channel,
+    timeMs: ms,
+  });
+  const feed = (sender: number | null, text: string, ms?: number): ChatLine => ({
+    sender,
+    text,
+    turn: null,
+    channel: 'unknown',
+    ...(ms !== undefined ? { timeMs: ms } : {}),
+  });
+
+  it('adds the GameFeed lines no web line matches by sender and time (within a second), by time, under unknown', () => {
+    const w = [web(ANN, 1_000_500, 'a'), web(BOB, 3_000_000, 'c', 'team')];
+    const f = [feed(ANN, 'a', 1_000_000), feed(BOB, 'b', 2_000_000), feed(BOB, 'c', 3_000_000), feed(BOB, 'z', 9_000_000)];
+    const { lines, added } = fillFromFeed(w, f);
+    expect(added).toBe(2);
+    expect(lines.map((l) => [l.text, l.channel])).toEqual([
+      ['a', 'public'],
+      ['b', 'unknown'],
+      ['c', 'team'],
+      ['z', 'unknown'],
+    ]);
+  });
+
+  it('matches each web line once; a line without a time matches on sender and text, else goes last', () => {
+    const w = [web(BOB, 1_000_000, 'gg')];
+    const { lines, added } = fillFromFeed(w, [feed(BOB, 'gg'), feed(BOB, 'gg'), feed(null, 'system')]);
+    expect(added).toBe(2);
+    expect(lines.map((l) => [l.sender, l.text])).toEqual([
+      [BOB, 'gg'],
+      [BOB, 'gg'],
+      [null, 'system'],
+    ]);
+  });
+
+  it('a different sender at the same time is another message', () => {
+    expect(fillFromFeed([web(ANN, 5_000, 'x')], [feed(BOB, 'x', 5_000)]).added).toBe(1);
   });
 });

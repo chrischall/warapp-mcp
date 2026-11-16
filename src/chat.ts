@@ -256,3 +256,37 @@ export function feedChatLines(raw: unknown): ChatLine[] | undefined {
   }
   return out;
 }
+
+// ---------- A short web read, filled from GameFeed (#313) ----------
+
+/** Two times this close (ms) are one message's: GameFeed may give whole seconds where the web client gives ms. */
+const SAME_MESSAGE_MS = 1000;
+
+const sameMessage = (web: ChatLine, feed: ChatLine): boolean => {
+  if (web.sender !== feed.sender) return false;
+  if (web.timeMs !== undefined && feed.timeMs !== undefined) return Math.abs(web.timeMs - feed.timeMs) < SAME_MESSAGE_MS;
+  return web.text === feed.text;
+};
+
+/**
+ * The web client's `web` lines with GameFeed's `feed` lines that no web line matches (same sender, and
+ * times within a second — or the same text when either has no time), each match used once. The added
+ * lines keep GameFeed's `unknown` channel and go in by time (after every web line of the same or an
+ * earlier time); one with no time goes last. Pure: `added` is how many GameFeed lines were added.
+ */
+export function fillFromFeed(web: readonly ChatLine[], feed: readonly ChatLine[]): { lines: ChatLine[]; added: number } {
+  const used = new Set<number>();
+  const extra: ChatLine[] = [];
+  for (const f of feed) {
+    const k = web.findIndex((w, i) => !used.has(i) && sameMessage(w, f));
+    if (k >= 0) used.add(k);
+    else extra.push({ ...f, channel: 'unknown' });
+  }
+  const lines = [...web];
+  for (const e of extra) {
+    const at = e.timeMs === undefined ? -1 : lines.findIndex((l) => l.timeMs !== undefined && l.timeMs > e.timeMs!);
+    if (at < 0) lines.push(e);
+    else lines.splice(at, 0, e);
+  }
+  return { lines, added: extra.length };
+}

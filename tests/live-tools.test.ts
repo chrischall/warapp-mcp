@@ -908,6 +908,71 @@ describe('warapp_get_chat', () => {
       expect(s.asked[0]).toMatchObject({ lobby: true });
     });
 
+    describe('when the web read has fewer messages than GameFeed (#313)', () => {
+      const surrender = { playerID: BOB.inGame, message: 'Bob surrendered', date: at(30).toISOString(), turn: '9' };
+
+      it('an empty web read falls back to GameFeed, says so, and its messages can be marked seen', async () => {
+        const feedOnly = game('Finished', { chat: [surrender] });
+        const s = refresh(() => []);
+        h = await liveHarness({ feed: [feedOnly, feedOnly], pages: SIGNED_IN_ANN, warapp: s.warapp });
+        const p = payload<{ messages: Array<Record<string, unknown>> } & Record<string, unknown>>(
+          await h.call('warapp_get_chat', { game_id: GAME, mark_seen: true }),
+        );
+        expect(s.asked).toHaveLength(1);
+        // No extra GameFeed read: the one the tool already made carries the chat.
+        expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(1);
+        expect(p.source).toBe('gamefeed');
+        expect(p.feedFill).toMatchObject({ web: 0, gamefeed: 1, added: 1 });
+        expect(String((p.feedFill as { note: string }).note)).toMatch(/fewer messages/);
+        expect(p.messages).toMatchObject([{ from: '⟦Bob⟧', text: '⟦Bob surrendered⟧', channel: 'unknown', new: true }]);
+        expect(p.unread).toEqual({ public: 0, team: 0, private: 0, unknown: 1 });
+        expect(p.markedSeen).toEqual(['unknown']);
+        const again = payload(await h.call('warapp_get_chat', { game_id: GAME }));
+        expect(again.unread).toEqual({ public: 0, team: 0, private: 0 });
+      });
+
+      it('a short web read is merged: GameFeed messages no web message matches by time and sender land under unknown', async () => {
+        const web: SyntheticMessage[] = [
+          { id: 1, date: at(1), from: ANN.inGame, text: 'gl hf', turn: 1 },
+          { id: 3, date: at(3), from: BOB.inGame, text: 'push north', channel: 1, turn: 2 },
+        ];
+        const feed = game('Finished', {
+          chat: [
+            // The same two messages, matched by time and sender (to the second)...
+            { playerID: ANN.inGame, message: 'gl hf', date: at(1).toISOString() },
+            { playerID: BOB.inGame, message: 'push north', date: at(3).toISOString() },
+            // ...and one the web read lacks, between them by time.
+            { playerID: BOB.inGame, message: 'gl', date: at(2).toISOString() },
+            surrender,
+          ],
+        });
+        h = await liveHarness({ feed: [feed, feed], pages: SIGNED_IN_ANN, warapp: refresh(() => web).warapp });
+        const p = payload<{ messages: Array<Record<string, unknown>> } & Record<string, unknown>>(
+          await h.call('warapp_get_chat', { game_id: GAME, mark_seen: true }),
+        );
+        expect(p.source).toBe('merged');
+        expect(p.sourceNote).toMatch(/GameFeed/);
+        expect(p.feedFill).toMatchObject({ web: 2, gamefeed: 4, added: 2 });
+        expect(p.messages.map((m) => [m.text, m.channel])).toEqual([
+          ['⟦gl hf⟧', 'public'],
+          ['⟦gl⟧', 'unknown'],
+          ['⟦push north⟧', 'team'],
+          ['⟦Bob surrendered⟧', 'unknown'],
+        ]);
+        expect(p.unread).toEqual({ public: 0, team: 1, private: 0, unknown: 2 });
+        expect(p.markedSeen).toEqual(['public', 'team', 'private', 'unknown']);
+        expect(payload(await h.call('warapp_get_chat', { game_id: GAME })).unread).toEqual({ public: 0, team: 0, private: 0 });
+      });
+
+      it('GameFeed with no more messages than the web read leaves it web', async () => {
+        const feed = game('Playing', { chat: [surrender] });
+        h = await liveHarness({ feed: [feed], pages: SIGNED_IN_ANN, warapp: refresh(() => CHAT.slice(0, 1)).warapp });
+        const p = payload(await h.call('warapp_get_chat', { game_id: GAME }));
+        expect(p.source).toBe('web');
+        expect(p.feedFill).toBeUndefined();
+      });
+    });
+
     it('falls back to GameFeed when GameRefresh fails or answers nothing readable', async () => {
       for (const warapp of [
         routes({ [Method.GameRefresh]: () => ({ error: { code: 17, message: 'not in game' } }) }),
