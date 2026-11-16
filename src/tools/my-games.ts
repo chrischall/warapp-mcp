@@ -11,13 +11,16 @@
 import { untrustedEnvelope } from '@chrischall/mcp-utils';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { briefGameLine, isFinished, readMyGames, summarizeMyGames, type MyGame, type RawMyGame } from '../my-games.js';
+import { briefGameLine, gameStateName, isFinished, readMyGames, summarizeMyGames, type MyGame, type RawMyGame } from '../my-games.js';
 import { Method, MY_GAMES_DEFAULT_SORT, MyGamesFilterType, writeGetMyGamesParams, type MyGamesFilters } from '../protocol/methods.js';
-import { readAnnotations, respond, untrustedDescription, WARAPP_UNTRUSTED_NOTE } from './common.js';
+import { readAnnotations, respond, untrustedDescription, untrustedText, WARAPP_UNTRUSTED_NOTE } from './common.js';
 import { canonicalMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
 import { accountUnknown } from './write-kit.js';
+import { playerStateName } from '../player-states.js';
+import { pendingSurrenders, surrenderOwed } from '../surrender-pending.js';
+import { readDetailsSeats, SURRENDER_PENDING_NOTE, surrenderMayBePending, type PendingSurrenderView } from './surrender-pending.js';
 
 const VIEWS = ['compact', 'brief'] as const;
 
@@ -92,6 +95,44 @@ export async function fetchMyGames(ctx: LiveContext): Promise<{ me: number } & M
   return { me, ...list };
 }
 
+/** #317: the most games whose details one call reads for a pending surrender (the rest are `null`). */
+export const MAX_SURRENDER_READS = 20;
+/** Details read at once. */
+const SURRENDER_READ_BATCH = 4;
+
+/**
+ * #317: each game's pending surrenders, by game id: read for a game being played or picked where my seat
+ * still plays (at most {@link MAX_SURRENDER_READS}, war.app's order), `null` elsewhere or when unreadable.
+ * GetMyGames carries no GameFeed id, so `player` is `null`; the name is the list's, untrusted.
+ */
+export async function myGamesSurrenders(
+  ctx: Pick<LiveContext, 'rpc' | 'bundle'>,
+  games: readonly RawMyGame[],
+  me: number,
+): Promise<{ byGame: Map<number, PendingSurrenderView[] | null>; skipped: number }> {
+  const byGame = new Map<number, PendingSurrenderView[] | null>();
+  const eligible = games.filter((g) => {
+    const mine = g.players.find((p) => p.id === me);
+    return surrenderMayBePending(gameStateName(g.stateCode), mine ? playerStateName(mine.stateCode) : undefined);
+  });
+  const read = eligible.slice(0, MAX_SURRENDER_READS);
+  for (let i = 0; i < read.length; i += SURRENDER_READ_BATCH) {
+    const batch = read.slice(i, i + SURRENDER_READ_BATCH);
+    const seats = await Promise.all(batch.map((g) => readDetailsSeats(ctx, g.id)));
+    batch.forEach((g, j) => {
+      const s = seats[j];
+      const names = new Map(g.players.map((p) => [p.id, p.name]));
+      byGame.set(
+        g.id,
+        s
+          ? pendingSurrenders(s, me).map((p) => ({ ...p, name: names.has(p.inGameId) ? untrustedText(names.get(p.inGameId)) : null }))
+          : null,
+      );
+    });
+  }
+  return { byGame, skipped: eligible.length - read.length };
+}
+
 export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
   server.registerTool(
     'warapp_my_games',
@@ -101,7 +142,11 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
         'Your war.app (Warzone) games, games waiting on you first: each with its id, name, state ' +
           '(WaitingForPlayers, DistributingTerritories, Playing, Finished), turn, players (name, state, whether ' +
           'they have committed this turn) and waitingOnYou — true when the game is being played or distributing ' +
-          'territories, you are still playing, and you have not committed. Finished games are left out unless ' +
+          'territories, you are still playing, and you have not committed — and surrenderPending: the surrenders other ' +
+          'players asked for that are still pending, each with owedByMe (true: waiting for you to accept it), read from ' +
+          'the game details (unverified live; null when not read or unreadable, never "none"); the top-level ' +
+          'surrenderPending counts the games where one waits on you, and those games come first too. ' +
+          'Finished games are left out unless ' +
           '`include_finished` (`finishedLeftOut` counts them). `listed` is how many games war.app returned and ' +
           '`complete` false (with a `warning`) means the list may be partial. Use the id with the other warapp tools. ' +
           `${BRIDGE_NOTE} Read-only.`,
@@ -116,7 +161,7 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
             '"compact" (default): the games as described. "brief": one line per game — name — "turn N" (or the ' +
               'state when not being played) — "waiting on you" or "waiting on others", inside the untrusted-data ' +
               'envelope as data: string[]; "-- none" when there are no games, and a last "-- the list may be ' +
-              'partial…" line when it may be.',
+              'partial…" line when it may be. Brief reads no game details, so it says nothing of pending surrenders.',
           ),
         include_finished: z
           .boolean()
@@ -127,13 +172,25 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
     async ({ view, include_finished }) => {
       const { me, games: raw, partial } = await fetchMyGames(ctx);
       const kept = include_finished ? raw : raw.filter((g) => !isFinished(g));
-      const games = summarizeMyGames(kept, me);
-      if (view === 'brief') return briefResult(games, partial ? raw.length : undefined);
+      const summary = summarizeMyGames(kept, me);
+      if (view === 'brief') return briefResult(summary, partial ? raw.length : undefined);
       const finishedLeftOut = raw.length - kept.length;
+      // #317: the surrenders pending in each game (the game details; null: not read or unreadable, never "none").
+      const { byGame, skipped } = await myGamesSurrenders(ctx, kept, me);
+      const withSurrenders = summary.map((g) => ({ ...g, surrenderPending: byGame.get(g.id) ?? null }));
+      // A game waiting on my acceptance waits on me too: it goes first with the turns waiting on me.
+      const first = (g: (typeof withSurrenders)[number]) => g.waitingOnYou || surrenderOwed(g.surrenderPending);
+      const games = [...withSurrenders.filter(first), ...withSurrenders.filter((g) => !first(g))];
+      const unread = games.filter((g) => g.surrenderPending === null && byGame.has(g.id)).length;
       return respond(undefined, ['compact'], () => ({
         games,
         count: games.length,
         waitingOnYou: games.filter((g) => g.waitingOnYou).length,
+        surrenderPending: games.filter((g) => surrenderOwed(g.surrenderPending)).length,
+        surrenderNote:
+          SURRENDER_PENDING_NOTE +
+          (unread ? ` The details of ${unread} game(s) could not be read.` : '') +
+          (skipped ? ` ${skipped} more game(s) were not read (at most ${MAX_SURRENDER_READS} per call).` : ''),
         listed: raw.length,
         ...(finishedLeftOut ? { finishedLeftOut } : {}),
         complete: !partial,

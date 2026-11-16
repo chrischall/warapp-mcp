@@ -11,9 +11,11 @@ import { foldFinishedGame } from '../profile-store.js';
 import type { PushListener } from '../push/listener.js';
 import { currentTurn, gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
-import type { LiveContext } from './live-context.js';
+import { failureText, FROZEN_TAB_HINT, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
 import { requireMe } from './write-kit.js';
+import { surrenderOwed } from '../surrender-pending.js';
+import { fetchDetailsSeats, readPendingSurrenders, SURRENDER_PENDING_NOTE, surrenderOwedLine, type PendingSurrenderView } from './surrender-pending.js';
 
 /** Game states in which a player has something to submit (picks or orders). */
 const ACTION_STATES: ReadonlySet<string> = new Set(['Playing', 'DistributingTerritories']);
@@ -44,6 +46,13 @@ export interface GameCheck {
   waitingOnYou: boolean;
   /** Set when no turn of mine can come in this game: why (it finished, or my seat is out). */
   ended?: string;
+  /**
+   * #317: the surrenders pending (the game details), when they were asked for: `null` when unreadable or
+   * when none can matter to me (the game not in play, or my seat out) — never "none".
+   */
+  surrenderPending?: PendingSurrenderView[] | null;
+  /** #317: a surrender waits on my acceptance here. */
+  surrenderOwed?: true;
 }
 
 /** Why no turn of mine can come in `game` any more, or undefined while one still can (#130). */
@@ -55,7 +64,7 @@ function endedReason(game: Game, playerId: number): string | undefined {
   return undefined;
 }
 
-export function checkOf(game: Game, playerId: number): GameCheck {
+export function checkOf(game: Game, playerId: number, surrenders?: PendingSurrenderView[] | null): GameCheck {
   const ended = endedReason(game, playerId);
   return {
     id: game.id,
@@ -64,6 +73,8 @@ export function checkOf(game: Game, playerId: number): GameCheck {
     turn: currentTurn(game),
     waitingOnYou: isWaitingOn(game, playerId),
     ...(ended ? { ended } : {}),
+    ...(surrenders !== undefined ? { surrenderPending: surrenders } : {}),
+    ...(surrenderOwed(surrenders) ? { surrenderOwed: true as const } : {}),
   };
 }
 
@@ -88,11 +99,16 @@ interface WaitOptions {
   progress?: (elapsedMs: number, message: string) => void;
   progressEveryMs?: number;
   now?: () => number;
+  /** #317: also return when a game's check says a surrender waits on my acceptance (`surrenderOwed`). */
+  wakeOnSurrender?: boolean;
 }
 
 interface WaitOutcome {
-  /** `game_over`: every watched game finished or has my seat out — no turn is coming (#130). */
-  status: 'your_turn' | 'timed_out' | 'game_over';
+  /**
+   * `game_over`: every watched game finished or has my seat out — no turn is coming (#130).
+   * `surrender_pending` (#317, with `wakeOnSurrender`): no turn waits on me, but a surrender waits on my acceptance.
+   */
+  status: 'your_turn' | 'surrender_pending' | 'timed_out' | 'game_over';
   /** The latest view of every game, in the order asked. */
   games: GameCheck[];
   /** Pushes received for these games while waiting. */
@@ -186,7 +202,9 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
       chatActivity: [...ids].filter((id) => chatActivity.has(id)),
     });
     const allEnded = () => [...latest.values()].every((c) => c.ended !== undefined);
+    const owed = () => opts.wakeOnSurrender === true && [...latest.values()].some((c) => c.surrenderOwed === true);
     if ([...latest.values()].some((c) => c.waitingOnYou)) return outcome('your_turn');
+    if (owed()) return outcome('surrender_pending');
     // Every game ended (finished, or my seat out): no turn can come, so return before watching (#130).
     if (allEnded()) return outcome('game_over');
     opts.signal?.throwIfAborted();
@@ -237,6 +255,7 @@ export async function waitForTurn(opts: WaitOptions): Promise<WaitOutcome> {
           latest.set(id, c);
           settle(c);
           if (c.waitingOnYou) return outcome('your_turn');
+          if (opts.wakeOnSurrender === true && c.surrenderOwed === true) return outcome('surrender_pending');
           if (allEnded()) return outcome('game_over');
           opts.progress?.(now() - start, `Game ${id} updated; not your turn there yet.`);
         } catch (e) {
@@ -295,6 +314,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
   const env = deps.env ?? process.env;
   // One GameFeed read per game at a time across every wait in the process, one queued (#131).
   const readGame = coalesced((id: number) => ctx.client.getGame(id, { map: false }));
+  // #317: and one game-details read per game at a time, for a pending surrender.
+  const readDetails = coalesced((id: number) => fetchDetailsSeats(ctx, id));
   server.registerTool(
     'warapp_wait_for_turn',
     {
@@ -306,7 +327,11 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           'your seat is out (each says why in `ended`). It checks each game once at the start, then listens to ' +
           "war.app's push notifications — over a direct WebSocket while a linked war.app session serves calls, else " +
           'through your signed-in war.app tab (ContextMint Bridge) — and re-checks a game whenever war.app says it ' +
-          'changed, and every game after the push socket reconnects. Pass the game ids to watch (1–20), or omit them to watch every game ' +
+          'changed, and every game after the push socket reconnects. It also returns (status `surrender_pending`) when ' +
+          'another player\'s surrender waits for you to accept it (each game\'s `surrenderPending`, read from the game ' +
+          'details, unverified live: null when unreadable, never "none"; after one failed read it stops asking for the ' +
+          'rest of the wait and says why in `surrenderUnread`), unless `ignore_surrenders`. ' +
+          'Pass the game ids to watch (1–20), or omit them to watch every game ' +
           'of yours being played or picked (the first 20, as warapp_my_games lists them). Reports progress while it ' +
           'waits and stops when the call is cancelled. Then plan with warapp_plan_turn (or pick with ' +
           'warapp_submit_picks). Read-only.',
@@ -330,9 +355,16 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           .max(MAX_TIMEOUT_SECONDS)
           .optional()
           .describe(`Give up after this many seconds (default ${DEFAULT_TIMEOUT_SECONDS}, max ${MAX_TIMEOUT_SECONDS}).`),
+        ignore_surrenders: z
+          .boolean()
+          .optional()
+          .describe(
+            'Do not return for a surrender waiting on your acceptance (default false). Use it once the owner has ' +
+              'decided not to accept yet, or the wait returns at once every time; games still report surrenderPending.',
+          ),
       }),
     },
-    async ({ game_ids, timeout_seconds }) => {
+    async ({ game_ids, timeout_seconds, ignore_surrenders }) => {
       let ids: number[];
       if (game_ids) {
         ids = [...new Set(game_ids.map((g) => parseGameId(g)))];
@@ -347,6 +379,19 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
       }
       // Turns are watched for the account signed in to the war.app tab.
       const token = await requireMe(ctx, { fresh: false, consequence: 'there is no turn to wait for' });
+      // #317: once a details read fails in this wait (a frozen tab stalls each call until it times out),
+      // it is not asked again until the wait ends; every later check reports the surrenders as unknown.
+      // (The rpc layer has no per-call timeout, so the first failure costs one bridge timeout.)
+      let detailsFailed: string | undefined;
+      const readSurrenderSeats = async (gameId: number) => {
+        if (detailsFailed !== undefined) return undefined;
+        try {
+          return await readDetails(gameId);
+        } catch (e) {
+          detailsFailed ??= failureText(e);
+          return undefined;
+        }
+      };
       const check = async (id: number) => {
         // A turn check reads only the game's state: no map (a cold map is ~190 KB per game, #131).
         const game = await readGame(id);
@@ -357,7 +402,9 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         }
         // The first read that shows a game of mine finished folds its opponent profile (B2; best effort, no request).
         if (game.state === 'Finished' && ctx.dataDir) await foldFinishedGame(ctx.dataDir, game, env);
-        return checkOf(game, token);
+        // #317: a surrender waiting on my acceptance (only while the game is in play and my seat plays).
+        const surrenders = await readPendingSurrenders(ctx, game, game.players.find((p) => p.id === token), readSurrenderSeats);
+        return checkOf(game, token, surrenders);
       };
       const timeoutSec = timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS;
       const progress = callerWantsProgress()
@@ -373,6 +420,7 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         timeoutMs: timeoutSec * 1000,
         push,
         check,
+        wakeOnSurrender: ignore_surrenders !== true,
         ...(signal ? { signal } : {}),
         ...(progress ? { progress } : {}),
       });
@@ -381,6 +429,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         status: out.status,
         watching: ids,
         ...(out.status === 'your_turn' ? { ready: out.games.filter((g) => g.waitingOnYou).map((g) => g.id) } : {}),
+        // #317: the games where a surrender waits on my acceptance, whatever the status.
+        ...(out.games.some((g) => g.surrenderOwed) ? { surrenders: out.games.filter((g) => g.surrenderOwed).map((g) => g.id) } : {}),
         games: out.games.map((g) => (out.chatActivity.includes(g.id) ? { ...g, chatActivity: true as const } : g)),
         waited_seconds: Math.round(out.waitedMs / 1000),
         updates: out.updates,
@@ -391,8 +441,24 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           ...(st.lastError ? { last_error: st.lastError } : {}),
         },
         ...(out.errors.length ? { errors: out.errors } : {}),
+        surrenderNote: SURRENDER_PENDING_NOTE,
+        ...(detailsFailed !== undefined
+          ? {
+              surrenderUnread:
+                `The game details could not be read (${detailsFailed}), so pending surrenders were skipped for the ` +
+                'rest of this wait (surrenderPending null: unknown, not none).' +
+                (detailsFailed.includes(FROZEN_TAB_HINT) ? '' : ` ${FROZEN_TAB_HINT}`),
+            }
+          : {}),
         next:
-          out.status === 'your_turn'
+          out.status === 'surrender_pending'
+            ? out.games
+                .filter((g) => g.surrenderOwed)
+                .map((g) => `Game ${g.id}: ${surrenderOwedLine(g.surrenderPending ?? null)}`)
+                .join(' ') +
+              ' ' +
+              'Once decided, wait again (with ignore_surrenders: true while it stays unaccepted).'
+            : out.status === 'your_turn'
             ? 'Plan the turn with warapp_plan_turn (or, while territories are being picked, warapp_get_live_board and warapp_submit_picks).'
             : out.status === 'game_over'
               ? 'No turn is coming in these games (each finished or your seat is out — see `ended`), so stop watching them.'

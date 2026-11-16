@@ -384,9 +384,11 @@ describe('end-game notes: the data', () => {
     // warapp_submit_turn sends deploys, attack/transfer orders (with a commander, Transfer Only, Attack
     // Only, by percentage or attacking teammates, #185) and Reinforcement, Order Priority, Order Delay and
     // Blockade cards, and (PLAN-TEAMS part D, unverified live) Diplomacy, Sanctions, Bomb and the other
-    // targeted cards; it never accepts a surrender, boots a player or votes to end.
+    // targeted cards; it never boots a player or votes to end. Accepting a surrender is
+    // warapp_accept_surrender (#317), its encoding not yet verified live.
+    expect(note('ffa-surrender-veto').text).toMatch(/warapp_accept_surrender accepts \(unverified live\)/);
+    expect(note('ffa-surrender-veto').text).not.toMatch(/game client/);
     for (const id of [
-      'ffa-surrender-veto',
       'ffa-boot-clock',
       'fighting-vote-to-end',
     ]) {

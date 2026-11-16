@@ -22,6 +22,8 @@
 //   warapp_leave_game     left → confirmed; unconfirmed; unknown
 //   warapp_surrender      surrendered → confirmed; pending, still_playing → accepted;
 //                         unchanged → unconfirmed; unknown
+//   warapp_accept_surrender  accepted, pending (my acceptance read back, others still owe
+//                         theirs) → confirmed; unconfirmed; unknown
 //   warapp_uncommit_turn  uncommitted → confirmed; unconfirmed; unknown
 //   warapp_submit_turn    resolved, committed → confirmed; unknown after a send war.app
 //                         accepted (read-back failed or shows nothing yet) → unconfirmed;

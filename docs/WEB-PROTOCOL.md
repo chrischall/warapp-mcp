@@ -99,7 +99,7 @@ string email                  the signed-in account's email
 | 63 | GetOpenAutoGame | not used |
 | 64 | **DeclineGame** | params: int32 gameId, bool modHook — read from the bundle, **verified live 2026-11-14** (open-seat lobby); see [DeclineGame](#declinegame-leaving-a-lobby) |
 | 67 | **Surrender** | params: int32 gameId, bool surrender, bool false — see [Surrender](#surrender) |
-| 68 | AcceptSurrender | accept another player's pending surrender (not used) |
+| 68 | **AcceptSurrender** | params: int32 gameId, int32 in-game player id, bool accept, bool modHook — read from the bundle, UNVERIFIED live; sent by `warapp_accept_surrender` (accept only); see [Accepting a surrender](#accepting-a-surrender) |
 | 73 | GetMapDetails | no auth; params: int32 mapId |
 | 74 | **SendOrders** | the turn commit — not yet captured |
 | 75 | SendInProgressOrders | draft save of orders |
@@ -801,11 +801,82 @@ surrender may already have gone through — and is never retried. Error codes, w
 meaning: **4** the game is over; **7** and **230** you are no longer in the game.
 
 **In a game of more than two players a surrender is not immediate.** It waits for the others to
-accept it ("Pending surrender"; accepting is `AcceptSurrender`, 68, not used): the player stays
+accept it (the client marks it as pending; accepting is `AcceptSurrender`, 68: see [Accepting a surrender](#accepting-a-surrender)): the player stays
 `Playing` in GameFeed until then, so the tool reports `pending`, not surrendered, and a pending
 surrender is what `surrender = false` takes back. With two players a surrender ends the game at once
 (GameFeed shows `SurrenderAccepted`), so there is nothing to take back. The encoder is pinned by a
 golden test built from synthetic ids.
+
+## Accepting a surrender
+
+**Read from the client bundle, UNVERIFIED live (#317).** Where a pending surrender lives, how the
+client decides that my acceptance is owed, and how it sends one. Nothing here has been checked
+against a live game yet.
+
+**Where a pending surrender is represented.** Only in the game details: `warlight.shared.GameWL`
+(the second field of GameRefresh's `GameDetailsAndChat` reply, and the whole reply of
+`GetGameDetails`, 38). Its eighth field, in read order (index 7), is the players: an optional dict
+of int32 → `warlight.shared.GamePlayer`. A `GamePlayer` record has 36 fields; the ones that matter
+here, by read-order index:
+
+| Index | Type | Meaning (the client's own names) |
+|---|---|---|
+| 0 | optional int32 | the AI id; present means the seat is an AI (`IsAI`) |
+| 14 | bool | `HumanTurnedIntoAI` |
+| 20 | optional int32 | the in-game player id (`ID`; when absent, the AI id stands in) |
+| 21 | optional dict int32 → date | `PlayersAcceptedMySurrender`: the in-game ids that accepted this player's surrender, each with the time it did |
+| 28 | GamePlayerState | the seat's state (2 `Playing`, 7 `SurrenderAccepted`, …) |
+| 29 | bool | `Surrendered`: the player has asked to surrender and it is still pending |
+| 30 | int32 | the team |
+
+Neither `GetMyGames`' `GameInfoPlayer` nor `GetLatestGameInfo`'s `LatestGameInfo` carries any
+surrender field, and GameFeed keeps the player `Playing` with no pending state, so the game details
+are the only source. (In the client's writer `GetGameDetails` sends no auth block, just the int32
+game id; this server does not call it — GameRefresh, already used for chat, carries the same record.)
+
+**How this server reads it (#317).** GameRefresh with `chat = false`, `nonChat = true` (one request per
+game; the chat is not asked). `GameWL` has 14 fields in read order. The client's `GamePlayer` reader, when
+called inside a game, first sets a link back to the game being built, so the decoded record carries that
+game as an extra first value: it is dropped before the 36 fields are counted. Any count or type that does
+not match reads as unknown (`null` in the tools), never as "no surrender pending". Checked offline only: a
+synthetic frame in this layout decodes through the cached real bundle's readers; no live reply has been
+read. `warapp_wait_for_turn` reads it at every check; once one read fails in a wait (a frozen tab times
+out every bridged POST) it is not asked again in that wait.
+
+**When my acceptance is owed.** The client asks whether to accept that player's surrender when all of
+these hold: the game is not `InstantSurrender`; my seat is `Playing` and not turned into an AI; the
+other player's seat is `Playing` with `Surrendered` set; and my in-game id is not in that player's
+`PlayersAcceptedMySurrender`. (Dismissing that question is remembered in the browser only, per game and
+player.) Each such player also gets an accept button, which becomes a take-back button once my id is in
+the dict; the client asks for confirmation either way.
+
+**When the server grants it.** The pending surrender goes through once every other seat that is
+`Playing` and neither an AI nor a human turned into an AI has accepted it (with `InstantSurrender`
+it goes through at once). The seat then becomes `SurrenderAccepted` (7) — or, when the game's
+`SurrenderedPlayersTurnIntoAIs` is on and the player is not already an AI, it is handed to an AI.
+
+**The send.** `AcceptSurrender` (68), `POST /Services?m=AcceptSurrender&js=1` through `WarappRpc`.
+Parameters after the auth block, in the client writer's order:
+
+1. `int32` game id;
+2. `int32` the in-game id of the player whose surrender is accepted;
+3. `bool` accept — `true` accepts, `false` takes back an acceptance (the take-back button);
+4. the per-method `bool` the client sets when one of the game's mods hooks this method — sent
+   `false`.
+
+There is **no result payload** on success: the outcome must be read back from the game details
+(my id in the dict, or the seat no longer `Playing`), never from the reply. Error codes, by what
+each means (our wording): **4** the game has ended; **186** (`CannotAcceptSurrenderOfPlayerNotSurrendered`)
+that player has withdrawn its surrender; **7** one of the two seats has left the game; **230** my own
+seat is no longer taking part. The encoder (`writeAcceptSurrenderParams`) is pinned by a golden
+test built from synthetic ids.
+
+**How this server sends it (#317).** `warapp_accept_surrender`, confirm-gated, sends accept = `true` only
+(it never takes an acceptance back). Before sending it reads the game details and refuses unless that
+player's surrender is pending and my acceptance is owed by the test above. After sending it reads GameFeed
+(the seat `SurrenderAccepted`, handed to an AI, or the game over: `accepted`) and the game details again (my
+id in `PlayersAcceptedMySurrender` with the surrender still pending: `pending`, others still owe theirs);
+anything else is `unconfirmed`, and no answer is `unknown`. Nothing is resent.
 
 ## Begin first turn
 

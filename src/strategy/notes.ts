@@ -2148,10 +2148,10 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'format',
     when: on({ format: ['ffa'] }),
     text:
-      'Where surrenders must be accepted, every other player must accept before a loser leaves; its land then ' +
+      'Where surrenders must be accepted, all others must accept before a loser leaves; its land then ' +
       'turns neutral or goes to an AI, as the game is set. Accept when that helps you more than your rivals; ' +
-      'if it would mostly feed a rival, refusing keeps the player in (it must move or be booted). Accept in ' +
-      'the game client.',
+      'if it would mostly feed a rival, refusing keeps the player in (it must move or be booted). ' +
+      'warapp_accept_surrender accepts (unverified live).',
     source: S.surrender,
     basis: 'derived',
   },

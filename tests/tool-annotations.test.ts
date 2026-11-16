@@ -5,7 +5,7 @@ import { harnessFor, type Harness } from './helpers.js';
  * Fleet annotation meta-test, read off the wire (tools/list). Every tool reads
  * war.app except the confirm-gated writes that reach other people
  * (submitting territory picks, submitting a turn's orders, sending chat,
- * joining a game, surrendering one, withdrawing committed orders) and
+ * joining a game, surrendering one, accepting another player's surrender, withdrawing committed orders) and
  * two LOCAL writes that reach no one but this machine — linking the
  * direct-transport session (confirm-gated: it stores a cookie locally) and
  * recording an agreement in the local ledger (not confirm-gated) — and one
@@ -14,6 +14,7 @@ import { harnessFor, type Harness } from './helpers.js';
  * destroys only the account's own data: deleting notifications (#311).
  */
 const WRITES = [
+  'warapp_accept_surrender',
   'warapp_begin_turn',
   'warapp_join_game',
   'warapp_leave_game',
@@ -52,6 +53,7 @@ afterAll(async () => {
 describe('tool annotations', () => {
   it('covers the full surface (guards against a registrar being dropped)', () => {
     expect(Object.keys(ann).sort()).toEqual([
+      'warapp_accept_surrender',
       'warapp_advise_diplomacy',
       'warapp_analyze_board',
       'warapp_begin_turn',
@@ -112,6 +114,7 @@ describe('tool annotations', () => {
     expect(ann.warapp_join_game?.idempotentHint).toBe(false);
     expect(ann.warapp_leave_game?.idempotentHint).toBe(false);
     expect(ann.warapp_surrender?.idempotentHint).toBe(false);
+    expect(ann.warapp_accept_surrender?.idempotentHint).toBe(false);
     expect(ann.warapp_begin_turn?.idempotentHint).toBe(false);
     expect(ann.warapp_uncommit_turn?.idempotentHint).toBe(false);
   });

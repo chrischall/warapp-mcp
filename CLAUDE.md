@@ -35,8 +35,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameFeed answers as the player whose token is presented (fog of war included). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Twelve tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_delete_notification` (deletes war.app notifications, for good; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing) and `warapp_link_session` (local only:
+- **Thirteen tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_delete_notification` (deletes war.app notifications, for good; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing) and `warapp_link_session` (local only:
   it stores a session cookie on this machine and is not registered hosted), registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
@@ -437,6 +437,36 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   via `commitmentWarnings`: an attack a no-attack still covers or an open proposal of mine covers (scope `all`:
   an attack into the fog, `unchecked`), and a will-attack for this turn the orders leave out; `warapp_plan_turn`
   gives the same warnings for its plan (the planner never reads commitments). A will-attack is only for the current turn.
+- **A pending surrender is read from the game details (#317, `src/surrender-pending.ts`, UNVERIFIED live).**
+  GameFeed keeps a player who asked to surrender `Playing`, and GetMyGames / LatestGameInfo carry nothing:
+  only GameRefresh (39) asked with `nonChat` does — `GameDetailsAndChat` → `GameWL` (14 fields, players at 7) →
+  `GamePlayer` (36 fields; the reader's link back to the game, set first, is dropped before counting).
+  `pendingSurrenders` gives `{ inGameId, player (GameFeed id or null), owedByMe }`, owed by the client's own
+  test (their seat `Playing` + `Surrendered`, mine `Playing`, not AI or turned AI, my id not in their
+  `PlayersAcceptedMySurrender`); my own surrender is left out. `src/tools/surrender-pending.ts` reads it only
+  for a game being played or picked with my seat playing; unreadable or not read is `null`, never `[]`.
+  Reported by `warapp_my_games` (per game, `player` null — the list has no GameFeed ids — and a top-level count;
+  at most `MAX_SURRENDER_READS` games, brief reads none), `warapp_wait_for_turn` (status `surrender_pending`
+  unless `ignore_surrenders`; after one failed details read — a frozen tab stalls each until the bridge times
+  out, and the rpc layer has no per-call timeout — it stops asking for the rest of that wait and says why once in
+  `surrenderUnread`, with `FROZEN_TAB_HINT`) and `warapp_plan_turn` (`surrenderPending`, the first warning when
+  owed). Each read costs one GameRefresh; nothing is cached (a surrender can come any moment). A GameFeed id and
+  an in-game id are never one field: results carry `player` (GameFeed id or `null`) beside `inGameId`, and the
+  in-game id of a GameFeed player comes from one helper, `inGameOf` (`src/live.ts`).
+- **Accepting another player's surrender is `AcceptSurrender` (68) via `warapp_accept_surrender`, confirm-gated**
+  (#317; encoder read from the bundle's writer, golden-pinned, UNVERIFIED live). `player` names the surrendering
+  player (optional with one pending). The plan reads the game details and refuses a finished game, a lobby, a game
+  I am not playing, an instant-surrender game, unreadable details, no surrender pending from that player, and my
+  acceptance not owed (already given, or my seat cannot accept). The preview (`src/analysis/accept-surrender.ts`,
+  pure): whose `seat` (`player`, `inGameId`, name through `untrustedText`), `landBecomes` (`AI` / `neutral` /
+  `null`, from `SurrenderedPlayersTurnIntoAIs`, not for a seat already an AI), `land` (from the live board, else
+  `null`: its territories in view and `borderedBy`, each neighbour by how many of ITS territories border that land),
+  `othersStillToAccept` (`{ player, inGameId }` each) / `goesThroughNow`, `winsGame` (no seat off my side left, a seat handed to an AI counting as
+  one unless the AIs give up when one human remains; `null` when it hangs on an unread setting or teams I could not
+  read) and one `advice` line: the win, or in a free-for-all the neighbour with the most bordering territories, citing
+  `ffa-surrender-veto`. The outcome is read back from GameFeed (the seat `SurrenderAccepted`, handed to an AI, or
+  the game over → `accepted`) and the game details (my id among those that accepted → `pending`, others still owe
+  theirs; both `confirmed`); else `unconfirmed`, and no answer is `unknown`. Never resent.
 - **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — the others' acceptance is needed when the game's

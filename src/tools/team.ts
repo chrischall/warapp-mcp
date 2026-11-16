@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { visibleIncomeFor } from '../analysis/plan/shared.js';
 import { cardRules, handReadable, readHand } from '../cards.js';
 import { parseGameId } from '../client.js';
-import { boardStateFromLive, playersByInGameId } from '../live.js';
+import { boardStateFromLive, inGameOf } from '../live.js';
 import type { Player } from '../normalize.js';
 import { withTeammateOrders, type TeammateOrders, type TeamOrders } from '../team-orders.js';
 import { carriesTeam, teammatesOf } from '../teams.js';
@@ -38,11 +38,6 @@ const NOTES = [
 
 const DISTRIBUTING = 'DistributingTerritories';
 const BOARD_STATES = new Set(['Playing', DISTRIBUTING]);
-
-/** A teammate's in-game id; `undefined` for a seat without a GameFeed player id (an AI). */
-function inGameOf(p: Player): number | undefined {
-  return [...playersByInGameId([p]).keys()][0];
-}
 
 /** A teammate's pick list while distributing (C1/C2): where it was read from, and the ids in priority order. */
 export interface TeammatePicks {

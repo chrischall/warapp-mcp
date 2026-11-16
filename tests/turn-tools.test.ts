@@ -26,6 +26,7 @@ import {
 } from './protocol/live-bundle.js';
 import { CHAT_SUMMARY_NOTE } from '../src/tools/chat.js';
 import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
+import { writeGameDetailsAndChat, type SyntheticSeat } from './protocol/chat-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -121,6 +122,52 @@ interface PlanPayload {
 }
 
 describe('warapp_plan_turn', () => {
+  describe('a pending surrender (#317)', () => {
+    const refresh = (seats: SyntheticSeat[] | null) => (req: DecodedRequest) => {
+      const r = req.body;
+      // The game details, not the chat.
+      expect([r.int32(), r.bool(), r.bool()]).toEqual([GAME, false, true]);
+      return { body: (w: Writer) => writeGameDetailsAndChat(w, null, seats) };
+    };
+
+    it('leads the warnings when a surrender waits on my acceptance, and reports it', async () => {
+      h = await liveHarness({
+        feed: [game('Playing')],
+        warapp: routes({
+          [Method.GetLatestGameInfo]: board(BOARD),
+          [Method.GameRefresh]: refresh([{ id: ANN.inGame }, { id: BOB.inGame, surrendered: true }]),
+        }),
+      });
+      const p = payload<PlanPayload & { surrenderPending: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+      expect(p.surrenderPending).toEqual([{ inGameId: BOB.inGame, player: Number(BOB.feed), owedByMe: true, name: untrustedText('Bob') }]);
+      expect(p.warnings[0]).toMatch(/surrender is waiting for you to accept it.*Bob.*7176543229.*UNVERIFIED.*owner's decision/);
+    });
+
+    it('reports one I already accepted without the warning, and null (unknown) when the details do not read', async () => {
+      h = await liveHarness({
+        feed: [game('Playing')],
+        warapp: routes({
+          [Method.GetLatestGameInfo]: board(BOARD),
+          [Method.GameRefresh]: refresh([{ id: ANN.inGame }, { id: BOB.inGame, surrendered: true, acceptedBy: [ANN.inGame] }]),
+        }),
+      });
+      let p = payload<PlanPayload & { surrenderPending: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+      expect(p.surrenderPending).toEqual([{ inGameId: BOB.inGame, player: Number(BOB.feed), owedByMe: false, name: untrustedText('Bob') }]);
+      expect(p.warnings.join('\n')).not.toMatch(/surrender is waiting/);
+      await h.harness.close();
+      h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+      p = payload<PlanPayload & { surrenderPending: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+      expect(p.surrenderPending).toBeNull();
+      await h.harness.close();
+      h = await liveHarness({
+        feed: [game('Playing')],
+        warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD), [Method.GameRefresh]: refresh([{ id: ANN.inGame }, { id: BOB.inGame }]) }),
+      });
+      p = payload<PlanPayload & { surrenderPending: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+      expect(p.surrenderPending).toEqual([]);
+    });
+  });
+
   it('warns that the income may be off when a setting the model does not compute is on (#38)', async () => {
     const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };
     h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
@@ -221,8 +268,8 @@ describe('warapp_plan_turn', () => {
     expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
     expect(p).not.toHaveProperty('settings');
 
-    // One read through the bridge; nothing sent.
-    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
+    // Two reads through the bridge (the board, and the game details for a pending surrender, #317); nothing sent.
+    expect(h.exchanges.map((e) => e.request.method).sort((a, b) => a - b)).toEqual([Method.GameRefresh, Method.GetLatestGameInfo]);
   });
 
   it('the default goal (balanced) does not complete a bonus it cannot hold next turn (R3)', async () => {
@@ -892,10 +939,11 @@ describe('warapp_plan_turn — threat trend', () => {
       expect(res.isError, textOf(res)).toBeFalsy();
       counts.push(upstream() - before);
     }
-    // Cold: the signed-in account, the game (with its map), the game list (its teams), the board, the history.
+    // Cold: the signed-in account, the game (with its map), the game list (its teams), the board, the history,
+    // and every time the game details for a pending surrender (#317, never cached: it can change any moment).
     // Warm: the account, the map and the teams are cached. Then turns 3 and 4 are cached on disk, so no
     // history read at all.
-    expect(counts).toEqual([5, 3, 2]);
+    expect(counts).toEqual([6, 4, 3]);
     expect(live.calls.map((c) => c.url.includes('GetMap=false'))).toEqual([false, true, true, true, true]);
     expect(live.calls.filter((c) => c.url.includes('GetHistory=true'))).toHaveLength(2);
   });
@@ -916,8 +964,8 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(textOf(res)).not.toContain('secret plan');
     expect(h.calls[0]!.url).toContain('GetChat=true');
     // No extra request for it: the game's own read carried the chat. (The game list is asked for the teams:
-    // nine seats, none with a team from GameFeed.)
-    expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetMyGames, Method.GetLatestGameInfo]);
+    // nine seats, none with a team from GameFeed; GameRefresh is the game details for a pending surrender, #317.)
+    expect(h.exchanges.map((e) => e.request.method).sort((a, b) => a - b)).toEqual([Method.GameRefresh, Method.GetLatestGameInfo, Method.GetMyGames]);
   });
 
   it('no chat in the game read: no chat field', async () => {

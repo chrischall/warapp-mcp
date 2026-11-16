@@ -20,6 +20,7 @@ export const Method = {
   GetOpenAutoGame: 63,
   DeclineGame: 64,
   Surrender: 67,
+  AcceptSurrender: 68,
   GetMapDetails: 73,
   SendOrders: 74,
   SendInProgressOrders: 75,
@@ -176,6 +177,24 @@ interface SurrenderParams {
  */
 export function writeSurrenderParams(w: Writer, p: SurrenderParams): void {
   w.int32(p.gameId).bool(p.surrender).bool(false);
+}
+
+interface AcceptSurrenderParams {
+  gameId: number;
+  /** The in-game id of the player whose pending surrender is accepted. */
+  playerId: number;
+  /** true: accept; false: take back an acceptance given earlier. */
+  accept: boolean;
+}
+
+/**
+ * AcceptSurrender(auth, …) — accept another player's pending surrender (#317). READ FROM THE CLIENT
+ * BUNDLE's writer, NOT VERIFIED LIVE: after the auth block the int32 game id, the int32 in-game id of
+ * the surrendering player, the accept flag (false takes an acceptance back), then the per-method
+ * "a mod hooks this method" bool, sent false. No result payload: the outcome is read from game state.
+ */
+export function writeAcceptSurrenderParams(w: Writer, p: AcceptSurrenderParams): void {
+  w.int32(p.gameId).int32(p.playerId).bool(p.accept).bool(false);
 }
 
 /**

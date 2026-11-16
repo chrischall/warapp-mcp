@@ -19,13 +19,16 @@ export const MY_GAMES_RETURN = 'warlight.shared.MyGamesReturn';
 export const GAME_INFO = 'warlight.shared.GameInfo';
 export const GAME_INFO_PLAYER = 'warlight.shared.GameInfoPlayer';
 
-/** GameState. */
-const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
+/** GameState: the web client's codes, named as GameFeed names them. */
+export const GAME_STATE_NAMES: Readonly<Record<number, string>> = {
   2: 'WaitingForPlayers',
   3: 'Playing',
   4: 'Finished',
   5: 'DistributingTerritories',
 };
+/** A GameState code's name; the code itself when it has none. */
+export const gameStateName = (code: number): string => GAME_STATE_NAMES[code] ?? String(code);
+
 const GAME_WAITING = 2;
 const GAME_PLAYING = 3;
 const GAME_DISTRIBUTING = 5;
@@ -195,7 +198,7 @@ export function summarizeMyGames(games: readonly RawMyGame[], myInGameId: number
     return {
       id: g.id,
       name: g.name,
-      state: GAME_STATE_NAMES[g.stateCode] ?? String(g.stateCode),
+      state: gameStateName(g.stateCode),
       turn: g.lastTurn < 0 ? null : g.lastTurn + 1,
       waitingOnYou: active && me !== undefined && me.stateCode === PLAYER_PLAYING && !me.committed,
       players: g.players.map((p) => ({

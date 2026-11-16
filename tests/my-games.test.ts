@@ -21,6 +21,8 @@ import { WarappBundle } from '../src/protocol/bundle.js';
 import { MY_GAMES_BUNDLE } from './protocol/my-games-bundle.js';
 import { EMAIL, liveHarness, payload, textOf, type Harness } from './helpers.js';
 import { writeMyGamesReturn, type SyntheticGame } from './protocol/my-games-bundle.js';
+import { writeGameDetailsAndChat, type SyntheticSeat } from './protocol/chat-bundle.js';
+import { untrustedText } from '../src/tools/common.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -223,6 +225,8 @@ describe('warapp_my_games', () => {
         { name: 'Bob', state: 'Playing', committed: true },
         { name: 'Ann', state: 'Playing', committed: false },
       ],
+      // #317: this fake answers no GameRefresh, so the details are unread: unknown, never "none".
+      surrenderPending: null,
     });
     expect(games[1]).toMatchObject({ state: 'DistributingTerritories', turn: null });
     expect(games[3]).toMatchObject({ state: 'WaitingForPlayers', turn: null });
@@ -281,6 +285,94 @@ describe('warapp_my_games', () => {
     await harness([]);
     const body = JSON.parse(textOf(await h!.call('warapp_my_games', { view: 'brief' }))) as { data: string[] };
     expect(body.data).toEqual(['-- none']);
+  });
+});
+
+describe('warapp_my_games: pending surrenders (#317)', () => {
+  const THREE: SyntheticGame[] = [
+    {
+      id: 2001,
+      name: 'Quiet',
+      lastTurn: 4,
+      state: PLAYING,
+      players: [
+        { id: ME.inGame, name: 'Ann', state: P_PLAYING, committed: true },
+        { id: 765432, name: 'Bob', state: P_PLAYING, committed: true },
+      ],
+    },
+    {
+      id: 2002,
+      name: 'Bob gives up',
+      lastTurn: 7,
+      state: PLAYING,
+      players: [
+        { id: ME.inGame, name: 'Ann', state: P_PLAYING, committed: true },
+        { id: 765432, name: 'Bob', state: P_PLAYING, committed: true },
+        { id: 222222, name: 'Cy', state: P_PLAYING, committed: true },
+      ],
+    },
+    ...GAMES.filter((g) => g.id === 1003 || g.id === 1005),
+  ];
+  const DETAILS: Record<number, SyntheticSeat[]> = {
+    2001: [{ id: ME.inGame }, { id: 765432 }],
+    2002: [{ id: ME.inGame }, { id: 765432, surrendered: true, acceptedBy: [222222] }, { id: 222222 }],
+  };
+
+  async function surrenderHarness(fail: number[] = []) {
+    const refreshed: Array<{ id: number; chat: boolean; nonChat: boolean }> = [];
+    h = await liveHarness({
+      pages: SIGNED_IN,
+      warapp: (req) => {
+        if (req.method === Method.GetMyGames) return myGamesReply(THREE)();
+        if (req.method === Method.GameRefresh) {
+          const id = req.body.int32();
+          refreshed.push({ id, chat: req.body.bool(), nonChat: req.body.bool() });
+          if (fail.includes(id)) return { error: { code: 17, message: 'no' } };
+          return { body: (w: Writer) => writeGameDetailsAndChat(w, null, DETAILS[id] ?? null) };
+        }
+        throw new Error(`unexpected method ${req.method}`);
+      },
+    });
+    return refreshed;
+  }
+
+  it('reports each game being played: one owed first and counted, a quiet one empty, the rest null', async () => {
+    const refreshed = await surrenderHarness();
+    const p = payload(await h!.call('warapp_my_games'));
+    const games = p.games as Array<Record<string, unknown>>;
+    // Only games being played or picked where my seat plays are read (not the lobby, nor the one I am out of).
+    expect(refreshed.sort((a, b) => a.id - b.id)).toEqual([
+      { id: 2001, chat: false, nonChat: true },
+      { id: 2002, chat: false, nonChat: true },
+    ]);
+    expect(games.map((g) => [g.id, g.waitingOnYou])).toEqual([
+      [2002, false],
+      [2001, false],
+      [1003, false],
+      [1005, false],
+    ]);
+    expect(games[0]!.surrenderPending).toEqual([{ inGameId: 765432, player: null, owedByMe: true, name: untrustedText('Bob') }]);
+    expect(games[1]!.surrenderPending).toEqual([]);
+    expect(games[2]!.surrenderPending).toBeNull();
+    expect(games[3]!.surrenderPending).toBeNull();
+    expect(p.surrenderPending).toBe(1);
+    expect(p.waitingOnYou).toBe(0);
+    expect(String(p.surrenderNote)).toMatch(/UNVERIFIED live.*null means they could not be read/);
+  });
+
+  it('a failed read is null (unknown) and counted in the note, never an empty list', async () => {
+    await surrenderHarness([2002]);
+    const p = payload(await h!.call('warapp_my_games'));
+    const games = p.games as Array<Record<string, unknown>>;
+    expect(games.find((g) => g.id === 2002)!.surrenderPending).toBeNull();
+    expect(p.surrenderPending).toBe(0);
+    expect(String(p.surrenderNote)).toMatch(/The details of 1 game\(s\) could not be read/);
+  });
+
+  it('brief reads no details', async () => {
+    const refreshed = await surrenderHarness();
+    await h!.call('warapp_my_games', { view: 'brief' });
+    expect(refreshed).toEqual([]);
   });
 });
 

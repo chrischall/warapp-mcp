@@ -16,7 +16,29 @@ export const CHAT_BUNDLE = [
   'Gdc.rd=function(a,b){var d=new Gdc;' +
     'd.c1=a.Ua()?P.Sd(a,function(){return a.Ua()?Gmg.Ha(a,d,b):null}):null;' +
     'd.c2=a.Ua()?Gwl.Ha(a,d,b):null;d.c3=P.Ya(a);return d};',
-  'W["warlight.shared.GameWL"]=Gwl;Gwl.Ha=function(a,b,d){var e=new Gwl;e.w1=P.Ya(a);return e};',
+  // GameWL: 14 fields, the players (a dict of in-game id → GamePlayer) eighth (docs/WEB-PROTOCOL.md,
+  // "Accepting a surrender"). The other fields are placeholders of this file's own choosing.
+  'W["warlight.shared.GameWL"]=Gwl;Gwl.Ha=function(a,b,d){null==d&&(d=242);return Gwl.rd(a,d)};',
+  'Gwl.rd=function(a,b){var e=new Gwl;e.g0=P.Ya(a);e.g1=P.Ya(a);e.g2=P.Td(a);e.g3=a.Ua()?new Z(P.Ya(a)):new Z;' +
+    'e.g4=P.Ya(a);e.g5=P.Td(a);e.g6=a.Ua()?new Z(P.Ya(a)):new Z;' +
+    'e.g7=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Gpl.Ha(a,e,b):null}):null;' +
+    'e.g8=a.Ua()?new Z(P.Ya(a)):new Z;e.g9=P.Td(a);e.g10=P.Td(a);e.g11=P.Td(a);e.g12=P.Ya(a);' +
+    'e.g13=a.Ua()?new Z(P.Ya(a)):new Z;return e};',
+  // GamePlayer: 36 fields. Read inside a game, the record first links back to it (as the client's
+  // reader does), which is not a read field. Read here: 0 the AI id (optional), 14 turned into an AI,
+  // 20 the in-game id (optional), 21 who accepted its surrender (a dict of id → time), 28 the state
+  // (a byte), 29 Surrendered. The rest are placeholders.
+  'function Gpl(){}W["warlight.shared.GamePlayer"]=Gpl;',
+  'Gpl.mc=function(a){var b=new Gpl;a instanceof Gwl&&(b.wl=a);return b};',
+  'Gpl.Ha=function(a,b,d){b=Gpl.mc(b);b.p0=a.Ua()?new Z(P.Ya(a)):new Z;' +
+    Array.from({ length: 13 }, (_, i) => `b.p${i + 1}=P.Ya(a);`).join('') +
+    'b.p14=P.Yc(a);' +
+    Array.from({ length: 5 }, (_, i) => `b.p${i + 15}=P.Ya(a);`).join('') +
+    'b.p20=a.Ua()?new Z(P.Ya(a)):new Z;b.p21=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return P.Td(a)}):null;' +
+    Array.from({ length: 6 }, (_, i) => `b.p${i + 22}=P.Ya(a);`).join('') +
+    'b.p28=P.uq(a);b.p29=P.Yc(a);' +
+    Array.from({ length: 6 }, (_, i) => `b.p${i + 30}=P.Ya(a);`).join('') +
+    'return b};',
   'W["warlight.shared.GameMessage"]=Gmg;',
   'Gmg.Ha=function(a){return Gmg.rd(a)};',
   'Gmg.rd=function(a){var b=new Gmg;b.m0=P.Td(a);b.m1=a.Ua()?new Z(P.Ya(a)):new Z;' +
@@ -62,11 +84,61 @@ function writeMessages(w: Writer, messages: readonly SyntheticMessage[] | null):
   else w.bool(true).list(messages, (ww, m) => writeGameMessage(ww.bool(true), m));
 }
 
-/** The result of GameRefresh (present flag first), as the synthetic bundle reads it. */
-export function writeGameDetailsAndChat(w: Writer, messages: readonly SyntheticMessage[] | null): void {
+/** One synthetic seat of the game details (GamePlayer). */
+export interface SyntheticSeat {
+  /** In-game id; absent with `aiId`: an AI seat with no player id. */
+  id?: number;
+  aiId?: number;
+  turnedAI?: boolean;
+  /** GamePlayerState code (default 2, Playing). */
+  state?: number;
+  surrendered?: boolean;
+  /** In-game ids that accepted this seat's surrender (`null`: the dict is absent). */
+  acceptedBy?: number[] | null;
+}
+
+/** One GamePlayer record (no present flag). */
+export function writeGamePlayer(w: Writer, s: SyntheticSeat): void {
+  optInt(w, s.aiId);
+  for (let i = 1; i <= 13; i++) w.int32(i);
+  w.bool(s.turnedAI ?? false);
+  for (let i = 15; i <= 19; i++) w.int32(i);
+  optInt(w, s.id);
+  const accepted = s.acceptedBy === undefined ? [] : s.acceptedBy;
+  if (accepted === null) w.bool(false);
+  else w.bool(true).list(accepted, (ww, id) => ww.int32(id).date(new Date(Date.UTC(2026, 10, 2))));
+  for (let i = 22; i <= 27; i++) w.int32(i);
+  w.u8(s.state ?? 2).bool(s.surrendered ?? false);
+  for (let i = 30; i <= 35; i++) w.int32(i);
+}
+
+/** One GameWL record (no present flag): `seats` `null` leaves the players dict out. */
+export function writeGameWL(w: Writer, seats: readonly SyntheticSeat[] | null): void {
+  const d = new Date(Date.UTC(2026, 10, 1));
+  w.int32(7).int32(0).date(d).bool(false).int32(0).date(d).bool(false);
+  if (seats === null) w.bool(false);
+  else
+    w.bool(true).list(seats, (ww, s) => {
+      ww.int32(s.id ?? s.aiId ?? 0).bool(true);
+      writeGamePlayer(ww, s);
+    });
+  w.bool(false).date(d).date(d).date(d).int32(3).bool(false);
+}
+
+/**
+ * The result of GameRefresh (present flag first), as the synthetic bundle reads it: the chat, then the
+ * game with `seats` (none by default: the players dict absent).
+ */
+export function writeGameDetailsAndChat(
+  w: Writer,
+  messages: readonly SyntheticMessage[] | null,
+  seats: readonly SyntheticSeat[] | null = null,
+): void {
   w.bool(true);
   writeMessages(w, messages);
-  w.bool(true).int32(7).int32(0);
+  w.bool(true);
+  writeGameWL(w, seats);
+  w.int32(0);
 }
 
 /**
