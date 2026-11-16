@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { GetGameOptions } from './client.js';
 import { isHosted } from './hosted.js';
-import { readableRecord, recordFromGame, type GameRecord } from './map-stats.js';
+import { RETIRED_LAYOUTS, readableRecord, recordFromGame, type GameRecord } from './map-stats.js';
 import type { Game } from './normalize.js';
 import { historyReport, safeKeys, type HistoryUnreadable } from './trend.js';
 
@@ -105,6 +105,7 @@ const isRecord = (v: unknown): v is GameRecord => {
     typeof r.gameId === 'number' &&
     typeof r.mapId === 'number' &&
     typeof r.turnsSeen === 'number' &&
+    (r.layout === undefined || typeof r.layout === 'string') &&
     Array.isArray(r.players) &&
     r.players.every(
       (p: unknown) =>
@@ -308,8 +309,17 @@ export class StatsCollector {
         const record = recordFromGame(game, map);
         if (!readableRecord(record)) {
           const report = historyReport(game, { needPlayerLand: true });
-          // A history with player land that still yields no starts (the first board with land shows none of the game's players).
-          this.#unreadable.set(id, 'unreadable' in report ? report.unreadable : { reason: 'no-starts', keys: safeKeys(game.feedKeys ?? []), turns: report.read.turns });
+          const keys = safeKeys(game.feedKeys ?? []);
+          this.#unreadable.set(
+            id,
+            'unreadable' in report
+              ? report.unreadable
+              : record.layout !== undefined && RETIRED_LAYOUTS.has(record.layout)
+                ? // Read under a layout the live check found misnumbered (#302).
+                  { reason: 'retired-layout', keys, turns: report.read.turns, layout: record.layout }
+                : // A history with player land that still yields no starts (the first board with land shows none of the game's players).
+                  { reason: 'no-starts', keys, turns: report.read.turns },
+          );
           listUnreadable(id);
           this.#failed.delete(id);
           res.unreadable++;

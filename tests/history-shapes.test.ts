@@ -3,7 +3,7 @@
 // the real shape. Synthetic replies only.
 import { afterEach, describe, expect, it } from 'vitest';
 import { normalizeGame, type Game, type GameMap, type Player } from '../src/normalize.js';
-import { recordFromGame } from '../src/map-stats.js';
+import { readableRecord, recordFromGame } from '../src/map-stats.js';
 import { StatsCollector, type StatsClient } from '../src/stats.js';
 import { boardFromHistory, historyBoards, historyReport } from '../src/trend.js';
 import { mkdtempSync } from 'node:fs';
@@ -41,6 +41,19 @@ describe('historyBoards: the shapes GameFeed may send (#302)', () => {
   it('without numberOfTurns, a distributionStanding puts standing0 one turn on', () => {
     const h = { distributionStanding: standing(0), standing0: standing(1) };
     expect(historyBoards(h, PLAYERS).map((b) => b.turn)).toEqual([0, 1]);
+  });
+
+  it('a distributionStanding with no player land is the board before picks: standing0 is the start, whatever numberOfTurns says', () => {
+    // Pre-pick: every territory available or neutral. standing0 is then the board after picks.
+    const pre = [{ terrID: '1', ownedBy: 'AvailableForDistribution', armies: '2' }, { terrID: '9', ownedBy: 'Neutral', armies: '2' }];
+    const h = { distributionStanding: pre, standing0: standing(0), standing1: standing(1) };
+    for (const opts of [{}, { numberOfTurns: 2 }]) {
+      const boards = historyBoards(h, PLAYERS, opts);
+      expect(boards.map((b) => [b.turn, held(b.board)])).toEqual([[0, 1], [1, 2]]);
+    }
+    expect(historyReport({ history: h, players: PLAYERS, numberOfTurns: 2 })).toEqual({
+      read: { turns: 2, first: 0, last: 1, layout: 'standing-keys+distribution' },
+    });
   });
 
   it('a turnN entry of orders beside standingN never shadows the standing', () => {
@@ -154,6 +167,40 @@ describe('map statistics read the top-level layout and say why a game is unreada
     const r = recordFromGame(game, MAP);
     expect(r.turnsSeen).toBe(3);
     expect(r.players.find((p) => p.playerId === A)).toMatchObject({ starts: [1], firstBonusTurn: 1 });
+  });
+
+  it('recordFromGame takes the starts from standing0 when the distribution standing holds no player land', () => {
+    const pre = [1, 2, 3, 9].map((t) => ({ terrID: String(t), ownedBy: 'AvailableForDistribution', armies: '2' }));
+    const game: Game = {
+      id: 6,
+      state: 'Finished',
+      numberOfTurns: 2,
+      players: PLAYERS.map((p) => ({ ...p, state: p.id === A ? 'Won' : 'Eliminated' })),
+      history: { distributionStanding: pre, standing0: standing(0), standing1: standing(1) },
+    };
+    const r = recordFromGame(game, MAP);
+    expect(r.layout).toBe('standing-keys+distribution');
+    // Not standing1's captures: the start is the first board after picks.
+    expect(r.players.find((p) => p.playerId === A)).toMatchObject({ starts: [1], firstBonusTurn: 1 });
+    expect(r.players.find((p) => p.playerId === B)).toMatchObject({ starts: [9] });
+  });
+
+  it('a record read under a retired layout is unreadable (the collector and the cache both judge by readableRecord); one kept before layouts is not', async () => {
+    const game: Game = {
+      id: 9,
+      state: 'Finished',
+      numberOfTurns: 1,
+      map: MAP,
+      players: PLAYERS.map((p) => ({ ...p, state: p.id === A ? 'Won' : 'Eliminated' })),
+      history: { standing0: standing(0), standing1: standing(1) },
+    };
+    const r = recordFromGame(game, MAP);
+    expect(r.layout).toBe('standing-keys');
+    expect(readableRecord(r)).toBe(true);
+    expect(readableRecord(r, new Set(['standing-keys']))).toBe(false);
+    // A record cached before layouts were kept has none and stays readable.
+    const { layout: _, ...old } = r;
+    expect(readableRecord(old, new Set(['standing-keys']))).toBe(true);
   });
 
   it('the collector lists each unreadable game with its reason', async () => {

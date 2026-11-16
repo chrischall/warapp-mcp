@@ -47,7 +47,8 @@ export interface HistoryOptions {
   /**
    * The game's completed turns (GameFeed `numberOfTurns`): with top-level `standing<N>` keys it
    * decides whether `standing0` is the start (the last N reaches it) or the board after the first
-   * turn (the last N is one short). UNVERIFIED either way.
+   * turn (the last N is one short), unless a distribution standing beside the keys decides (it
+   * outranks this). UNVERIFIED either way.
    */
   numberOfTurns?: number;
 }
@@ -66,6 +67,10 @@ interface Parsed {
   /** What the history was: `array`, `object`, `string` (did not parse as JSON), or another `typeof`. */
   shape: string;
 }
+
+/** Whether a raw standing shows any territory held by a player (a pre-pick board shows none). */
+const playerLand = (raw: unknown): boolean =>
+  boardFromStanding(standingOf(raw))?.territories.some((t) => t.owner.kind === 'player') ?? false;
 
 /** History entries in any of the plausible layouts (#302). Throws only on a hostile getter (callers catch). */
 function parseHistory(history: unknown, opts: HistoryOptions = {}): Parsed {
@@ -103,11 +108,21 @@ function parseHistory(history: unknown, opts: HistoryOptions = {}): Parsed {
   }
   if (standings.length) {
     // Top-level `standing<N>` keys (#302), `turn<N>` beside them being orders: is standing0 the
-    // start, or the board after the first turn? The game's completed turns decide when the last N
-    // reaches them or falls one short; else a distribution standing beside them puts standing0 one on.
+    // start, or the board after the first turn? UNVERIFIED. A distribution standing beside them
+    // decides: one on which no player holds land is the board before picks, so standing0 is the
+    // start (the board after picks); one with player land is the start itself, so standing0 is one
+    // turn on. Without one, the game's completed turns decide when the last N reaches them or
+    // falls one short.
     const last = Math.max(...standings.map(([n]) => n));
     const t = opts.numberOfTurns;
-    const offset = t !== undefined && last >= t ? 0 : t !== undefined && last === t - 1 ? 1 : dist !== undefined ? 1 : 0;
+    const offset =
+      dist !== undefined
+        ? playerLand(dist)
+          ? 1
+          : 0
+        : t !== undefined && last === t - 1
+          ? 1
+          : 0;
     const entries: Array<[number, unknown]> = standings.map(([n, v]) => [n + offset, v]);
     if (dist !== undefined && !entries.some(([n]) => n === 0)) entries.push([0, standingOf(dist)]);
     return {
@@ -208,9 +223,12 @@ export interface HistoryUnreadable {
    * `absent`: the reply carried no history the reader knows; `not-json`: a string that did not parse;
    * `no-turns`: a history with no entry the reader knows; `no-standing`: entries, none a board;
    * `no-player-land`: boards on which no player of the game holds land (map statistics need one);
-   * `no-starts` (map statistics): the first board where land is held shows none of the game's players.
+   * `no-starts` (map statistics): the first board where land is held shows none of the game's players;
+   * `retired-layout` (map statistics): read under a layout the live check found misnumbered (`RETIRED_LAYOUTS`).
    */
-  reason: 'absent' | 'not-json' | 'no-turns' | 'no-standing' | 'no-player-land' | 'no-starts';
+  reason: 'absent' | 'not-json' | 'no-turns' | 'no-standing' | 'no-player-land' | 'no-starts' | 'retired-layout';
+  /** With `retired-layout`: the layout the history was read in. */
+  layout?: string;
   /** The reply's top-level key names (identifiers only, capped). */
   keys: string[];
   /** What the history was (`array`, `object`, `string`, …), when there was one. */

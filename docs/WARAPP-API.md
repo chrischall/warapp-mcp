@@ -512,12 +512,14 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   `turn<N>` (orders, never read as boards) and `distributionStanding` gathered into one object
   (the layout older Warlight-era API clients read; not seen live here), else a per-turn
   `standings` list (one that does not read as the current board) or `turns` list. Under
-  top-level `standing<N>` keys, `standing0` is the start when the last N reaches
-  `numberOfTurns`, the board after the first turn when it is one short (or, with no count, when
-  a `distributionStanding` sits beside them) — **UNVERIFIED**. `historyReport` (`src/trend.ts`)
+  top-level `standing<N>` keys a `distributionStanding` beside them decides: one on which no
+  player holds land is the board before picks, so `standing0` is the start; one with player land
+  is the start itself, so `standing0` is the board after the first turn. Without one, `standing0`
+  is the start when the last N reaches `numberOfTurns` and the board after the first turn when it
+  is one short — **UNVERIFIED**. `historyReport` (`src/trend.ts`)
   says whether it read (`historyRead`: boards, first and last entry, `layout`) or why not
   (`historyUnreadable`: `reason` — `absent`, `not-json`, `no-turns`, `no-standing`,
-  `no-player-land`, `no-starts` — with the reply's top-level key names, and the history's or its
+  `no-player-land`, `no-starts`, `retired-layout` — with the reply's top-level key names, and the history's or its
   first entry's key names and entry count where they apply; identifiers only, never values or
   owner text). `warapp_get_game` reports it in the compact and full views when the history was
   asked for (the client keeps the key names, `Game.feedKeys`, only then), and `warapp_map_stats`
@@ -627,7 +629,10 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   (#302: every layout listed under "Board state", and each unreadable game's reason in
   `collected.unreadableGames`).
   **Assumed:** the first board where players hold land is the starting picks, and an entry's
-  number is the count of completed turns.
+  number is the count of completed turns. Each cached record keeps the `layout` it was read in, so
+  once the live check settles a layout as misnumbered, adding it to `RETIRED_LAYOUTS`
+  (`src/map-stats.ts`, empty until then) makes every record read under it unreadable: never cached,
+  and a cached one deleted and fetched again (`retired-layout`).
 - Throttle (ours, not war.app's): at most 50 new games per call (default 10), ≥ 1 s between
   requests, finished games cached forever at `<dataDir>/stats/<mapId>/<gameId>.json` as
   name-free records. A finished game whose history yields no starting board is counted
