@@ -12,9 +12,12 @@
 // account's email and password, so the result grants it nothing it did not
 // have. Nothing else about the account is returned, and a refusal's text never
 // holds the email, the password or a cookie value (src/direct/sign-in.ts).
-// The registration should hide it from the connector's tool menu (mcp-host
-// `enabledTools`): a flow's step and capture calls are never checked against
-// that allowlist, so the sign-in still runs while a chat client never sees it.
+// Hiding it from the connector's tool menu (mcp-host `enabledTools`) is the
+// owner's choice, not a default: a flow's step and capture calls are never
+// checked against that allowlist, so the sign-in would still run, but the gate
+// is fail-closed — once set, the connection's resources (warapp://strategy) and
+// prompts are gone, and every tool a later release adds stays hidden until the
+// list is edited by hand (docs/PLAN-DIRECT.md, registration change step 3).
 //
 // Not confirm-gated: the flow calls it with exactly the arguments its document
 // declares, and a gate would need another argument there. It is not read-only

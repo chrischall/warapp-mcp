@@ -224,3 +224,36 @@ describe('no paste-the-cookie flow until warapp_sign_in takes a cookie', () => {
     expect(Object.keys(tool!.inputSchema.properties ?? {}).sort()).toEqual(['email', 'password']);
   });
 });
+
+describe('hiding warapp_sign_in with enabledTools is an owner choice whose costs the docs state', () => {
+  // mcp-host's `enabledTools` gate is fail-closed: once set, resources/list and prompts/list
+  // come back empty and resources/read is refused, and a tool a later release adds stays hidden
+  // until the list is edited by hand. This server registers resources hosted, so hiding the
+  // sign-in tool that way costs them; the docs must say so rather than present it as free.
+  const planDirect = read('../docs/PLAN-DIRECT.md');
+  const registration = planDirect.slice(planDirect.indexOf('### Registration change'));
+  const step3 = registration.slice(registration.indexOf('\n3. '), registration.indexOf('\n4. '));
+  const claude = read('../CLAUDE.md');
+  const bullet = claude.slice(claude.indexOf('**`warapp_sign_in` (part B'), claude.indexOf('- **End of game (#178).**'));
+  const signInHeader = read('../src/tools/sign-in.ts').split('\nimport ')[0]!;
+
+  it('a hosted child does register resources, so the cost is real', async () => {
+    const { resources } = await harness.client.listResources();
+    expect(resources.map((r) => r.uri)).toContain('warapp://strategy');
+  });
+
+  it('PLAN-DIRECT step 3 is optional and names both costs', () => {
+    expect(step3).toMatch(/optional/i);
+    expect(step3).toMatch(/warapp:\/\/strategy/);
+    expect(step3).toMatch(/resources/i);
+    expect(step3).toMatch(/later release/i);
+  });
+
+  it('the CLAUDE.md bullet and the tool header no longer say the registration should hide it', () => {
+    for (const text of [bullet, signInHeader]) {
+      expect(text).not.toMatch(/registration should hide it/);
+      expect(text).toMatch(/resources/);
+      expect(text).toMatch(/later release/);
+    }
+  });
+});

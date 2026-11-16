@@ -178,11 +178,12 @@ capture (or re-capture) the token.
   capture's `path` from it). **That result is the one documented exception to "the token is never in
   a tool result"**: the capture needs it there, and the caller already holds the password, so it
   grants nothing new. Registered only hosted (locally `warapp_link_session` stays the way). It is
-  not confirm-gated, so the flow sends only the two arguments its document declares; instead the
-  registration should hide it from the connector's menu: leave it out of `enabledTools` (`--tools`).
-  mcp-host never checks a flow's step or capture tool against that allowlist (`packages/core/src/wire.ts`
+  not confirm-gated, so the flow sends only the two arguments its document declares. Whether to hide it
+  from the connector's menu is the owner's choice (step 3 of the registration change below): mcp-host
+  never checks a flow's step or capture tool against `enabledTools` (`packages/core/src/wire.ts`
   `toolCallRequestSchema`: "a login tool is often hidden from the menu"), so the flow still calls it
-  while no chat client sees it. It takes no cookie argument (see "Not built" below). The flow
+  when hidden, but that allowlist also empties the connection's resources and hides every later tool.
+  It takes no cookie argument (see "Not built" below). The flow
   document is part of the contract: `tests/auth-flow-doc.test.ts` checks it against mcp-host's rules
   offline (every `{from}` provided earlier, the capture never over an `authField`, a host-set or
   loader variable, `perUserChild`, the step tools and the capture tool registered hosted with exactly
@@ -215,8 +216,8 @@ browser bridge, which the registration keeps as its fallback.
 On the hosted registration (`warapp`, today `authFields` `WARAPP_EMAIL` + `WARAPP_API_TOKEN`,
 `perUserChild`, `dataDir`, `bridge: true`, `bridgePortEnv: WARAPP_WS_PORT`): **add** the `authFlow`,
 **keep** everything else (the bridge stays the fallback on the same registration: a session that
-stops working, or a connection that has not signed in yet), and **hide** `warapp_sign_in` from the
-menu. The exact steps:
+stops working, or a connection that has not signed in yet), and decide whether to hide
+`warapp_sign_in` from the menu (step 3, optional). The exact steps:
 
 1. **Wait for the release.** `npm view @chrischall/warapp-mcp version` shows the version with
    `warapp_sign_in`, and the registration's pin is on it (`mcp-host get <id>`: `source.version`;
@@ -232,9 +233,20 @@ menu. The exact steps:
      docs/examples/warapp-auth-flow.json` gives the same document explicitly).
    A refusal at this step (a `{from}` nothing fills, a capture over an `authField`) is mcp-host
    reading the document: report its text verbatim; `tests/auth-flow-doc.test.ts` should have caught it.
-3. **Hide `warapp_sign_in`** from the connector's menu: `mcp-host set <id> --tools <every other
-   tool>` (an `enabledTools` list). The flow still calls it; mcp-host never checks a flow's step or
-   capture tool against that list.
+3. **Optional, the owner's choice: hide `warapp_sign_in`** from the connector's menu with
+   `mcp-host set <id> --tools <every other tool>` (an `enabledTools` list). The flow still calls it
+   (mcp-host never checks a flow's step or capture tool against that list). It has two costs, because
+   mcp-host's gate is fail-closed (`packages/core/src/mcp-bridge/enabled-tools.ts`, `tools.enable` in
+   its `docs/MINT-MANIFEST.md`):
+   - **The resources go.** Once `enabledTools` is set, `resources/list` and `prompts/list` come back
+     empty and `resources/read` is refused, so the hosted connection loses the `warapp://strategy`
+     and `warapp://strategy/map/{mapId}` resources (`warapp_strategy` the tool still answers).
+   - **Every tool a later release adds stays hidden** until someone adds it to the list by hand.
+   Weigh that against leaving it in the menu, which is the default (skip this step): a chat model then
+   sees a tool whose description says it is for the host's sign-in flow only; it can do nothing without
+   the account's email and password, and what it returns (the session cookie) gives a caller holding
+   those nothing new, but a call spends a war.app sign-in attempt, which war.app may count. Recommended:
+   skip it unless the owner wants the menu clean more than the resources and future tools.
 4. **Connect.** On the connection (admin portal), run **Sign in** (or disconnect and connect again):
    the page asks only for the war.app password, masked. Enter it once.
 5. **Verify.** Call `warapp_session_status` on that connection. Expected:

@@ -1578,9 +1578,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   result":** mcp-host's capture reads the credential from the capture tool's result, and the caller
   already holds the password, so it grants nothing new; nothing else about the account is returned.
   Not confirm-gated (the flow sends only the arguments its document declares); annotated not
-  read-only, not destructive, not idempotent, open-world. The registration should hide it from the
-  menu (`enabledTools` left without it): mcp-host never checks a flow's step or capture tool against
-  that allowlist (`wire.ts` `toolCallRequestSchema`). The design, trade-off, registration change
+  read-only, not destructive, not idempotent, open-world. Hiding it from the
+  menu (`enabledTools` left without it) is an owner choice, off by default: mcp-host never checks a flow's
+  step or capture tool against that allowlist (`wire.ts` `toolCallRequestSchema`), but the gate is
+  fail-closed, so once set the connection's resources (`warapp://strategy`) and prompts are gone, and every
+  tool a later release adds stays hidden until the list is edited by hand. The design, trade-off, registration change
   and the unbuilt paste fallback are in `docs/PLAN-DIRECT.md`.
 - **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
   needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback;
