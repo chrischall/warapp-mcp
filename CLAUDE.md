@@ -1645,7 +1645,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   fresh download written with the stored copy's `storedAt` so they still age out on their own clock, and a mode
   whose stored ids are not all territories of the fresh map is not carried, so it is read again).
   Only `warapp_get_map`'s full view (no `bonus` filter) asks; it lists each mode's `territoryCount` and
-  `territories`. UNVERIFIED live beyond #328's trace (docs/WEB-PROTOCOL.md "Map details").
+  `territories`. VERIFIED live 2026-11-16 for normal modes (seven modes on one map matched #328's trace); the scenario
+  mode is UNVERIFIED live (docs/WEB-PROTOCOL.md "Map details"). `warapp_locate_opponents` reports where its start
+  candidates came from as `startCandidates` (`source`, `count`, and for a distribution mode its id and name).
 - **A game's map comes from `mapOf(game)`** (`src/tools/map.ts`), which applies the game's
   `OverriddenBonuses` (`applyBonusOverrides`); load the game with `settings: true` wherever bonus
   values matter. The JSON shape is verified live (an array of `{ bonusID, value }` numbers); overrides
