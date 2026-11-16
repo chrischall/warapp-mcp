@@ -76,7 +76,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   orders against each opponent's single-deploy replies (attack from one stack with its commander,
   sit on a territory I attack, every stack at once, spread and concentrated; #180: a struck stack
   dodging first, two opponents on one territory — teammates, or any two when I lead a free-for-all
-  — and under Multi-Attack each stack's best chain; Local Deployment bounds each deploy), under both move
+  — and under Multi-Attack each stack's best chain; Local Deployment bounds each deploy as the planner does, #293), under both move
   orders unless `first_mover` is given, with the same per-opponent deploy estimates as the
   planner; the opponents are whoever holds a stack on the board, not only players GameFeed calls
   `Playing`. "Safe" means safe against those replies only: fog-hidden stacks (`blindBorders`,
@@ -626,9 +626,24 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   passes is sized for that opponent, never conceded on the two together, #235; a held bonus is judged whole: its
   members are sized so when its joint unit costs more than the income and its single-opponent unit pays, and a
   bonus funded neither so nor whole up front leaves each member the per-border test on its value without that
-  bonus — the judgement it gets with no bonus); teammates are never a threat or a target; under Local Deployment an opponent's
-  visible bonus pools reach only their own territories (its free base income still lands anywhere,
-  even when its estimate leaves the pools out). A warning
+  bonus — the judgement it gets with no bonus); teammates are never a threat or a target; under Local Deployment (#293, `enemyDeployReaching` in
+  `src/analysis/local-deploy.ts`, one bound for the planner's `deployReaching` and `warapp_check_plan`'s
+  replies) a border faces the opponent's free income (base, never below the floor, plus a Reinforcement
+  card: `freeIncome`) plus the pools of the bonuses it could hold (`couldHoldBonusPools`: no member shown
+  with another owner, fogged ones included) that contain its stacks there, never above the estimate: a
+  tracked total or prior above that never lands on one border; the same bounds an untrusted figure (#275).
+  Only with per-territory income (`BonusArmyPer`; check_plan's `perTerritoryIncome`) does what the estimate
+  holds beyond every bonus it could hold together count as free too (per-territory income in the fog may
+  land anywhere), and a warning says so whenever that slack is used. A next-turn judgement (`nextTurnAt`: R3's defensibility, rule 4d's frontier
+  cost, `exposure`) also adds its visible stacks one step behind its front (beside a stack next to the
+  border, not next to it), which can walk up this turn, and their pools. In the observed deploy
+  (`ObserveContext.localFree`, planner and tracker alike: `localFreeOn`, base plus a Reinforcement card the
+  clock lets it hold on the turn read — the planner's game clock, else `PlannerSettings.opponentReinforcement`,
+  a fixed card from `plannerSettings`), growth beside the fog on a territory in no bonus it could hold on the
+  earlier board is a walk only as far as a neighbour in view's shrink is left once the captures and the other
+  grown stacks have claimed theirs (one claim pass: a shrink never offsets a capture and a walk both), and
+  deploy only up to its free income (shared), the rest a move out of the fog (`localCut`, named in the
+  rationale). A warning
   states each estimate and its basis. With a previous board, each opponent's deploy is also
   *observed* (`observedDeploy`, #57): the *net* change of its armies on territories visible
   both times (shrinks included — a transfer between its own territories is not deploy; counting
@@ -661,13 +676,29 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the territories the board hides and of the bonuses it could still hold, its own in full), and the
   warning calls it a prior — every observed figure is
   a lower bound under fog, and without it a finished game's true deploys read 2–3× low. #235: the
-  prior shrinks with evidence: with a usable track it keeps `PRIOR_EVIDENCE_TURNS` (4) / (4 + its
-  consecutive observed turns up to the newest board — a run that stopped earlier counts none — × the
-  visible share of its edge) of its lead over the tracked figure (or the visible one, when larger;
-  `priorBlend`; the warning names both figures). This applies in a 1v1 too,
+  prior shrinks with evidence: with a usable track it keeps `PRIOR_EVIDENCE_TURNS` (4) / (4 + the sum,
+  over its consecutive observed turns up to the newest board — a run that stopped earlier counts none —,
+  of each turn's frontier coverage, #294) of its lead over the tracked figure (or the visible one, when
+  larger; `priorBlend`; the warning names both figures; a turn built by hand without a coverage counts the
+  visible share of its edge on this board). This applies in a 1v1 too,
   pulling #119's prior back toward the tracked figures #119 found 2–3× low (8 turns with the whole
-  edge in view keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
-  against a finished 1v1. A
+  frontier read keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
+  against a finished 1v1. **Frontier coverage (#294).** Each observed turn carries `coverage`
+  (`frontierCoverage`, pure, in `src/analysis/plan/shared.ts`): its territories in view with a neighbour
+  not its own, plus every territory beside them whose owner is hidden (it could hold it: the "~M"), read
+  when in view with armies on both boards, and the positive bonuses it could hold with a hidden member;
+  the track (`OpponentTrack.coverage`, `trackCoverage` over the income window: Σ read ÷ Σ frontier) and
+  the estimate (`EnemyDeployEstimate.coverage`) carry it, warapp_track_opponents shows it, and the tracked
+  warning says "read from N of ~M frontier territories (P%)". While that share is under `LOW_COVERAGE`
+  (0.5) and the tracked figure beats its visible base + bonuses, the estimate never falls below tracked ×
+  `LOW_COVERAGE_FACTOR` (1.5), at most what it could earn (`coverageFloor`, its own warning); both
+  constants are unmeasured (the play session's long fogged games tracked a half to a quarter of the
+  income later seen). A tracked figure no higher than its visible income gets no floor. Each observed
+  deploy also carries `stacks` (`DeployObservation`): every stack of the opponent held in view on both
+  boards that grew, its growth split into what a neighbour in view of its own visibly sent (each shrink
+  claimed once, first by the stacks with no hidden neighbour, whose rest can only be deploy, then by those
+  beside the fog, each in id order), then what could have come out of the fog (beside a hidden territory) or can
+  only be deploy; the plan's rationale has one "growth by stack" line per opponent. A
   free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
   out; a player out is never listed among the opponents beside the fog). The newest observed turn
   never lifts a usable track (#235 1c): a stack walking in beside the fog is not income (#123 lesson
@@ -765,8 +796,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the boards' ten, since the stock reads every turn's), written by `warapp_plan_turn` only. While untrusted, the
   planner sizes borders of bonuses held in full at the start for max(estimate, the figure) where the figure
   is max(implied, my income) (`PlanInput.untrusted`, forceAt; not under `enemyDeploy`; under Local Deployment that
-  figure is not bounded by where the opponent's bonus pools can land, as `deployReaching` bounds the estimate:
-  such a border is over-sized, the conservative direction; the guard-off breach price, `breachAt`, sizes the stack
+  figure is bounded like the estimate, by where the pools it could hold can land (#293, `deployReaching`), as
+  `warapp_check_plan` bounds it; the guard-off breach price, `breachAt`, sizes the stack
   that would come through on the same figure; a held bonus contested on that sizing, #118, whose border faces it
   is held whole before any capture when what is left covers it, `settleContested('untrusted')`, so no expansion
   goes ahead of the gate — and one it cannot cover, or one triage conceded beside that opponent's stack, gets
@@ -1374,6 +1405,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   reported one is re-read with the plan's front, so the losing state the plan acts on (rule 3d's decided
   horizon, its line calling it an estimate) is the one shown and logged. `warapp_plan_turn` passes the plan's profile standing
   back (`standing`): an `even`/`stalemate` outlook beside `ahead`/`behind` says why the two differ.
+  **What the state rests on (#304).** Every outlook turn carries `evidence` (`OutlookEvidence`, the latest's
+  also on `GameOutlook.evidence`): the two incomes compared (mine — my team's in a team game — against the
+  side the likely high rests on, else the strongest; tracked off my boards, its visible income at least, else
+  in view), and per opponent still playing its income and the share of its frontier that income was read
+  from (#294's `TrackCoverage`, `null` when unmeasured), `thin` when the board is not in full view and that
+  share is under `LOW_COVERAGE` (0.5) or unmeasured. The basis says them after the state ("Incomes compared
+  …", "Frontier read …", and "Thin evidence: … so "even" is not a safe reading"); plan_turn's compact
+  outlook, the outlook log (per turn and `latest`, without the coverage's words) and the surrender preview
+  carry it. Reporting only: it never changes the state, a ratio or any plan.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

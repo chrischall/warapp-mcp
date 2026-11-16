@@ -7,11 +7,13 @@ import { carriesTeam } from '../../teams.js';
 import { searchChains } from '../chains.js';
 import { guaranteedKills } from '../combat.js';
 import { bfsDistances, neighborsOf } from '../graph.js';
-import { enemyDeployReaching, heldBonusPools } from '../local-deploy.js';
+import { couldHoldBonusPools, enemyDeployReaching, freeIncome } from '../local-deploy.js';
 import { incomeBasis, LOST_STACK_TURNS } from '../opponents.js';
 import {
   HIDDEN_POOL_INCOMES,
   MAX_NAMED_REVEALS,
+  coverageText,
+  LOW_COVERAGE,
   MIN_ENEMY_DEPLOY,
   openingArmies,
   ownerShown,
@@ -201,29 +203,47 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
   const teamOf = new Map<number, number>();
   for (const p of ctx.players ?? []) if (carriesTeam(p.team) && foe(p.id)) teamOf.set(p.id, p.team);
   /**
-   * Local Deployment (#128): each opponent's bonuses it visibly holds in full, as deploy pools that
-   * land only on their own territories. Empty without Local Deployment or under the override.
+   * Local Deployment (#128, #293): each opponent's bonuses it could hold (none of their territories
+   * shown with another owner), as deploy pools that land only on their own territories. Empty without
+   * Local Deployment or under the override.
    */
   const enemyPools = new Map<number, { value: number; members: ReadonlySet<number> }[]>();
   // #199: the one Local Deployment bound (local-deploy.ts), shared with check_plan's stress test.
   // A what-if `enemyDeploy` is taken as it stands: no pool bounds it.
-  if (s.localDeployments && !custom)
-    for (const [p, pools] of heldBonusPools(g, (t) => {
+  // #293 review: with per-territory income, income no pool carries (territories the fog hides) may land
+  // anywhere, so what an estimate holds beyond every bonus it could hold counts as free; without it, a
+  // border faces only the free income and the pools there.
+  const perTerritory = (s.bonusArmyPer ?? 0) > 0;
+  if (s.localDeployments && !custom) {
+    const foes = [...new Set([...state.values()].flatMap((t) => (t.owner.kind === 'player' && foe(t.owner.playerId) ? [t.owner.playerId] : [])))].sort(byNum);
+    for (const [p, pools] of couldHoldBonusPools(g, foes, (t) => {
       const o = ownerShown(state.get(t))?.owner;
-      return o?.kind === 'player' ? o.playerId : undefined;
-    }))
-      if (foe(p)) enemyPools.set(p, pools);
+      return o === undefined ? undefined : o.kind === 'player' ? o.playerId : null;
+    })) {
+      enemyPools.set(p, pools);
+      const e = estimates.get(p);
+      const free = freeIncome(e?.base ?? 0, MIN_ENEMY_DEPLOY, e?.card?.armies ?? 0);
+      const pooled = pools.reduce((n, q) => n + q.value, 0);
+      const figure = deployOf(p);
+      if (perTerritory && figure - pooled > free)
+        warnings.push(
+          `Local Deployment with per-territory income: player ${p}'s estimate of ~${figure} is more than its free income +${free} and the +${pooled} of bonuses it could hold, so the ${figure - pooled - free} beyond them is taken as per-territory income the fog hides, which may be deployed anywhere: every border faces it.`,
+        );
+    }
+  }
   /**
-   * What `player` may deploy on any of `on` (#128): its whole estimate, except under Local
-   * Deployment, where a bonus it visibly holds pays only into that bonus's territories — the
-   * estimate less the visible pools it counts (unseen income counts as deployable anywhere) plus
-   * the pools that contain one of `on`, never above the estimate. The estimate may leave pools
-   * out (the opening board's floor; a negative bonus lowering its bonus income), so only what
-   * it holds above its free floor — max({@link MIN_ENEMY_DEPLOY}, base income) — is taken as
-   * pooled: the free base always lands anywhere.
+   * What `player` may deploy on any of `on` (#128, #293): its whole estimate, except under Local
+   * Deployment, where a bonus it could hold pays only into that bonus's territories: its free income
+   * (base, never below {@link MIN_ENEMY_DEPLOY}, plus a Reinforcement card) plus the pools that contain
+   * one of `on`, never above the estimate ({@link enemyDeployReaching}). A tracked total or a prior above
+   * that never lands on one border. `figure` replaces the estimate (an untrusted opponent's, #275).
    */
-  const deployReaching = (player: number, on: readonly number[]): number =>
-    enemyDeployReaching(deployOf(player), estimates.get(player)?.base ?? 0, MIN_ENEMY_DEPLOY, enemyPools.get(player) ?? [], on);
+  const deployReaching = (player: number, on: readonly number[], figure = deployOf(player)): number => {
+    const pools = enemyPools.get(player);
+    if (!pools) return figure;
+    const e = estimates.get(player);
+    return enemyDeployReaching(figure, freeIncome(e?.base ?? 0, MIN_ENEMY_DEPLOY, e?.card?.armies ?? 0), pools, on, perTerritory);
+  };
   /**
    * #120: what the owner of enemy territory `t` may add there before my attack lands — its deploy
    * estimate (under Local Deployment, what reaches `t`), or its growth there per turn when larger
@@ -402,6 +422,8 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
    * {@link nextTurnAt} (the frontier and a completion's defensibility) counts its stacks.
    */
   const returning = pc.truce.lookAheadFoes;
+  /** #293: under Local Deployment a next-turn judgement counts the visible stacks one step behind a front. */
+  const behindNext = s.localDeployments === true && !pc.custom;
   const foeNext = (p: number) => foe(p) || returning.has(p);
   const {
     growthOf, teamOf, deployReaching, holdArmies, bombSized, takesAlone, killsOf, hiddenFoe, hiddenMovable, lostAt,
@@ -469,9 +491,9 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
    * ({@link lostAt}), the pool's carrier keeping what they leave of it. With `trend`, its fastest
    * growth there. Shared by {@link forceAt} and the floor tier's armies already next to a border.
    */
-  const stacksAt = (t: number, gone: (n: number) => boolean, trend: boolean, nextTurn = false) => {
+  const stacksAt = (t: number, gone: (n: number) => boolean, trend: boolean, nextTurn = false, behind = false) => {
     const isFoe = nextTurn ? foeNext : foe;
-    const byPlayer = new Map<number, { stacks: { id: number; movable: number }[]; growth: number }>();
+    const byPlayer = new Map<number, { stacks: { id: number; movable: number }[]; growth: number; behind?: number[] }>();
     // #164: a player's unaccounted armies are one pool, in one place at most: its first hidden stack
     // next to `t` carries them; any other hidden stack of it there is the guard alone (movable 0).
     const pooled = new Set<number>();
@@ -518,6 +540,26 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
       const pool = hiddenMovable(player);
       c.movable = Math.max(viaCarrier, pool - lostElsewhere.reduce((n, l) => n + l.movable, 0));
     }
+    // #293: for a next-turn judgement under Local Deployment, its visible stacks one step behind its
+    // front (beside one of its stacks next to `t`, not next to `t` themselves) can walk up this turn
+    // and attack next turn: each joins the front stack it borders (the lowest id), once.
+    if (behind)
+      for (const [player, p] of byPlayer) {
+        const front = p.stacks.filter((x) => visibleState(state.get(x.id)) !== undefined).map((x) => x.id);
+        const seen = new Set<number>([t, ...p.stacks.map((x) => x.id)]);
+        const ids: number[] = [];
+        for (const f of [...front].sort(byNum))
+          for (const m of [...neighborsOf(g, f)].sort(byNum)) {
+            const st = visibleState(state.get(m));
+            if (seen.has(m) || gone(m) || st?.owner.kind !== 'player' || st.owner.playerId !== player || neighborsOf(g, m).includes(t)) continue;
+            seen.add(m);
+            const walk = Math.max(0, st.armies! - guard) + unitsAt(m);
+            if (walk <= 0) continue;
+            p.stacks.find((x) => x.id === f)!.movable += walk;
+            ids.push(m);
+          }
+        if (ids.length) p.behind = ids.sort(byNum);
+      }
     return byPlayer;
   };
   /**
@@ -535,9 +577,9 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
   const forceAt = (
     t: number,
     gone: (n: number) => boolean,
-    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean; solo?: boolean; nextTurn?: boolean },
+    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean; solo?: boolean; nextTurn?: boolean; behind?: boolean },
   ): Force | null => {
-    const byPlayer = stacksAt(t, gone, o.trend, o.nextTurn === true);
+    const byPlayer = stacksAt(t, gone, o.trend, o.nextTurn === true, o.behind === true);
     // B2 (T2, plan/relations.ts): on a truce hold the partner attacks with its stacks alone — no
     // deploy, no trend, its Multi-Attack chains from the armies standing; `full` asks for the hold
     // the truce relaxed.
@@ -548,8 +590,12 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
     const each = [...byPlayer]
       .sort((a, b) => a[0] - b[0])
       .map(([player, p]) => {
-        // #275 (b): a held bonus's border is sized for an untrusted estimate's figure, never below the estimate.
-        const deploy = truced === player ? 0 : Math.max(deployReaching(player, p.stacks.map((x) => x.id)), untrustedAt(player, t));
+        // #275 (b): a held bonus's border is sized for an untrusted estimate's figure, never below the estimate
+        // (#293: under Local Deployment, what of that figure can reach these stacks).
+        const deploy =
+          truced === player
+            ? 0
+            : deployReaching(player, [...p.stacks.map((x) => x.id), ...(p.behind ?? [])], Math.max(pc.deployOf(player), untrustedAt(player, t)));
         const growth = truced === player ? 0 : p.growth;
         const movable = p.stacks.reduce((n, x) => n + x.movable, 0);
         const add = Math.max(deploy, growth);
@@ -622,8 +668,8 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
    * from only this turn counted again ({@link foeNext}). The same as threatAt when there is none.
    */
   const nextTurnAt = (t: number, gone: (n: number) => boolean): { player: number; threat: number } | null => {
-    if (!returning.size) return threatAt(t, gone);
-    const f = forceAt(t, gone, { trend: true, allPlayers: true, solo: ps.soloHeld.has(t), nextTurn: true });
+    if (!returning.size && !behindNext) return threatAt(t, gone);
+    const f = forceAt(t, gone, { trend: true, allPlayers: true, solo: ps.soloHeld.has(t), nextTurn: true, behind: behindNext });
     return f ? { player: f.player, threat: f.threat } : null;
   };
   /**
@@ -857,6 +903,20 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           rationale.push(
             `Observed deploy for player ${p}, ${turns}: +${e.observedRaw}/turn over ${o.counted.length} territories visible on both boards (${o.captured.length} captured${o.captured.length ? `, ${o.fromFog.length} from the fog` : ''}); ${o.reveals.length} skipped as fog reveals${o.reveals.length ? ` (${shown}${more}): not shown with an owner and armies last turn (fogged, armies hidden, or not yet picked), so what they hold is not income` : ''}.`,
           );
+          // #294: each grown stack's growth split three ways, so the arithmetic can be checked on the board.
+          if (o.stacks.length) {
+            const grown = [...o.stacks].sort((a, b) => b.growth - a.growth || a.territoryId - b.territoryId);
+            const parts = grown.slice(0, MAX_NAMED_REVEALS).map((x) => {
+              const why = [
+                ...x.moved.map((m) => `${m.armies} could be a move from ${label(m.from)} in view`),
+                ...(x.fog ? [`${x.fog} could have come out of the fog`] : []),
+                ...(x.deploy ? [`${x.deploy} can only be deploy`] : []),
+              ];
+              return `${label(x.territoryId)} +${x.growth} (${why.join(', ')})`;
+            });
+            const rest = grown.length > MAX_NAMED_REVEALS ? ` and ${grown.length - MAX_NAMED_REVEALS} more` : '';
+            rationale.push(`Player ${p}'s growth by stack, ${turns}: ${parts.join('; ')}${rest}.`);
+          }
           // A stack that arrived from the fog by a capture is a threat, never income (#86).
           for (const id of o.fromFog) {
             const where = neighborsOf(g, id).some((n) => mineSet.has(n)) ? 'stack next to you' : 'stack';
@@ -864,10 +924,19 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               `Player ${p}'s ${where}: ${armiesOf(id)} on ${label(id)} (threat), arrived from the fog by a capture: a move, not income.`,
             );
           }
-          // #123: the ambiguous readings, each named with the other way it could read.
+          // #123: the ambiguous readings, each named with the other way it could read. #293: under Local
+          // Deployment growth outside every bonus it could hold is cut at its free income instead.
+          const fogReason = (x: typeof o) => {
+            const twice = `beyond twice the ~${x.expected} it was expected to deploy`;
+            const cut = x.localCut;
+            if (!cut) return twice;
+            const local = `in no bonus it could hold: under Local Deployment only its free income +${cut.free} could be deployed there`;
+            const all = x.grewFromFog.every((id) => cut.territories.includes(id));
+            return all ? local : `${cut.territories.map(label).join(', ')} ${local}; elsewhere ${twice}`;
+          };
           if (o.grewFromFog.length) {
             rationale.push(
-              `Player ${p}: ${o.fogGrowth} of its growth on ${o.grewFromFog.map(label).join(', ')} (beyond twice the ~${o.expected} it was expected to deploy) is next to the fog: read as a move out of the fog, not income — though it may be income the fog hides (observed +${o.low}–${o.high} either way).`,
+              `Player ${p}: ${o.fogGrowth} of its growth on ${o.grewFromFog.map(label).join(', ')} (${fogReason(o)}) is next to the fog: read as a move out of the fog, not income — though it may be income the fog hides (observed +${o.low}–${o.high} either way).`,
             );
           }
           if (o.reinforced.length)
@@ -910,7 +979,14 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           const track = input.tracks!.find((t) => t.playerId === p)!;
           const used = track.turns.filter((x) => e.trackedTurns.includes(x.from));
           rationale.push(
-            `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+            `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog${e.coverage ? `, read from ${coverageText(e.coverage)}` : ''}; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+          );
+        }
+        // #294: a tracked figure read from little of its frontier keeps a floor above it.
+        if (e.coverageFloor) {
+          const f = e.coverageFloor;
+          warnings.push(
+            `Player ${p}'s tracked ~${f.tracked} was read from ${coverageText({ ...e.coverage!, hiddenBonuses: 0 }).replace(/\)$/, `, under ${Math.round(LOW_COVERAGE * 100)}%)`)}: the estimate is at least ~${f.tracked} × ${f.factor} = ${f.figure} (the factor is unmeasured), since the fog hid most of where it deploys.`,
           );
         }
         // #164: a Reinforcement card the clock says it may hold, on top of its income.
@@ -966,7 +1042,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               e.priorBlend
                 ? ` — shrunk toward its ${
                     e.priorBlend.toward === e.tracked ? `tracked ~${e.tracked}` : `visible ${e.priorBlend.toward}`
-                  } by the evidence: ${e.priorBlend.turns} observed ${e.priorBlend.turns === 1 ? 'turn' : 'turns'} with ${Math.round(e.priorBlend.share * 100)}% of its edge in view keep ${Math.round(e.priorBlend.weight * 100)}% of the gap from ${e.priorBlend.prior}`
+                  } by the evidence: ${e.priorBlend.turns} observed ${e.priorBlend.turns === 1 ? 'turn' : 'turns'} with ${Math.round(e.priorBlend.share * 100)}% of its ${e.coverage ? 'frontier read' : 'edge in view'} keep ${Math.round(e.priorBlend.weight * 100)}% of the gap from ${e.priorBlend.prior}`
                 : ''
             }; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
           );
@@ -974,7 +1050,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
         }
         if (e.source === 'tracked') {
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${income} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible})${withCard}; it holds income the fog hides, and could deploy more.`,
+            `Enemy deploy estimate for player ${p}: ~${income} (tracked over ${e.trackedTurns.length} observed turns, ${e.coverage ? `read from ${coverageText(e.coverage)}; ` : ''}more than ${visible})${withCard}; it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }

@@ -360,6 +360,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         orderPriority,
         ...(settings.localDeployments ? { localDeployments: true } : {}),
+        ...(settings.localDeployments && (settings.bonusArmyPer ?? 0) > 0 ? { perTerritoryIncome: true } : {}),
         leader,
         ...(binding.length ? { truces: binding.map((r) => ({ player: r.player, covered: r.coveredMine })) } : {}),
       });

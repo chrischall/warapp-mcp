@@ -77,6 +77,7 @@ interface TrackPayload {
       measured?: number;
       brokenBonuses?: Array<{ id: number; value: number }>;
       reveals?: unknown[];
+      coverage?: { inView: number; frontier: number; share: number; hiddenBonuses: number };
     }>;
     income: {
       estimate: number | null;
@@ -86,6 +87,7 @@ interface TrackPayload {
       method: string | null;
       lowered?: number;
       observedRange: { min: number; max: number } | null;
+      coverage?: { turns: number[]; inView: { min: number; max: number }; frontier: { min: number; max: number }; share: number };
     };
     unexplainedArmies: number | null;
     inferredBonuses: unknown;
@@ -144,6 +146,9 @@ describe('warapp_track_opponents', () => {
       method: 'visible',
       observedRange: { min: 5, max: 5 },
     });
+    // #294: how much of its frontier each turn, and the window, read.
+    for (const o of bob.observed) expect(o.coverage).toMatchObject({ inView: expect.any(Number), frontier: expect.any(Number) });
+    expect(bob.income.coverage).toMatchObject({ turns: [3, 4] });
     expect(bob.unexplainedArmies).toBe(0);
     expect(bob.notes.join(' ')).toMatch(/its visible base \+ bonuses, observed 5–5 over turns 3–4/);
     const cached = JSON.parse(readFileSync(join(dir, 'boards', `${GAME}.json`), 'utf8')) as { turns: object };

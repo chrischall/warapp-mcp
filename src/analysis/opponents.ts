@@ -103,12 +103,21 @@ import {
   bombPossibleOn,
   enemyDeployEstimates,
   failedAttackKills,
+  frontierCoverage,
   holdLosses,
+  localFreeOn,
   observeSigned,
   ownerShown,
   repelledFloor,
+  coverageText,
+  LOW_COVERAGE,
+  LOW_COVERAGE_FACTOR,
+  TRACKED_MIN_TURNS,
+  trackCoverage,
   visibleState,
+  type FrontierCoverage,
   type PlannerSettings,
+  type TrackCoverage,
   type RepelledAttacks,
 } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
@@ -194,6 +203,11 @@ export interface ObservedTurn {
   from: number;
   /** The later board's turn (`from + 1`: only consecutive boards are compared). */
   to: number;
+  /**
+   * #294: how much of its frontier the turn could read ({@link frontierCoverage}). Absent on a turn
+   * built by hand.
+   */
+  coverage?: FrontierCoverage;
   /** Its observed deploy, capped at what it could earn ({@link ObservedTurn.cap}). */
   observed: number;
   /** The observed deploy before the cap ({@link ObservedTurn.measured} included). */
@@ -395,6 +409,11 @@ export interface OpponentTrack {
   income: number | null;
   /** The `from` turns the estimate used (its window), oldest first. */
   incomeTurns: number[];
+  /**
+   * #294: how much of its frontier the window's turns read ({@link trackCoverage}); `null` before any
+   * observed turn. Absent on a track built by hand.
+   */
+  coverage?: TrackCoverage | null;
   /** The least and the most it was observed to deploy over that window; `null` before any observed turn. */
   observedRange: { min: number; max: number } | null;
   /** Which term set `income` ({@link IncomeMethod}); `null` before any observed turn. */
@@ -1401,7 +1420,7 @@ export function trackOpponents(
       // about its deploy (every stack would read as a reveal, or there is no estimate at all):
       // skip it with a note rather than observe 0 or throw (#83).
       const e = seesPlayer(before, g, playerId)
-        ? enemyDeployEstimates(g, after, me, settings, before).find((x) => x.playerId === playerId)
+        ? enemyDeployEstimates(g, after, me, settings, before, undefined, undefined, { turn: to }).find((x) => x.playerId === playerId)
         : undefined;
       if (!e?.observation) {
         unseen.push(seesPlayer(before, g, playerId) ? to : from);
@@ -1426,6 +1445,8 @@ export function trackOpponents(
         guard,
         most: e.observedCap!,
         ...(expected !== null ? { expected: Math.max(expected, carriedSoFar) } : {}),
+        // #293: the same Local Deployment reading the board-only observation used.
+        ...(settings.localDeployments ? { localFree: localFreeOn(e.base, DEFAULT_BASE_INCOME, settings.opponentReinforcement, from) } : {}),
       };
       const { signed, ...o } =
         expected !== null && carriedSoFar > expected
@@ -1447,6 +1468,7 @@ export function trackOpponents(
       observed.push({
         from,
         to,
+        coverage: frontierCoverage(g, after, before, playerId),
         observed: seenObserved,
         raw,
         ...(context.expected !== undefined ? { expected: context.expected } : {}),
@@ -1823,6 +1845,12 @@ export function trackOpponents(
     lostStacks.sort((a, b) => b.armies - a.armies || a.territoryId - b.territoryId).splice(MAX_LOST_STACKS);
     for (const l of lostStacks)
       notes.push(`A stack of ${l.armies} was last seen on territory ${l.territoryId} on turn ${l.turn} and has been out of view since (stacks of it that came into view since, within its reach, are taken as it and offset it): the planner counts it at each border it can reach by now, for ${LOST_STACK_TURNS} turns after it was seen.`);
+    // #294: what its income was read from.
+    const covered = estimate ? trackCoverage(incomeWindow) : null;
+    if (covered && covered.share < 1)
+      notes.push(
+        `Income read from ${coverageText(covered)}: the rest of where it can deploy was out of view, so the figure is a lower bound${covered.share < LOW_COVERAGE && income! > visibleIncome && observed.length >= TRACKED_MIN_TURNS ? `, and the planner keeps at least ${LOW_COVERAGE_FACTOR} × it` : ''}.`,
+      );
     notes.push(...warnings);
     return {
       playerId,
@@ -1834,6 +1862,7 @@ export function trackOpponents(
       visibleIncome,
       income,
       incomeTurns: incomeWindow.map((x) => x.from),
+      coverage: estimate ? trackCoverage(incomeWindow) : null,
       observedRange: estimate?.observedRange ?? null,
       incomeMethod: estimate?.method ?? null,
       incomeLowered: carried ? carried.set - carried.income : 0,

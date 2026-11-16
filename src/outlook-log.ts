@@ -8,7 +8,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { HowLost } from './analysis/how-lost.js';
-import type { GameOutlook, OutlookState } from './analysis/outlook.js';
+import type { GameOutlook, OutlookEvidence, OutlookState } from './analysis/outlook.js';
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -34,7 +34,26 @@ export interface OutlookLogTurn {
     mine: { armies: number; income: number };
     strongest: { playerId: number; team?: number; armies: number; income: number } | null;
   };
+  /**
+   * #304: what the state rested on — the incomes compared, each opponent's income and the share of its
+   * frontier read, and whether that was thin (ids and figures; the coverage's words are left out).
+   * Absent on turns logged before #304.
+   */
+  evidence?: LoggedEvidence;
 }
+
+/** #304: {@link OutlookEvidence} as logged: name-free, without the words. */
+export interface LoggedEvidence {
+  incomes: OutlookEvidence['incomes'];
+  opponents: { playerId: number; income: number; source: 'tracked' | 'visible'; coverage: number | null; thin: boolean }[];
+  thin: boolean;
+}
+
+const logged = (e: OutlookEvidence): LoggedEvidence => ({
+  incomes: e.incomes ? { ...e.incomes, ...(e.incomes.players ? { players: [...e.incomes.players] } : {}) } : null,
+  opponents: e.opponents.map(({ playerId, income, source, coverage, thin }) => ({ playerId, income, source, coverage, thin })),
+  thin: e.thin,
+});
 
 /** The log as read back: the outlook log's turns and latest outlook, the result and the loss. */
 export interface OutlookLog {
@@ -42,7 +61,7 @@ export interface OutlookLog {
   playerId: number;
   turns: Record<string, OutlookLogTurn>;
   /** The outlook of the newest turn planned. */
-  latest?: { turn: number; state: OutlookState | null; heldTurns: number; basis: string };
+  latest?: { turn: number; state: OutlookState | null; heldTurns: number; basis: string; evidence?: LoggedEvidence };
   /** My GameFeed state once the game was seen finished (e.g. `Won`, `Eliminated`, `SurrenderAccepted`). */
   result?: string;
   /**
@@ -98,6 +117,7 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
               },
             }
           : {}),
+        ...(t.evidence ? { evidence: logged(t.evidence) } : {}),
       };
     const keep = Object.keys(log.turns)
       .map(Number)
@@ -105,7 +125,14 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
       .slice(0, OUTLOOK_LOG_TURNS);
     log.turns = Object.fromEntries(keep.sort((a, b) => a - b).map((k) => [String(k), log.turns[String(k)]!]));
     const last = outlook.turns.at(-1);
-    if (last) log.latest = { turn: last.turn, state: outlook.state, heldTurns: outlook.heldTurns, basis: outlook.basis };
+    if (last)
+      log.latest = {
+        turn: last.turn,
+        state: outlook.state,
+        heldTurns: outlook.heldTurns,
+        basis: outlook.basis,
+        ...(outlook.evidence ? { evidence: logged(outlook.evidence) } : {}),
+      };
     await write(dir, log);
   } catch {
     // The log is optional.

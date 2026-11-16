@@ -305,6 +305,10 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   // #271 review: the first turn an opponent may play a Bomb (a bomb reads as a failed attack on my hold).
   const bombFrom = cardClock(s)?.cards.find((c) => c.card === 'Bomb')?.firstPlayableTurn.fastest;
   if (bombFrom !== undefined && bombFrom !== null) out.bombFrom = bombFrom;
+  // #293 review: an opponent's fixed Reinforcement card on the clock (no hand here: a progressive one
+  // is unknown), which the observed deploy counts in its free income under Local Deployment.
+  const reinforcement = opponentReinforcement(s, []);
+  if (reinforcement) out.opponentReinforcement = reinforcement;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game. The
@@ -1990,7 +1994,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
-          'armies + 3 × income held over 3 turns of boards, with its `basis`; thresholds unmeasured, so advice, not a verdict; ' +
+          'armies + 3 × income held over 3 turns of boards, with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; thresholds unmeasured, so advice, not a verdict; ' +
           'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
           'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
@@ -2456,7 +2460,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 ...(plan.profile.endsWith !== null ? { endsWith: plan.profile.endsWith } : {}),
               },
         // #178: the outlook and its basis; full adds each turn judged.
-        outlook: rung === 'full' ? outlook : { state: outlook.state, basis: outlook.basis },
+        // #304: the compact view keeps what the state rests on beside it (`evidence`).
+        outlook:
+          rung === 'full'
+            ? outlook
+            : { state: outlook.state, basis: outlook.basis, ...(outlook.evidence ? { evidence: outlook.evidence } : {}) },
         // Part D: the opponent reads (reported only, never planned on); absent when none is at the bar.
         ...(reads?.length
           ? {

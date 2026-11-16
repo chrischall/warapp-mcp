@@ -145,39 +145,61 @@ export function chargeDeploys(pools: DeployPools, deploys: ReadonlyMap<number, n
 }
 
 /**
- * An opponent's deploy under Local Deployment (#180), as the planner bounds it (#128): a bonus it
- * visibly holds in full pays only into that bonus's territories, so on `on` it may deploy its
- * estimate less the pools it counts (income in the fog counts as deployable anywhere), plus the
- * pools that contain one of `on`, never above the estimate. Only what it holds above its free
- * floor — max(`floor`, its base income) — is taken as pooled: the free base always lands anywhere.
- * `pools` are the values and members of the bonuses it holds; with none the whole estimate reaches.
+ * What an opponent may deploy anywhere under Local Deployment (#293): its free income — its base
+ * income (never below `floor`) plus the Reinforcement card armies its estimate counts. Bonus armies
+ * land only in their own bonus.
+ */
+export function freeIncome(base: number, floor: number, card = 0): number {
+  return Math.max(floor, base) + Math.max(0, card);
+}
+
+/**
+ * An opponent's deploy under Local Deployment on `on` (#180, #293), as the planner bounds it (#128)
+ * and warapp_check_plan's stress test does: its free income ({@link freeIncome}) plus the pools of the
+ * bonuses it could hold ({@link couldHoldBonusPools}) that contain one of `on`, never above the
+ * estimate. A total read above that (a tracked figure, the fog prior) never lands on one border.
+ * With per-territory income (`perTerritory`) the income no pool can carry (per-territory income on
+ * territories the fog hides) may land anywhere too: what the estimate holds beyond every bonus it
+ * could hold together counts as free (with no pools, the whole estimate reaches). Without it, nothing
+ * beyond the free income and those pools does.
  */
 export function enemyDeployReaching(
   estimate: number,
-  base: number,
-  floor: number,
+  free: number,
   pools: readonly { value: number; members: ReadonlySet<number> }[],
   on: readonly number[],
+  perTerritory: boolean,
 ): number {
-  if (!pools.length) return estimate;
   const pooled = pools.reduce((n, q) => n + q.value, 0);
   const here = pools.reduce((n, q) => n + (on.some((t) => q.members.has(t)) ? q.value : 0), 0);
-  const free = Math.min(estimate, Math.max(floor, base));
-  return Math.min(estimate, Math.max(free, estimate - pooled) + here);
+  const anywhere = perTerritory ? Math.max(Math.min(estimate, free), estimate - pooled) : free;
+  return Math.min(estimate, anywhere + here);
 }
 
-/** Each player's bonuses (value above 0) whose every territory it is shown to own: its Local Deployment pools. */
-export function heldBonusPools(
+/**
+ * Each player's Local Deployment pools as far as the board can tell (#293): the bonuses (value above 0)
+ * it could hold — none of their territories shown with another owner (`ownerOf` gives a player id, `null`
+ * for an owner shown that is no player, `undefined` when the board hides the owner). For each of
+ * `players`, sorted by bonus id. A bonus it visibly holds in full is one of them; so is one the fog hides.
+ */
+export function couldHoldBonusPools(
   g: MapGraph,
-  ownerOf: (territory: number) => number | undefined,
+  players: readonly number[],
+  ownerOf: (territory: number) => number | null | undefined,
 ): Map<number, { bonusId: number; value: number; members: ReadonlySet<number> }[]> {
   const out = new Map<number, { bonusId: number; value: number; members: ReadonlySet<number> }[]>();
-  for (const b of g.map.bonuses) {
+  for (const p of players) out.set(p, []);
+  for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     if (b.value <= 0) continue;
     const ts = bonusTerritories(g, b.id);
-    const p = ts.length ? ownerOf(ts[0]!) : undefined;
-    if (p === undefined || !ts.every((t) => ownerOf(t) === p)) continue;
-    out.set(p, [...(out.get(p) ?? []), { bonusId: b.id, value: b.value, members: new Set(ts) }]);
+    if (!ts.length) continue;
+    const members = new Set(ts);
+    for (const p of players)
+      if (ts.every((t) => {
+        const o = ownerOf(t);
+        return o === undefined || o === p;
+      }))
+        out.get(p)!.push({ bonusId: b.id, value: b.value, members });
   }
   return out;
 }

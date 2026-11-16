@@ -78,6 +78,10 @@
 // then `state` is null and the basis says what each turn read. #228: given the plan's profile
 // `standing`, an `even` or `stalemate` latest turn beside `ahead` / `behind` says why the two differ
 // (the standing compares incomes; this outlook needs a decided ratio). The state never reads it.
+// #304: beside the state, each turn reports what it rests on (`evidence`): the two incomes compared
+// and how much of each opponent's frontier its income was read from (#294's coverage); a share under
+// LOW_COVERAGE, or none measured, under fog is thin evidence, and the basis says "even" is then not safe.
+// Reporting only: the state never reads it.
 //
 // OUTLOOK_RATIO (2.4×) is borrowed from a published bot's "lost" rule and has never been measured
 // for war.app: the outlook is a basis for a decision, not a verdict. The planner acts on it in one
@@ -96,6 +100,7 @@ import { boardIncome, DEFAULT_BASE_INCOME, territoryIncome } from './player.js';
 import { BEHIND_RATIO, STRENGTH_INCOME_TURNS, type GameStanding } from './profile.js';
 import { FORECAST_TURNS, forecastBorder, mainFront, type BorderOutcome, type FrontStack } from './exchange.js';
 import { specialUnitStrength } from './combat.js';
+import { coverageText, LOW_COVERAGE, type TrackCoverage } from './plan/shared.js';
 
 /** Turns a state must hold before it is reported. */
 export const OUTLOOK_TURNS = 3;
@@ -200,7 +205,41 @@ export interface OutlookTurn {
     outcome: BorderOutcome;
     turn: number | null;
   };
+  /**
+   * #304: what the state rests on, reported beside it (it never changes the state): the two incomes
+   * compared and how much of each opponent's frontier its income was read from (#294's coverage).
+   */
+  evidence?: OutlookEvidence;
   state: OutlookState;
+}
+
+/**
+ * #304: one opponent's income as the outlook read it, and the share of its frontier that was read
+ * ({@link TrackCoverage}, over its income window; `null` when no pair of my boards measured it).
+ * `thin` when the board is not in full view and that share is under {@link LOW_COVERAGE} or unmeasured.
+ */
+export interface OutlookEvidenceRow {
+  playerId: number;
+  income: number;
+  /** `tracked` off my boards (its visible income at least), else `visible`: a lower bound under fog. */
+  source: 'tracked' | 'visible';
+  coverage: number | null;
+  thin: boolean;
+  /** The words beside the share ({@link coverageText}); absent without a coverage. */
+  read?: string;
+}
+
+/** #304: what an outlook turn's state rests on. Reporting only. */
+export interface OutlookEvidence {
+  /**
+   * My side's income against the compared side's (the side the likely high rests on, else the
+   * strongest): in a team game each team's players summed. `null` with no opponent.
+   */
+  incomes: { mine: number; theirs: number; playerId: number; team?: number; players?: number[]; source: 'tracked' | 'visible' } | null;
+  /** Every opponent still playing, by id. */
+  opponents: OutlookEvidenceRow[];
+  /** Any opponent's row is thin: the state rests on thin evidence, so `even` is not safe. */
+  thin: boolean;
 }
 
 export interface GameOutlook {
@@ -215,6 +254,8 @@ export interface GameOutlook {
   threshold: number;
   /** One paragraph: the measure, the latest turn's figures, the thresholds and why they are not a verdict. */
   basis: string;
+  /** #304: the latest turn's {@link OutlookEvidence}; absent with no turn judged. */
+  evidence?: OutlookEvidence;
 }
 
 interface OutlookInput {
@@ -390,7 +431,10 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     const board = byTurn.get(turn)!.board;
     // #208: what the tracker reads of each opponent's income off my boards up to this turn.
     let tracked:
-      | Map<number, { visible: number; income: number | null; visibleIncome: number; observed: { to: number; observed: number }[] }>
+      | Map<
+          number,
+          { visible: number; income: number | null; visibleIncome: number; observed: { to: number; observed: number }[]; coverage: TrackCoverage | null }
+        >
       | undefined;
     const trackedAll = () =>
       (tracked ??= new Map(
@@ -407,6 +451,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
             income: tr.income === null ? null : Math.max(tr.visibleIncome, tr.income),
             visibleIncome: tr.visibleIncome,
             observed: tr.turns.map((o) => ({ to: o.to, observed: o.observed })),
+            coverage: tr.coverage ?? null,
           },
         ]),
       ));
@@ -649,6 +694,36 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     const groundDown = ownOutcome === 'ground-down';
     const incomeBehind = lowLikely && mostTracked() > 0 && myNow <= BEHIND_RATIO * mostTracked();
     const lostOnEstimate = lowLikely && (groundDown || incomeBehind);
+    // #304: what the state rests on — the two incomes compared and each opponent's frontier read.
+    // Reporting only: nothing above reads it.
+    const evidenceRows: OutlookEvidenceRow[] = rows.map((r) => {
+      const tr = trackedOf(r.playerId);
+      const tracked = tr?.income ?? null;
+      const cov = tr?.coverage ?? null;
+      return {
+        playerId: r.playerId,
+        income: tracked ?? r.seen.income,
+        source: tracked !== null ? 'tracked' : 'visible',
+        coverage: cov ? round2(cov.share) : null,
+        thin: !open && (cov === null || cov.share < LOW_COVERAGE),
+        ...(cov ? { read: coverageText(cov) } : {}),
+      };
+    });
+    const compared = likely ? sides.find((x) => x.playerId === likely.playerId) : top;
+    const comparedRows = compared ? evidenceRows.filter((r) => (compared.players ?? [compared.playerId]).includes(r.playerId)) : [];
+    const evidence: OutlookEvidence = {
+      incomes: compared
+        ? {
+            mine: myNow,
+            theirs: comparedRows.reduce((n, r) => n + r.income, 0),
+            playerId: compared.playerId,
+            ...sideOf(compared),
+            source: comparedRows.some((r) => r.source === 'tracked') ? 'tracked' : 'visible',
+          }
+        : null,
+      opponents: evidenceRows,
+      thin: evidenceRows.some((r) => r.thin),
+    };
     const state: OutlookState =
       bound || estimated
         ? 'winning'
@@ -670,6 +745,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       state,
       ...(estimated || lostOnEstimate ? { estimated: true as const } : {}),
       ...(lowLikely ? { lowLikely: { myIncome: myNow, mostTracked: mostTracked(), groundDown, losing: lostOnEstimate } } : {}),
+      evidence,
     };
   });
 
@@ -713,6 +789,23 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         : state
           ? `${state[0]!.toUpperCase()}${state.slice(1)} for ${OUTLOOK_TURNS} turns running; ${figures}.`
           : `${last.state[0]!.toUpperCase()}${last.state.slice(1)} for ${heldTurns} of the ${OUTLOOK_TURNS} turns (${turns.map((t) => t.state).join(', ')}), so no state yet; ${figures}.`;
+    // #304: the incomes compared and each opponent's frontier read, said beside the state, and thin
+    // evidence named so that "even" does not read as safe.
+    const ev = last.evidence;
+    if (ev?.incomes) {
+      const i = ev.incomes;
+      reading += ` Incomes compared: ${teamGame ? "my team's" : 'mine'} ${i.mine}, ${sideName(i)}'s ${i.theirs} (${i.source === 'tracked' ? 'tracked off my boards' : 'in view, a lower bound under fog'}).`;
+    }
+    if (ev && !fullyVisible(g, byTurn.get(last.turn)!.board) && ev.opponents.length)
+      reading += ` Frontier read: ${ev.opponents.map((r) => `player ${r.playerId} ${r.read ?? 'not measured'}`).join('; ')}.`;
+    if (ev?.thin) {
+      const pct = Math.round(LOW_COVERAGE * 100);
+      const which = ev.opponents
+        .filter((r) => r.thin)
+        .map((r) => `player ${r.playerId} (${r.coverage === null ? 'not measured' : `${Math.round(r.coverage * 100)}%`})`)
+        .join(', ');
+      reading += ` Thin evidence: the income of ${which} was read from under ${pct}% of its frontier, so "${last.state}" is not a safe reading: an opponent may be stronger than the fog shows.`;
+    }
     reading += est;
     // #228: a likely ratio far below parity, said with what it took (or lacked) to read losing.
     const low = last.lowLikely;
@@ -751,5 +844,13 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       reading += ` The main front (the biggest enemy stack next to me against my biggest beside it), each side deploying its whole income there every turn (mine ${fr.myIncome}, player ${fr.player}'s ${fr.theirIncome}: ${theirs}): my ${fr.mine} on #${fr.from} against its ${fr.theirs} on #${fr.at}, ${outcome}.`;
     }
   }
-  return { state, heldTurns, turns, k, threshold: OUTLOOK_RATIO, basis: `${reading} ${measure} ${thresholdsText}` };
+  return {
+    state,
+    heldTurns,
+    turns,
+    k,
+    threshold: OUTLOOK_RATIO,
+    basis: `${reading} ${measure} ${thresholdsText}`,
+    ...(last?.evidence ? { evidence: last.evidence } : {}),
+  };
 }

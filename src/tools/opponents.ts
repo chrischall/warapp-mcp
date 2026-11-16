@@ -92,6 +92,8 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
           deploy: x.observed,
           ...(x.raw !== x.observed ? { uncapped: x.raw, cap: x.cap } : {}),
           visibleIncome: x.visibleIncome,
+          // #294: how much of its frontier the turn read.
+          ...(x.coverage ? { coverage: x.coverage } : {}),
           // #119: what my own orders that turn measured (defenders my failed attacks killed, …).
           ...(x.measured ? { measured: x.measured } : {}),
           ...(x.broken.length ? { brokenBonuses: x.broken.map(bonusOf) } : {}),
@@ -144,6 +146,8 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
               method: t.incomeMethod,
               ...(t.incomeLowered ? { lowered: t.incomeLowered } : {}),
               observedRange: t.observedRange,
+              // #294: how much of its frontier the window's turns read.
+              ...(t.coverage ? { coverage: t.coverage } : {}),
               usedByPlanner: t.income !== null && t.turns.length >= TRACKED_MIN_TURNS,
               // #250: set by one turn far above the turns before it, with what the boards say of it.
               ...(t.incomeJump ? { jump: t.incomeJump } : {}),

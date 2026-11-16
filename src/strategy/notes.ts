@@ -555,6 +555,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'border on that, not on its total income, which is spread over pools it cannot move.',
     source: S.localDeployments,
     basis: 'derived',
+    encoded: '#293: each border is sized on the free income plus the pools it could hold there, the stacks one step behind for next turn (warapp_plan_turn, warapp_check_plan)',
   },
   {
     id: 'settings-no-split',

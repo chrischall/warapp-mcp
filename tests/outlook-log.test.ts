@@ -66,6 +66,24 @@ describe('outlook log (#178)', () => {
     });
   });
 
+  it('#304: keeps each turn\'s evidence (the incomes compared, each opponent\'s frontier read, thin) and the latest\'s', async () => {
+    const o = outlook(7, 'even');
+    o.evidence = {
+      incomes: { mine: 8, theirs: 6, playerId: 2001, source: 'tracked' },
+      opponents: [{ playerId: 2001, income: 6, source: 'tracked', coverage: 0.33, thin: true, read: '1 of ~3 frontier territories (33%)' }],
+      thin: true,
+    };
+    o.turns[0] = { ...o.turns[0]!, evidence: o.evidence };
+    await recordOutlook(dir, 7001, 1001, o);
+    const log = await readOutlookLog(dir, 7001, 1001);
+    expect(log?.turns['7']?.evidence).toEqual({
+      incomes: { mine: 8, theirs: 6, playerId: 2001, source: 'tracked' },
+      opponents: [{ playerId: 2001, income: 6, source: 'tracked', coverage: 0.33, thin: true }],
+      thin: true,
+    });
+    expect(log?.latest?.evidence).toEqual(log?.turns['7']?.evidence);
+  });
+
   it('records the final result only for a game it already logs', async () => {
     expect(await recordResult(dir, 7002, 1001, 'Won')).toBe(false);
     expect(await readOutlookLog(dir, 7002, 1001)).toBeUndefined();
