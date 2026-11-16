@@ -29,23 +29,26 @@
 // seats go to the pool only; a human who became an AI is left out of the game altogether (no turn of
 // the change is known, V4). A finished game is folded by `foldFinishedGame` on the first read that
 // shows it finished (warapp_get_game, warapp_wait_for_turn's re-read); its per-game file is then
-// marked `folded: 'live'` and kept until the age rule deletes it (part C, which would read the
-// game's history first, is not built), and a file reaching that age unfolded is folded with every
-// ending `unknown`, then deleted. A store or salt that exists but is not JSON, not an object or not
+// marked `folded: 'live'` and kept until the age rule deletes it, and a file reaching that age
+// unfolded is folded with every ending `unknown`, then deleted. Part C (#312 E2): the end-of-game
+// pass folds the game again from its history (`source: 'history'`, src/tools/end-of-game.ts), which
+// replaces the live entry and marks a per-game file not yet folded `folded: 'history'`. A store or salt that exists but is not JSON, not an object or not
 // version 1 is never overwritten: reads say `unreadable`, folds fail. Inside a version-1 store the
 // read is loose, like the board cache's: a malformed player record, entry or total is dropped (an
 // `entries` that is not an array reads as none), and the next fold writes the store back without it.
 //
 // Folding is idempotent only while the game's entry is still stored: `foldGame` finds "this game
 // again" among a player's last `MAX_PROFILE_ENTRIES` entries and the population's last
-// `MAX_POPULATION_ENTRIES`. A game folded again after its entry was dropped (part C's history
-// replacement arriving that late) is faded and counted a second time. Likewise the
+// `MAX_POPULATION_ENTRIES`. A live fold after its entry was dropped is faded and counted a second
+// time. The history fold guards it (#312 E2): when the game was folded before (the population holds
+// it, or the caller says the per-game file is marked), a player with no entry for it is skipped
+// whenever its entry list is full (an entry may have been dropped), and the population is skipped
+// when it no longer holds the game. Likewise the
 // `MAX_PROFILE_GAME_FILES` bound can fold a game still in progress (endings `unknown`) and delete
 // its file; if play goes on, `recordBehaviour` starts a new file with the later turns only, and the
 // fold at the finish replaces the earlier entry with that shorter one, so the turns before the
-// eviction leave the totals. Both are rare today (30 games with one opponent, 200 games in play);
-// part C must guard them (a kept tombstone of folded keys, or merging into the stored entry) before
-// it relies on refolding.
+// eviction leave the totals (the history fold then replaces that shorter entry with the whole game's).
+// Both are rare today (30 games with one opponent, 200 games in play).
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -392,6 +395,11 @@ export interface FoldInput {
   source: 'live' | 'history';
   /** My opponents (never me, a teammate, or a human who became an AI). */
   seats: readonly FoldSeat[];
+  /**
+   * With `history`: the game was folded before (its per-game file is marked folded), whatever the
+   * stores still hold. A game whose stored entry is gone is then not counted again (#312 E2).
+   */
+  foldedBefore?: boolean;
 }
 
 interface ProfileEntry {
@@ -557,6 +565,12 @@ export async function foldGame(dir: string, input: FoldInput, env: EnvSource = p
       if (!salt) return 'failed';
       const key = profileGameKey(salt, input.me, input.gameId);
       const seats = [...input.seats].sort((a, b) => a.id - b.id);
+      const oldPopulation = population.entries.find((e) => e.key === key);
+      // #312 E2: a history fold replaces what a live fold counted, and must never count it twice. The
+      // game was folded before when the population still holds it or the caller knows it was; then a
+      // player with no entry for it is counted only when its entry list never dropped one (not full).
+      const history = input.source === 'history';
+      const foldedBefore = history && (oldPopulation !== undefined || input.foldedBefore === true);
 
       // Each human seat, under its player key.
       for (const seat of seats) {
@@ -565,6 +579,7 @@ export async function foldGame(dir: string, input: FoldInput, env: EnvSource = p
         const p: StoredProfile = players.players[pk] ?? { seq: 0, games: 0, totals: {}, entries: [] };
         const old = p.entries.find((e) => e.key === key);
         if (old?.source === 'history' && input.source === 'live') continue;
+        if (!old && foldedBefore && p.entries.length >= MAX_PROFILE_ENTRIES) continue;
         if (!old) {
           // A game new to this player: everything before it fades once.
           for (const f of PROFILE_FORMATS) if (p.totals[f]) p.totals[f] = scaleHabits(p.totals[f]!, PROFILE_DECAY);
@@ -592,8 +607,8 @@ export async function foldGame(dir: string, input: FoldInput, env: EnvSource = p
       // The population: humans by format, AIs pooled; replaced as a whole for a game folded again.
       const humans = sumOf(seats.filter((s) => !s.ai).map((s) => s.habits));
       const ai = sumOf(seats.filter((s) => s.ai).map((s) => s.habits));
-      const old = population.entries.find((e) => e.key === key);
-      if (!(old?.source === 'history' && input.source === 'live')) {
+      const old = oldPopulation;
+      if (!(old?.source === 'history' && input.source === 'live') && !(history && !old && foldedBefore)) {
         if (old) {
           bump(population.totals, old.format, old.humans, -1);
           population.ai = addHabits(population.ai, old.ai, -1);
@@ -762,6 +777,25 @@ export async function foldFinishedGame(dir: string, game: Pick<Game, 'id' | 'sta
     // Best effort.
   }
   return folded;
+}
+
+/**
+ * After a history fold (#312 E2): mark the per-game file of `gameId` as `playerId` saw it `folded:
+ * 'history'`, so the live fold at the next finished read leaves it alone. Nothing when there is no
+ * file or it is already folded. Never throws.
+ */
+export async function markHistoryFolded(dir: string, gameId: number, playerId: number): Promise<void> {
+  const path = profileGamePath(dir, gameId, playerId);
+  try {
+    await stat(path);
+  } catch {
+    return;
+  }
+  await withPathLock(path, async () => {
+    const file = await readGameFile(dir, gameId, playerId);
+    if (file.folded) return;
+    await writeGameFile(path, { version: 1, gameId, playerId, ...file, folded: 'history' });
+  }).catch(() => undefined);
 }
 
 /**

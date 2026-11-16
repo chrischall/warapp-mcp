@@ -1060,7 +1060,33 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `WARAPP_PLAYER_PROFILE=off` or no data dir: nothing — not even the signed-in account is read (`finishedAccount` checks
   first); `warapp_get_game` asks for the account (an InviteToken page read) at most once per finished game per process
   when it cannot be read (the sweep picks the game up later). Registered hosted like the profile store. Inform only (P1): no planner decision reads it (golden
-  unchanged); the per-map record, the lessons summary and C1's history habits will read these records.
+  unchanged).
+  **Processing a captured history (#312 E2, `processHistory` in `src/tools/end-of-game.ts`; pure parts in
+  `src/analysis/game-lessons.ts`, stores in `src/lessons-store.ts`)** runs right after a `captured` record is written,
+  each part on its own, and reports `processed: { profiles, map, lessons }` (`no-map` without the map; profiles
+  `teams-unknown` for a game of 3+ seats whose teams `keptTeams` cannot read, `nothing` when no turn was observed).
+  (1) **Part C:** `observeHistory` reads each pair of consecutive history boards N, N + 1 as turn N + 1 with my
+  cached orders of that turn (`observeTurn`, while I held land), `habitsOf` per opponent (never me, a teammate or a
+  human who became an AI; AI seats pooled), folded with `source: 'history'`, which replaces the live entry; the
+  per-game file, when there, is marked `folded: 'history'` (`markHistoryFolded`). `foldGame` never counts a game twice
+  (`foldedBefore`: the population holds it, or the per-game file was marked): a player with no entry for the game
+  is skipped when its entry list is full (one may have been dropped), and the population when it no longer holds
+  the game. (2) **The map's record** `<dataDir>/maps-record/<mapId>.json`: games, outcomes, and per game (at most
+  `MAX_MAP_ENTRIES`, 50) the format, seats, result, turns, my start region (territories and every bonus they touch,
+  `startRegion`), my income curve (by completed turns, at most 60 points) and income after turns 4 and 8, and each
+  winner's start region and income after turns 4 and 8 (the pace to beat); at most `MAX_MAP_RECORDS` (200) maps
+  by last write; `mapRecordSummary` gives the medians. (3) **The lessons** `<dataDir>/lessons.json`: per format the
+  games, outcomes, lost games by cause (`lessonLoss`: `howLost` on the history boards — `commander`,
+  `last-territories`, `unknown` — or `surrendered`, `booted`, `still-holding`), the turn my income first went flat
+  (`flatTurn`: from board 1 on, within `FLAT_TOLERANCE` (10%, at least 1) on each of the next `FLAT_TURNS` (3)
+  boards; `flat: { n, sum }`), and the calibration (#294, #318 a): for each turn T I cached a board for,
+  `trackOpponents` over my cached boards up to T (every seat as still playing) against the opponent's income on
+  history board T − 1, estimate ÷ truth counted by coverage bucket (`none`, `under-25`, `25-50`, `50-75`, `75-up`:
+  `n`, `sum`, `sq`, `logSum`, `under` < 0.5, `over` > 1.5) — aggregates only, no turn or player. Each game's entry
+  (at most `MAX_LESSON_ENTRIES`, 500) holds its own counts, so processing it again replaces its share; a dropped
+  entry's counts stay. Both stores: keyed by `finishedGameKey`, no id, name or clock; 0600, atomic, under the path
+  lock; a file that does not parse (or a malformed total) is never overwritten (`failed`). Nothing reads them yet
+  (P1; the use is #305 and #318).
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in

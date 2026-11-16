@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WarappClient } from '../src/client.js';
 import { finishedDir, finishedPath } from '../src/finished-store.js';
+import { lessonsPath, mapRecordDir, mapRecordPath } from '../src/lessons-store.js';
+import { profilePlayersPath } from '../src/profile-store.js';
 import { playerKey, playerRecordSalt } from '../src/player-record-store.js';
 import { Method } from '../src/protocol/methods.js';
 import type { Writer } from '../src/protocol/codec.js';
@@ -79,7 +81,7 @@ describe('the end-of-game pass', () => {
     await writePickList(dir, GAME, ANN, [1, 3]);
     h = await liveHarness({ feed: [finished(), withHistory()], dataDir: dir, pages: SIGNED_IN });
     const r = payload(await h.call('warapp_get_game', { game_id: GAME }));
-    expect(r.endOfGame).toEqual({ status: 'captured', turns: 3 });
+    expect(r.endOfGame).toEqual({ status: 'captured', turns: 3, processed: { profiles: 'folded', map: 'kept', lessons: 'kept' } });
     expect(historyCalls(h)).toBe(1);
 
     const rec = await record(dir);
@@ -114,6 +116,43 @@ describe('the end-of-game pass', () => {
     expect(historyCalls(h)).toBe(1);
   });
 
+  it('#312 E2: a captured history is folded into the profiles, the map record and the lessons, name-free', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    h = await liveHarness({ feed: [finished(), withHistory()], dataDir: dir, pages: SIGNED_IN });
+    payload(await h.call('warapp_get_game', { game_id: GAME }));
+    const salt = (await playerRecordSalt(dir))!;
+
+    // Part C: Bob's turns from the history, folded as `history`.
+    const players = JSON.parse(readFileSync(profilePlayersPath(dir), 'utf8'));
+    const bob = players.players[playerKey(salt, BOB)];
+    expect(bob.games).toBe(1);
+    expect(bob.entries).toHaveLength(1);
+    expect(bob.entries[0]).toMatchObject({ source: 'history', format: '1v1', ending: 'Won', turnsSeen: 2 });
+
+    // The map's record: my start region and income curve, the winner's start and pace.
+    const rec = JSON.parse(readFileSync(mapRecordPath(dir, 77), 'utf8'));
+    expect(rec).toMatchObject({ version: 1, mapId: 77, games: 1, outcomes: { eliminated: 1 } });
+    expect(rec.entries[0]).toMatchObject({
+      format: '1v1',
+      seats: 2,
+      result: 'eliminated',
+      turns: 2,
+      me: { territories: [1], bonuses: [100], income: [5, 8, 0], income4: null, income8: null },
+      winners: [{ territories: [6], bonuses: [200], income4: null, income8: null }],
+    });
+
+    // The lessons: how I lost, no flat income in a 2-turn game.
+    const lessons = JSON.parse(readFileSync(lessonsPath(dir), 'utf8'));
+    expect(lessons.byFormat['1v1']).toMatchObject({ games: 1, outcomes: { eliminated: 1 }, howLost: { 'last-territories': 1 }, flat: { n: 0, sum: 0 } });
+    expect(lessons.entries[0]).toMatchObject({ result: 'eliminated', flatAfterTurn: null, howLost: { cause: 'last-territories', turn: 2 } });
+
+    for (const path of [mapRecordPath(dir, 77), lessonsPath(dir), profilePlayersPath(dir)]) {
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+      const text = readFileSync(path, 'utf8');
+      for (const x of [String(ANN), String(BOB), String(GAME), 'Ann', 'Bob', 'Secret']) expect(text).not.toContain(x);
+    }
+  });
+
   it('a failed read is recorded and not retried; an explicit include_history re-runs it from that read', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
     h = await liveHarness({ feed: [finished(), { error: 'Something broke' }, finished(), withHistory()], dataDir: dir, pages: SIGNED_IN });
@@ -127,7 +166,7 @@ describe('the end-of-game pass', () => {
     expect(h.calls).toHaveLength(3);
 
     const third = payload(await h.call('warapp_get_game', { game_id: GAME, include_history: true }));
-    expect(third.endOfGame).toEqual({ status: 'captured', turns: 3 });
+    expect(third.endOfGame).toEqual({ status: 'captured', turns: 3, processed: { profiles: 'folded', map: 'kept', lessons: 'kept' } });
     expect(h.calls).toHaveLength(4);
     expect(await record(dir)).toMatchObject({ status: 'captured' });
   });
@@ -157,6 +196,31 @@ describe('the end-of-game pass', () => {
     // Off means off: not even the signed-in account is read (no InviteToken page through the bridge).
     expect(h.bridge.requests.some((r) => r.path.includes('InviteToken'))).toBe(false);
     expect(existsSync(finishedDir(dir))).toBe(false);
+    expect(existsSync(lessonsPath(dir))).toBe(false);
+    expect(existsSync(mapRecordDir(dir))).toBe(false);
+  });
+
+  it('#312 E2: a game of three seats whose teams are unknown folds no profile, but keeps the map record and lessons', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const CAT = 5512345655;
+    const three = (o: Record<string, unknown> = {}) =>
+      finished({
+        players: [
+          { id: String(ANN), name: 'Ann', isAI: 'False', humanTurnedIntoAI: 'False', hasCommittedOrders: 'False', state: 'Eliminated' },
+          { id: String(BOB), name: 'Bob', isAI: 'False', humanTurnedIntoAI: 'False', hasCommittedOrders: 'False', state: 'Won' },
+          { id: String(CAT), name: 'Cat', isAI: 'False', humanTurnedIntoAI: 'False', hasCommittedOrders: 'False', state: 'Eliminated' },
+        ],
+        ...o,
+      });
+    const hist = three({
+      standing0: [terr(1, ANN, 5), terr(2, 'Neutral', 2), terr(3, CAT, 5), terr(5, 'Neutral', 2), terr(6, BOB, 5)],
+      standing1: [terr(1, ANN, 4), terr(2, ANN, 3), terr(3, CAT, 5), terr(5, BOB, 4), terr(6, BOB, 4)],
+      standing2: [terr(1, BOB, 6), terr(2, BOB, 1), terr(3, BOB, 5), terr(5, BOB, 4), terr(6, BOB, 1)],
+    });
+    h = await liveHarness({ feed: [three(), hist], dataDir: dir, pages: SIGNED_IN });
+    const r = payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(r.endOfGame).toMatchObject({ status: 'captured', processed: { profiles: 'teams-unknown', map: 'kept', lessons: 'kept' } });
+    expect(existsSync(profilePlayersPath(dir))).toBe(false);
   });
 
   it('a record that does not parse is never overwritten, and nothing is read', async () => {

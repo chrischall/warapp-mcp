@@ -101,7 +101,8 @@ export function registerGameTool(
           'else from the boards cached then — a backfill; no other request), as warapp_profile_opponents reads them. ' +
           'A finished game of mine also gets its end-of-game pass once (`endOfGame`: its history read once — one more ' +
           'request — and kept name-free for later games: the outcome, my picks, every player\'s income and bonuses by turn, ' +
-          'what stood where my attacks failed; a failed read is recorded and not retried, except by a call with ' +
+          'what stood where my attacks failed — then folded into the opponent profiles, the map\'s record and the lessons ' +
+          '(`endOfGame.processed`); a failed read is recorded and not retried, except by a call with ' +
           '`include_history`, which re-runs it from that read). ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
       ),

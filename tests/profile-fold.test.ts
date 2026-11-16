@@ -98,6 +98,49 @@ describe('foldGame', () => {
     expect((await history(dir, BOB)).pools.byFormat['1v1']).toEqual(hist);
   });
 
+  it('#312 E2: a history fold of a game folded before never counts it twice once its stored entry is gone', async () => {
+    const dir = tmp();
+    const live = habits([1, 2]);
+    const hist = habits([4, 6], [2, 3], 9);
+    // BOB met in MAX_PROFILE_ENTRIES games, this one first: its entry for GAME is dropped.
+    await foldGame(dir, fold({ seats: [human(BOB, live)] }), {});
+    for (let i = 1; i <= MAX_PROFILE_ENTRIES; i++) await foldGame(dir, fold({ gameId: GAME + 1000 + i, seats: [human(BOB, habits([0, 1]))] }), {});
+    const before = await history(dir, BOB);
+    // The population still holds GAME: the game was folded before, and BOB's full list may have dropped it.
+    await foldGame(dir, fold({ source: 'history', seats: [human(BOB, hist)] }), {});
+    expect((await history(dir, BOB)).players.get(BOB)).toEqual(before.players.get(BOB));
+    // The population's own entry is replaced (live out, history in).
+    expect((await history(dir, BOB)).pools.games).toBe(before.pools.games);
+  });
+
+  it('#312 E2: a history fold counts a player new to the game when its list never dropped an entry', async () => {
+    const dir = tmp();
+    const live = habits([1, 2]);
+    const hist = habits([4, 6], [2, 3], 9);
+    const carl = habits([1, 1], [1, 1], 3);
+    await foldGame(dir, fold({ format: 'ffa', players: 3, seats: [human(BOB, live)] }), {});
+    // CARL was never in contact live; the history saw it.
+    await foldGame(dir, fold({ format: 'ffa', players: 3, source: 'history', seats: [human(BOB, hist), human(BOT, carl)] }), {});
+    const h = await readProfileHistory(dir, [BOB, BOT], {}, {});
+    if (typeof h !== 'object') throw new Error('history');
+    expect(h.players.get(BOB)).toMatchObject({ games: 1, past: hist });
+    expect(h.players.get(BOT)).toMatchObject({ games: 1, past: carl });
+    expect(h.pools.byFormat.ffa).toEqual(addHabits(hist, carl));
+    expect(h.pools.games).toBe(1);
+  });
+
+  it('#312 E2: a history fold of a game the population no longer holds but the caller says was folded skips the population', async () => {
+    const dir = tmp();
+    const hist = habits([4, 6], [2, 3], 9);
+    await foldGame(dir, fold({ seats: [human(BOB, habits([0, 1]))], gameId: GAME2 }), {});
+    const before = await history(dir, BOB);
+    await foldGame(dir, fold({ source: 'history', foldedBefore: true, seats: [human(BOB, hist)] }), {});
+    const after = await history(dir, BOB);
+    expect(after.pools).toEqual(before.pools);
+    // BOB's list (one entry, not full) never dropped one: the game is new to it and counted.
+    expect(after.players.get(BOB)!.games).toBe(2);
+  });
+
   it('fades a player once per new game, never on a game folded again', async () => {
     const dir = tmp();
     const a = habits([2, 2]);

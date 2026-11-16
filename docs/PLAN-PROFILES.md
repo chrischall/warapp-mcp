@@ -369,9 +369,21 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   (`src/analysis/finished-game.ts`, pure). A failed request is `read-failed`, an unreadable history
   `history-unreadable` with #315's reason; neither is retried by a trigger, only by an explicit
   `warapp_get_game` with `include_history`, from that call's own read. The sweep also folds each game's
-  live profile (`foldFinished`), so #273 needs no `warapp_get_game` per game. C1's habits from the
-  standings (and the history entry replacing the live one) are not built yet: they will read these
-  records, never GameFeed again.
+  live profile (`foldFinished`), so #273 needs no `warapp_get_game` per game.
+- **Processing the history (#312 E2, built):** right after a `captured` record, the same pass (no
+  further request) folds the opponent profiles from the history boards — `observeTurn` over each pair
+  of full boards with my cached orders where present (`observeHistory`, `src/analysis/game-lessons.ts`),
+  the primitives of part A rather than C1's standing-only habits above, folded as `history` so the entry
+  replaces the live one. The double count named in section 9 is guarded: when the game was folded
+  before (the population holds it, or the per-game file is marked folded), a player with no entry for
+  it is skipped if its entry list is full, and the population is skipped if it no longer holds the game.
+  The same pass keeps the game in its map's record (`<dataDir>/maps-record/<mapId>.json`: outcomes, my
+  start region and income curve, each winner's start region and income after turns 4 and 8) and adds
+  its lessons (`<dataDir>/lessons.json`: per format the outcomes, how each lost game was lost, the
+  turn my income first went flat, and the tracker's estimates over my cached boards against the
+  history's true incomes by frontier coverage — part 0's measurement, aggregates only). Both are
+  name-free (keyed by `finishedGameKey`), bounded, 0600, and never overwritten when they do not parse.
+  Nothing reads them yet (P1).
 - One request per finished game, through `WarappClient`, never retried in a loop, never for a game
   the account did not play. A request spent with no record left (the write failed; the reply showed the
   game not finished or not mine) is remembered for the life of the process, so no trigger repeats it.

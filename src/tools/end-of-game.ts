@@ -14,20 +14,37 @@
 // (`attempted`), so no trigger reads that game's history twice (P2: never retried in a loop). Off with `WARAPP_PLAYER_PROFILE=off`; nothing without a data directory.
 // Profiles inform only (P1): no planner decision reads any of this. Never throws.
 import type { EnvSource } from '@chrischall/mcp-utils';
+import type { BoardState } from '../board.js';
 import { captureFinished, type FinishedCapture } from '../analysis/finished-game.js';
+import {
+  aggregateCalibration,
+  calibrationSamples,
+  flatTurn,
+  historyHabits,
+  incomeCurve,
+  lessonLoss,
+  mapFacts,
+} from '../analysis/game-lessons.js';
+import type { MapGraph } from '../analysis/graph.js';
+import { profileFormatOf } from '../analysis/opponent-profile.js';
+import { trackGame, type MyOrders, type TurnBoard } from '../analysis/opponents.js';
+import { recordLessons, recordMapGame } from '../lessons-store.js';
+import { endingOf, foldGame, markHistoryFolded, profileFileState, type FoldSeat } from '../profile-store.js';
 import type { WarappClient } from '../client.js';
 import { MAX_FINISHED_RECORDS, finishedPath, finishedRecordOf, readFinishedState, touchFinished, writeFinishedRecord, type FinishedFailure, type FinishedRecord, type FinishedStatus } from '../finished-store.js';
 import type { Game } from '../normalize.js';
 import { withPathLock } from '../path-lock.js';
 import { readPickRecord } from '../pick-list.js';
-import { playerRecordSalt, playerSaltForWrite } from '../player-record-store.js';
+import { finishedGameKey, playerRecordSalt, playerSaltForWrite } from '../player-record-store.js';
 import { holdsSeat } from '../player-states.js';
 import { profileEnabled } from '../profile-store.js';
 import { nameFreeSettings } from '../replay.js';
-import { historyBoards, historyReport, readCachedOrders, readCachedPlayer } from '../trend.js';
+import { historyBoards, historyReport, readBoardHistory, readCachedOrders, readCachedPlayer } from '../trend.js';
 import { graphOf } from './common.js';
 import { mapOf } from './map.js';
-import { foldFinished, type FinishedFold } from './profile-hook.js';
+import { cardsInPlay, foldFinished, observeSettings, profiledOpponents, type FinishedFold } from './profile-hook.js';
+import { keptTeams } from './team-source.js';
+import { plannerSettings } from './turn.js';
 
 /** Finished games the warapp_my_games sweep processes per call (each one GameFeed history read). */
 export const END_OF_GAME_PER_CALL = 2;
@@ -61,6 +78,20 @@ export interface EndOfGameResult {
   failure?: FinishedFailure;
   /** The profile fold, when the pass ran it (the warapp_my_games sweep). */
   profileFold?: FinishedFold;
+  /** With `captured`: what the history was processed into (#312 E2). */
+  processed?: Processed;
+}
+
+/**
+ * What a captured history was processed into (#312 E2): the opponent profiles folded from it (part C),
+ * the map's record, and the lessons store. `no-map`: the map was not had, so no income or adjacency;
+ * `teams-unknown`: a game of 3+ seats whose teams could not be read (teammates are never profiled);
+ * `nothing`: no opponent turn observed.
+ */
+export interface Processed {
+  profiles: 'folded' | 'nothing' | 'no-map' | 'teams-unknown' | 'failed';
+  map: 'kept' | 'no-map' | 'failed';
+  lessons: 'kept' | 'no-map' | 'failed';
 }
 
 export interface EndOfGameDeps {
@@ -165,17 +196,19 @@ export async function endOfGame(
       if (game && !game.players.some((p) => p.id === me && holdsSeat(p.state))) return { status: 'not-a-player' };
       read = game;
       const shown = game ?? seen;
-      const record = await buildRecord(dataDir, salt, me, gameId, game, shown, failure);
+      const { record, history } = await buildRecord(dataDir, salt, me, gameId, game, shown, failure);
       try {
         const protect = opts.protectIds ? new Set(opts.protectIds.map((id) => finishedPath(dataDir, salt, me, id))) : undefined;
         await writeFinishedRecord(dataDir, path, record, opts.keep, protect);
       } catch {
         return { status: 'failed' };
       }
+      const processed = history && game ? await processHistory(dataDir, env, salt, me, gameId, game, history) : undefined;
       return {
         status: record.status,
         ...(record.turns ? { turns: record.turns.length } : {}),
         ...(record.failure ? { failure: record.failure } : {}),
+        ...(processed ? { processed } : {}),
       };
     });
     if (opts.fold && (result.status === 'captured' || result.status === 'history-unreadable')) {
@@ -188,6 +221,14 @@ export async function endOfGame(
   }
 }
 
+/** What a captured history hands to {@link processHistory}. */
+interface CapturedHistory {
+  capture: FinishedCapture;
+  boards: { turn: number; board: BoardState }[];
+  orders: ReadonlyMap<number, MyOrders>;
+  graph: MapGraph | undefined;
+}
+
 /** The record of one pass: the capture when the history read, else what the reads that came say. */
 async function buildRecord(
   dataDir: string,
@@ -197,7 +238,7 @@ async function buildRecord(
   read: Game | undefined,
   shown: Game | undefined,
   failure: FinishedFailure | undefined,
-): Promise<FinishedRecord> {
+): Promise<{ record: FinishedRecord; history?: CapturedHistory }> {
   const pick = await readPickRecord(dataDir, gameId, me);
   const picks = pick?.list ? { list: pick.list, ...(pick.award !== undefined ? { award: pick.award } : {}) } : null;
   const common = {
@@ -208,27 +249,138 @@ async function buildRecord(
     mapId: shown?.settings?.mapId ?? shown?.map?.id,
     picks,
   };
-  if (!read) return finishedRecordOf({ ...common, status: 'read-failed', failure, capture: capture(shown, me, [], new Map(), undefined) });
+  if (!read) return { record: finishedRecordOf({ ...common, status: 'read-failed', failure, capture: capture(shown, me, [], new Map(), undefined) }) };
   const report = historyReport(read);
   const orders = (await readCachedPlayer(dataDir, gameId)) === me ? await readCachedOrders(dataDir, gameId, me) : new Map();
   const map = read.map ? mapOf(read) : undefined;
   if ('unreadable' in report) {
     const u = report.unreadable;
-    return finishedRecordOf({
-      ...common,
-      status: 'history-unreadable',
-      failure: { reason: u.reason, keys: u.keys, ...(u.layout ? { layout: u.layout } : {}), ...(u.shape ? { shape: u.shape } : {}), ...(u.turns !== undefined ? { turns: u.turns } : {}) },
-      capture: capture(read, me, [], orders, undefined),
-    });
+    return {
+      record: finishedRecordOf({
+        ...common,
+        status: 'history-unreadable',
+        failure: { reason: u.reason, keys: u.keys, ...(u.layout ? { layout: u.layout } : {}), ...(u.shape ? { shape: u.shape } : {}), ...(u.turns !== undefined ? { turns: u.turns } : {}) },
+        capture: capture(read, me, [], orders, undefined),
+      }),
+    };
   }
   const boards = historyBoards(read.history, read.players, read.numberOfTurns !== undefined ? { numberOfTurns: read.numberOfTurns } : {});
-  return finishedRecordOf({
-    ...common,
-    status: 'captured',
-    layout: report.read.layout,
-    noMap: !map,
-    capture: capture(read, me, boards, orders, map ? graphOf(map) : undefined),
+  const graph = map ? graphOf(map) : undefined;
+  const captured = capture(read, me, boards, orders, graph)!;
+  return {
+    record: finishedRecordOf({ ...common, status: 'captured', layout: report.read.layout, noMap: !map, capture: captured }),
+    history: { capture: captured, boards, orders, graph },
+  };
+}
+
+/**
+ * Process a captured history (#312 E2), each part on its own (one failing leaves the others): fold the
+ * opponent profiles from it (part C: `observeTurn` over the full boards with my cached orders, `history`
+ * replacing the live entry, never counting a game twice), keep the game in its map's record, and add
+ * its lessons (the turn my income went flat, how I lost, and the tracker's estimates over my cached
+ * boards scored against the truth by coverage). Never throws.
+ */
+async function processHistory(dataDir: string, env: EnvSource, salt: string, me: number, gameId: number, game: Game, h: CapturedHistory): Promise<Processed> {
+  const out: Processed = { profiles: 'no-map', map: 'no-map', lessons: 'no-map' };
+  const g = h.graph;
+  if (!g) return out;
+  const teams = await keptTeams(dataDir, game).catch(() => undefined);
+  const resolved = teams?.game ?? game;
+  const mine = resolved.players.find((p) => p.id === me);
+  const seated = resolved.players.filter((p) => holdsSeat(p.state));
+  const format = profileFormatOf(resolved.players);
+  const opponents = mine ? profiledOpponents(resolved, mine) : resolved.players.filter((p) => p.id !== me).map((p) => p.id);
+  const key = finishedGameKey(salt, me, gameId);
+  const c = h.capture;
+  try {
+    out.profiles = !teams?.known || !mine ? 'teams-unknown' : await foldHistory(dataDir, env, me, gameId, resolved, opponents, format, seated.length, h);
+  } catch {
+    out.profiles = 'failed';
+  }
+  const mapId = game.settings?.mapId ?? game.map?.id;
+  if (mapId !== undefined) {
+    out.map = await recordMapGame(dataDir, mapId, {
+      key,
+      format,
+      seats: seated.length,
+      result: c.outcome.result,
+      turns: c.outcome.turn,
+      ...mapFacts(g, me, c.outcome.winners, c.starts, c.turns),
+    });
+  }
+  try {
+    const cachedOrders = await readCachedOrders(dataDir, gameId, me);
+    const cached: TurnBoard[] = ((await readCachedPlayer(dataDir, gameId)) === me ? await readBoardHistory(dataDir, gameId, me) : []).map((b) => {
+      const o = cachedOrders.get(b.turn);
+      return { turn: b.turn, board: b.board, ...(o ? { orders: o } : {}) };
+    });
+    // Every seat as still playing: a final state would read a seat out on every earlier board.
+    const asPlaying = resolved.players.map(({ state: _state, ...p }) => p);
+    const samples = calibrationSamples({
+      graph: g,
+      me,
+      cached,
+      history: h.boards,
+      plannerSettings: plannerSettings(game.settings),
+      incomeSettings: game.settings,
+      game: trackGame(asPlaying, game.settings, game.map),
+      opponents,
+    });
+    out.lessons = await recordLessons(dataDir, {
+      key,
+      format,
+      seats: seated.length,
+      result: c.outcome.result,
+      flatAfterTurn: flatTurn(incomeCurve(c.turns, me)),
+      howLost: lessonLoss({
+        result: c.outcome.result,
+        me,
+        boards: h.boards,
+        orders: h.orders,
+        graph: g,
+        settings: game.settings,
+        numberOfTurns: c.outcome.turn,
+        outTurn: c.outcome.outTurn,
+      }),
+      calibration: aggregateCalibration(samples),
+    });
+  } catch {
+    out.lessons = 'failed';
+  }
+  return out;
+}
+
+/** Part C: fold the opponents' habits read off the history, as `history` (replacing a live entry). */
+async function foldHistory(
+  dataDir: string,
+  env: EnvSource,
+  me: number,
+  gameId: number,
+  game: Game,
+  opponents: readonly number[],
+  format: ReturnType<typeof profileFormatOf>,
+  players: number,
+  h: CapturedHistory,
+): Promise<Processed['profiles']> {
+  const byId = new Map(game.players.map((p) => [p.id, p]));
+  // Never a human who became an AI (no turn of the change is known).
+  const watched = opponents.filter((id) => !byId.get(id)?.humanTurnedIntoAI);
+  const habits = historyHabits({
+    graph: h.graph!,
+    me,
+    boards: h.boards,
+    orders: h.orders,
+    settings: observeSettings(game),
+    ...cardsInPlay(game),
+    opponents: watched,
   });
+  const seats: FoldSeat[] = [...habits].map(([id, hb]) => ({ id, ai: byId.get(id)?.isAI === true, habits: hb, ending: endingOf(byId.get(id)?.state) }));
+  if (!seats.length) return 'nothing';
+  const foldedBefore = (await profileFileState(dataDir, gameId, me)) === 'folded';
+  const r = await foldGame(dataDir, { me, gameId, format, players, source: 'history', seats, foldedBefore }, env);
+  if (r !== 'folded') return 'failed';
+  await markHistoryFolded(dataDir, gameId, me);
+  return 'folded';
 }
 
 function capture(
