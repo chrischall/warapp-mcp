@@ -411,7 +411,8 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   `pending`), and in the `warapp_my_games` sweep over the account's finished games not yet processed (`END_OF_GAME_PER_CALL`,
   2, per call, newest first, among the newest 250 only: half the store bound, their records refreshed
   each call and never pruned by the sweep's writes). The history read asks `GetMap=false` (a cached map is
-  attached by id, and the client's map refresh, which would repeat the read, never runs); with no map
+  attached by id, and the client's map refresh, which would repeat the read, never runs) and `noRetry` (the
+  client's transport does not re-send it on a 429 or 5xx: the POST goes out once); with no map
   cached one map-only read follows, never a second history read. It keeps the capture name-free at `<dataDir>/finished/<hmac>.json`
   (`src/finished-store.ts`: the key an HMAC of my account and the game under the shared salt; players by
   `playerKey`; 0600, atomic, at most 500, an unparsable file never overwritten), which is a processed
@@ -450,7 +451,8 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   it folded from finished histories, reads `basis: history` in `warapp_profile_opponents` and the plan's `reads`.
   **#312 item 4 is only partly met:** the calibration from past games is reported in
   `warapp_track_opponents` full (`pastGames`) only; the outlook and the estimate warnings do not report it yet.
-- One request per finished game, through `WarappClient`, never retried in a loop, never for a game
+- One request per finished game, through `WarappClient`, sent once (`noRetry`: no transport retry on a 429
+  or 5xx) and never retried in a loop, never for a game
   the account did not play. A request spent with no record left (the write failed; the reply showed the
   game not mine) still leaves the lasting mark; one whose reply showed the game not finished is remembered
   for the life of the process only (it may end later), so no trigger repeats it.

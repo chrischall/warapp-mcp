@@ -1,7 +1,7 @@
 // The end-of-game pass (#312 E1; owner decisions P2–P4 of 2026-11-16): once per finished game the
 // account played, read the game's history ONCE (GameFeed GetHistory with its settings and GetMap=false:
-// a cached map is attached by its id, and the client's refresh of a map that lacks land never runs, so
-// the history is never read twice; with no map cached, one map-only read without the history follows),
+// a cached map is attached by its id, and the client's refresh of a map that lacks land never runs, and
+// with `noRetry` the client does not re-send it on a 429 or 5xx, so the history is never read twice; with no map cached, one map-only read without the history follows),
 // capture what it teaches (src/analysis/finished-game.ts) and keep it name-free (src/finished-store.ts).
 // The record is the "processed" mark, and a separate bounded list of hashed keys (`markProcessed`, ten
 // times the record bound) outlives its prune: a game with either is never read again by a trigger,
@@ -201,7 +201,7 @@ export async function endOfGame(
       const state = await readFinishedState(path);
       if (state === 'unreadable') return { status: 'record-unreadable' };
       if (state !== 'missing' && (!opts.retry || state.status === 'captured' || !opts.history)) return { status: 'already-processed' };
-      // The one history read: the caller's, else one request, never retried.
+      // The one history read: the caller's, else one request, sent once (no transport retry) and never retried.
       let game: Game | undefined = opts.history;
       let failure: FinishedFailure | undefined;
       if (!game) {
@@ -212,8 +212,9 @@ export async function endOfGame(
         remember(attempted, key);
         try {
           // P2: GetMap=false, so the client never re-reads the game for a map it lacks (no `lacksTerritory`
-          // refresh, which would repeat the history read); a cached map is attached by its id.
-          game = await deps.client.getGame(gameId, { history: true, settings: true, map: false });
+          // refresh, which would repeat the history read); a cached map is attached by its id. `noRetry`:
+          // a 429 or 5xx is not re-sent by the client's transport retry either, so the POST goes out once.
+          game = await deps.client.getGame(gameId, { history: true, settings: true, map: false, noRetry: true });
         } catch (e) {
           const kind = (e as { kind?: unknown }).kind;
           failure = { reason: 'request-failed', ...(typeof kind === 'string' && SAFE.test(kind) ? { kind } : {}) };

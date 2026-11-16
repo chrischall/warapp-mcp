@@ -1039,8 +1039,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **The end-of-game pass (#312 E1; owner decisions P2–P4 of 2026-11-16) runs once per finished game the account
   played** (`src/tools/end-of-game.ts`, never throws): it reads the game's history ONCE (`getGame` with history,
   settings and `map: false`: a cached map is attached by its id, and the client's refresh of a cached map lacking
-  land the standing names — which would repeat the request — never runs; with no map cached, one map-only read
-  without the history follows, and when that fails the record is kept `noMap`), never retried, and keeps the
+  land the standing names — which would repeat the request — never runs, and `noRetry` keeps the client from
+  re-sending it on a 429 or 5xx, so the POST goes out once; with no map cached, one map-only read without the
+  history follows, and when that fails the record is kept `noMap`), never retried, and keeps the
   capture name-free at `<dataDir>/finished/<hmac>.json` (`src/finished-store.ts`: the file name `finishedGameKey`, an
   HMAC of my account and the game under the ONE shared salt; players inside by `playerKey`; no clock; 0600, atomic, at
   most `MAX_FINISHED_RECORDS` (500) by last write or the sweep's refresh, never one the writer protects; a file that does not parse is never overwritten and blocks the pass,

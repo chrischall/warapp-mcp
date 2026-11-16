@@ -469,6 +469,21 @@ describe('P2: the one history read asks no map and never refreshes one (#312)', 
     expect(await record(dir)).toMatchObject({ noMap: true });
   });
 
+  it.each([503, 429, 500])('a %i on the history read sends ONE GetHistory request (no client retry) and records read-failed', async (status) => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response('down', { status });
+    }) as typeof fetch;
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined, mapCache: new MapCache(), dataDir: () => dir });
+    const r = await (await freshProcess()).endOfGame({ client, dataDir: dir, env: {} }, GAME, ANN, undefined);
+    expect(r).toMatchObject({ status: 'read-failed', failure: { reason: 'request-failed' } });
+    expect(history(calls)).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(await record(dir)).toMatchObject({ status: 'read-failed' });
+  });
+
   it('the processed mark outlives the record bound: a pruned game is never read again, in any process', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
     const { calls, fetchImpl } = stubFetch(withHistory());

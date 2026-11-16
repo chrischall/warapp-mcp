@@ -185,6 +185,11 @@ export interface GetGameOptions {
    * state; the map is still attached when cached. Default: download it unless cached.
    */
   map?: boolean;
+  /**
+   * `true`: send this request once, never re-sent on a 429 or 5xx (the client otherwise retries once).
+   * For a read that must reach war.app at most once — the end-of-game pass's history read (P2).
+   */
+  noRetry?: boolean;
 }
 
 export interface WarappClientOptions {
@@ -207,33 +212,38 @@ export class WarappClient {
   readonly #cache: MapCache;
   readonly #dataDir: (() => string | undefined) | undefined;
   readonly #api: ApiClient;
+  /** The same client with no retry, for a request that must go out at most once (`noRetry`). */
+  readonly #apiOnce: ApiClient;
   #secrets: SecretValue[] = [];
 
   constructor(opts: WarappClientOptions = {}) {
     this.#env = opts.env;
     this.#cache = opts.mapCache ?? defaultMapCache;
     this.#dataDir = opts.dataDir;
-    this.#api = createApiClient({
-      baseUrl: BASE_URL,
-      serviceName: SERVICE,
-      baseHeaders: { accept: 'application/json' },
-      retry: { count: 1, delayMs: 2000, statuses: [429, 500, 502, 503, 504], honorRetryAfter: true },
-      redirect: 'same-origin',
-      ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
-      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-      ...(opts.sleep ? { sleep: opts.sleep } : {}),
-      onUnauthorized: () =>
-        new McpToolError('war.app refused the request (HTTP 401).', {
-          kind: 'credential_rejected',
-          status: 401,
-          hint: AUTH_FAILED_HINT,
-        }),
-      onErrorResponse: ({ status, body }) =>
-        new McpToolError(
-          `war.app GameFeed answered HTTP ${status}${body.trim() ? `: ${this.#redact(body)}` : ''}`,
-          { kind: 'http', status },
-        ),
-    });
+    const build = (count: number): ApiClient =>
+      createApiClient({
+        baseUrl: BASE_URL,
+        serviceName: SERVICE,
+        baseHeaders: { accept: 'application/json' },
+        retry: { count, delayMs: 2000, statuses: [429, 500, 502, 503, 504], honorRetryAfter: true },
+        redirect: 'same-origin',
+        ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+        ...(opts.sleep ? { sleep: opts.sleep } : {}),
+        onUnauthorized: () =>
+          new McpToolError('war.app refused the request (HTTP 401).', {
+            kind: 'credential_rejected',
+            status: 401,
+            hint: AUTH_FAILED_HINT,
+          }),
+        onErrorResponse: ({ status, body }) =>
+          new McpToolError(
+            `war.app GameFeed answered HTTP ${status}${body.trim() ? `: ${this.#redact(body)}` : ''}`,
+            { kind: 'http', status },
+          ),
+      });
+    this.#api = build(1);
+    this.#apiOnce = build(0);
   }
 
   #redact(text: string): string {
@@ -267,7 +277,8 @@ export class WarappClient {
     if (flags.settings) path += '&GetSettings=true';
     if (flags.chat) path += '&GetChat=true';
     if (flags.noMap) path += '&GetMap=false';
-    const body = await this.#api.fetchJson<Record<string, unknown>>('POST', path, {
+    const api = flags.noRetry ? this.#apiOnce : this.#api;
+    const body = await api.fetchJson<Record<string, unknown>>('POST', path, {
       rawBody: new URLSearchParams({ Email: email, APIToken: token }).toString(),
       contentType: 'application/x-www-form-urlencoded',
       // A read sent as POST: safe to repeat.
