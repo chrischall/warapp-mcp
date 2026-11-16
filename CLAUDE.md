@@ -1390,6 +1390,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   reported one is re-read with the plan's front, so the losing state the plan acts on (rule 3d's decided
   horizon, its line calling it an estimate) is the one shown and logged. `warapp_plan_turn` passes the plan's profile standing
   back (`standing`): an `even`/`stalemate` outlook beside `ahead`/`behind` says why the two differ.
+  **What the state rests on (#304).** Every outlook turn carries `evidence` (`OutlookEvidence`, the latest's
+  also on `GameOutlook.evidence`): the two incomes compared (mine — my team's in a team game — against the
+  side the likely high rests on, else the strongest; tracked off my boards, its visible income at least, else
+  in view), and per opponent still playing its income and the share of its frontier that income was read
+  from (#294's `TrackCoverage`, `null` when unmeasured), `thin` when the board is not in full view and that
+  share is under `LOW_COVERAGE` (0.5) or unmeasured. The basis says them after the state ("Incomes compared
+  …", "Frontier read …", and "Thin evidence: … so "even" is not a safe reading"); plan_turn's compact
+  outlook, the outlook log (per turn and `latest`, without the coverage's words) and the surrender preview
+  carry it. Reporting only: it never changes the state, a ratio or any plan.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

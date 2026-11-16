@@ -710,6 +710,12 @@ describe('warapp_plan_turn — threat trend', () => {
     );
     expect(first.outlook.state).toBeNull();
     expect(first.outlook.basis).toMatch(/Only 1 turn of boards/);
+    // #304: the compact view carries what the state rests on beside it.
+    expect((first.outlook as unknown as { evidence: { incomes: unknown; opponents: unknown[] } }).evidence).toMatchObject({
+      incomes: expect.objectContaining({ mine: expect.any(Number), theirs: expect.any(Number) }),
+      opponents: expect.any(Array),
+    });
+    expect(first.outlook.basis).toMatch(/Incomes compared: mine/);
     const dir = h.dataDir;
     await h.harness.close();
     let last: { outlook: { state: string | null; basis: string; turns?: unknown[] } } | undefined;

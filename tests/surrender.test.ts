@@ -331,6 +331,26 @@ describe('warapp_surrender', () => {
       expect(p.outlook).toMatchObject({ turn: 5, state: 'losing', basis: 'Losing for 3 turns running.' });
     });
 
+    it('#304: shows beside the logged state the incomes compared and each opponent\'s frontier read, thin evidence named', async () => {
+      h = await harness([feedGame(DUEL)]);
+      const evidence = {
+        incomes: { mine: 8, theirs: 6, playerId: 1001, source: 'tracked' as const },
+        opponents: [{ playerId: 1001, income: 6, source: 'tracked' as const, coverage: 0.25, thin: true }],
+        thin: true,
+      };
+      await recordOutlook(h.dataDir, GAME_ID, Number(ME.feed), {
+        state: 'even',
+        heldTurns: 3,
+        k: 3,
+        threshold: 2.4,
+        basis: 'Even for 3 turns running.',
+        turns: [{ turn: 5, mine: 30, strongest: { playerId: 1001, low: 20, high: 50 }, ratio: { low: 0.6, high: 1.5 }, changed: 0, state: 'even', evidence }],
+        evidence,
+      });
+      const p = payload(await h.call('warapp_surrender', { game_id: GAME_ID })).preview as Record<string, unknown>;
+      expect(p.outlook).toMatchObject({ state: 'even', evidence });
+    });
+
     it('lists opponents close to a boot, what their seat becomes, and that lastTurnTime is unverified', async () => {
       h = await harness([feedGame([me(), { ...opp(1), hasCommittedOrders: 'False' }, opp(2)])]);
       const preview = payload(await h.call('warapp_surrender', { game_id: GAME_ID }));
