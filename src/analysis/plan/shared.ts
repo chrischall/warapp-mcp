@@ -383,6 +383,11 @@ export interface PlanInput {
    */
   previousBoard?: BoardState;
   /**
+   * #281: the territories a static seat (#270: out, no AI on it) held, by territory, with the player
+   * who left them. `planTurn` sets it when it plans them as neutrals; a caller need not.
+   */
+  vacated?: ReadonlyMap<number, number>;
+  /**
    * #226: my orders on the turn `previousBoard` was played (what warapp_submit_turn sent and cached):
    * a failed attack of mine counts its kills back into the defender's observed deploy
    * ({@link ObserveContext.myOrders}). Unknown orders change nothing.

@@ -130,6 +130,8 @@ export interface BoardCtx {
    * its step. Absent with no commander of mine on the board (or more than one).
    */
   commanderAt: CommanderPlace | undefined;
+  /** #281: the neutrals a static seat left (planTurn's conversion, #270), by territory, with that player. */
+  vacated: ReadonlyMap<number, number>;
 }
 
 /** The combat model: kill rates, luck, rounding, and what a capture or a hold costs. */

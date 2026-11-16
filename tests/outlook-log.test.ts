@@ -47,6 +47,25 @@ describe('outlook log (#178)', () => {
     expect(raw).not.toMatch(/name/i);
   });
 
+  it('#283: keeps each turn\'s armies and income, mine and the strongest side\'s, with its id (name-free)', async () => {
+    const o = outlook(6, 'losing');
+    o.turns[0] = {
+      ...o.turns[0]!,
+      strongest: { playerId: 2001, low: 20, high: null, team: 2, players: [2001, 2002] },
+      figures: { mine: { armies: 25, income: 5 }, strongest: { armies: 8, income: 4 } },
+      state: 'losing',
+    };
+    await recordOutlook(dir, 7001, 1001, o);
+    expect((await readOutlookLog(dir, 7001, 1001))?.turns['6']).toEqual({
+      mine: 40,
+      low: 20,
+      high: null,
+      ratio: { low: 0, high: 2 },
+      state: 'losing',
+      figures: { mine: { armies: 25, income: 5 }, strongest: { playerId: 2001, team: 2, armies: 8, income: 4 } },
+    });
+  });
+
   it('records the final result only for a game it already logs', async () => {
     expect(await recordResult(dir, 7002, 1001, 'Won')).toBe(false);
     expect(await readOutlookLog(dir, 7002, 1001)).toBeUndefined();

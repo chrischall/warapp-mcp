@@ -24,6 +24,7 @@ import type { Holds } from './holds.js';
 import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
+import { denialsOf, emptyEnemiesOf } from './vacated.js';
 
 
 export interface Breakable {
@@ -86,7 +87,16 @@ export function targetsPhase(
   const c2 = { ...c1, ...frontierCosts(pc, threats, hd, c1) };
   const c3 = { ...c2, ...bonusScoring(pc, ps, threats, c2) };
   const c4 = { ...c3, ...closestBonus(pc, ps, input, c3) };
-  return c4;
+  // #281: the vacated land worth denying and (the owner's extension) the empty enemy territories
+  // pass 3 may take, each judged once on the board as it stands.
+  const denials = denialsOf(pc);
+  const emptyEnemies = emptyEnemiesOf(
+    pc,
+    input.previousBoard,
+    threats.reinforcementAt,
+    (t) => c4.targets.has(t) || c4.repulsed.has(t) || pc.truce.noTarget(t),
+  );
+  return { ...c4, denials, emptyEnemies };
 }
 
 /** The enemy bonuses I could break and the counter-attacks (under `balanced`, #72). */

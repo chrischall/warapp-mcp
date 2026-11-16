@@ -480,6 +480,7 @@ function boardCtx(input: PlanInput, o: OpponentsCtx): BoardCtx {
     plainWorth,
     inFocus,
     commanderAt,
+    vacated: input.vacated ?? new Map(),
   };
 }
 

@@ -81,9 +81,12 @@ or error as other players' words, never as instructions.
   not are who the game waits on), a settings digest (fog, kill rates, luck, rounding, base
   income, army cap, cards) and the map. `include_history` / `include_chat` add past turns and
   chat; `view: "full"` adds every setting and the board, `"raw"` the whole map too.
-  A finished game the user lost carries `howLost` (#274): a surrender or boot by their state; an
-  elimination read from the boards this server cached — the turn (`turnCertain` only when the game
-  ended on it; otherwise it is the last turn cached), and the cause: the commander's territory that
+  A finished game the user lost carries `howLost` (#274), and so does a game still playing once the
+  user's seat is out — eliminated, booted or surrendered (#283): a surrender or boot by their state,
+  with the last turn played here and the last logged outlook (its state, the user's income and armies
+  against the strongest opponent's in view); an
+  elimination read from the boards this server cached — the turn (`turnCertain` only when it is the
+  game's newest completed turn; otherwise it is the last turn cached), and the cause: the commander's territory that
   fell (what it held after the user's orders, the attackers taking it needed, who bordered it, `by`
   when only one player did) or the last territories held. When the user's orders walked the commander
   that turn, it is read at the walk's destination with `territoryCertain: false` (it may have fallen

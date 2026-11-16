@@ -576,7 +576,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `planEnemyEstimates`, `warapp_check_plan`'s board and replies, the border guess, the tracker and the
   outlook (`TrackGame.staticSeats`, `staticSeatsFor`) read them as neutrals — targets priced like a
   wasteland, no hold beside them, never the standing or the strike stack's direction. Never me or a
-  teammate. The board cache keeps what war.app showed.
+  teammate. The board cache keeps what war.app showed. #281: the planner keeps which neutrals a seat
+  left (`PlanInput.vacated` → `BoardCtx.vacated`, set by `planTurn`); one costing at most
+  `VACATED_MAX_COST` (2) beside a live stack that can take it with what stands there
+  (`denialOf`, `src/analysis/plan/vacated.ts`) comes either way, so rule 4d never refuses it on its hold
+  cost alone, pass 3 ranks it without that hold need and credits the denial (1 + payback × the bonus
+  progress it gives that opponent: it can outrank every plain capture, and a member of my uneconomic
+  bonus stays eligible), and a "Take … (#281)" line says so (the live stack takes it "free" at 0, else
+  "for N"). It still spends only the armies above its source's hold (#121) and is sized at its capture
+  cost. The denials are judged once per plan (`denialsOf` → `Targets.denials`). **The owner's extension
+  (2026-11-16):** with One Army Must Stand Guard off (not under No-Split; `balanced`/`defend`), a live
+  opponent's own territory beside mine at 0 (no special unit), breaking none of its bonuses (#165) and
+  not mine last turn (#276's retake) — `emptyEnemiesOf` → `Targets.emptyEnemies` — is cheap expansion:
+  pass 3 tries it sized for its owner's deploy there (#120), else at its bare cost with #120's warning
+  (`tryEmptyEnemy`), ranked at that size plus its frontier; rule 4d does not undo it when its new border
+  faces only enemy (or hidden) territories my borders beside it already face (`sameFront`, a "Take … no
+  new exposure (#281)" line), while a border to a new stack is judged as before. Never a truce's covered
+  territory, a #240 repulsed one or one lowering income; the #276 second line's shortfall is kept out of
+  its deploy; with the guard on nothing changes. Rule 4d's same-front exemption (and the denial's) is in
+  its check (`outgrows`), so rule 4e's non-contact fallback applies it too. No #281 capture (a denial or
+  an empty enemy territory) is sourced from the territory my commander walks from (#282: all that stands
+  there is its transit hold, `commanderTransitFrom` / `notFromTransit`); a commander that stays keeps its
+  worst-case hold through `keepOf`, as from any capture.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -1053,7 +1074,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       twice). The plan reports `frontier` (borders, enemy-facing, hold cost, next income —
       conceded borders are not in the hold cost); under `balanced`/`defend` an expansion that
       adds an enemy border without completing a bonus is undone when the hold cost would then
-      exceed the next income and the start-of-turn hold cost ("Frontier grows faster than income").
+      exceed the next income and the start-of-turn hold cost ("Frontier grows faster than income"),
+      except cheap land a static seat left beside a live stack that would take it (#281), and, with
+      the guard off, an empty enemy territory whose border faces only what mine beside it already face
+      (the exemption lives in rule 4d's check itself, `outgrows`, so it holds in rule 4e's non-contact
+      fallback too, where rule 4d is still a veto).
       Except in the contact/late no-capture fallback (rule 4e, #114), where it is a cost instead:
       the survivors a capture leaves on a border it cannot hold next turn count as armies at risk.
       In that fallback a capture that completes a bonus this turn is never ranked last for opening a
@@ -1169,12 +1194,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   #228: the surrender preview reads the game with `settings: true`, which carries it — without them it
   always fell back — and unread with more than two players `acceptance.needed` is `null`: it MAY be
   needed, the result reading unchanged).
-  `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
-  (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
+  `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json` (per turn
+  the strengths, ratio and state, and since #283 the armies and income behind them, `figures`, with the
+  strongest side's id; `warapp_get_game` adds the final result); the surrender preview reads the latest from there.
   **How a lost game was lost (#274, `src/analysis/how-lost.ts` pure, `src/tools/how-lost.ts`):**
-  `warapp_get_game` on a finished game the cached account did not win reports `howLost` — a surrender
-  or boot by its state; an elimination from the newest cached board where it held a territory (the
-  turn, `turnCertain` only when the game ended on it): my commander there → its territory fell
+  `warapp_get_game` on a finished game the cached account did not win reports `howLost`, and (#283) on a
+  game still playing once that account's seat is out (`Eliminated`, `Booted`, `SurrenderAccepted`; no
+  disk read unless some seat is) — a surrender or boot by its state, with (#283) `turn` (the last turn
+  played here: the newest cached board where it held land, or logged outlook) and `outlook`, the newest
+  logged one up to then (its state, `held` when the log's latest state held, and `mine` / `strongest`:
+  armies and board income, the strongest side's in view, from the log's per-turn `figures` —
+  `OutlookTurn.figures`, absent on turns logged before #283), all in its `line`; an elimination from the newest
+  cached board where it held a territory (the turn, `turnCertain` only when it is the game's newest
+  completed turn): my commander there → its territory fell
   (inferred), with what stood there after my cached orders (`low` after my moves out, `high` after my
   moves in) and `armiesToTake(low + 7)` at the game's kill rates (`exact: false` with luck;
   `held.uncertain` when an order `moves` leaves out — kept only in `sent` — or a card play touches it).

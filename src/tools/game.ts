@@ -66,7 +66,8 @@ function compact(game: Game) {
  * outlook log (#178), and its opponent profile is folded into the cross-game stores (B2,
  * docs/PLAN-PROFILES.md; off with `WARAPP_PLAYER_PROFILE=off` in `env`): the per-game file kept while it
  * was played, else, once, its cached boards (#264's backfill), reported as `profileFold`. A finished game
- * the cached account did not win says how (`howLost`, #274, src/tools/how-lost.ts).
+ * the cached account did not win says how (`howLost`, #274, src/tools/how-lost.ts), as does (#283) a game
+ * still playing once that account's seat is out.
  */
 export function registerGameTool(server: McpServer, client: WarappClient, dir?: () => string, env?: EnvSource): void {
   server.registerTool(
@@ -80,8 +81,10 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
           'is on and whether the board is available for warapp_analyze_board; the end-of-game, boot and AI settings ' +
           '(`endRules`) and the humans who have not committed with the time left to each boot (`leavers`, when the game boots; from ' +
           'lastTurnTime, whose meaning is unverified). Optional game history and chat. ' +
-          'A finished game I lost says how (`howLost`): a surrender or boot by my state; an elimination from the boards ' +
-          'this server cached while it played — the turn (certain only when the game ended on it), my commander\'s territory ' +
+          'A game I lost says how (`howLost`), once finished or, while the others play on, once my seat is out (eliminated, ' +
+          'booted or surrendered): a surrender or boot by my state, with the last turn played here and the last logged outlook ' +
+          '(its state, my income and armies against the strongest opponent\'s in view); an elimination from the boards ' +
+          'this server cached while it played — the turn (certain only when it is the newest completed turn), my commander\'s territory ' +
           'that fell with what it held, the attackers that needed and who bordered it (at a commander walk\'s destination, ' +
           'which may instead have fallen before the walk ran), or else my last territories (inferred, never seen). ' +
           'A finished game is folded once into the opponent profiles (`profileFold`; from the turns kept while it was played, ' +

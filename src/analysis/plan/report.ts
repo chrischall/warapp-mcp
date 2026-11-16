@@ -76,7 +76,7 @@ export function reportExpected(
   const { borders } = threats;
   const { conceded, heldAgainst, keptIncome, stayAt, twoStepBound, twoStepCited, twoStepHold, twoStepNote } = hd;
   const { frontierOf, startHold } = tgt;
-  const { notCompleted, stopped, stoppedLine } = caps;
+  const { notCompleted, stopped, stoppedLine, denied } = caps;
   // ---- expected ----
   const after = heldNow();
   const completed = completedBy(after);
@@ -130,6 +130,8 @@ export function reportExpected(
     const kept = rationale.filter((r) => !takenAfterAll.some((line) => r.startsWith(line)));
     rationale.splice(0, rationale.length, ...kept);
   }
+  // #281: each vacated territory taken though it faces an enemy, said once.
+  for (const t of [...denied.keys()].sort(byNum)) if (captured.has(t)) rationale.push(denied.get(t)!);
   if (outgrown || notTaken.length) {
     const stop = notTaken.length
       ? ` Expansion that adds enemy borders without completing a bonus is stopped: ${notTaken.map((x) => `${label(x.t)} (the frontier would need ${x.holdCost}, next income ${x.income})`).join(', ')} not taken.`

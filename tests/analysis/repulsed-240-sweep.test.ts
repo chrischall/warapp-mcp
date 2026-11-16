@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { neighborsOf } from '../../src/analysis/graph.js';
 import { planTurn, type PlanInput, type RepulsedTarget, type TurnPlan } from '../../src/analysis/planner.js';
 import type { BoardState } from '../../src/board.js';
+import { CHEAP_EXPANSION } from '../../src/analysis/plan/vacated.js';
 import { DEFAULT_STRIDE, SYNTHETIC_COUNT, suiteInputs, syntheticInput } from './golden/corpus.js';
 
 /**
@@ -122,7 +123,10 @@ describe('#240 review: one repulsed territory at a time, across the whole corpus
         const before = sentOn(plain, t);
         const attacks = p.moves.filter((m) => m.kind === 'attack' && m.to === t);
         const sent = sentOn(p, t);
-        if (before >= sure && sent === 0) dropped.push(`${name}: T${t} ${before} >= ${sure} -> 0`);
+        // #281 (the owner's extension, 2026-11-16): an empty enemy territory taken as cheap expansion
+        // with the guard off is never a repulsed one — the owner's rule, as for #276's raids.
+        const cheap = plain.moves.some((m) => m.kind === 'attack' && m.to === t && m.reason.includes(CHEAP_EXPANSION));
+        if (before >= sure && sent === 0 && !cheap) dropped.push(`${name}: T${t} ${before} >= ${sure} -> 0`);
         if (attacks.length === 1 && sent < sure) under.push(`${name}: T${t} ${sent} < ${sure} (${attacks[0]!.reason.slice(0, 60)})`);
       }
     }
