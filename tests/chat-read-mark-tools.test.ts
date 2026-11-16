@@ -219,6 +219,18 @@ describe('warapp_mark_chat_read (#311)', () => {
     expect(textOf(feedOnly)).toMatch(/GameFeed, which gives no message ids/);
     await h.harness.close();
 
+    // #313: the web read answered with no message while GameFeed holds some: no message id to mark, and
+    // retrying from a fresh tab would not help, so the refusal says what war.app's web read returned.
+    const webEmpty = warapp({ chat: [] });
+    h = await liveHarness({ feed: [feedGame({ chat: [...chat, { playerID: BOB.inGame, message: 'gg' }] })], pages: SIGNED_IN_ANN, warapp: webEmpty.handler });
+    const shortWeb = await h.call('warapp_mark_chat_read', { game_id: GAME });
+    expect(shortWeb.isError).toBe(true);
+    expect(textOf(shortWeb)).toMatch(/web read of game 12345678 returned no messages \(GameFeed holds 2\)/);
+    expect(textOf(shortWeb)).toMatch(/no message id to mark/);
+    expect(textOf(shortWeb)).not.toMatch(/retry/);
+    expect(webEmpty.marks).toEqual([]);
+    await h.harness.close();
+
     const empty = warapp({ chat: [] });
     h = await liveHarness({ feed: [feedGame()], pages: SIGNED_IN_ANN, warapp: empty.handler });
     const nothing = await h.call('warapp_mark_chat_read', { game_id: GAME });

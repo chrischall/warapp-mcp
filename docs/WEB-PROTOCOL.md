@@ -547,7 +547,7 @@ private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `wara
   game ended by surrender GameRefresh returned none while GameFeed held the surrender line; why is not
   known — GameRefresh may not carry a finished game's or a surrender turn's messages): GameFeed's list
   stands in when the web read is empty, else its messages no web message matches (sender, time within a
-  second) are added as `unknown`; `warapp_plan_turn` counts unread chat from it (the game read carries it).
+  second) are added as `unknown` (the result's `source` stays `web`, flagged `filledFromGamefeed`, #321); `warapp_plan_turn` counts unread chat from it (the game read carries it).
 - **Send:** `SendChat` (42): auth, int32 gameId, string text, int32 channel (`-1` = public,
   otherwise the sender's team: the client sends its own player's team), optional int32 private
   recipient (the client then sends channel `-1`; server error 201 is "cannot specify team in a
@@ -675,7 +675,11 @@ with the auth block first; field orders are the client writers' and readers' rea
   marked goes as `-1`, an empty dict as absent. The effect is read back from `GetMyGames` (the four flags above,
   `RawMyGame.unreadChat`): `read` (`confirmed`) when every marked channel's flag is clear, else `unconfirmed`; no
   answer is `unknown` and is never resent; a refusal is an error (nothing changed). It refuses a game its list
-  already shows read. It reaches no other player and posts nothing. `mark_seen: true` on `warapp_get_chat` and
+  already shows read. It reaches no other player and posts nothing. **Limit (#313):** when GameRefresh answers with
+  no message while GameFeed's chat holds some (seen on a finished game ended by surrender), there is no message id
+  to send — GameFeed's messages carry none — so the tool refuses, saying the web read returned no messages and how
+  many GameFeed holds; a retry from a fresh tab reads the same. Whether war.app's own client can clear such a
+  game's unread flags is unknown. `mark_seen: true` on `warapp_get_chat` and
   `warapp_chat_inbox` marks only this machine's cursor and sends nothing to war.app. The inbox lists a finished game
   when one of its flags is set, or when its flags do not read as booleans (a misread position must not hide its
   chat; the answer's `finishedUnflagged` counts those, read unjudged).

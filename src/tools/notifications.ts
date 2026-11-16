@@ -25,7 +25,7 @@ import {
   writeDeleteInAppNotificationParams,
   writeGetInAppNotificationsParams,
 } from '../protocol/methods.js';
-import { WarappServerError } from '../protocol/rpc.js';
+import { notSent, WarappServerError } from '../protocol/rpc.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { mintMeta } from './hints.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
@@ -146,6 +146,8 @@ interface DeleteSends {
   alreadyGone: string[];
   refused?: { id: string; code: number };
   unanswered?: string;
+  /** The id whose request failed before it left (#272: nothing sent), after an earlier id changed something. */
+  unsent?: string;
   notSent: string[];
 }
 
@@ -429,8 +431,9 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
           ...(sends.notSent.length ? { notSent: sends.notSent } : {}),
         });
         return sendAndVerify({
-          // One request per id, in order, never retried. A refusal (other than 699) or no answer stops there:
-          // the ids after it are not sent. A refusal before anything changed is an error; after, it is reported.
+          // One request per id, in order, never retried. A refusal (other than 699), no answer or a request that
+          // could not be sent stops there: the ids after it are not sent. A refusal or an unsent request before
+          // anything changed is an error; after, it is reported and the read-back judges what did change.
           send: async () => {
             for (const [i, id] of ids.entries()) {
               try {
@@ -443,6 +446,12 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
                 }
                 sends.notSent = ids.slice(i + 1);
                 const changed = sends.sent.length + sends.alreadyGone.length > 0;
+                if (changed && notSent(e)) {
+                  // Never "nothing changed": earlier ids went. This one never left, so it is not sent either.
+                  sends.unsent = id;
+                  sends.notSent = ids.slice(i);
+                  return;
+                }
                 if (e instanceof WarappServerError) {
                   if (!changed) throw e;
                   sends.refused = { id, code: e.code };
@@ -483,12 +492,15 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
             const notSeen = missing.filter((id) => !gone.includes(id));
             const deleted = gone.filter((id) => sends.sent.includes(id));
             const parts = { ids, ...(deleted.length ? { deleted } : {}), ...progress() };
-            if (!stillListed.length && !notSeen.length && !sends.refused) {
+            if (!stillListed.length && !notSeen.length && !sends.refused && !sends.unsent) {
               return { status: 'deleted' as const, outcome: 'confirmed' as const, ...parts };
             }
             const problems = [
               ...(sends.refused
                 ? [`war.app refused ${sends.refused.id} (error ${sends.refused.code})${sends.notSent.length ? `, so ${sends.notSent.join(', ')} ${sends.notSent.length === 1 ? 'was' : 'were'} not sent` : ''}`]
+                : []),
+              ...(sends.unsent
+                ? [`${sends.unsent} could not be sent, so ${sends.notSent.join(', ')} ${sends.notSent.length === 1 ? 'was' : 'were'} not sent`]
                 : []),
               ...(stillListed.length ? [`the list still holds ${stillListed.join(', ')}`] : []),
               ...(notSeen.length

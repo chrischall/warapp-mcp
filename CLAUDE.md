@@ -232,11 +232,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
   failure, GameFeed's `chat` (no channel: `unknown`). **A web read with fewer messages than GameFeed's chat (#313:
   a finished game's surrender line was missing) uses GameFeed's too**, from the GameFeed read the tool already made
-  (`readChat` in `src/tools/chat.ts`, no extra request): with no web message GameFeed's list stands in (`source:
-  gamefeed`), else the GameFeed messages no web message matches (same sender, times within a second, or the same
-  text when either has no time; `fillFromFeed` in `src/chat.ts`) are added under `unknown` by time (`source:
-  merged`, whose mark records the named channels too); `feedFill` gives the counts and a note. `warapp_mark_chat_read`
-  takes a merged read (its web ids). Bodies go out through `untrustedBody` (the
+  (`readChat` in `src/tools/chat.ts`, no extra request): with no web message GameFeed's list stands in, else the
+  GameFeed messages no web message matches (same sender, times within a second, or the same text when either has no
+  time; `fillFromFeed` in `src/chat.ts`) are added under `unknown` by time (the mark then records the named channels
+  too). **`source` keeps its contract (#321): `web` | `gamefeed`, the read that answered** — a filled web read is
+  `web`; the fill shows only in the additive `filledFromGamefeed: true` and `feedFill` (counts and a note), so no
+  caller meets a new enum value. `warapp_mark_chat_read` takes a filled read with web messages (their ids) and
+  refuses one whose web read returned none (no id to mark: it says so, never "retry"). Bodies go out through `untrustedBody` (the
   `untrustedText` cleaning, capped at 2,000). "New" is a name-free cursor at `<dataDir>/chat/<gameId>.json`
   (`src/chat-cursor.ts`: per channel the count and newest time marked seen, plus the whole chat, against
   which every message is judged too — a named channel by time only: seen by either mark is not new); only

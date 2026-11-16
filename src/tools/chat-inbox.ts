@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { CHAT_CHANNELS, type ChatChannel } from '../chat.js';
 import { chatGameIds, unflaggedFinished } from '../my-games.js';
 import { playersByInGameId } from '../live.js';
-import { CHAT_SOURCE_NOTES, chatMe, chatUnread, markChatSeen, readChat, shown, type ChatSource } from './chat.js';
+import { CHAT_SOURCE_NOTES, chatMe, chatUnread, feedFillFields, markChatSeen, readChat, shown, type ChatSource } from './chat.js';
 import { parseGameId } from '../client.js';
 import { gameIdArg, readAnnotations, respond, untrustedDescription, untrustedText } from './common.js';
 import { mintMeta } from './hints.js';
@@ -139,7 +139,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
             name: game.name === undefined ? null : untrustedText(game.name),
             state: game.state,
             source: read.source,
-            ...(read.feedFill ? { feedFill: read.feedFill } : {}),
+            ...feedFillFields(read),
             unread,
             newCount: fresh_.length,
             messages,

@@ -345,6 +345,30 @@ describe('warapp_delete_notification', () => {
     expect(p).toMatchObject({ status: 'unconfirmed', outcome: 'unconfirmed', deleted: ['9001'], refused: { id: '9002', code: 17 }, notSent: ['9003'] });
   });
 
+  it('a send that fails before leaving after an id was deleted stops there and lets the read-back judge it, never "nothing changed"', async () => {
+    const s = notificationServer([{ id: '9001' }, { id: '9002' }, { id: '9003' }]);
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const env = h.env;
+    const email = env.WARAPP_EMAIL!;
+    // Once 9001 is deleted, the next request (9002's) fails before it is sent: the email reads as unset once.
+    let failed = false;
+    Object.defineProperty(env, 'WARAPP_EMAIL', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        if (s.deletes.length !== 1 || failed) return email;
+        failed = true;
+        return undefined;
+      },
+    });
+    const p = payload(await confirmed({ ids: ['9001', '9002', '9003'] }));
+    expect(failed).toBe(true);
+    expect(s.deletes).toEqual(['9001']);
+    expect(p).toMatchObject({ status: 'unconfirmed', outcome: 'unconfirmed', deleted: ['9001'], notSent: ['9002', '9003'] });
+    expect(String(p.warning)).toMatch(/9002 could not be sent/);
+    expect(String(p.warning)).not.toMatch(/nothing changed/);
+  });
+
   it('is unknown, never resent and never read back, when war.app does not answer', async () => {
     const s = notificationServer([{ id: '9001' }, { id: '9002' }, { id: '9003' }], { del: { '9002': { msgNum: 999 } } });
     h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });

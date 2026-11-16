@@ -49,6 +49,8 @@ export interface Harness {
   /** Web-client frames the fake war.app answered (through the mock bridge). */
   exchanges: WarappExchange[];
   bridge: MockBridgeServer;
+  /** The env object the server reads (the same reference, so a test can change it mid-call). */
+  env: Record<string, string>;
   call: (name: string, args?: Record<string, unknown>) => Promise<CallToolResult>;
 }
 
@@ -96,9 +98,10 @@ export async function liveHarness(
   const fake = fakeWarapp(opts.warapp ?? NO_RESULT, opts.pages);
   const { bridge, mock } = mockWarappBridge(opts.socket ? withSocket(opts.socket, fake.handler) : fake.handler);
   const bundle = opts.bundle ?? new WarappBundle(`${LIVE_BUNDLE}\n${MY_GAMES_BUNDLE}\n${CHAT_BUNDLE}\n${NOTIFICATIONS_BUNDLE}`, 'test');
+  const env: Record<string, string> = { ...CREDS, MCP_DATA_DIR: dataDir, ...opts.env };
   const harness = await createTestHarness((s) =>
     registerAllTools(s, {
-      env: { ...CREDS, MCP_DATA_DIR: dataDir, ...opts.env },
+      env,
       fetchImpl,
       sleep: async () => {},
       mapCache: new MapCache(),
@@ -114,6 +117,7 @@ export async function liveHarness(
     calls,
     exchanges: fake.exchanges,
     bridge: mock,
+    env,
     call: (name, args = {}) => harness.client.callTool({ name, arguments: args }) as Promise<CallToolResult>,
   };
 }

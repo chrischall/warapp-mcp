@@ -67,7 +67,8 @@ export function registerMarkChatReadTool(server: McpServer, ctx: LiveContext): v
         "Mark a war.app (Warzone) game's chat read on war.app itself (war.app's RegisterChatView), so the game stops " +
         'showing unread messages there: every channel, or one (`channel`), up to the newest message read now. It ' +
         'changes only your own unread state, reaches no other player and posts nothing. Needs the chat read through ' +
-        'your war.app tab or linked session (GameFeed gives no message ids); refuses a chat with nothing to mark or one ' +
+        'your war.app tab or linked session (GameFeed gives no message ids); refuses a chat with nothing to mark (also ' +
+        "when war.app's web read returned no messages while GameFeed holds some: no message id to mark) or one " +
         "war.app's game list already shows read. Always as the signed-in account; the outcome is read back from your " +
         "game list's unread-chat flags (`read`, `unconfirmed` while a channel still shows unread, or `unknown` when " +
         "war.app did not answer — never resend blindly). warapp_get_chat's and warapp_chat_inbox's `mark_seen` mark " +
@@ -92,11 +93,20 @@ export function registerMarkChatReadTool(server: McpServer, ctx: LiveContext): v
         const me = await ctx.myIdentity({ fresh: true }).catch(() => undefined);
         if (!me) throw accountUnknown(ctx.hosted);
         const read = await readChat(ctx, game, me);
-        // A merged read (#313) still carries the web messages' ids; GameFeed's added lines carry none and mark nothing.
+        // A filled web read (#313) still carries the web messages' ids; GameFeed's added lines carry none and mark nothing.
         if (!read || read.source === 'gamefeed') {
           refuse(
             `The chat of game ${game.id} could be read only from GameFeed, which gives no message ids, so nothing was sent.`,
             'Make sure your war.app tab is open and signed in (reload or focus it if it is frozen), then retry.',
+          );
+        }
+        // #313: the web read answered with no message at all while GameFeed holds some (a finished game's chat,
+        // seen live). Every line is then GameFeed's, with no id; a retry reads the same, so it says why instead.
+        if (read.feedFill?.web === 0) {
+          refuse(
+            `war.app's web read of game ${game.id} returned no messages (GameFeed holds ${read.feedFill.gamefeed}), so ` +
+              'there is no message id to mark and nothing was sent.',
+            "This is a limit of war.app's web read for this game, not of your tab; warapp_get_chat still shows GameFeed's messages.",
           );
         }
         const channels: ChatChannel[] = channel === undefined || channel === 'all' ? [...CHAT_CHANNELS] : [channel];
