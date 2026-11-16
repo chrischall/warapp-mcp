@@ -254,7 +254,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   passed back as `cursor`), each exactly as `warapp_get_chat` reads it; a game with new messages shows only
   those (`limit` newest, `markedUnshown`), the others are `quiet`, and a failed read is in `failed`, never
   thrown. Only `mark_seen: true` writes the cursor (every channel, `markChatSeen`, shared with `warapp_get_chat`).
-  **Read marks on war.app (#311, UNVERIFIED live) are `warapp_mark_chat_read`, confirm-gated** (`src/tools/chat-read-mark.ts`;
+  **Read marks on war.app (#311, VERIFIED live 2026-11-16 on nine games, direct transport) are `warapp_mark_chat_read`, confirm-gated** (`src/tools/chat-read-mark.ts`;
   one game, every channel or one): it sends `RegisterChatView` (43; `writeRegisterChatViewParams`, golden-pinned): per
   channel the highest message id read (`chatViewMarks`, `src/chat.ts`, mine included; private conversations keyed by
   the counterpart — the recipient of my message, else the sender; game groups, the web client's `unknown`, by group
@@ -293,7 +293,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   there (`refused`, the rest `notSent`, `unconfirmed`); no answer stops there too and is `unknown`, never read back
   or resent. Read back by the same listing and `seenGone`: `deleted` (`confirmed`) only when every id sent is seen
   gone; still listed (`stillListed`) or `notSeen` is `unconfirmed`. The preview names ids and game ids only.
-  Encoders golden-pinned; everything UNVERIFIED live. Not a chat send (D2).
+  Encoders golden-pinned; 317, 318, 319 and 43 VERIFIED live 2026-11-16 (direct transport). Not a chat send (D2).
 - **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
   `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
   (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only

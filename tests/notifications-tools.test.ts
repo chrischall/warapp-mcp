@@ -365,7 +365,7 @@ describe('warapp_delete_notification', () => {
     expect(failed).toBe(true);
     expect(s.deletes).toEqual(['9001']);
     expect(p).toMatchObject({ status: 'unconfirmed', outcome: 'unconfirmed', deleted: ['9001'], notSent: ['9002', '9003'] });
-    expect(String(p.warning)).toMatch(/9002 could not be sent/);
+    expect(String(p.warning)).toMatch(/9002 could not be sent, so 9003 was not sent either/);
     expect(String(p.warning)).not.toMatch(/nothing changed/);
   });
 

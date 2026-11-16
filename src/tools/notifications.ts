@@ -500,7 +500,7 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
                 ? [`war.app refused ${sends.refused.id} (error ${sends.refused.code})${sends.notSent.length ? `, so ${sends.notSent.join(', ')} ${sends.notSent.length === 1 ? 'was' : 'were'} not sent` : ''}`]
                 : []),
               ...(sends.unsent
-                ? [`${sends.unsent} could not be sent, so ${sends.notSent.join(', ')} ${sends.notSent.length === 1 ? 'was' : 'were'} not sent`]
+                ? [sends.notSent.length > 1 ? `${sends.unsent} could not be sent, so ${sends.notSent.slice(1).join(', ')} ${sends.notSent.length === 2 ? 'was' : 'were'} not sent either` : `${sends.unsent} could not be sent`]
                 : []),
               ...(stillListed.length ? [`the list still holds ${stillListed.join(', ')}`] : []),
               ...(notSeen.length
