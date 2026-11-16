@@ -10,7 +10,9 @@
 // {@link DirectBridge} is that direct leg: it reads the AuthToken from the
 // session store (src/direct/session.ts) per call and issues an HTTPS request
 // through mcp-utils netguard `fetchPublic` (pinned to public addresses, so a
-// name that resolves or rebinds inward is refused). Every hop must be the exact
+// name that resolves or rebinds inward is refused) — or, with an egress proxy
+// configured (HTTPS_PROXY, mcp-host's only way out), through a proxy agent for
+// it (src/direct/egress.ts), the proxy holding the address table. Every hop must be the exact
 // origin https://war.app; a non-GET follows no redirect at all, so its body (the
 // account email, the orders) is never re-sent anywhere
 // ({@link directFetchOptions}). It maps the reply into the same
@@ -37,7 +39,7 @@
 // exactly as locally; without that token {@link createDirectFirstBridge} pins
 // the router to the browser bridge whatever WARAPP_TRANSPORT says and its
 // session store reads as empty, as before (#333).
-import { detectEdgeBlock, EdgeBlockedError, McpToolError } from '@chrischall/mcp-utils';
+import { detectEdgeBlock, EdgeBlockedError, McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import {
   createDirectFirstTransport,
   readTransportMode,
@@ -49,6 +51,7 @@ import {
   type TransportMode,
 } from '@chrischall/mcp-utils/fetchproxy';
 import { fetchPublic, type PublicFetchResponse, type PublicFetchStopped } from '@chrischall/mcp-utils/netguard';
+import { egressDispatcher, type ProxyAgentFactory } from './egress.js';
 import type { WarappBridge } from '../transport-bridge.js';
 import { isHosted } from '../hosted.js';
 import { hostedSession, SESSION_HOST, scrubError, type Session } from './session.js';
@@ -228,19 +231,44 @@ export function toDirectResult(
   return out;
 }
 
-/** The default direct leg: a real HTTPS request through netguard `fetchPublic` (public-only, war.app-only). */
-const fetchViaPublic: DirectFetch = async (url, init) => {
-  const res = await fetchPublic(url, {
-    ...directFetchOptions(init.method),
-    method: init.method,
-    headers: init.headers,
-    maxBytes: MAX_DIRECT_BODY_BYTES,
-    timeoutMs: DIRECT_TIMEOUT_MS,
-    ...(init.body !== undefined ? { body: init.body } : {}),
-    ...(init.signal ? { signal: init.signal } : {}),
-  });
-  return toDirectResult(res);
-};
+/** Options for {@link createDirectFetch}. */
+export interface DirectFetchEnv {
+  /** Env for the egress proxy, read on each request (default `process.env`). */
+  env?: EnvSource;
+  /** Builds the proxy agent (a test seam; default undici's `ProxyAgent`). */
+  proxyAgent?: ProxyAgentFactory;
+}
+
+/**
+ * The default direct leg: a real HTTPS request through netguard `fetchPublic`
+ * (war.app-only by `allowHosts` and `stopBefore`). With an egress proxy
+ * configured (HTTPS_PROXY: mcp-host's only way out, src/direct/egress.ts) it
+ * goes through a proxy agent, built per request and closed after; else netguard
+ * builds its public-only dispatcher, as before. A proxy that is set but unusable
+ * throws before anything is sent: never a direct connection instead.
+ */
+export function createDirectFetch(opts: DirectFetchEnv = {}): DirectFetch {
+  return async (url, init) => {
+    const proxy = egressDispatcher(opts.env ?? process.env, opts.proxyAgent);
+    try {
+      const res = await fetchPublic(url, {
+        ...directFetchOptions(init.method),
+        method: init.method,
+        headers: init.headers,
+        maxBytes: MAX_DIRECT_BODY_BYTES,
+        timeoutMs: DIRECT_TIMEOUT_MS,
+        ...(init.body !== undefined ? { body: init.body } : {}),
+        ...(init.signal ? { signal: init.signal } : {}),
+        ...(proxy ? { dispatcher: proxy } : {}),
+      });
+      return toDirectResult(res);
+    } finally {
+      await proxy?.close().catch(() => {});
+    }
+  };
+}
+
+const fetchViaPublic: DirectFetch = createDirectFetch();
 
 /**
  * Resolve a bridge path to an absolute https URL on the exact host war.app,
@@ -438,7 +466,7 @@ interface CreateDirectFirstBridgeOptions {
   mode?: TransportMode;
   /** Env for the default `mode` read and the hosted check (default `process.env`). */
   env?: NodeJS.ProcessEnv;
-  /** Test seam: the direct leg's HTTPS primitive (default netguard `fetchPublic`). */
+  /** Test seam: the direct leg's HTTPS primitive (default netguard `fetchPublic`, through the egress proxy when one is set). */
   directFetch?: DirectFetch;
   /** Where the switch notice goes (default stderr; never prints the token). */
   log?: (message: string) => void;
@@ -478,7 +506,7 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
     : (opts.mode ?? readTransportMode(TRANSPORT_ENV, opts.env ? { env: opts.env } : {}));
   const store: SessionStore = hosted ? { read: async () => hostSession } : opts.store;
   const hostSignIn = hostSession !== null;
-  const direct = new DirectBridge(store, opts.directFetch, hostSignIn);
+  const direct = new DirectBridge(store, opts.directFetch ?? createDirectFetch({ env }), hostSignIn);
   const log = opts.log ?? ((m: string) => console.error(m));
   const now = opts.now ?? Date.now;
 

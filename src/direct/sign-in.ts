@@ -29,10 +29,15 @@
 //    value: each is scrubbed BY VALUE, and the cause chain is dropped.
 //  - The single-hop fetch goes through mcp-utils netguard's public-only
 //    dispatcher (a name that resolves or rebinds inward is refused), with one
-//    deadline over the whole exchange and a byte cap on each body.
+//    deadline over the whole exchange and a byte cap on each body. With an
+//    egress proxy configured (HTTPS_PROXY: mcp-host's only way out) it goes
+//    through a proxy agent instead (src/direct/egress.ts); a proxy that is set
+//    but unusable is refused before anything is sent.
 import { detectEdgeBlock, McpToolError, type McpToolErrorKind } from '@chrischall/mcp-utils';
 import { createPublicOnlyDispatcher } from '@chrischall/mcp-utils/netguard';
 import { type Dispatcher, fetch as undiciFetch } from 'undici';
+import type { EnvSource } from '@chrischall/mcp-utils';
+import { defaultProxyAgent, egressProxyUrl, type ProxyAgentFactory } from './egress.js';
 import { scrubSecrets, type SecretValue } from '../redact.js';
 import { isPlausibleAuthToken, SESSION_HOST } from './session.js';
 import { hasPasswordInput } from './transport.js';
@@ -92,13 +97,34 @@ export interface SignInOptions {
   timeoutMs?: number;
   /** The caller's cancellation. */
   signal?: AbortSignal;
+  /** Env for the egress proxy read by the default fetch (default `process.env`). */
+  env?: EnvSource;
 }
 
-/** The default single-hop fetch: undici through a public-only dispatcher, redirects never followed. */
-export function createSignInFetch(opts: { dispatcher?: Dispatcher; maxBytes?: number } = {}): SignInFetch {
+/** Options for {@link createSignInFetch}. */
+export interface SignInFetchOptions {
+  /** Send through this dispatcher, left open (tests). Default: the egress proxy, else public-only. */
+  dispatcher?: Dispatcher;
+  maxBytes?: number;
+  /** Env for the egress proxy (default `process.env`). */
+  env?: EnvSource;
+  /** Builds the proxy agent (a test seam; default undici's `ProxyAgent`). */
+  proxyAgent?: ProxyAgentFactory;
+}
+
+/**
+ * The default single-hop fetch: undici, redirects never followed, through the
+ * egress proxy when one is configured (src/direct/egress.ts), else through a
+ * public-only dispatcher. A proxy that is set but unusable throws here, before
+ * any request.
+ */
+export function createSignInFetch(opts: SignInFetchOptions = {}): SignInFetch {
   const maxBytes = opts.maxBytes ?? SIGN_IN_MAX_BODY_BYTES;
+  // Read (and a bad proxy refused) now, before any request; an agent is built per hop and closed.
+  const proxy = opts.dispatcher ? undefined : egressProxyUrl(opts.env ?? process.env);
+  const makeProxy = opts.proxyAgent ?? defaultProxyAgent;
   return async (url, init) => {
-    const owned = opts.dispatcher ? undefined : createPublicOnlyDispatcher();
+    const owned = opts.dispatcher ? undefined : proxy ? makeProxy(proxy) : createPublicOnlyDispatcher();
     try {
       const res = await undiciFetch(url, {
         method: init.method,
@@ -227,7 +253,7 @@ async function exchange(creds: SignInCredentials, jar: Map<string, string>, opts
   if (!creds.email.trim() || !creds.password) {
     throw refusal('no_credential', 'Signing in to war.app needs both the email and the password; nothing was sent.');
   }
-  const fetchHop = opts.fetch ?? createSignInFetch();
+  const fetchHop = opts.fetch ?? createSignInFetch(opts.env ? { env: opts.env } : {});
   const timeoutMs = opts.timeoutMs ?? SIGN_IN_TIMEOUT_MS;
   const timeout = AbortSignal.timeout(timeoutMs);
   const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;

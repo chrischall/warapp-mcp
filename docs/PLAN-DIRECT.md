@@ -192,6 +192,21 @@ capture (or re-capture) the token.
   loader variable, `perUserChild`, the step tools and the capture tool registered hosted with exactly
   the arguments sent).
 
+- **The egress proxy (fixed after the first hosted sign-in failed with "Could not reach war.app to sign
+  in").** On mcp-host a child reaches the internet only through the egress proxy set by `HTTPS_PROXY` +
+  `NODE_USE_ENV_PROXY=1`; global `fetch` honours it, a custom undici dispatcher does not, and a direct
+  socket is silently dropped. The sign-in and the direct leg each brought netguard's public-only
+  dispatcher, so neither could leave the machine. `src/direct/egress.ts` (`egressProxyUrl` /
+  `egressDispatcher`) now gives both an undici `ProxyAgent` when `HTTPS_PROXY` (or `https_proxy`) is set,
+  built per request and closed after; without one, nothing changes (public-only, as before). The host
+  check stays ours (the exact origin `https://war.app`); the proxy enforces the child's allowlist and its
+  own address table, so the public-only pin is not needed behind it. A proxy URL that does not parse as
+  http(s) is refused before anything is sent (never echoed), never a fallback to a direct connection;
+  `NO_PROXY` is not read. The push channel's direct WebSocket (Node's built-in WebSocket, its own socket)
+  is not attempted while a proxy is set: the push uses xhr-polling over the direct-first router, whose
+  direct leg goes through the proxy. GameFeed (`createApiClient`) and the bundle download already use
+  global fetch.
+
 ### The security trade-off the owner accepted
 This reverses the "direct mode is local-only" rule. War.app's `AuthToken` is a full-account
 credential, and it is now stored hosted, as a per-user mcp-host secret (sealed to the account key),

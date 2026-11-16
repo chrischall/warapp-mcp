@@ -57,7 +57,7 @@ type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCa
   bundle?: () => Promise<ClassReader>;
   /** The turn-notification listener; default: the bridge's one per process. */
   push?: PushListener;
-  /** Test seam: the direct leg's HTTPS primitive (default netguard `fetchPublic`). */
+  /** Test seam: the direct leg's HTTPS primitive (default netguard `fetchPublic`, through the egress proxy when one is set). */
   directFetch?: DirectFetch;
   /** Test seam: warapp_sign_in's sign-in (hosted only; default src/direct/sign-in.ts). */
   signIn?: SignInToolDeps['signIn'];
@@ -157,7 +157,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     deps.push ??
     pushListenerFor(fetchproxy, {
       transport: () => bridge.ready(),
-      webSocket: pushWebSocketLeg(bridge, () => readSession(deps.env)),
+      webSocket: pushWebSocketLeg(bridge, () => readSession(deps.env), {}, deps.env ?? process.env),
       extras: () => live.rpc.extras,
     });
   registerSessionTools(server, {
