@@ -35,8 +35,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameFeed answers as the player whose token is presented (fog of war included). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Eleven tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing) and `warapp_link_session` (local only:
+- **Twelve tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_delete_notification` (deletes war.app notifications, for good; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing) and `warapp_link_session` (local only:
   it stores a session cookie on this machine and is not registered hosted), registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
@@ -261,7 +261,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GetMyGames' GameInfo unread flags (0-based 8 group, 17 private, 18 public, 23 team: `RawMyGame.unreadChat`, read
   loosely — a non-boolean leaves them unknown, never refuses the list): `read` (`confirmed`) when every marked
   channel's flag is clear, else `unconfirmed` (`stillUnread`); `unknown` when war.app did not answer, never resent.
-  Not a chat send (D2). The inbox also lists a finished game whose chat GetMyGames flags unread (`chatGameIds`).
+  Not a chat send (D2). The inbox also lists a finished game whose chat GetMyGames flags unread, or whose flags do not read (`chatGameIds`:
+  a misread must not hide its chat; `finishedUnflagged` counts those read unjudged).
   `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
   one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
@@ -278,12 +279,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   folds the game's opponent profile through `foldFinishedGame` only when a per-game file is kept unfolded
   (`hasUnfoldedProfile`): then one GameFeed read (no map), at most `FOLD_LOOKUPS` (5) per call, else no request
   (it is also where #312's end-of-game pass is to be triggered: a TODO in `foldEndedGames` until that exists).
-  `warapp_dismiss_notification` (confirm-gated) sends `AcknowledgeInAppNotifications` (319: marks read; delete,
-  318, is not used) for the listed unread ids; the preview names ids and game ids only; read back by listing
+  `warapp_dismiss_notification` (confirm-gated) sends `AcknowledgeInAppNotifications` (319: marks read, never
+  deletes) for the listed unread ids; the preview names ids and game ids only; read back by listing
   again (up to `MAX_FIND_PAGES` pages): `dismissed` (`confirmed`) only when every id reads read or is seen gone —
   the pages read cover the whole list, or reach past where it stood in the plan by as many as the list has grown
   (`seenGone`); an id not found otherwise is `notSeen` ("not seen in the pages read") and the outcome
-  `unconfirmed`, as is one still unread; `unknown` never resent. Encoders golden-pinned; everything UNVERIFIED live. Not a chat send (D2).
+  `unconfirmed`, as is one still unread; `unknown` never resent. `warapp_delete_notification` (confirm-gated,
+  destructive: the client's Delete button, as #311 asked) sends `DeleteInAppNotification` (318,
+  `writeDeleteInAppNotificationParams`: one decimal-text id) once per listed id, in order, never retried; error
+  699 (`NOTIFICATION_NOT_FOUND`) is `alreadyGone`; any other refusal throws when nothing changed yet, else stops
+  there (`refused`, the rest `notSent`, `unconfirmed`); no answer stops there too and is `unknown`, never read back
+  or resent. Read back by the same listing and `seenGone`: `deleted` (`confirmed`) only when every id sent is seen
+  gone; still listed (`stillListed`) or `notSeen` is `unconfirmed`. The preview names ids and game ids only.
+  Encoders golden-pinned; everything UNVERIFIED live. Not a chat send (D2).
 - **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
   `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
   (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only

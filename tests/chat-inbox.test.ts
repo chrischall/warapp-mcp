@@ -6,7 +6,11 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeGameDetailsAndChat, type SyntheticMessage } from './protocol/chat-bundle.js';
-import { writeMyGamesReturn, type SyntheticGame } from './protocol/my-games-bundle.js';
+import { MY_GAMES_BUNDLE, writeMyGamesReturn, type SyntheticGame } from './protocol/my-games-bundle.js';
+import { WarappBundle } from '../src/protocol/bundle.js';
+import { LIVE_BUNDLE } from './protocol/live-bundle.js';
+import { CHAT_BUNDLE } from './protocol/chat-bundle.js';
+import { NOTIFICATIONS_BUNDLE } from './protocol/notifications-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -292,6 +296,30 @@ describe('warapp_chat_inbox: finished games with unread chat (#311)', () => {
     // Reading marks nothing, here or on war.app.
     expect(fake.marks).toEqual([]);
     expect(p).not.toHaveProperty('readOnWarapp');
+  });
+
+  it('reads a finished game whose flags do not read (UNVERIFIED live), and says how many it read unjudged', async () => {
+    // A bundle whose GameInfo reads the team flag (field 23) as a number: the flags do not read as booleans.
+    const odd = MY_GAMES_BUNDLE.replace('e.c7=P.Yc(a)', 'e.c7=P.Yc(a)?1:0');
+    expect(odd).not.toBe(MY_GAMES_BUNDLE);
+    const bundle = new WarappBundle(`${LIVE_BUNDLE}\n${odd}\n${CHAT_BUNDLE}\n${NOTIFICATIONS_BUNDLE}`, 'test');
+    const fake = warapp(flagged(), { ...CHATS_311, 105: () => [{ id: 7, date: at(7), from: BOB.inGame, text: 'gg wp', turn: 9 }] });
+    const feed = [...FEED_311, feedGame(105, 'Finished')];
+    h = await liveHarness({ feed, pages: SIGNED_IN_ANN, warapp: fake.handler, bundle });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    // Both finished games are read: 104 (flags unreadable too) and 105, which a readable flag set would have left out.
+    expect(fake.refreshed).toEqual([101, 102, 103, 104, 105]);
+    expect(p.games.map((g) => g.id)).toEqual([101, 103, 104, 105]);
+    expect(p.finishedUnflagged).toBe(2);
+    expect(String(p.finishedNote)).toMatch(/flags/);
+  });
+
+  it('says nothing of unflagged finished games when every flag reads', async () => {
+    const fake = warapp(flagged(), CHATS_311);
+    h = await liveHarness({ feed: FEED_311, pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    expect(p).not.toHaveProperty('finishedUnflagged');
+    expect(p).not.toHaveProperty('finishedNote');
   });
 
   it('a game whose web read has fewer messages than GameFeed shows GameFeed\'s too (#313), with no extra read', async () => {

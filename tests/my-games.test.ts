@@ -13,6 +13,7 @@ import {
   myGamesTeams,
   readMyGames,
   summarizeMyGames,
+  unflaggedFinished,
   unreadChatOf,
   type MyGame,
 } from '../src/my-games.js';
@@ -444,6 +445,10 @@ describe('readMyGames / summarizeMyGames', () => {
     const [odd] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 23: 1 })], 0])), reader(true));
     expect(odd).not.toHaveProperty('unreadChat');
     expect(odd!.id).toBe(77);
+    // A finished game whose flags did not read is still a chat candidate (#311): the flags are UNVERIFIED live,
+    // and dropping it would hide its chat without a word.
+    expect(chatGameIds([odd!])).toEqual([77]);
+    expect(unflaggedFinished([odd!, g!])).toEqual([77]);
   });
 
   it('reads the flags through a bundle by read order (the synthetic GameInfo)', () => {
@@ -460,7 +465,7 @@ describe('readMyGames / summarizeMyGames', () => {
     ]);
   });
 
-  it('chatGameIds lists a finished game only when war.app flags its chat unread (#311)', () => {
+  it('chatGameIds lists a finished game when war.app flags its chat unread, or when its flags do not read (#311)', () => {
     const flags = (over: Partial<Record<'group' | 'private' | 'public' | 'team', boolean>> = {}) => ({
       group: false,
       private: false,
@@ -486,7 +491,7 @@ describe('readMyGames / summarizeMyGames', () => {
         g(2, 2),
         g(1, DISTRIBUTING),
       ]),
-    ).toEqual([1, 2, 3, 4, 9]);
+    ).toEqual([1, 2, 3, 4, 7, 9]);
   });
 
   it('treats a null player list as no players and a null name as empty', () => {

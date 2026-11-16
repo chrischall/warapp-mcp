@@ -1,5 +1,6 @@
-// warapp_get_notifications and warapp_dismiss_notification (#311): war.app's in-app notifications
-// through GetInAppNotifications (317), marked read with AcknowledgeInAppNotifications (319).
+// warapp_get_notifications, warapp_dismiss_notification and warapp_delete_notification (#311): war.app's
+// in-app notifications through GetInAppNotifications (317), marked read with AcknowledgeInAppNotifications
+// (319) and deleted with DeleteInAppNotification (318).
 // Synthetic replies built by our encoder only; no war.app traffic.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,17 +27,32 @@ const link = (id: number) => ({ Url: `https://war.app/MultiPlayer?GameID=${id}`,
 /** A fake war.app holding `items`: lists them by page, marks read on acknowledge (unless `ackWorks` is false). */
 function notificationServer(
   items: SyntheticNotification[],
-  opts: { ackWorks?: boolean; ackDeletes?: boolean; ackPrepends?: number; ack?: Partial<ReplyFrame> } = {},
+  opts: {
+    ackWorks?: boolean;
+    ackDeletes?: boolean;
+    ackPrepends?: number;
+    ack?: Partial<ReplyFrame>;
+    /** Per id, what a delete answers instead of deleting it (an error frame, or no answer). */
+    del?: Record<string, Partial<ReplyFrame>>;
+    /** A delete war.app accepts but does not carry out. */
+    deleteWorks?: boolean;
+    /** New notifications that arrive on top as a delete goes through. */
+    deletePrepends?: number;
+  } = {},
 ) {
   const state = items.map((n) => ({ ...n }));
   const lists: Array<{ start: number; count: number }> = [];
   const acks: string[][] = [];
+  const deletes: string[] = [];
+  /** Every request in order: `list` or `delete`. */
+  const log: string[] = [];
   const warapp = (req: DecodedRequest): Partial<ReplyFrame> => {
     const r = req.body;
     if (req.method === Method.GetInAppNotifications) {
       const start = r.int32();
       const count = r.int32();
       lists.push({ start, count });
+      log.push('list');
       return { body: (w) => writeInAppNotificationsReturn(w, state.slice(start, start + count), state.length) };
     }
     if (req.method === Method.AcknowledgeInAppNotifications) {
@@ -48,9 +64,21 @@ function notificationServer(
       else if (opts.ackWorks !== false) for (const n of state) if (ids.includes(n.id)) n.unread = false;
       return { body: () => {} };
     }
+    if (req.method === Method.DeleteInAppNotification) {
+      const id = r.string() ?? '';
+      deletes.push(id);
+      log.push('delete');
+      const instead = opts.del?.[id];
+      // 699: war.app no longer holds it (another tab deleted it as this one was sent).
+      if (instead?.error?.code === 699) state.splice(0, state.length, ...state.filter((n) => n.id !== id));
+      if (instead) return instead;
+      if (opts.deletePrepends) state.unshift(...Array.from({ length: opts.deletePrepends }, (_, i) => ({ id: String(800_000 + i) })));
+      if (opts.deleteWorks !== false) state.splice(0, state.length, ...state.filter((n) => n.id !== id));
+      return { body: () => {} };
+    }
     throw new Error(`unexpected method ${req.method}`);
   };
-  return { warapp, lists, acks, state };
+  return { warapp, lists, acks, deletes, log, state };
 }
 
 function finishedGame(): Record<string, unknown> {
@@ -234,5 +262,107 @@ describe('warapp_dismiss_notification', () => {
     const bad = await h.call('warapp_dismiss_notification', { ids: ['12a'] });
     expect(bad.isError).toBe(true);
     expect(s.acks).toEqual([]);
+  });
+});
+
+describe('warapp_delete_notification', () => {
+  async function confirmed(args: Record<string, unknown>) {
+    const preview = payload(await h!.call('warapp_delete_notification', args));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    return h!.call('warapp_delete_notification', { ...args, confirmToken: preview.confirmToken });
+  }
+
+  it('is a confirm-gated, idempotent, destructive write naming DeleteInAppNotification', async () => {
+    h = await liveHarness();
+    const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_delete_notification')!;
+    expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true });
+    expect(tool.description).toMatch(/DeleteInAppNotification/);
+  });
+
+  it('previews by id and game id only, says it cannot be undone, and sends nothing until confirmed', async () => {
+    const s = notificationServer([{ id: '9001', title: 'Game "Bob\'s war" has ended. You can now view its history', data: link(GAME), unread: false }]);
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const preview = payload(await h.call('warapp_delete_notification', { ids: ['9001'] }));
+    const text = JSON.stringify(preview);
+    expect(text).toContain('9001');
+    expect(text).toContain(String(GAME));
+    expect(text).not.toMatch(/Bob/);
+    expect(text).toMatch(/cannot be undone/);
+    expect(s.deletes).toEqual([]);
+  });
+
+  it('deletes each id, read or unread, one request per id, and reports deleted once the list no longer holds them', async () => {
+    const s = notificationServer([{ id: '9001' }, { id: '9002', unread: false }, { id: '9003' }]);
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const p = payload(await confirmed({ ids: ['9001', 9002] }));
+    expect(s.deletes).toEqual(['9001', '9002']);
+    expect(p).toMatchObject({ status: 'deleted', outcome: 'confirmed', deleted: ['9001', '9002'] });
+    expect(s.state.map((n) => n.id)).toEqual(['9003']);
+  });
+
+  it('treats error 699 (InAppNotificationKeyNotFound) as already gone and goes on with the rest', async () => {
+    const s = notificationServer([{ id: '9001' }, { id: '9002' }], {
+      del: { '9001': { error: { code: 699, message: 'InAppNotificationKeyNotFound' } } },
+    });
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const p = payload(await confirmed({ ids: ['9001', '9002'] }));
+    expect(s.deletes).toEqual(['9001', '9002']);
+    expect(p).toMatchObject({ status: 'deleted', outcome: 'confirmed', deleted: ['9002'], alreadyGone: ['9001'] });
+  });
+
+  it('is unconfirmed when the list still holds an id after the delete', async () => {
+    const s = notificationServer([{ id: '9001' }], { deleteWorks: false });
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const p = payload(await confirmed({ ids: ['9001'] }));
+    expect(p).toMatchObject({ status: 'unconfirmed', outcome: 'unconfirmed', stillListed: ['9001'] });
+    expect(s.deletes).toEqual(['9001']);
+  });
+
+  it('an id the read-back does not reach is unconfirmed, never confirmed', async () => {
+    // 200 notifications, the one deleted at index 140; 50 new ones arrive on top as it goes, past the pages read back.
+    const many = Array.from({ length: 200 }, (_, i) => ({ id: String(100 + i) }));
+    const s = notificationServer(many, { deletePrepends: 50 });
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const p = payload(await confirmed({ ids: ['240'] }));
+    expect(s.deletes).toEqual(['240']);
+    expect(p).toMatchObject({ status: 'unconfirmed', outcome: 'unconfirmed', notSeen: ['240'] });
+    expect(p.deleted).toBeUndefined();
+  });
+
+  it('a refusal on the first id is an error and sends no more', async () => {
+    const s = notificationServer([{ id: '9001' }, { id: '9002' }], { del: { '9001': { error: { code: 17, message: 'nope' } } } });
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const res = await confirmed({ ids: ['9001', '9002'] });
+    expect(res.isError).toBe(true);
+    expect(s.deletes).toEqual(['9001']);
+  });
+
+  it('a refusal after an id was deleted stops there and reports both, never claiming nothing changed', async () => {
+    const s = notificationServer([{ id: '9001' }, { id: '9002' }, { id: '9003' }], { del: { '9002': { error: { code: 17, message: 'nope' } } } });
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const p = payload(await confirmed({ ids: ['9001', '9002', '9003'] }));
+    expect(s.deletes).toEqual(['9001', '9002']);
+    expect(p).toMatchObject({ status: 'unconfirmed', outcome: 'unconfirmed', deleted: ['9001'], refused: { id: '9002', code: 17 }, notSent: ['9003'] });
+  });
+
+  it('is unknown, never resent and never read back, when war.app does not answer', async () => {
+    const s = notificationServer([{ id: '9001' }, { id: '9002' }, { id: '9003' }], { del: { '9002': { msgNum: 999 } } });
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const p = payload(await confirmed({ ids: ['9001', '9002', '9003'] }));
+    expect(s.deletes).toEqual(['9001', '9002']);
+    expect(p).toMatchObject({ status: 'unknown', outcome: 'unknown', sent: ['9001'], unanswered: '9002', notSent: ['9003'] });
+    // Nothing read back after the send.
+    expect(s.log.slice(s.log.indexOf('delete'))).toEqual(['delete', 'delete']);
+  });
+
+  it('refuses ids not in the list or not decimal text, sending nothing', async () => {
+    const s = notificationServer([{ id: '9001' }]);
+    h = await liveHarness({ pages: SIGNED_IN, warapp: s.warapp });
+    const missing = await h.call('warapp_delete_notification', { ids: ['424242'] });
+    expect(missing.isError).toBe(true);
+    expect(textOf(missing)).toMatch(/424242/);
+    const bad = await h.call('warapp_delete_notification', { ids: ['12a'] });
+    expect(bad.isError).toBe(true);
+    expect(s.deletes).toEqual([]);
   });
 });

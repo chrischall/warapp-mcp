@@ -228,6 +228,20 @@ export function writeAcknowledgeInAppNotificationsParams(w: Writer, ids: readonl
 }
 
 /**
+ * DeleteInAppNotification(auth, id) — deletes one notification (#311), the client's Delete button. READ
+ * FROM THE CLIENT BUNDLE's writer, NOT VERIFIED LIVE: after the auth block one string, the id as decimal
+ * text. No result payload; the client treats server error 699 (`InAppNotificationKeyNotFound`) as already
+ * deleted. The effect is read back from a later list.
+ */
+export function writeDeleteInAppNotificationParams(w: Writer, id: string): void {
+  if (!NOTIFICATION_ID.test(id)) throw new RangeError(`not a notification id: ${JSON.stringify(id)}`);
+  w.string(id);
+}
+
+/** The server error DeleteInAppNotification answers for an id it does not hold: already deleted. */
+export const NOTIFICATION_NOT_FOUND = 699;
+
+/**
  * DeclineGame(auth, gameId, modHook) — the lobby's Decline button, which is also how a seated
  * player leaves a game still `WaitingForPlayers` (#217). READ FROM THE CLIENT BUNDLE's writer,
  * NOT VERIFIED LIVE: after the auth block the int32 game id, then one bool the client sets when

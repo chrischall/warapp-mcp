@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { Reader, toHex, Writer } from '../src/protocol/codec.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { Method, methodName, writeAcknowledgeInAppNotificationsParams, writeGetInAppNotificationsParams } from '../src/protocol/methods.js';
+import {
+  Method,
+  methodName,
+  writeAcknowledgeInAppNotificationsParams,
+  writeDeleteInAppNotificationParams,
+  writeGetInAppNotificationsParams,
+} from '../src/protocol/methods.js';
 import {
   classifyNotification,
   gameIdFromData,
@@ -54,6 +60,15 @@ describe('notification method ids and encoders (#311, UNVERIFIED live)', () => {
     expect(hex((w) => writeAcknowledgeInAppNotificationsParams(w, ['12', '345']))).toBe(
       '01' + '02000000' + '01' + '02' + '3132' + '01' + '03' + '333435',
     );
+  });
+
+  it('DeleteInAppNotification is one id as decimal text (the client writes it after the auth block)', () => {
+    // A string: present, varint length, UTF-8.
+    expect(hex((w) => writeDeleteInAppNotificationParams(w, '12'))).toBe('01' + '02' + '3132');
+    expect(hex((w) => writeDeleteInAppNotificationParams(w, '9001'))).toBe('01' + '04' + '39303031');
+    expect(() => writeDeleteInAppNotificationParams(new Writer(), '12a')).toThrow();
+    expect(() => writeDeleteInAppNotificationParams(new Writer(), '')).toThrow();
+    expect(methodName(318)).toBe('DeleteInAppNotification');
   });
 
   it('refuses an id that is not decimal text', () => {

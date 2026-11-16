@@ -30,6 +30,7 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_get_chat: 'lookup',
   warapp_chat_inbox: 'whats-new',
   warapp_get_notifications: 'whats-new',
+  warapp_delete_notification: 'change',
   warapp_dismiss_notification: 'change',
   warapp_mark_chat_read: 'change',
   warapp_get_team: 'lookup',

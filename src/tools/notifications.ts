@@ -1,15 +1,16 @@
-// warapp_get_notifications and warapp_dismiss_notification (#311): war.app's in-app notifications
-// (the client's "In App Notifications" screen), read with GetInAppNotifications (317) and marked read
-// with AcknowledgeInAppNotifications (319). Both read from the client bundle, UNVERIFIED live
-// (docs/WEB-PROTOCOL.md, Notifications and read marks).
+// warapp_get_notifications, warapp_dismiss_notification and warapp_delete_notification (#311): war.app's
+// in-app notifications (the client's "In App Notifications" screen), read with GetInAppNotifications (317),
+// marked read with AcknowledgeInAppNotifications (319) and deleted with DeleteInAppNotification (318, the
+// client's Delete button). All read from the client bundle, UNVERIFIED live (docs/WEB-PROTOCOL.md,
+// Notifications and read marks).
 //
 // The list is name-free beyond ids: a notification's title and data are war.app's text with other
 // players' names in it, read only to classify the notification and find the game its link names.
 // A game-ended notification folds the game's kept opponent profile (B2, `foldFinishedGame`) when one
 // is kept unfolded — the one GameFeed read warapp_get_game's fold makes, and none otherwise.
 //
-// Dismissing marks read; it never deletes (318 is not used) and sends nothing to any player. Automated
-// chat stays off (D2): this is not a send.
+// Dismissing marks read and never deletes; deleting is its own tool, one 318 per id, error 699 read as
+// already gone. Neither sends anything to any player. Automated chat stays off (D2): neither is a send.
 import { CONFIRM_INJECTION_RULE, toolAnnotations, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -18,10 +19,13 @@ import { foldFinishedGame, hasUnfoldedProfile, profileEnabled } from '../profile
 import {
   Method,
   NOTIFICATION_ID,
+  NOTIFICATION_NOT_FOUND,
   NOTIFICATIONS_PAGE_SIZE,
   writeAcknowledgeInAppNotificationsParams,
+  writeDeleteInAppNotificationParams,
   writeGetInAppNotificationsParams,
 } from '../protocol/methods.js';
+import { WarappServerError } from '../protocol/rpc.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { mintMeta } from './hints.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
@@ -37,7 +41,7 @@ export const NOTIFICATIONS_UNVERIFIED =
 export const FOLD_LOOKUPS = 5;
 /** The most pages a dismissal reads to find its ids (and to read them back). */
 export const MAX_FIND_PAGES = 5;
-/** The most ids one dismissal takes. */
+/** The most ids one dismissal (or deletion) takes. */
 export const MAX_DISMISS_IDS = NOTIFICATIONS_PAGE_SIZE;
 
 /** One page of the account's notifications, from `start`. */
@@ -128,6 +132,33 @@ async function foldEndedGames(ctx: LiveContext, env: EnvSource, notes: readonly 
 
 const idArg = z.union([z.string(), z.number().int().nonnegative()]);
 
+interface DeleteState {
+  me: number;
+  ids: string[];
+  /** Where each id stood in the list when planned, and the list's length then. */
+  positions: Record<string, number>;
+  totalBefore: number;
+}
+
+/** What the per-id sends of a deletion did, in order: the rest after a stop were never sent. */
+interface DeleteSends {
+  sent: string[];
+  alreadyGone: string[];
+  refused?: { id: string; code: number };
+  unanswered?: string;
+  notSent: string[];
+}
+
+/** Clean, validated notification ids, or a refusal naming the bad ones. */
+function askedIds(ids: ReadonlyArray<string | number>): string[] {
+  const asked = [...new Set(ids.map((id) => String(id).trim()))];
+  const bad = asked.filter((id) => !NOTIFICATION_ID.test(id));
+  if (bad.length) {
+    refuse(`Not a notification id: ${bad.slice(0, 5).join(', ')}. Nothing was sent.`, 'Use the ids warapp_get_notifications lists.');
+  }
+  return asked;
+}
+
 interface DismissState {
   me: number;
   ids: string[];
@@ -191,7 +222,8 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
       name: 'warapp_dismiss_notification',
       description:
         'Mark one or several war.app (Warzone) in-app notifications read (war.app\'s AcknowledgeInAppNotifications), ' +
-        'by the ids warapp_get_notifications lists. It never deletes a notification and sends nothing to any player. ' +
+        'by the ids warapp_get_notifications lists. It never deletes a notification (warapp_delete_notification does) ' +
+        'and sends nothing to any player. ' +
         'Refuses ids war.app does not list and ids already read. Always as the signed-in war.app account; the outcome ' +
         'is read back by listing again (`dismissed`; `unconfirmed` while one still reads unread or was not seen in the ' +
         'pages read back; or `unknown` when ' +
@@ -211,11 +243,7 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
           .describe('Notification ids from warapp_get_notifications (decimal text).'),
       }),
       async plan({ ids }) {
-        const asked = [...new Set(ids.map((id) => String(id).trim()))];
-        const bad = asked.filter((id) => !NOTIFICATION_ID.test(id));
-        if (bad.length) {
-          refuse(`Not a notification id: ${bad.slice(0, 5).join(', ')}. Nothing was sent.`, 'Use the ids warapp_get_notifications lists.');
-        }
+        const asked = askedIds(ids);
         const me = await requireMe(ctx);
         const { found, positions, total } = await findNotifications(ctx, asked);
         const missing = asked.filter((id) => !found.has(id));
@@ -313,6 +341,167 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
               ...(stillUnread.length ? { stillUnread } : {}),
               ...(notSeen.length ? { notSeen } : {}),
               warning: `war.app accepted the request, but ${problems.join(', and ')}. ${check}`,
+            };
+          },
+        });
+      },
+    },
+  );
+
+  defineGatedWrite(
+    server,
+    {
+      title: 'Delete war.app notifications',
+      _meta: mintMeta('change', ['delete notification', 'remove notification', 'clear old notifications']),
+    },
+    {
+      name: 'warapp_delete_notification',
+      description:
+        "Delete one or several war.app (Warzone) in-app notifications (war.app's DeleteInAppNotification, the client's " +
+        'Delete button), by the ids warapp_get_notifications lists, read or unread: one request per id, in order. A ' +
+        'deleted notification is gone from war.app for good; it sends nothing to any player (to keep it and only clear ' +
+        'its unread mark, use warapp_dismiss_notification). Refuses ids war.app does not list. Always as the signed-in ' +
+        'war.app account; an id war.app no longer holds when sent (its error 699) counts as already gone (`alreadyGone`). ' +
+        'The outcome is read back by listing again (`deleted`; `unconfirmed` while one is still listed, was not seen in ' +
+        'the pages read back, or war.app refused one — the ids after a refusal are not sent; or `unknown` when war.app ' +
+        `did not answer — never resend blindly). ${NOTIFICATIONS_UNVERIFIED} ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
+      annotations: toolAnnotations({
+        title: 'Delete war.app notifications',
+        readOnly: false,
+        destructive: true,
+        idempotent: true,
+        openWorld: true,
+      }),
+      inputSchema: z.object({
+        ids: z
+          .array(idArg)
+          .min(1)
+          .max(MAX_DISMISS_IDS)
+          .describe('Notification ids from warapp_get_notifications (decimal text).'),
+      }),
+      async plan({ ids }) {
+        const asked = askedIds(ids);
+        const me = await requireMe(ctx);
+        const { found, positions, total } = await findNotifications(ctx, asked);
+        const missing = asked.filter((id) => !found.has(id));
+        if (missing.length) {
+          refuse(
+            `war.app does not list notification ${missing.join(', ')}, so nothing was sent.`,
+            'List them again with warapp_get_notifications: it may already be deleted.',
+          );
+        }
+        const shown = asked.map((id) => {
+          const n = classifyNotification(found.get(id)!);
+          return { id: n.id, kind: n.kind, gameId: n.gameId, time: n.time, unread: n.unread };
+        });
+        const label = asked.length === 1 ? `notification ${asked[0]}` : `${asked.length} notifications (${asked.join(', ')})`;
+        return {
+          gate: {
+            action: 'warapp.delete_notification',
+            // By id only: a notification's title and body are war.app's text with other players' names.
+            summary: `Delete war.app ${label}`,
+            account: writeAccount(me),
+            target: asked.join(','),
+            payload: { method: 'DeleteInAppNotification', ids: asked },
+            willSend: { ids: asked },
+            preview: {
+              warning: `This deletes ${label} from your war.app notifications; it cannot be undone. Nothing reaches another player.`,
+              account: `war.app account ${me}`,
+              notifications: shown,
+              unverified: NOTIFICATIONS_UNVERIFIED,
+            },
+          },
+          state: {
+            me,
+            ids: asked,
+            positions: Object.fromEntries(asked.map((id) => [id, positions.get(id)!])),
+            totalBefore: total,
+          } satisfies DeleteState,
+        };
+      },
+      async execute({ me, ids, positions, totalBefore }: DeleteState) {
+        await requireApprovedAccount(ctx, writeAccount(me));
+        const check = 'Check warapp_get_notifications before doing anything else.';
+        const sends: DeleteSends = { sent: [], alreadyGone: [], notSent: [] };
+        const progress = () => ({
+          ...(sends.alreadyGone.length ? { alreadyGone: sends.alreadyGone } : {}),
+          ...(sends.refused ? { refused: sends.refused } : {}),
+          ...(sends.notSent.length ? { notSent: sends.notSent } : {}),
+        });
+        return sendAndVerify({
+          // One request per id, in order, never retried. A refusal (other than 699) or no answer stops there:
+          // the ids after it are not sent. A refusal before anything changed is an error; after, it is reported.
+          send: async () => {
+            for (const [i, id] of ids.entries()) {
+              try {
+                await ctx.rpc.call('DeleteInAppNotification', Method.DeleteInAppNotification, (w) => writeDeleteInAppNotificationParams(w, id));
+                sends.sent.push(id);
+              } catch (e) {
+                if (e instanceof WarappServerError && e.code === NOTIFICATION_NOT_FOUND) {
+                  sends.alreadyGone.push(id);
+                  continue;
+                }
+                sends.notSent = ids.slice(i + 1);
+                const changed = sends.sent.length + sends.alreadyGone.length > 0;
+                if (e instanceof WarappServerError) {
+                  if (!changed) throw e;
+                  sends.refused = { id, code: e.code };
+                  return;
+                }
+                sends.unanswered = id;
+                throw e;
+              }
+            }
+          },
+          unanswered: (failure) => ({
+            status: 'unknown' as const,
+            outcome: 'unknown' as const,
+            ids,
+            ...(sends.sent.length ? { sent: sends.sent } : {}),
+            ...(sends.unanswered ? { unanswered: sends.unanswered } : {}),
+            ...progress(),
+            warning:
+              `war.app did not confirm (${failure}), so notification ${sends.unanswered ?? ids[0]} may already be deleted` +
+              `${sends.notSent.length ? `; ${sends.notSent.join(', ')} ${sends.notSent.length === 1 ? 'was' : 'were'} not sent` : ''}. ${check}`,
+          }),
+          readBack: () => findNotifications(ctx, ids),
+          unreadable: (failure) => ({
+            status: 'unconfirmed' as const,
+            outcome: 'unconfirmed' as const,
+            ids,
+            ...(sends.sent.length ? { sent: sends.sent } : {}),
+            ...progress(),
+            warning: `war.app accepted the request, but the list could not be read back (${failure}). ${check}`,
+          }),
+          classify: (after) => {
+            // Each id sent (or already gone) is deleted only once seen gone; one still listed, or not found where
+            // the pages read could not tell, is not confirmed.
+            const tried = [...sends.sent, ...sends.alreadyGone];
+            const stillListed = tried.filter((id) => after.found.has(id));
+            const missing = tried.filter((id) => !after.found.has(id));
+            const gone = missing.filter((id) => seenGone(after, positions[id], totalBefore));
+            const notSeen = missing.filter((id) => !gone.includes(id));
+            const deleted = gone.filter((id) => sends.sent.includes(id));
+            const parts = { ids, ...(deleted.length ? { deleted } : {}), ...progress() };
+            if (!stillListed.length && !notSeen.length && !sends.refused) {
+              return { status: 'deleted' as const, outcome: 'confirmed' as const, ...parts };
+            }
+            const problems = [
+              ...(sends.refused
+                ? [`war.app refused ${sends.refused.id} (error ${sends.refused.code})${sends.notSent.length ? `, so ${sends.notSent.join(', ')} ${sends.notSent.length === 1 ? 'was' : 'were'} not sent` : ''}`]
+                : []),
+              ...(stillListed.length ? [`the list still holds ${stillListed.join(', ')}`] : []),
+              ...(notSeen.length
+                ? [`${notSeen.join(', ')} ${notSeen.length === 1 ? 'was' : 'were'} not seen in the pages read (${after.readTo} of ${after.total})`]
+                : []),
+            ];
+            return {
+              status: 'unconfirmed' as const,
+              outcome: 'unconfirmed' as const,
+              ...parts,
+              ...(stillListed.length ? { stillListed } : {}),
+              ...(notSeen.length ? { notSeen } : {}),
+              warning: `${problems.join(', and ')}. ${check}`,
             };
           },
         });

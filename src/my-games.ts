@@ -222,8 +222,10 @@ export function activeGameIds(games: readonly RawMyGame[], myInGameId: number): 
 /**
  * Games whose chat is live (#256): lobbies, games being picked and games being played — every
  * game in the list but a finished one, whatever my seat's state — plus a finished game whose chat
- * war.app flags unread (#311, GameInfo's unread flags: UNVERIFIED live). Ascending id order, so a
- * cursor (the last id read) resumes the list even when games join or leave it between calls.
+ * war.app flags unread, or whose flags did not read at all (#311, GameInfo's unread flags: UNVERIFIED
+ * live — a misread position must not hide a finished game's chat without a word; `unflaggedFinished`
+ * names those). Ascending id order, so a cursor (the last id read) resumes the list even when games
+ * join or leave it between calls.
  */
 export function chatGameIds(games: readonly RawMyGame[]): number[] {
   return games
@@ -232,8 +234,16 @@ export function chatGameIds(games: readonly RawMyGame[]): number[] {
         g.stateCode === GAME_WAITING ||
         g.stateCode === GAME_PLAYING ||
         g.stateCode === GAME_DISTRIBUTING ||
-        (g.stateCode === GAME_FINISHED && anyUnreadChat(g.unreadChat)),
+        (g.stateCode === GAME_FINISHED && (g.unreadChat === undefined || anyUnreadChat(g.unreadChat))),
     )
+    .map((g) => g.id)
+    .sort((a, b) => a - b);
+}
+
+/** Finished games whose unread-chat flags did not read (#311): `chatGameIds` keeps them, unjudged. Ascending ids. */
+export function unflaggedFinished(games: readonly RawMyGame[]): number[] {
+  return games
+    .filter((g) => g.stateCode === GAME_FINISHED && g.unreadChat === undefined)
     .map((g) => g.id)
     .sort((a, b) => a - b);
 }

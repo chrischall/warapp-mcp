@@ -92,6 +92,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_begin_turn',
       'warapp_chat_inbox',
       'warapp_check_plan',
+      'warapp_delete_notification',
       'warapp_dismiss_notification',
       'warapp_get_chat',
       'warapp_get_game',

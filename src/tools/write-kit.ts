@@ -29,6 +29,8 @@
 //   warapp_submit_picks   verified → confirmed; unconfirmed; unknown
 //   warapp_send_chat      sent → accepted; unknown
 //   warapp_dismiss_notification  dismissed → confirmed; unconfirmed; unknown
+//   warapp_delete_notification   deleted → confirmed; unconfirmed (also after a refusal past the
+//                         first id); unknown
 //   warapp_mark_chat_read read → confirmed; unconfirmed; unknown
 //   warapp_link_session   linked → confirmed
 import {

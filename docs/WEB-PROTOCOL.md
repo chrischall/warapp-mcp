@@ -609,7 +609,7 @@ with the auth block first; field orders are the client writers' and readers' rea
 - **Delete: `DeleteInAppNotification` (318)**, `POST /Services?m=DeleteInAppNotification&js=1`. After
   the auth block: one string, the id as decimal text. **No result payload.** The client treats
   server error **699** `InAppNotificationKeyNotFound` as already deleted and throws on any other.
-  Deleting is not marking read: a read-only "mark read" feature needs only 319.
+  Deleting is not marking read: marking read needs only 319.
 - **How this server uses them (#311, UNVERIFIED live):** `warapp_get_notifications` sends 317 (start index, 30)
   and decodes the reply by type name (`src/notifications.ts`: the record must have its 7 fields; the interpreter
   hands the id back as the decimal text it parsed). It reports ids, the sent time and the unread flag, a `gameId`
@@ -620,7 +620,10 @@ with the auth block first; field orders are the client writers' and readers' rea
   reported nor used to classify. The title and the body are never passed on. `warapp_dismiss_notification` sends
   319 with the unread ids the list holds and reads the effect back by listing again (at most 5 pages): an id read
   back read, or seen gone (the pages cover the whole list, or reach past where it stood by as many as the list
-  grew), confirms it; an id not found otherwise is "not seen in the pages read", `unconfirmed`. 318 is not sent.
+  grew), confirms it; an id not found otherwise is "not seen in the pages read", `unconfirmed`.
+  `warapp_delete_notification` sends 318 once per listed id, in order, never retried: 699 counts as already gone,
+  any other refusal stops the rest (an error when nothing was deleted yet), no answer stops too (`unknown`, not
+  read back). It reads the effect back by the same listing: deleted once seen gone, else `unconfirmed`.
 - **The unread badge** comes with every reply: `warlight.shared.MessageExtrasDown`'s last optional
   field is **`warlight.shared.UnreadMailCheckResults`** — `bool`, `datetime`, `bool` (`src/protocol/codec.ts`
   already decodes it as `unreadMail`). The datetime is what the next request echoes as
@@ -674,7 +677,8 @@ with the auth block first; field orders are the client writers' and readers' rea
   answer is `unknown` and is never resent; a refusal is an error (nothing changed). It refuses a game its list
   already shows read. It reaches no other player and posts nothing. `mark_seen: true` on `warapp_get_chat` and
   `warapp_chat_inbox` marks only this machine's cursor and sends nothing to war.app. The inbox lists a finished game
-  when one of its flags is set.
+  when one of its flags is set, or when its flags do not read as booleans (a misread position must not hide its
+  chat; the answer's `finishedUnflagged` counts those, read unjudged).
 
 ## Open games
 

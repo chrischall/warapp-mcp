@@ -4,8 +4,9 @@
 // `limit` would each mean something else here.
 //
 // The games are `game_ids` when given (exactly those, #260), else every game GetMyGames lists (lobbies,
-// games being picked or played, and a finished game only when war.app flags its chat unread, #311; the whole
-// list, `fetchMyGames`), in ascending id
+// games being picked or played, and a finished game when war.app flags its chat unread or when its flags do not
+// read — they are UNVERIFIED live, and a misread must not hide a finished game's chat, so those are read unjudged
+// and counted in `finishedUnflagged` (#311); the whole list, `fetchMyGames`), in ascending id
 // order; the answer says which (`gamesFrom`) and, from the list, whether it may be partial; each is read as warapp_get_chat reads it (GameFeed with its chat, then
 // GameRefresh while the account is known, else GameFeed's list; a web read shorter than GameFeed's list is
 // filled from it, #313), one game at a time — never in
@@ -15,7 +16,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { CHAT_CHANNELS, type ChatChannel } from '../chat.js';
-import { chatGameIds } from '../my-games.js';
+import { chatGameIds, unflaggedFinished } from '../my-games.js';
 import { playersByInGameId } from '../live.js';
 import { CHAT_SOURCE_NOTES, chatMe, chatUnread, markChatSeen, readChat, shown, type ChatSource } from './chat.js';
 import { parseGameId } from '../client.js';
@@ -46,7 +47,8 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
       title: 'Read unseen chat across my war.app games',
       description: untrustedDescription(
         'The chat messages you have not yet marked seen, across all your war.app (Warzone) games in one call: your ' +
-          'lobbies and the games being picked or played (a finished game only when war.app shows its chat unread), from ' +
+          'lobbies and the games being picked or played (a finished game when war.app shows its chat unread, or when ' +
+          'those flags do not read: `finishedUnflagged` counts these), from ' +
           'your game list — or exactly ' +
           'the games in `game_ids`; `gamesFrom` says which, and from the list `listed` and `complete` say how many ' +
           'games war.app returned and whether the list was whole. Each game ' +
@@ -149,6 +151,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
         }
       }
       const remaining = ids.length - batch.length;
+      const unflagged = list ? unflaggedFinished(list.games).length : 0;
       return respond(undefined, ['compact'], () => ({
         games: withNew,
         quiet,
@@ -169,6 +172,14 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
             }
           : {}),
         ...(remaining > 0 ? { next: String(batch.at(-1)!), remaining } : {}),
+        ...(unflagged > 0
+          ? {
+              finishedUnflagged: unflagged,
+              finishedNote:
+                `${unflagged} finished game(s) in your list carry unread-chat flags this server could not read, so they ` +
+                'are read like the rest rather than left out (the flags are not yet verified against war.app).',
+            }
+          : {}),
         ...(sources.size ? { sourceNotes: Object.fromEntries([...sources].map((s) => [s, CHAT_SOURCE_NOTES[s]])) } : {}),
       }));
     },
