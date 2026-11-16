@@ -232,11 +232,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
   failure, GameFeed's `chat` (no channel: `unknown`). **A web read with fewer messages than GameFeed's chat (#313:
   a finished game's surrender line was missing) uses GameFeed's too**, from the GameFeed read the tool already made
-  (`readChat` in `src/tools/chat.ts`, no extra request): with no web message GameFeed's list stands in (`source:
-  gamefeed`), else the GameFeed messages no web message matches (same sender, times within a second, or the same
-  text when either has no time; `fillFromFeed` in `src/chat.ts`) are added under `unknown` by time (`source:
-  merged`, whose mark records the named channels too); `feedFill` gives the counts and a note. `warapp_mark_chat_read`
-  takes a merged read (its web ids). Bodies go out through `untrustedBody` (the
+  (`readChat` in `src/tools/chat.ts`, no extra request): with no web message GameFeed's list stands in, else the
+  GameFeed messages no web message matches (same sender, times within a second, or the same text when either has no
+  time; `fillFromFeed` in `src/chat.ts`) are added under `unknown` by time (the mark then records the named channels
+  too). **`source` keeps its contract (#321): `web` | `gamefeed`, the read that answered** — a filled web read is
+  `web`; the fill shows only in the additive `filledFromGamefeed: true` and `feedFill` (counts and a note), so no
+  caller meets a new enum value. `warapp_mark_chat_read` takes a filled read with web messages (their ids) and
+  refuses one whose web read returned none (no id to mark: it says so, never "retry"). Bodies go out through `untrustedBody` (the
   `untrustedText` cleaning, capped at 2,000). "New" is a name-free cursor at `<dataDir>/chat/<gameId>.json`
   (`src/chat-cursor.ts`: per channel the count and newest time marked seen, plus the whole chat, against
   which every message is judged too — a named channel by time only: seen by either mark is not new); only
@@ -252,7 +254,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   passed back as `cursor`), each exactly as `warapp_get_chat` reads it; a game with new messages shows only
   those (`limit` newest, `markedUnshown`), the others are `quiet`, and a failed read is in `failed`, never
   thrown. Only `mark_seen: true` writes the cursor (every channel, `markChatSeen`, shared with `warapp_get_chat`).
-  **Read marks on war.app (#311, UNVERIFIED live) are `warapp_mark_chat_read`, confirm-gated** (`src/tools/chat-read-mark.ts`;
+  **Read marks on war.app (#311, VERIFIED live 2026-11-16 on nine games, direct transport) are `warapp_mark_chat_read`, confirm-gated** (`src/tools/chat-read-mark.ts`;
   one game, every channel or one): it sends `RegisterChatView` (43; `writeRegisterChatViewParams`, golden-pinned): per
   channel the highest message id read (`chatViewMarks`, `src/chat.ts`, mine included; private conversations keyed by
   the counterpart — the recipient of my message, else the sender; game groups, the web client's `unknown`, by group
@@ -291,7 +293,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   there (`refused`, the rest `notSent`, `unconfirmed`); no answer stops there too and is `unknown`, never read back
   or resent. Read back by the same listing and `seenGone`: `deleted` (`confirmed`) only when every id sent is seen
   gone; still listed (`stillListed`) or `notSeen` is `unconfirmed`. The preview names ids and game ids only.
-  Encoders golden-pinned; everything UNVERIFIED live. Not a chat send (D2).
+  Encoders golden-pinned; 317, 318, 319 and 43 VERIFIED live 2026-11-16 (direct transport). Not a chat send (D2).
 - **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
   `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
   (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only

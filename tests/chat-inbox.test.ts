@@ -329,9 +329,16 @@ describe('warapp_chat_inbox: finished games with unread chat (#311)', () => {
     const p = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: ['104'], mark_seen: true }));
     expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(1);
     expect(p.games).toHaveLength(1);
-    expect(p.games[0]).toMatchObject({ id: 104, source: 'gamefeed', newCount: 1, feedFill: { web: 0, gamefeed: 1, added: 1 } });
+    // #321: `source` stays `web` | `gamefeed` (which read answered); the GameFeed fill is additive.
+    expect(p.games[0]).toMatchObject({
+      id: 104,
+      source: 'web',
+      filledFromGamefeed: true,
+      newCount: 1,
+      feedFill: { web: 0, gamefeed: 1, added: 1 },
+    });
     expect(p.games[0]!.messages.map((m) => [m.text, m.channel])).toEqual([['⟦Bob surrendered⟧', 'unknown']]);
-    expect(p.sourceNotes).toHaveProperty('gamefeed');
+    expect(Object.keys(p.sourceNotes as object)).toEqual(['web']);
     const after = payload<Inbox>(await h.call('warapp_chat_inbox', { game_ids: ['104'] }));
     expect(after.quiet).toEqual([104]);
   });

@@ -911,7 +911,7 @@ describe('warapp_get_chat', () => {
     describe('when the web read has fewer messages than GameFeed (#313)', () => {
       const surrender = { playerID: BOB.inGame, message: 'Bob surrendered', date: at(30).toISOString(), turn: '9' };
 
-      it('an empty web read falls back to GameFeed, says so, and its messages can be marked seen', async () => {
+      it('an empty web read shows GameFeed\'s messages, keeps `source: web` (the read that answered), says so, and they can be marked seen', async () => {
         const feedOnly = game('Finished', { chat: [surrender] });
         const s = refresh(() => []);
         h = await liveHarness({ feed: [feedOnly, feedOnly], pages: SIGNED_IN_ANN, warapp: s.warapp });
@@ -921,7 +921,9 @@ describe('warapp_get_chat', () => {
         expect(s.asked).toHaveLength(1);
         // No extra GameFeed read: the one the tool already made carries the chat.
         expect(h.calls.filter((c) => c.url.includes('GameFeed'))).toHaveLength(1);
-        expect(p.source).toBe('gamefeed');
+        // #321: `source` keeps its pre-#313 contract (`web` | `gamefeed`: which read answered); the fill is additive.
+        expect(p.source).toBe('web');
+        expect(p.filledFromGamefeed).toBe(true);
         expect(p.feedFill).toMatchObject({ web: 0, gamefeed: 1, added: 1 });
         expect(String((p.feedFill as { note: string }).note)).toMatch(/fewer messages/);
         expect(p.messages).toMatchObject([{ from: '⟦Bob⟧', text: '⟦Bob surrendered⟧', channel: 'unknown', new: true }]);
@@ -950,8 +952,9 @@ describe('warapp_get_chat', () => {
         const p = payload<{ messages: Array<Record<string, unknown>> } & Record<string, unknown>>(
           await h.call('warapp_get_chat', { game_id: GAME, mark_seen: true }),
         );
-        expect(p.source).toBe('merged');
-        expect(p.sourceNote).toMatch(/GameFeed/);
+        expect(p.source).toBe('web');
+        expect(p.filledFromGamefeed).toBe(true);
+        expect(String((p.feedFill as { note: string }).note)).toMatch(/GameFeed/);
         expect(p.feedFill).toMatchObject({ web: 2, gamefeed: 4, added: 2 });
         expect(p.messages.map((m) => [m.text, m.channel])).toEqual([
           ['⟦gl hf⟧', 'public'],
@@ -970,6 +973,7 @@ describe('warapp_get_chat', () => {
         const p = payload(await h.call('warapp_get_chat', { game_id: GAME }));
         expect(p.source).toBe('web');
         expect(p.feedFill).toBeUndefined();
+        expect(p).not.toHaveProperty('filledFromGamefeed');
       });
     });
 

@@ -91,7 +91,7 @@ string email                  the signed-in account's email
 | 38 | GetGameDetails | |
 | 39 | **GameRefresh** | params: int32 gameId, bool chat, bool nonChat, string "-1", string "-1", bool lobby, optional dict, optional dict; reply `GameDetailsAndChat` — see [Chat](#chat) (the chat-only read of public messages VERIFIED live 2026-11-14; the rest UNVERIFIED) |
 | 40 | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
-| 43 | **RegisterChatView** | params: int32 gameId, string public mark, string team mark, optional dict private counterpart → mark, optional dict game group → mark; no result — marks a game's chat read, see [Notifications and read marks](#notifications-and-read-marks) (UNVERIFIED live) |
+| 43 | **RegisterChatView** | params: int32 gameId, string public mark, string team mark, optional dict private counterpart → mark, optional dict game group → mark; no result — marks a game's chat read, see [Notifications and read marks](#notifications-and-read-marks) (VERIFIED live 2026-11-16, direct transport) |
 | 48 | GetGameSettings | |
 | 60 | AcceptGame | accept an invitation (not used) |
 | 61 | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
@@ -109,9 +109,9 @@ string email                  the signed-in account's email
 | 79 | GetTerritoryPicks | params: int32 gameId, int32 in-game player id; verified for my own id. `warapp_get_team` also asks it with a teammate's id while picking (UNVERIFIED, V6); a refusal reads as unknown |
 | 80 | **UnCommit** | params: int32 gameId — see [UnCommit](#uncommit) |
 | 81 | GetTurns | |
-| 317 | **GetInAppNotifications** | params: int32 start index, int32 page size (the client sends 30); reply `GetInAppNotificationsReturn` — see [Notifications and read marks](#notifications-and-read-marks) (UNVERIFIED live) |
-| 318 | **DeleteInAppNotification** | params: string notification id (decimal text); no result (UNVERIFIED live) |
-| 319 | **AcknowledgeInAppNotifications** | params: optional list of string notification ids (decimal text); no result — marks them read (UNVERIFIED live) |
+| 317 | **GetInAppNotifications** | params: int32 start index, int32 page size (the client sends 30); reply `GetInAppNotificationsReturn` — see [Notifications and read marks](#notifications-and-read-marks) (VERIFIED live 2026-11-16, direct transport) |
+| 318 | **DeleteInAppNotification** | params: string notification id (decimal text); no result (VERIFIED live 2026-11-16, direct transport) |
+| 319 | **AcknowledgeInAppNotifications** | params: optional list of string notification ids (decimal text); no result — marks them read (VERIFIED live 2026-11-16, direct transport) |
 | 238 | Subscribe | push channel only, **no auth**; params: bool true, list of topic strings, string null; reply dict topic→int32 error |
 | 241 | GameUpdated | server push, **no auth**; msgNum `0x80000000`, 61 bytes: the game id, then bools `chat` and `nonChat` (named by the client's own log line; UNVERIFIED live) and an optional dict — re-read GameFeed |
 
@@ -547,7 +547,7 @@ private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `wara
   game ended by surrender GameRefresh returned none while GameFeed held the surrender line; why is not
   known — GameRefresh may not carry a finished game's or a surrender turn's messages): GameFeed's list
   stands in when the web read is empty, else its messages no web message matches (sender, time within a
-  second) are added as `unknown`; `warapp_plan_turn` counts unread chat from it (the game read carries it).
+  second) are added as `unknown` (the result's `source` stays `web`, flagged `filledFromGamefeed`, #321); `warapp_plan_turn` counts unread chat from it (the game read carries it).
 - **Send:** `SendChat` (42): auth, int32 gameId, string text, int32 channel (`-1` = public,
   otherwise the sender's team: the client sends its own player's team), optional int32 private
   recipient (the client then sends channel `-1`; server error 201 is "cannot specify team in a
@@ -610,7 +610,7 @@ with the auth block first; field orders are the client writers' and readers' rea
   the auth block: one string, the id as decimal text. **No result payload.** The client treats
   server error **699** `InAppNotificationKeyNotFound` as already deleted and throws on any other.
   Deleting is not marking read: marking read needs only 319.
-- **How this server uses them (#311, UNVERIFIED live):** `warapp_get_notifications` sends 317 (start index, 30)
+- **How this server uses them (#311, VERIFIED live 2026-11-16, direct transport):** `warapp_get_notifications` sends 317 (start index, 30)
   and decodes the reply by type name (`src/notifications.ts`: the record must have its 7 fields; the interpreter
   hands the id back as the decimal text it parsed). It reports ids, the sent time and the unread flag, a `gameId`
   taken from a war.app link (`Url`, else the first of `Urls`, with `GameID=`) in the data JSON, and a kind:
@@ -666,7 +666,7 @@ with the auth block first; field orders are the client writers' and readers' rea
   sets all four false. They are the read-back for `RegisterChatView`: after a mark, the game's
   flag for that channel should read false (UNVERIFIED live). `MyGamesFilterType` 5
   (`YourTurnOrPendingChat`) and 7 (`ActiveGameOrPendingChat`) presumably filter on the same state.
-- **How this server uses them (#311, UNVERIFIED live):** `warapp_mark_chat_read` (confirm-gated) sends 43
+- **How this server uses them (#311, VERIFIED live 2026-11-16, direct transport):** `warapp_mark_chat_read` (confirm-gated) sends 43
   (`writeRegisterChatViewParams`, golden-pinned) for one game, only from a web read (GameFeed gives no message ids)
   with the signed-in account known: per channel marked, the
   highest message id among the messages read, mine included (`chatViewMarks`); a private conversation is keyed by
@@ -675,7 +675,11 @@ with the auth block first; field orders are the client writers' and readers' rea
   marked goes as `-1`, an empty dict as absent. The effect is read back from `GetMyGames` (the four flags above,
   `RawMyGame.unreadChat`): `read` (`confirmed`) when every marked channel's flag is clear, else `unconfirmed`; no
   answer is `unknown` and is never resent; a refusal is an error (nothing changed). It refuses a game its list
-  already shows read. It reaches no other player and posts nothing. `mark_seen: true` on `warapp_get_chat` and
+  already shows read. It reaches no other player and posts nothing. **Limit (#313):** when GameRefresh answers with
+  no message while GameFeed's chat holds some (seen on a finished game ended by surrender), there is no message id
+  to send — GameFeed's messages carry none — so the tool refuses, saying the web read returned no messages and how
+  many GameFeed holds; a retry from a fresh tab reads the same. Whether war.app's own client can clear such a
+  game's unread flags is unknown. `mark_seen: true` on `warapp_get_chat` and
   `warapp_chat_inbox` marks only this machine's cursor and sends nothing to war.app. The inbox lists a finished game
   when one of its flags is set, or when its flags do not read as booleans (a misread position must not hide its
   chat; the answer's `finishedUnflagged` counts those, read unjudged).
