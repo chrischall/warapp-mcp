@@ -122,9 +122,11 @@ export function scheduleOrders(
   /**
    * #274 review: the walk is my first order (after a strike or kill, before any withdrawal) only when
    * the opponent's first attack may catch my commander before it runs (`ps.commanderCaught`: the
-   * transit hold falls short, or the fog beside it); otherwise the first order is chosen as before.
+   * transit hold falls short, or the fog beside it), or when that hold covers only what lands before
+   * my first order (`ps.commanderWalkFirst`, #274 review 2: no card advised for it then); otherwise
+   * the first order is chosen as before.
    */
-  const caughtOrder = ps.commanderCaught ? commanderOrder : undefined;
+  const caughtOrder = ps.commanderCaught || ps.commanderWalkFirst ? commanderOrder : undefined;
   const outOfConceded = moves.filter((m) => conceded.has(m.from) && m !== strikeOrder && m !== killOrder && m !== caughtOrder);
   /** My first order: the one Order Priority would protect. Checked against the schedule below. */
   let firstOrder: PlannedMove | undefined =
@@ -221,7 +223,9 @@ export function scheduleOrders(
   const decided = [...moves];
   /** Within a slot, a larger early move first: one grouped early transfer beats several small ones. */
   const rankOf = (m: PlannedMove) => (m === commanderOrder ? Infinity : slotOf(m) === MoveSlot.Early ? m.armies : 0);
-  let scheduled = scheduleMoves(decided, slotOf, rankOf);
+  /** #274 review 2: a strike that ends a player may leave my commander's territory before the walk; nothing else may. */
+  const beforeWalk = (m: PlannedMove) => m === strikeOrder || m === killOrder;
+  let scheduled = scheduleMoves(decided, slotOf, rankOf, beforeWalk);
   if (firstOrder && scheduled[0] !== firstOrder) {
     // A move it depends on (one into its source, say) must run before it, so it is not my first
     // order, and the card protects only that one: my first order is whatever the schedule puts first.
@@ -239,9 +243,16 @@ export function scheduleOrders(
     }
     firstOrder = outOfConceded.includes(head) || (caughtOrder !== undefined && head === caughtOrder) ? head : undefined;
     lastWhy.clear();
-    scheduled = scheduleMoves(decided, slotOf, rankOf);
+    scheduled = scheduleMoves(decided, slotOf, rankOf, beforeWalk);
   }
   moves.splice(0, moves.length, ...scheduled);
+  // #274 review 2: a walk whose transit hold covers only the first attacks must be my first order.
+  if (ps.commanderWalkFirst && commanderOrder && scheduled[0] !== commanderOrder) {
+    const head = scheduled[0]!;
+    warnings.push(
+      `My commander's walk from ${label(commanderOrder.from)} cannot be my first order (${label(head.from)} → ${label(head.to)} is): what is deployed there holds only against the first attacks, and moving first, two of the opponent's may land on it before the walk runs (#274).`,
+    );
+  }
   // Order Priority moves only my first order ahead of the opponent's first: spend the card only
   // for that order — the strike rule 1s advised it for, else a move out of a conceded border that
   // saves enough — when I hold one, and when I do not move first anyway.
@@ -259,9 +270,11 @@ export function scheduleOrders(
         ? undefined
         : !opts.holdsOrderPriority
           ? 'I hold no Order Priority card to play'
-          : n < ORDER_PRIORITY_MIN_ARMIES && !opts.orderPriorityForced && firstOrder !== killOrder && firstOrder !== caughtOrder
-            ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
-            : undefined;
+          : firstOrder === caughtOrder && !ps.commanderCaught
+            ? "my commander's walk is my first order, and the territory it leaves already holds against what lands before it"
+            : n < ORDER_PRIORITY_MIN_ARMIES && !opts.orderPriorityForced && firstOrder !== killOrder && firstOrder !== caughtOrder
+              ? `it saves only ${n} ${n === 1 ? 'army' : 'armies'}, under the ${ORDER_PRIORITY_MIN_ARMIES} a card is worth`
+              : undefined;
     ps.cardAdvice = why === undefined ? 'order-priority' : null;
     const mayHold = (who: string) =>
       `I move first this turn, but ${who} may hold an Order Priority card: two cancel, so mine keeps this order first`;

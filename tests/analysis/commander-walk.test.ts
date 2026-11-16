@@ -4,6 +4,7 @@ import type { BoardSpecialUnit, TerritoryState } from '../../src/board.js';
 import { armiesToTake, COMMANDER_STRENGTH } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { commanderSafety } from '../../src/analysis/commander-safety.js';
+import { simulateTurn } from '../../src/analysis/turn-sim.js';
 import { COMMANDER_CLEAR_MOVES, commanderPlace } from '../../src/analysis/plan/commander.js';
 import { planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
@@ -133,6 +134,22 @@ describe('planner: my commander walks out of a pocket (#274)', () => {
     expect(out[0]).toMatchObject({ to: 6, commander: true });
     expect(out[0]!.armies).toBe(341 + deployedTo(plan, 1));
   });
+
+  it('under No-Split, a commander kill the walk displaces is named, with what it would need (#274 review 2)', () => {
+    // T1 (my commander, 50) beside A's commander on T2 (2), A's T5 behind it; T3 and T4, mine, lead inland.
+    const g = buildGraph(makeMap([1, 2, 3, 4, 5], [[1, 2], [2, 5], [1, 3], [3, 4]]));
+    const b = board(
+      [withCommander(mine(1, 50)), { ...enemy(2, 2), specialUnits: [commander(A)] }, mine(3, 2), mine(4, 2), enemy(5, 3)],
+      true,
+    );
+    const split = planTurn({ graph: g, board: b, me: ME, income: 10, settings: STD });
+    expect(split.moves.some((m) => m.from === 1 && m.to === 2 && m.kind === 'attack')).toBe(true);
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 10, settings: { ...STD, noSplit: true } });
+    expect(plan.moves.filter((m) => m.from === 1)).toEqual([expect.objectContaining({ to: 3, commander: true })]);
+    expect(plan.warnings).toContain(
+      "Player 20's commander on T2 (#2) is in reach: T1 (#1) could send the 23 attackers killing it needs (its 2 armies + the commander's 7 + its owner's full ~5 deploy), but under No-Split my commander's walk is T1 (#1)'s one order (#274): not attacked. Killing it ends the game (a 1v1): to strike instead, send T1 (#1) → T2 (#2) by hand, and my commander stays on T1 (#1).",
+    );
+  });
 });
 
 describe('planner: the territory my commander walks from holds it until my first order runs (#274)', () => {
@@ -186,6 +203,71 @@ describe('planner: the territory my commander walks from holds it until my first
     const plan = planTurn({ graph: g, board: board([withCommander(mine(1, 10)), enemy(2, 200), mine(3, 2), mine(4, 2)], true), me: ME, income: 30, settings: STD });
     expect(plan.moves[0]).toMatchObject({ from: 1, to: 3, commander: true });
     expect(plan.warnings.some((w) => w.startsWith('My commander may be caught on T1 (#1) before it walks (#274)'))).toBe(true);
+  });
+});
+
+describe('planner: two stacks beside the territory my commander walks from (#274 review 2)', () => {
+  // T1 (my commander, 10) borders A's T2 (30) and T5 (30); T3 and T4, mine, lead inland. T6 (mine, 30)
+  // faces A's T7 (500) and is conceded: its withdrawal to T8 (T9 behind it) would take my first order,
+  // so the walk goes second, and moving first (me1, A1, A2, me2) both of A's attacks land on T1 first.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7, 8, 9], [[1, 2], [1, 5], [1, 3], [3, 4], [6, 7], [6, 8], [8, 9]]));
+  const b = (t2 = 30, t5 = 30) =>
+    board([withCommander(mine(1, 10)), enemy(2, t2), mine(3, 1), mine(4, 1), enemy(5, t5), mine(6, 30), enemy(7, 500), mine(8, 1), mine(9, 1)], true);
+  /** Whether A, deploying `deploy` on one of `on` and attacking T1 from T2 and T5 in either order, kills my commander. */
+  const killable = (p: TurnPlan, bd: ReturnType<typeof b>, deploy: number) => {
+    const out: string[] = [];
+    for (const order of [[ME, A], [A, ME]])
+      for (const on of [2, 5])
+        for (const seq of [[2, 5], [5, 2]]) {
+          const r = simulateTurn({
+            graph: g,
+            board: bd,
+            deploys: [...p.deploys.map((d) => ({ player: ME, territoryId: d.territoryId, armies: d.armies })), { player: A, territoryId: on, armies: deploy }],
+            orders: [
+              { player: ME, orders: p.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })) },
+              { player: A, orders: seq.map((s) => ({ from: s, to: 1, armies: 1000 })) },
+            ],
+            moveOrder: order,
+            settings: STD,
+          });
+          if (r.eliminated.includes(ME)) out.push(`${order[0] === ME ? 'me' : 'A'} first, deploy on T${on}, T${seq[0]} then T${seq[1]}`);
+        }
+    return out;
+  };
+
+  it('the review\'s shape, known to move first: both attacks that may land before the walk are held', () => {
+    const plan = planTurn({ graph: g, board: b(), me: ME, income: 30, settings: STD, options: { movesFirst: true } });
+    expect(commanderMoves(plan)).toEqual([expect.objectContaining({ from: 1, to: 3 })]);
+    expect(killable(plan, b(), 30)).toEqual([]);
+    expect(plan.rationale.some((r) => r.includes('every stack beside it'))).toBe(true);
+  });
+
+  it('the order unknown, the same', () => {
+    const plan = planTurn({ graph: g, board: b(), me: ME, income: 30, settings: STD });
+    expect(commanderMoves(plan)).toEqual([expect.objectContaining({ from: 1, to: 3 })]);
+    expect(killable(plan, b(), 30)).toEqual([]);
+  });
+
+  it('when only the first attack can be held, the walk is my first order, with no Order Priority advised for it', () => {
+    // 60 and 60 beside T1: the income holds against one attack and the deploy, not both.
+    const bd = b(60, 60);
+    const plan = planTurn({ graph: g, board: bd, me: ME, income: 50, settings: STD, options: { holdsOrderPriority: true } });
+    expect(plan.moves[0]).toMatchObject({ from: 1, to: 3, commander: true });
+    expect(plan.cardAdvice).toBeNull();
+    expect(plan.rationale.some((r) => r.includes('my first order') && r.includes('#274'))).toBe(true);
+    expect(plan.warnings.some((w) => w.startsWith('My commander may be caught'))).toBe(false);
+    expect(killable(plan, bd, 50)).toEqual([]);
+    // Known to move first it is just as safe: the walk runs before any attack.
+    const first = planTurn({ graph: g, board: bd, me: ME, income: 50, settings: STD, options: { movesFirst: true } });
+    expect(first.moves[0]).toMatchObject({ from: 1, to: 3, commander: true });
+    expect(killable(first, bd, 50)).toEqual([]);
+  });
+
+  it('the submit\'s commander check finds the old plan (one stack\'s hold, the walk second) killable', () => {
+    const deploys = [{ territoryId: 1, armies: 19 }, { territoryId: 3, armies: 11 }];
+    const moves = [{ from: 6, to: 8, armies: 29 }, { from: 1, to: 3, armies: 28, withCommander: true }];
+    const s = commanderSafety({ graph: g, board: b(), me: ME, deploys, moves, opponents: [{ id: A, deploy: 30 }], settings: STD, killedBy: false })!;
+    expect(s.killers).toBeGreaterThan(0);
   });
 });
 
@@ -267,6 +349,36 @@ describe('planner: my commander\'s territory is held against the worst case (#27
     // Without Multi-Attack the stack cannot reach it this turn: no border there.
     const plain = planTurn({ graph: line, board: b4, me: ME, income: 10, settings: STD });
     expect(plain.rationale.some((r) => r.startsWith("My commander's territory T1 (#1) is held against the worst case"))).toBe(false);
+  });
+
+  it('an enemyDeploy what-if below my income sizes the hold for the what-if: the commander check at my income still flags it (#274 review 2)', () => {
+    // Pinned (the one board the golden regeneration found newly unsafe): a what-if `enemyDeploy` is the
+    // caller's plausible income and the planner takes it as it stands, while warapp_plan_turn's and the
+    // submit's commander check size every reply at the larger of the estimate and my own income.
+    // T1 (my commander, 3) – T2 (mine, 3) – A's T3 (10) – the fog (T4); T7 (mine) – T8 – T9, a +6 bonus to build.
+    const line = buildGraph({
+      ...makeMap([1, 2, 3, 4, 7, 8, 9], [[1, 2], [2, 3], [3, 4], [4, 7], [7, 8], [8, 9]]),
+      bonuses: [{ id: 100, name: 'B', value: 6, territoryIds: [7, 8, 9], bonusIds: [] }],
+    });
+    const b4 = board([withCommander(mine(1, 3)), mine(2, 3), enemy(3, 10), fogged(4), mine(7, 2), neutral(8, 4), neutral(9, 4)], true);
+    const settings = { ...STD, multiAttack: true };
+    const check = (p: TurnPlan, deploy: number) =>
+      commanderSafety({
+        graph: line,
+        board: b4,
+        me: ME,
+        deploys: p.deploys,
+        moves: p.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+        opponents: [{ id: A, deploy }],
+        settings,
+        killedBy: false,
+      })!;
+    const plain = planTurn({ graph: line, board: b4, me: ME, income: 30, settings });
+    expect(check(plain, 30).killers).toBe(0);
+    const whatIf = planTurn({ graph: line, board: b4, me: ME, income: 30, settings, options: { enemyDeploy: 5 } });
+    expect(whatIf.rationale.some((r) => r.startsWith("My commander's territory T1 (#1) is held against the worst case (#274), ~14"))).toBe(true);
+    expect(check(whatIf, 5).killers).toBe(0);
+    expect(check(whatIf, 30).killers).toBeGreaterThan(0);
   });
 
   it('a commander three moves clear is no border: nothing is deployed for it and it stays', () => {

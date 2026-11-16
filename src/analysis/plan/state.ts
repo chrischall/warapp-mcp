@@ -192,6 +192,12 @@ export interface PlanState {
    * first order, for Order Priority (plan/commander.ts `commanderTransit`).
    */
   commanderCaught?: true;
+  /**
+   * #274 review 2: the transit hold covers only what lands before my first order (some player has two
+   * stacks beside it, and holding against them all does not fit): the walk is my first order, with no
+   * Order Priority advised for it (plan/commander.ts `commanderTransit`).
+   */
+  commanderWalkFirst?: true;
   warnings: string[];
   rationale: string[];
   /** Armies deployed on each territory of mine. */

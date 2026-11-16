@@ -118,13 +118,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   one, else its own 0-army transfer; under No-Split the territory's one order, reserved before any pass, with
   the whole stack. The step is my commander's territory for rule 1k that turn; where it stood is held only for
   its own worth (its 7 not counted there), except that after the strikes and before triage it gets the deploys
-  that survive the opponent's first order (`commanderTransit`), after the step's own hold (all that is left when
-  that falls short, with a warning) — even when I am known to move first, since the submit's commander check is
-  not told who moves first and tries the opponent first too. The walk goes early; it is my first order (after a
-  protected strike or kill) only when the commander may be caught before it runs (`ps.commanderCaught`: the
-  transit hold falls short, or the fog borders it), and only then is Order Priority advised for it; otherwise the
-  first order is chosen as before. A walk carrying no armies never waits behind a move into its territory (one
-  carrying armies does). Under No-Split the walk wins over a strike or kill from that territory. The plan's first
+  that survive what may land there before the walk (`commanderTransit`), after the step's own hold — even when I
+  am known to move first, since the submit's commander check is not told who moves first and tries the opponent
+  first too. Moving first, a walk that is not my first order runs after two of the opponent's orders (me1, opp1,
+  opp2, me2), so the hold is sized for every enemy stack beside it attacking in turn, each player's deploy on one
+  (review 2); when that does not fit, for each player's strongest attack only, and the walk is then my first
+  order with no Order Priority advised (`ps.commanderWalkFirst`; a warning if a strike or kill still goes first);
+  when neither fits, all that is left goes there, with a warning (`ps.commanderCaught`). The walk goes early; it is
+  my first order (after a protected strike or kill) in those two cases or when the fog borders it, and Order
+  Priority is advised for it only when caught; otherwise the first order is chosen as before. Every other move
+  out of its territory waits for the walk (`scheduleMoves`' `beforeWalk`: only a strike that ends a player may
+  go first). A walk carrying no armies never waits behind a move into its territory (one carrying armies does).
+  Under No-Split the walk wins over a strike or kill from that territory; a commander kill that territory alone
+  could send is a warning naming it (and that a 1v1 ends with it). The commander check (`targets`) also tries
+  every stack beside its territory converging on it, the deploy on each in turn (the all-attack puts it on the
+  largest stack, which may face elsewhere). A what-if `enemyDeploy` below my income sizes the plan's holds for
+  the what-if while the check sizes replies at my income: such a plan can read unsafe (pinned by a test). The plan's first
   warning says it walks; with nowhere safer it stays, and a hold it cannot fund is the first warning. Rule 1k's
   threat is now the worst case: per opponent (a team together; the FFA leader's every opponent) its whole deploy,
   at least my income (a what-if `enemyDeploy` as given), plus the movable armies of every stack of its within two

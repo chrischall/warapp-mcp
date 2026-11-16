@@ -711,6 +711,18 @@ export function commanderStrikes(pc: PlanCtx, ps: PlanState, book: DeployBook, t
         limits.push(
           `${label(x)} can send at most ${unkept(x)}${local ? ` (Local Deployment: only ${roomLeft.get(x)} may be deployed there)` : ''}`,
         );
+    // #274 review 2: under No-Split my commander's walk is its territory's one order; a kill that
+    // territory alone could make is named, never silently dropped (a 1v1 ends with it).
+    const walk = adjacent.find((x) => x === pc.commanderAt?.retreat?.from && orderOf(x)?.commander === true);
+    if (walk !== undefined && !could.length && Math.max(0, avail.get(walk)!) + Math.max(0, spareAt(walk)) >= cost) {
+      unstruck.push({
+        t,
+        text: `${at} is in reach: ${label(walk)} could send the ${cost} attackers killing it needs (${sizing}), but under No-Split my commander's walk is ${label(walk)}'s one order (#274): not attacked. ${
+          profile.format === '1v1' ? 'Killing it ends the game (a 1v1)' : `Killing it eliminates player ${p}`
+        }: to strike instead, send ${label(walk)} → ${label(t)} by hand, and my commander stays on ${label(walk)}.`,
+      });
+      continue;
+    }
     unstruck.push({
       t,
       text: `${at} is in reach, but killing it needs ${cost} attackers (${sizing}), more than my territories next to it can send this turn${limits.length ? ` (${limits.join('; ')})` : ''}: not attacked.`,

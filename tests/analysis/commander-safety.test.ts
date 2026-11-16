@@ -227,10 +227,23 @@ describe('stressPlan targets (#274)', () => {
     const graph = buildGraph(STAR);
     const all = stressPlan({ graph, board: starBoard(), me: ME, deploys: [], moves: [], opponents: [{ id: FOE, deploy: 5 }], settings: GUARD_OFF, lookAhead: false });
     const one = stressPlan({ graph, board: starBoard(), me: ME, deploys: [], moves: [], opponents: [{ id: FOE, deploy: 5 }], settings: GUARD_OFF, lookAhead: false, targets: [1] });
-    expect(one.considered).toBeLessThan(all.considered);
+    // (More may be considered than without targets: the converging replies below are tried only with them.)
     expect(one.considered).toBeGreaterThan(0);
     // The stack on 2 striking 8 is no longer tried.
     expect(all.replies.some((r) => r.to === 8)).toBe(true);
     expect(one.replies.some((r) => r.to === 8)).toBe(false);
+  });
+
+  it('tries every stack beside a target converging on it, the deploy on each in turn (#274 review 2)', () => {
+    // My commander on 1 (10 + its 7) beside the foe's 2 (30) and 5 (30); the foe's largest stack, 7 (500),
+    // faces my 6. The all-attack puts the deploy on 7; converging with the deploy on 2 or 5 kills it.
+    const g = buildGraph(makeMap(8, [[1, 2], [1, 5], [1, 3], [3, 4], [6, 7], [6, 8]]));
+    const b = board([withCommander(mine(1, 29)), foe(2, 30), mine(3, 1), mine(4, 1), foe(5, 30), mine(6, 1), foe(7, 500), mine(8, 1)]);
+    const input = { graph: g, board: b, me: ME, deploys: [], moves: [], opponents: [{ id: FOE, deploy: 30 }], settings: STD, lookAhead: false } as const;
+    const plain = stressPlan(input);
+    expect(plain.replies.some((r) => r.kind === 'all-attack' && r.deployTo !== 7)).toBe(false);
+    const one = stressPlan({ ...input, targets: [1] });
+    expect(one.replies.some((r) => r.kind === 'all-attack' && (r.deployTo === 2 || r.deployTo === 5) && r.lost.includes(1))).toBe(true);
+    expect(commanderSafety({ ...input, killedBy: false })!.killers).toBeGreaterThan(0);
   });
 });

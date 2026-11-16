@@ -7,7 +7,7 @@
 // enemy or the fog (taken before my order runs, the step would turn the commander's transfer into
 // an attack): the safest path; and only toward a territory strictly farther than where it stands.
 // With no such territory it stays, and rule 1k holds it against the worst case.
-import { COMMANDER_STRENGTH } from '../combat.js';
+import { COMMANDER_STRENGTH, guaranteedKills } from '../combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from '../graph.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
@@ -142,18 +142,28 @@ export function placeCommanderMove(pc: Pick<PlanCtx, 'commanderAt' | 'noSplit' |
 }
 
 /**
- * #274: my commander stays where it stood until my first order runs, and the opponent's first order
- * may come before it: the territory it leaves gets the deploys that make it survive one attack
- * there — the strongest stack beside it with its owner's whole deploy (at least my own income, as
- * warapp_submit_turn sizes its replies; a what-if `enemyDeploy` as given), my commander counted.
- * Even when I am known to move first (#274 review): warapp_submit_turn's commander check is not
- * told who moves first and tries the opponent first too, so a walk without this hold would be
+ * #274: my commander stays where it stood until its walk runs, and the opponent's orders may come
+ * before it: the territory it leaves gets the deploys that make it survive what can land there first.
+ * Each player's attack there is its stack beside it with its owner's whole deploy (at least my own
+ * income, as warapp_submit_turn sizes its replies; a what-if `enemyDeploy` as given), my commander
+ * counted. Even when I am known to move first (#274 review): warapp_submit_turn's commander check is
+ * not told who moves first and tries the opponent first too, so a walk without this hold would be
  * refused there. Nothing more: once it has walked, the territory is held only for its own worth.
- * The hold where it walks to (rule 1k) is reserved first; when what is left cannot make it hold, all
- * of it goes there and a warning says so. That case, or a fogged neighbour (what hides there cannot
- * be sized), sets `ps.commanderCaught`: only then is Order Priority advised for the walk
- * (plan/move-order.ts). Run after the strikes (a territory `gone` — struck or finished off —
- * threatens nothing), before triage.
+ *
+ * #274 review 2: the walk is my first order only when nothing else claims that slot (a strike, a
+ * kill, a conceded withdrawal); moving first, the zigzag then runs my first order, the opponent's
+ * first and second, then the walk, so two attacks land before it. So the hold is sized, in order:
+ *   1. every enemy stack beside it attacking in turn, each player's deploy on one of its stacks
+ *      (each stack tried as the last, as the border threat sizes separate attacks): whatever order
+ *      the walk ends up in, nothing more can land there before it;
+ *   2. when that does not fit, each player's strongest single attack in turn (one player: its first
+ *      attack), and the walk is made my first order (`ps.commanderWalkFirst`): then only those land
+ *      before it whoever moves first. No Order Priority is advised for it: the hold covers them;
+ *   3. when neither fits, all that may go there goes there, a warning says so and `ps.commanderCaught`
+ *      makes the walk my first order with Order Priority advised for it (plan/move-order.ts), as a
+ *      fogged neighbour does (what hides there cannot be sized).
+ * The hold where it walks to (rule 1k) is reserved first. Run after the strikes (a territory `gone`
+ * — struck or finished off — threatens nothing), before triage.
  */
 export function commanderTransit(
   pc: PlanCtx,
@@ -173,18 +183,53 @@ export function commanderTransit(
   )
     ps.commanderCaught = true;
   const floor = pc.custom ? 0 : Math.max(0, pc.income - pc.cardArmies);
-  let threat = 0;
-  let by: number | undefined;
+  /** Per player beside it: each stack's movable armies and the deploy that can land on it, strongest first. */
+  const byPlayer = new Map<number, { id: number; movable: number; add: number }[]>();
   for (const n of [...neighborsOf(pc.g, r.from)].sort(byNum)) {
     const st = pc.territories.get(n);
     if (gone(n) || st?.owner.kind !== 'player' || !pc.foe(st.owner.playerId) || st.armies === null) continue;
     const p = st.owner.playerId;
-    const t = Math.max(0, st.armies - pc.guard) + pc.unitsAt(n) + Math.max(floor, pc.custom ? pc.deployOf(p) : threats.deployReaching(p, [n]));
-    if (t > threat) [threat, by] = [t, p];
+    const add = Math.max(floor, pc.custom ? pc.deployOf(p) : threats.deployReaching(p, [n]));
+    byPlayer.set(p, [...(byPlayer.get(p) ?? []), { id: n, movable: Math.max(0, st.armies - pc.guard) + pc.unitsAt(n), add }]);
   }
-  if (by === undefined) return;
-  threat = threats.bombSized(r.from, threat);
+  if (!byPlayer.size) return;
+  const players = [...byPlayer].sort((a, b) => a[0] - b[0]);
+  for (const [, xs] of players) xs.sort((a, b) => b.movable + b.add - (a.movable + a.add) || a.id - b.id);
+  /** The strongest single attack (the lowest player id on a tie): what the opponent's first order may be. */
+  let single = 0;
+  let by = players[0]![0];
+  for (const [p, xs] of players) if (xs[0]!.movable + xs[0]!.add > single) [single, by] = [xs[0]!.movable + xs[0]!.add, p];
+  const kills = (n: number) => guaranteedKills(n, pc.rates.offensiveKillRate, 0, 'StraightRound');
+  type Sequence = { soft: number[]; last: number };
+  /**
+   * The attack sequences to survive: softening attacks (their kills come off first) and a last one
+   * that must not take what is left. `every`: all the stacks, each tried as the last with its own
+   * deploy, every other player's deploy on its strongest stack; else each player's strongest attack.
+   */
+  const sequences = (every: boolean): Sequence[] =>
+    players.flatMap(([lastP, lastXs]) =>
+      (every ? lastXs : lastXs.slice(0, 1)).map((L) => {
+        const soft: number[] = [];
+        for (const [p, xs] of players)
+          for (const [i, x] of xs.entries()) {
+            if (x === L || (!every && i > 0)) continue;
+            const armies = x.movable + (p !== lastP && i === 0 ? x.add : 0);
+            if (armies > 0) soft.push(armies);
+          }
+        return { soft, last: L.movable + L.add };
+      }),
+    );
+  const all = sequences(true);
+  /** Some player has two stacks beside it: more can land before a later walk than before my first order. */
+  const stacked = players.some(([, xs]) => xs.length > 1);
+  const many = players.reduce((n, [, xs]) => n + xs.length, 0) > 1;
   const have = ps.avail.get(r.from)! + book.guardAt(r.from) + pc.unitsAt(r.from) + COMMANDER_STRENGTH;
+  /** Whether `d` defenders (my commander counted) survive every sequence, each last attack sized for a Bomb as a border's threat is. */
+  const survives = (d: number, seqs: readonly Sequence[]) =>
+    seqs.every(({ soft, last }) => {
+      const left = d - soft.reduce((a, n) => a + kills(n), 0);
+      return left > 0 && (pc.toTake(left) ?? Infinity) > threats.bombSized(r.from, last);
+    });
   // Where it walks to holds it for the rest of the turn (rule 1k there): its hold comes first.
   const dest = threats.borderAt(r.to, gone);
   let reserve = 0;
@@ -193,23 +238,40 @@ export function commanderTransit(
     while (reserve <= ps.budget && (pc.toTake(there + reserve) ?? Infinity) <= dest.threat) reserve++;
   }
   const room = Math.max(0, Math.min(book.roomAt(r.from), ps.budget - reserve));
-  let need = 0;
-  while (need <= room && (pc.toTake(have + need) ?? Infinity) <= threat) need++;
-  // `need` past `room`: no deploy there makes it hold.
+  const needFor = (seqs: readonly Sequence[]) => {
+    let need = 0;
+    while (need <= room && !survives(have + need, seqs)) need++;
+    return need;
+  };
   const label = pc.label;
+  const threat = threats.bombSized(r.from, single);
+  // `need` past `room`: no deploy there makes it hold.
+  const need = needFor(all);
   if (need <= room) {
     if (need > 0) {
       book.deploy(r.from, need);
       ps.rationale.push(
-        `Deploy ${need} to ${label(r.from)}: my commander walks from it this turn (#274), but until my first order runs the opponent's first attack may land there: with my commander it then holds against ~${threat} (player ${by}'s strongest stack beside it and its whole deploy, never below my own income).`,
+        many
+          ? `Deploy ${need} to ${label(r.from)}: my commander walks from it this turn (#274), but until the walk runs every enemy stack beside it may attack it, one after another (moving first, two land before a walk that is not my first order): with my commander it then holds against all of them (each player's whole deploy, never below my own income).`
+          : `Deploy ${need} to ${label(r.from)}: my commander walks from it this turn (#274), but until my first order runs the opponent's first attack may land there: with my commander it then holds against ~${threat} (player ${by}'s strongest stack beside it and its whole deploy, never below my own income).`,
       );
     }
+    return;
+  }
+  // #274 review 2: holding against each player's first attack only, the walk must be my first order.
+  const first = stacked ? needFor(sequences(false)) : Infinity;
+  if (first <= room) {
+    ps.commanderWalkFirst = true;
+    if (first > 0) book.deploy(r.from, first);
+    ps.rationale.push(
+      `My commander's walk from ${label(r.from)} is my first order (#274): ${first > 0 ? `the ${first} deployed there hold` : 'it holds'} against ${players.length > 1 ? "each player's strongest attack" : `player ${by}'s first attack (~${threat}, its strongest stack beside it and its whole deploy)`}, all that can land before my first order, but not against every stack beside it attacking in turn, which could land before a later one.`,
+    );
     return;
   }
   // Short of it, all that may go there goes there (an attack smaller than the worst case may come).
   ps.commanderCaught = true;
   book.deploy(r.from, room);
   ps.warnings.push(
-    `My commander may be caught on ${label(r.from)} before it walks (#274): if the opponent moves first, player ${by}'s first attack there (~${threat}) lands before my first order, and ${room ? `the ${room} deployed there` : 'nothing more deployed there'} cannot make it hold against that (it needs more). Order Priority, when I hold one, runs the walk first.`,
+    `My commander may be caught on ${label(r.from)} before it walks (#274): if the opponent moves first, ${players.length > 1 ? `the first attacks of players ${players.map(([p]) => p).join(' and ')} there land` : `player ${by}'s first attack there (~${threat}) lands`} before my first order, and ${room ? `the ${room} deployed there` : 'nothing more deployed there'} cannot make it hold against ${players.length > 1 ? 'them' : 'that'} (it needs more). Order Priority, when I hold one, runs the walk first.`,
   );
 }

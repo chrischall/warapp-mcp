@@ -13,7 +13,9 @@
 //   all-attack  every stack with a target attacks at once, the deploy on the largest: once
 //               spread (each stack takes the most valuable target no other has taken) and once
 //               concentrated (each takes its most valuable target). Tried when two or more
-//               stacks have targets: it is what needs no deploy.
+//               stacks have targets: it is what needs no deploy. With `targets` (#274, the
+//               commander check), also every stack beside a target converging on it, the
+//               deploy on each of them in turn, that stack attacking first.
 //   dodge       (#180) a stack my orders attack moves out first, its deploy on it and its
 //               commander along, into each exit it can take: its own neighbour, or a neutral or
 //               a territory of mine its armies break (luck-free, on the board after my deploys).
@@ -472,6 +474,21 @@ export function stressPlan(input: StressInput): StressReport {
       const same = JSON.stringify(variants[0]) === JSON.stringify(variants[1]);
       for (const orders of same ? [variants[0]!] : variants) {
         candidates.push({ player: opp.id, kind: 'all-attack', deployTo: largest, deploy: dep, orders });
+      }
+    }
+    // #274 review 2: with `targets` (the commander check), every stack beside a target converges on
+    // it, the deploy on each in turn and that stack attacking first: the all-attack above puts the
+    // deploy on the largest stack, which may face another territory altogether.
+    for (const t of input.targets ? [...new Set(input.targets)].sort(byNum) : []) {
+      const beside = [...reach].filter(([, ts]) => ts.includes(t)).map(([st]) => st);
+      if (beside.length < 2) continue;
+      const bySize = [...beside].sort((a, b) => (start.get(b)?.armies ?? 0) - (start.get(a)?.armies ?? 0) || a - b);
+      for (const d of bySize) {
+        const dep = deployOn(opp, d);
+        const orders = [d, ...bySize.filter((x) => x !== d)].map((st) => ({ from: st, to: t, armies: allOf(st, st === d ? dep : 0), withCommander: true }));
+        const key = JSON.stringify([d, orders]);
+        if (candidates.some((c) => c.kind === 'all-attack' && c.player === opp.id && JSON.stringify([c.deployTo, c.orders]) === key)) continue;
+        candidates.push({ player: opp.id, kind: 'all-attack', deployTo: d, deploy: dep, orders });
       }
     }
     // Dodge (#180): a stack my orders attack moves out first, never when I am known to move first.

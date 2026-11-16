@@ -607,19 +607,27 @@
 //     #165 option, encoding unverified live): on the move out of its territory to that step when
 //     the plan has one, else its own transfer carrying no armies (under No-Split, the territory's
 //     one order, entered before any pass plans, with the whole stack: it wins over a commander
-//     strike or a kill that territory could have made, which the passes then leave out). The step,
+//     strike or a kill that territory could have made, which the passes then leave out; a commander
+//     kill it alone could have sent is named in a warning, with how to send it by hand). The step,
 //     not where it stood, is my commander's territory for rule 1k this turn; where it stood is held
 //     only for its own worth, its commander's 7 not counted there — except that after the strikes
-//     and before triage it gets the deploys that survive the opponent's first order (its strongest
-//     stack beside it plus its owner's whole deploy, at least my income; my commander counted),
-//     after the hold the step needs (all that is left when that falls short, with a warning). It
-//     does so even when I am known to move first: warapp_submit_turn's commander check is not told
-//     who moves first and tries the opponent first too. The walk goes early; it is my first order
-//     after a strike that protects my commander or ends a player only when my commander may be
-//     caught before it runs — the transit hold falls short, or the fog borders where it stands —
-//     and then Order Priority is advised for it when I hold one, whatever it carries; otherwise the
-//     first order is chosen as before. A walk carrying no armies never waits behind a move into its
-//     territory (one carrying armies does: they may be arriving). The plan's first warning says it
+//     and before triage it gets the deploys that survive what may land there before the walk
+//     (each stack plus its owner's whole deploy, at least my income; my commander counted), after
+//     the hold the step needs. Moving first, a walk that is not my first order runs after two of
+//     the opponent's (me1, opp1, opp2, me2), so the hold is sized for every enemy stack beside it
+//     attacking in turn (#274 review 2); when that does not fit, for each player's strongest attack
+//     only, and the walk is then my first order (`commanderWalkFirst`, no Order Priority advised for
+//     it: the hold covers what lands before it; a warning if a strike or kill still goes first); when
+//     neither fits, all that is left goes there, with a warning. It does so even when I am known to
+//     move first: warapp_submit_turn's commander check is not told who moves first and tries the
+//     opponent first too. The walk goes early; it is my first order after a strike that protects my
+//     commander or ends a player when the hold covers only the first attacks, or when my commander
+//     may be caught before it runs — the transit hold falls short, or the fog borders where it
+//     stands — and only then is Order Priority advised for it when I hold one, whatever it carries;
+//     otherwise the first order is chosen as before. Every other move out of its territory waits for
+//     the walk (the armies there hold it until it leaves), except a strike that ends a player. A walk
+//     carrying no armies never waits behind a move into its territory (one carrying armies does:
+//     they may be arriving). The plan's first warning says it
 //     walks. With no such territory it stays, rule 1k holds it against the worst case, and a hold it
 //     cannot fund is the first warning. `commanderWalks: false` keeps it where it is.
 //  1s. Commander strike (every goal, before finishing off, triage and any expansion; #61).
