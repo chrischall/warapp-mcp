@@ -51,9 +51,10 @@
 //                it (`orders.cards`) is no capture, and with my card plays not recorded (`cards` absent) no
 //                capture of mine is read when Gift may be in play (`gift`). My cached orders count only when
 //                the board agrees they ran (`ordersLanded`, shared with the held attack): orders modified in the
-//                web client after this server cached them (a deploy that never landed) read no capture of mine,
-//                nor one of a neutral beside mine. A deploy on a territory of mine it took never counts: once
-//                lost, the board cannot confirm it;
+//                web client after this server cached them (a deploy that never landed, a transfer dropped or
+//                rerouted, an attack added into a neutral) read no capture of mine, nor one of a neutral beside
+//                mine. A deploy on a territory of mine it took never counts: once lost, the board cannot confirm
+//                it; nor is one read beside a neutral that shrank with no attack of mine cached into it;
 //   held-attack  an attack of mine (my cached orders) failed on a territory of its that held: the
 //                defenders it took to hold (one more than my attackers kill) beyond the armies there
 //                (its commander there counted as 7, as on its stacks beside it),
@@ -290,14 +291,23 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
    * #275 review: whether the board agrees with my cached orders, so they are the orders war.app ran (orders
    * modified in the web client after this server cached them are not). Every territory of mine on both
    * boards with no card play or order in outside `moves` touching it, borders included, ends at most at what
-   * it had plus my deploys there plus what my orders in could send; every territory newly mine, at most at
-   * what my orders in could send. Each one that stayed mine with no other
+   * it had plus my deploys there plus what my orders in could send, less what its transfers out into
+   * territories mine on both boards sent (none with an order out outside `moves`); every territory newly
+   * mine, at most at what my orders in could send; every neutral in view on both boards beside nothing but
+   * my territories and neutrals, at least at what it had less what my cached attacks into it could kill.
+   * Each one that stayed mine with no other
    * player or fog beside it, no card play or order outside `moves` touching it, and only transfers out of it
    * into territories that stayed mine, must end at what it had plus my deploys there, less what went out,
    * plus what came in (an order in from a territory that may have been hit first: up to what it sends).
    * Needs one such territory: with none, nothing agrees. Shared by the capture and the held attack, which
    * both read my cached orders; neither trusts a cached figure the board cannot confirm (a deploy on a
    * territory I lost; an attack its source's losses do not fit).
+   * What no board shows: a failed attack the edit added out of a territory I then lost into a territory of
+   * the player that took it (its losses fell with the territory; the defenders it met are that player's to
+   * count). Into a neutral it shows as the neutral shrinking: here when nothing but mine is beside it, and the
+   * capture skips one beside the territory lost whoever else is beside it. Only called without Multi-Attack
+   * (both callers need it): a chain carries armies an order out of a territory entered earlier sends, which
+   * `sentFrom` does not count.
    */
   let landed: boolean | undefined;
   const ordersLanded = (): boolean => {
@@ -314,9 +324,20 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     // armies (an attack on it only kills, a failed attack's survivors stay where they were), so it ends at
     // most at what it had plus my deploys there plus what each order in could send. A deploy or a move the
     // web-client edit put there instead shows above that (#275 review: borders are never quiet).
+    // Less what its transfers out sent into territories mine on both boards (#275 review: a web-client edit
+    // that dropped or rerouted a transfer between two borders left its source above this): a transfer between
+    // my territories cannot fail, and each order sends no more than `sentFrom` says, the shortfall of them all
+    // at most what a hit on x took first, which x lost too. Not with an order out of x outside `moves`: it
+    // may have taken any share first, so the transfers listed may have sent nothing.
+    const transferredOut = (x: number) =>
+      unlisted((m) => m.from === x)
+        ? 0
+        : sentFrom(x)
+            .filter((o) => isMine(before.get(o.to)) && isMine(cur.get(o.to)))
+            .reduce((n, o) => n + o.armies, 0);
     for (const x of [...before.keys()].sort(byNum)) {
       if (!isMine(before.get(x)) || !isMine(cur.get(x)) || carded.has(x) || unlisted((m) => m.to === x)) continue;
-      const most = before.get(x)!.armies! + deployedOn(x) + sentInto(x).reduce((n, i) => n + i.into, 0);
+      const most = before.get(x)!.armies! + deployedOn(x) + sentInto(x).reduce((n, i) => n + i.into, 0) - transferredOut(x);
       if (visibleState(cur.get(x))!.armies! > most) return false;
     }
     // Every territory newly mine (a neutral, another player's or one the fog hid): only my orders into it
@@ -327,6 +348,29 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       if (isMine(before.get(x)) || !isMine(cur.get(x)) || carded.has(x) || unlisted((m) => m.to === x)) continue;
       const most = sentInto(x).reduce((n, i) => n + i.into, 0);
       if (visibleState(cur.get(x))!.armies! > most) return false;
+    }
+    // Every neutral in view on both boards with nothing but my territories and neutrals, all in view, beside
+    // it on the previous board: only my attacks wear it down, each killing at most its luck-free share of what
+    // it sends (#275 review: a web-client edit that added a failed attack into it, from a border I then lost,
+    // shows here). Not with an order into it outside `moves` or a card play on it.
+    for (const x of [...before.keys()].sort(byNum)) {
+      const was = visibleState(before.get(x));
+      const is = visibleState(cur.get(x));
+      if (was?.owner.kind !== 'neutral' || is?.owner.kind !== 'neutral' || carded.has(x) || unlisted((m) => m.to === x)) continue;
+      const alone = neighborsOf(graph, x).every((n) => {
+        const t = visibleState(before.get(n));
+        return t !== undefined && (t.owner.kind === 'neutral' || playerOf(t) === me);
+      });
+      if (!alone) continue;
+      const kills = sentInto(x).reduce(
+        (n, { f }) =>
+          n +
+          sentFrom(f)
+            .filter((o) => o.to === x)
+            .reduce((k, o) => k + straightKills(o.armies, s.offensiveKillRate ?? 60), 0),
+        0,
+      );
+      if (is.armies! < was.armies! - kills) return false;
     }
     let checked = 0;
     for (const x of [...before.keys()].sort(byNum)) {
@@ -512,6 +556,16 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
         // review): once it is lost the board cannot confirm one, and a web-client edit moving a deploy from
         // it to another border would read as defenders that never stood there.
         if (!myOrders || !ordersLanded() || unlisted((m) => m.from === id) || giftUnknown || gifted.has(id)) continue;
+        // A neutral beside it in view on both boards that shrank with no order of mine cached into it: an
+        // attack the cache does not list (a web-client edit) may have spent its armies first. With its owner
+        // beside that neutral too the board cannot tell which (`ordersLanded` reads only a neutral beside
+        // nobody but me), so the capture is not read (#275 review).
+        const worn = neighborsOf(graph, id).some((n) => {
+          const a = visibleState(before.get(n));
+          const b = visibleState(cur.get(n));
+          return a?.owner.kind === 'neutral' && b?.owner.kind === 'neutral' && b.armies! < a.armies! && !myOrders.sent!.some((m) => m.to === n);
+        });
+        if (worn) continue;
         const out = myOrders.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
         defenders = Math.max(guard, defenders - out);
       } else {

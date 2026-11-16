@@ -721,9 +721,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   order outside `moves` on it and only transfers out into territories that stayed mine ends at what it had plus my
   deploys less what went out plus what came in — up to what an order sends from a source that may have been hit
   first — and at least one such territory exists, and every territory of mine on both boards, borders included,
-  ends at most at what it had plus my deploys there plus what my orders in could send, so orders changed in the
-  web client after the cache, a deploy that never landed, read nothing; a capture of mine never counts a cached
-  deploy on the territory lost (the board cannot confirm it), and a held attack is not read when its source
+  ends at most at what it had plus my deploys there plus what my orders in could send, less what its transfers
+  out into territories mine on both boards sent (none with an order out outside `moves`), every territory newly
+  mine at most at what my orders in could send, and every neutral in view beside only mine at least at what it
+  had less what my cached attacks into it could kill, so orders changed in the web client after the cache — a
+  deploy that never landed, a transfer dropped or rerouted between borders, an attack added — read nothing; a
+  capture of mine never counts a cached deploy on the territory lost (the board cannot confirm it), nor is read
+  beside a neutral that shrank with no attack of mine cached into it (a failed attack added out of the lost
+  territory into its taker's own territory is the one edit no board shows), and a held attack is not read when its source
   lost fewer than the defenders it needed kill — every attacker, or round(defensive kill rate × defenders) —
   since the attack that ran was smaller; a capture is read with no luck and straight rounding only, as a held attack is)
   for `UNTRUSTED_TURNS` (3).
