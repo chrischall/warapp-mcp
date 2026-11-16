@@ -88,7 +88,7 @@ export function registerMapTool(server: McpServer, client: WarappClient, live: M
           'map\'s chokepoints (articulation points, bridges between regions, narrow connectors). Filter with ' +
           '`bonus` (part of a bonus name) to see one bonus\'s territories, borders and entry points by name. ' +
           'View "full" also lists the map\'s distribution modes with the territories each lets a player start on ' +
-          '(read once from war.app\'s map details through the signed-in tab, then kept with the map; unknown is null). ' +
+          '(read once from war.app\'s map details through the web-client channel (direct or bridge), then kept with the map; unknown is null). ' +
           'Map-only — needs no board, so it works in a lobby. Read-only.',
       ),
       _meta: lookupMeta(['warzone map', 'best bonuses', 'easiest bonus', 'chokepoints']),
