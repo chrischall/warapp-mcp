@@ -61,7 +61,7 @@ type HostedView = boolean | undefined | { hosted?: boolean | undefined; hostSign
 
 /**
  * The hint when the signed-in account cannot be told: linking a session is suggested only locally, and a
- * hosted connection mcp-host signed in to war.app is pointed at its "Sign in", never at a tab.
+ * hosted connection mcp-host signed in to war.app is pointed at its "Sign in" (a paired tab meanwhile).
  */
 function signedInHint(view: HostedView): string {
   const { hosted, hostSignIn } = typeof view === 'object' ? view : { hosted: view, hostSignIn: false };

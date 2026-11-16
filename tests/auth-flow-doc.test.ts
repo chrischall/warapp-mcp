@@ -257,3 +257,39 @@ describe('hiding warapp_sign_in with enabledTools is an owner choice whose costs
     }
   });
 });
+
+describe('the docs state that the flow makes a password sign-in mandatory for a new connection', () => {
+  // Once the registration carries the authFlow, mcp-host ends a login with no grant when the
+  // capture is an isError (login-flow.ts, authorize.ts): every refusal kind, not only a wrong
+  // password. So a new connection needs one successful war.app password sign-in, and the bridge
+  // is a fallback only for connections made before the flow and for a session that expires later.
+  const planDirect = read('../docs/PLAN-DIRECT.md');
+  const registration = planDirect.slice(planDirect.indexOf('### Registration change'));
+  const step2 = registration.slice(registration.indexOf('\n2. '), registration.indexOf('\n3. '));
+  const readme = read('../README.md');
+  const hostedReadme = readme.slice(readme.indexOf('**Hosted (mcp-host).**'), readme.indexOf('## Tools'));
+  const claude = read('../CLAUDE.md');
+  const claudeHosted = claude.slice(claude.indexOf('**Hosted, the direct leg serves only'), claude.indexOf('- **End of game (#178).**'));
+
+  it('no doc says a bot check or a connection that never signed in falls back to the bridge', () => {
+    for (const text of [planDirect, readme, claude, mint]) {
+      expect(text).not.toMatch(/leaves the connection on the\s+browser bridge/);
+      expect(text).not.toMatch(/a connection that has not signed in yet\)/);
+      expect(text).not.toMatch(/a connection that has not signed in since it was added, uses the browser bridge/);
+    }
+  });
+
+  it('PLAN-DIRECT puts the trade-off in front of the step that adds the flow, as the owner\'s decision', () => {
+    const decision = step2.slice(0, step2.indexOf('mcp-host set'));
+    expect(decision).toMatch(/owner's decision/i);
+    expect(decision).toMatch(/successful war\.app\s+password sign-in/);
+    expect(decision).toMatch(/edge_blocked/);
+    expect(decision).toMatch(/clear/);
+  });
+
+  it('the README, CLAUDE.md and mint.yaml each state it', () => {
+    for (const text of [hostedReadme, claudeHosted, mint]) {
+      expect(text).toMatch(/successful\s+(?:#\s+)?war\.app\s+(?:#\s+)?password\s+(?:#\s+)?sign-in/);
+    }
+  });
+});

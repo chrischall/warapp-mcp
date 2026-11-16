@@ -77,10 +77,14 @@ export interface SessionStore {
   read(): Promise<Session | null>;
 }
 
-/** What to do about a signed-out host-captured session: mcp-host runs the sign-in again. */
+/**
+ * What to do about a signed-out host-captured session: mcp-host runs the sign-in again. Until then the
+ * router falls back to the browser bridge, so a paired war.app tab still serves the connection.
+ */
 export const HOST_SIGN_IN_ADVICE =
   'Use "Sign in" on this war.app connection, or reconnect it (mcp-host signs in to war.app again and captures a ' +
-  'new session).';
+  'new session). Meanwhile, a war.app tab signed in and paired with the browser bridge works, since calls fall ' +
+  'back to it.';
 
 /** No war.app session is linked — the router (in `auto`) falls back to the bridge. */
 export class SessionNotLinkedError extends McpToolError {

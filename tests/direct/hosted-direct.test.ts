@@ -127,7 +127,7 @@ describe('the router when hosted with a captured token', () => {
     expect(logged).not.toContain(HOST_TOKEN);
   });
 
-  it('never re-sends a write that reached war.app; the error says Sign in, never link, never a tab', async () => {
+  it('never re-sends a write that reached war.app; the error says Sign in (a paired tab meanwhile), never link', async () => {
     const directFetch = vi.fn<DirectFetch>(async () => ({ status: 200, body: 'not a frame', url: 'https://war.app/Services?m=x' }));
     const bridgeFetch = vi.fn();
     const router = createDirectFirstBridge({
@@ -145,7 +145,8 @@ describe('the router when hosted with a captured token', () => {
     expect(msg).toMatch(/not re-sent/);
     expect(msg).toMatch(/Sign in/);
     expect(msg).not.toContain(LINK);
-    expect(msg).not.toMatch(/\btab\b/);
+    // Later calls fall back to the bridge, so a paired war.app tab works until the Sign in.
+    expect(msg).toMatch(/Meanwhile, a war\.app tab .*paired .*works/);
     expect(bridgeFetch).not.toHaveBeenCalled();
   });
 
@@ -195,12 +196,13 @@ describe('the router when hosted with a captured token', () => {
 });
 
 describe('accountUnknown on a host-signed-in connection', () => {
-  it('points at Sign in on the connection, never a tab or the link tool', () => {
+  it('points at Sign in on the connection, with a paired tab meanwhile, never the link tool', () => {
     const hint = accountUnknown({ hosted: true, hostSignIn: true }).hint ?? '';
     expect(hint).toMatch(/Sign in/);
     // A connection made before the flow existed has no Sign in to re-run: reconnecting runs it.
     expect(hint).toMatch(/or reconnect it/);
-    expect(hint).not.toMatch(/\btab\b/);
+    // The router falls back to the bridge, so a paired war.app tab works until then.
+    expect(hint).toMatch(/Meanwhile, a war\.app tab .*paired .*works/);
     expect(hint).not.toContain(LINK);
     expect(accountUnknown({ hosted: true }).hint).toBe(accountUnknown(true).hint);
   });

@@ -1548,8 +1548,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`auto`: direct first, the bridge its fallback, the non-GET never re-sent) from that token alone
   (the given store is not consulted); `warapp_session_status` and the healthcheck say
   `linked: 'host-captured'` (no capture time, no age); a signed-out session's errors, log line and
-  hints say to use "Sign in" on the connection, or reconnect it (`HOST_SIGN_IN_ADVICE`; mcp-host runs
-  the login again), never `warapp_link_session` and never a tab (`LiveContext.hostSignIn`, `accountUnknown(ctx)`).
+  hints say to use "Sign in" on the connection, or reconnect it, and that a paired war.app tab works meanwhile
+  (`HOST_SIGN_IN_ADVICE`; mcp-host runs the login again, the router falls back to the bridge), never
+  `warapp_link_session` (`LiveContext.hostSignIn`, `accountUnknown(ctx)`).
   Without it a hosted child is byte-identical to before: the store reads as empty, the router is
   pinned to the browser bridge whatever `WARAPP_TRANSPORT` says, and no hint suggests linking.
   Locally `WARAPP_AUTH_TOKEN` is ignored: only the session file counts. The flow is
@@ -1559,7 +1560,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   attempt, the token never in the gateway-readable bag). No paste-the-cookie fallback ships:
   `warapp_sign_in` takes no cookie argument, so such a flow would be an `isError` that ends the
   login (a test keeps the document, the hint and the manifest from offering one until it is built).
-  `mint.yaml` declares the password flow as `auth.flow` (a path inside the package).
+  `mint.yaml` declares the password flow as `auth.flow` (a path inside the package). **Once a
+  registration carries the flow, every new connection needs one successful war.app password sign-in:**
+  mcp-host ends the login with no grant on ANY `isError` from the capture (`credential_rejected`,
+  `edge_blocked`, `transport`, `timeout`, `http`, `unknown`), so a captcha, an outage or a network fault
+  ends it like a wrong password and may clear the fields already entered, and an account with no war.app
+  password (Facebook sign-in) cannot connect. The bridge is the fallback only for a connection made before
+  the flow was added and for a session that expires later. Adding the flow is the owner's decision.
   `tests/auth-flow-doc.test.ts` checks it against mcp-host's rules offline. **`warapp_sign_in` (part B, `src/direct/sign-in.ts`, `src/tools/sign-in.ts`)
   is registered ONLY hosted** (locally `warapp_link_session` stays the way). It takes `email` and
   `password` and makes ONE attempt, never retried (war.app may count failed sign-ins): GET

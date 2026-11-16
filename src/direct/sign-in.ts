@@ -264,12 +264,16 @@ async function exchange(creds: SignInCredentials, jar: Map<string, string>, opts
     return res;
   };
 
-  /** Follow `res`'s redirects (as GETs, within war.app) until a final answer or the AuthToken. */
+  /**
+   * Follow `res`'s redirects (as GETs, within war.app) until a final answer or, once the POST
+   * has gone, the AuthToken. Before the POST an AuthToken ends nothing: it is not this
+   * account's (the page phase drops it), and stopping on a redirect would read as no form.
+   */
   const follow = async (from: URL, first: SignInResponse): Promise<{ url: URL; res: SignInResponse }> => {
     let url = from;
     let res = first;
     for (let n = 0; ; n++) {
-      if (jar.has(AUTH_COOKIE)) return { url, res };
+      if (posted && jar.has(AUTH_COOKIE)) return { url, res };
       const location = REDIRECTS.has(res.status) ? res.headers.location : undefined;
       if (!location) return { url, res };
       let next: URL;

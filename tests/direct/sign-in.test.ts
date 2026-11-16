@@ -210,6 +210,20 @@ describe('signIn', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('keeps following the sign-in page past a redirect that sets an AuthToken: only the POST may end a phase on it', async () => {
+    const { fetch, calls } = scripted(
+      page({ status: 302, headers: { location: '/LogIn?r=1' }, setCookies: ['AuthToken=staleFromPage'], body: '' }),
+      getPage(),
+      page({ setCookies: [`AuthToken=${FAKE_TOKEN}`], body: HOME_PAGE }),
+    );
+    await expect(signIn({ email: EMAIL, password: PASSWORD }, { fetch })).resolves.toEqual({ authToken: FAKE_TOKEN });
+    expect(calls.map((c) => [c.method, c.url])).toEqual([
+      ['GET', SIGN_IN_URL],
+      ['GET', 'https://war.app/LogIn?r=1'],
+      ['POST', SIGN_IN_URL],
+    ]);
+  });
+
   it('ignores an AuthToken the sign-in page sets on its own: only one the POST earns counts', async () => {
     const { fetch } = scripted(page({ setCookies: ['AuthToken=stale'] }), page({ body: HOME_PAGE }));
     const err = await refusalOf(signIn({ email: EMAIL, password: PASSWORD }, { fetch }));

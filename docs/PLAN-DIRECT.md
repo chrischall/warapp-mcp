@@ -32,7 +32,10 @@ capture (or re-capture) the token.
   `authFlow` and **never stored**; only war.app's `AuthToken` is captured, as the per-user secret
   `WARAPP_AUTH_TOKEN`, and the hosted child reads it into memory (`hostedSession`,
   `src/direct/session.ts`), never into a file. The bridge stays the fallback on the same
-  registration. A hosted child still never reads or writes a session file and never registers
+  registration, but only for a connection made before the flow was added and for a session that
+  expires later: once the registration carries the flow, a NEW connection needs one successful
+  war.app password sign-in, because mcp-host ends a login whose sign-in fails (see "Registration
+  change" below). A hosted child still never reads or writes a session file and never registers
   `warapp_link_session`; without the captured token it is pinned to the bridge exactly as before.
   Part A (built) is the transport, status and hints; part B is the war.app sign-in tool the
   `authFlow` calls (`warapp_sign_in`, built from the form and endpoint the owner's play session
@@ -209,21 +212,35 @@ required, so a capture sending `{ auth_token }` would be a schema `isError`, whi
 refused credential (the login ends and the collected credentials are deleted). Building it means an
 `auth_token` mode on `warapp_sign_in` (one cookie-only GET to war.app to check the session, then
 `{ authToken }`), its flow document, and the capture-args check in `tests/auth-flow-doc.test.ts`
-extended to it. Until then a bot check on the sign-in (`edge_blocked`) leaves the connection on the
-browser bridge, which the registration keeps as its fallback.
+extended to it. Until then, once the registration carries the flow, a bot check on the sign-in
+(`edge_blocked`), like any other refusal, ends the login with no grant: the connection is not made,
+and the browser bridge does not stand in for it (see the owner's decision in step 2 below).
 
 ### Registration change for the owner to apply (after part B ships in a release)
 On the hosted registration (`warapp`, today `authFields` `WARAPP_EMAIL` + `WARAPP_API_TOKEN`,
 `perUserChild`, `dataDir`, `bridge: true`, `bridgePortEnv: WARAPP_WS_PORT`): **add** the `authFlow`,
-**keep** everything else (the bridge stays the fallback on the same registration: a session that
-stops working, or a connection that has not signed in yet), and decide whether to hide
+**keep** everything else (the bridge stays the fallback on the same registration, for a connection
+made before the flow was added and for a session that stops working later; never for a new
+connection whose sign-in failed, see step 2), and decide whether to hide
 `warapp_sign_in` from the menu (step 3, optional). The exact steps:
 
 1. **Wait for the release.** `npm view @chrischall/warapp-mcp version` shows the version with
    `warapp_sign_in`, and the registration's pin is on it (`mcp-host get <id>`: `source.version`;
    a `latest` pin resolves at the next spawn, an exact pin needs `mcp-host set <id> --data
    '{"source":{"type":"npm","pkg":"@chrischall/warapp-mcp","version":"<new>"}}'`).
-2. **Register the flow**, either way:
+2. **Register the flow — the owner's decision first.** Adding the flow makes one successful war.app
+   password sign-in a condition of every NEW connection. mcp-host ends the login with no grant when
+   the capture is an `isError` (`packages/gateway/src/login-flow.ts` ~285, `authorize.ts` ~1385), and
+   that is every refusal `warapp_sign_in` makes, not only a wrong password: `credential_rejected`,
+   `edge_blocked`, `transport`, `timeout`, `http`, `unknown`. A non-credential failure (a captcha,
+   a war.app outage, a network fault) ends the login exactly as a wrong password does, and may clear
+   the fields the user already entered (the email and API token), so they type them again. So a
+   captcha in front of the sign-in, a war.app outage at connect time, or an account that signs in
+   through Facebook and has no war.app password means **no hosted connection at all**; the browser
+   bridge does not stand in, because no connection exists to fall back on. The bridge stays the
+   fallback only for connections made before the flow was added (they never ran it) and for a
+   session that expires after a successful sign-in. Without the flow every connection keeps working
+   through the bridge alone, as today. Register it only if that trade is worth direct mode; either way:
    - on the existing registration: `mcp-host set <id> --data "$(jq -c '{authFlow: .}'
      docs/examples/warapp-auth-flow.json)"` (the control API's `PUT /api/v1/registrations/<id>` with
      the whole `authFlow` document; it is not part of `configHash`, so no running child is retired
@@ -259,7 +276,8 @@ stops working, or a connection that has not signed in yet), and decide whether t
 **What to report** (on #333; never the token, the password or the email): the release and pin; the
 step-2 command's answer (accepted, or the refusal text); what the Sign in page showed (one password
 field, the help text) and whether it succeeded, or the `warapp_sign_in` refusal kind it named
-(`credential_rejected`, `edge_blocked`, `transport`, `timeout`, `http`, `unknown`); the
+(`credential_rejected`, `edge_blocked`, `transport`, `timeout`, `http`, `unknown`; any of them ends
+the login, so say whether the connection was made at all and whether its fields had to be re-entered); the
 `warapp_session_status` answers from step 5 (`linked`, `activeTransport`, `pushTransport` once a turn
 wait has run, `sessionExpired` if present); whether the first calls after Sign in rode the bridge
 until the child respawned; and, over the following days, when (if ever) the session went stale
