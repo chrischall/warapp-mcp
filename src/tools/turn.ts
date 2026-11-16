@@ -61,6 +61,7 @@ import {
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH, type CombatSettings, luckFraction, straightKills } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
+import { holdsBelowPlan, type HoldOrders, type HoldShortfall } from '../analysis/hold-diff.js';
 import { guardCase } from '../analysis/profile.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
@@ -1746,6 +1747,59 @@ async function commanderCheck(
   });
 }
 
+/** What the comparison with the default plan (#275 pattern 3) says the plan was. */
+export const BELOW_PLAN_BASIS =
+  'the default plan made now on this board (warapp_plan_turn with no goal, focus, reserve, enemy_deploy or first mover, ' +
+  'and no award of picks: a plan made with them may differ)';
+
+/**
+ * #275 pattern 3: the borders `given` leaves below the hold the default plan gives them — planTurn on the
+ * same live board with default options (`livePlanSetup`, `award: false`: it writes nothing), one plan per
+ * call — with the difference (src/analysis/hold-diff.ts). `undefined` when the plan cannot be made. Never throws.
+ */
+export async function bordersBelowPlan(
+  ctx: LiveContext,
+  a: {
+    game: Game;
+    map: GameMap;
+    me: Player;
+    turn: number | null;
+    territories: LiveTerritory[];
+    info: unknown;
+    history: BoardHistory;
+    teamsKnown?: boolean;
+    given: HoldOrders;
+  },
+): Promise<HoldShortfall[] | undefined> {
+  try {
+    const { given, ...rest } = a;
+    const setup = await livePlanSetup(ctx, { ...rest, award: false });
+    const plan = planTurn(setup.input);
+    return holdsBelowPlan({
+      graph: setup.graph,
+      board: setup.seen,
+      me: a.me.id,
+      settings: setup.settings,
+      ...(setup.teams ? { teams: setup.teams } : {}),
+      plan: { deploys: plan.deploys, moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })) },
+      conceded: plan.conceded,
+      given,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/** #275 pattern 3: the preview's warning for the borders left below the default plan's hold, by id; none when there are none. */
+export function belowPlanWarning(rows: readonly HoldShortfall[] | undefined): string | undefined {
+  if (!rows?.length) return undefined;
+  return (
+    `These orders leave ${rows.length} border${rows.length === 1 ? '' : 's'} below the hold the default plan gives ${rows.length === 1 ? 'it' : 'them'} (#275): ` +
+    rows.map((r) => `territory ${r.territory} with ${r.left} where the plan leaves ${r.hold} (${r.short} short)`).join('; ') +
+    `. Compared with ${BELOW_PLAN_BASIS}; a hand edit that drains a border the plan sized is the usual cause.`
+  );
+}
+
 export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
   /**
    * B2: after `warapp_submit_turn` with `break_agreement`, mark the agreements its orders broke
@@ -2621,7 +2675,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
         'several attacks on one target in the order listed, each against what the earlier ones leave) ' +
         'and warns about one that cannot capture; it also warns (never refuses) when the orders leave a border of a bonus you hold ' +
-        'falling to a single deploy below your own income (the headroom table, as warapp_plan_turn has it). An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
+        'falling to a single deploy below your own income (the headroom table, as warapp_plan_turn has it), and when they leave ' +
+        'a border below what the default plan made now (warapp_plan_turn with no options) leaves standing there, naming each ' +
+        'with the difference. An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
         'and, once the orders are committed, the ledger records it broken-by-me. In a Commanders game, orders that ' +
         'leave your commander takeable by one opponent\'s single deploy, or two striking together when you lead a ' +
@@ -3001,21 +3057,23 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #275 (c): a border of a held bonus these orders leave falling to a deploy below my own income.
         // A warning, never a refusal; the stress test (warapp_check_plan) tries the replies in full.
         const subTeams = teamsOf(game.players);
+        const givenDeploys = deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies }));
+        const givenMoves = moves.map((m, i) => ({
+          from: m.from.id,
+          to: m.to.id,
+          armies: m.percent ? (options.estimates.get(i) ?? 0) : m.armies,
+          ...(m.mode === 'attack-only' || m.mode === 'transfer-only' ? { mode: m.mode } : {}),
+          ...(m.commander ? { withCommander: true } : {}),
+          ...(m.attackTeammates ? { attackTeammates: true } : {}),
+        }));
         warnings.push(
           ...headroomWarnings(
             safeHeadroom({
               graph: graphOf(map),
               board,
               me: me.id,
-              deploys: deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })),
-              moves: moves.map((m, i) => ({
-                from: m.from.id,
-                to: m.to.id,
-                armies: m.percent ? (options.estimates.get(i) ?? 0) : m.armies,
-                ...(m.mode === 'attack-only' || m.mode === 'transfer-only' ? { mode: m.mode } : {}),
-                ...(m.commander ? { withCommander: true } : {}),
-                ...(m.attackTeammates ? { attackTeammates: true } : {}),
-              })),
+              deploys: givenDeploys,
+              moves: givenMoves,
               settings: plannerSettings(game.settings),
               ...(subTeams ? { teams: subTeams } : {}),
               ...(plays.some((p) => p.kind === 'OrderPriority') ? { orderPriority: true } : {}),
@@ -3024,6 +3082,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             !teamsKnown,
           ),
         );
+        // #275 pattern 3: a border these orders leave below the hold the default plan gives it (one plan, a warning).
+        const belowPlan = belowPlanWarning(
+          await bordersBelowPlan(ctx, {
+            game, map, me, turn: turnNumber, territories, info, teamsKnown,
+            // The board cache alone (warapp_plan_turn writes it each turn): no GameFeed request is added here.
+            history: await boardHistory(ctx, game, me, turnNumber, { cacheOnly: true }),
+            given: { deploys: givenDeploys, moves: givenMoves },
+          }),
+        );
+        if (belowPlan) warnings.push(belowPlan);
         // Deploys first (as the client sends them), merged per territory.
         const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
         for (const d of deploys) {

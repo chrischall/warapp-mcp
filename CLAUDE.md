@@ -705,6 +705,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`borderGuess`' `untrusted`, reason `untrusted`: a split drawn from the estimate would undo it), `warapp_check_plan`
   tries that figure by default (source `untrusted`), and both say so in the first warning (under `enemy_deploy`
   `warapp_check_plan` says nothing of it and `warapp_plan_turn`'s warning names the what-if figure it used).
+- **Given orders against the default plan (#275, pattern 3).** `src/analysis/hold-diff.ts` (pure,
+  `holdsBelowPlan`): for each border (mine at the start, beside an enemy stack in view, a teammate no enemy,
+  not conceded by the plan) what stands on it after the default plan's deploys and moves and after the given
+  ones, on the turn simulator with no opponent order (my commander as 7; card plays not carried out); a border
+  the given orders leave lower is named with `hold`, `left`, `short`, largest first. `bordersBelowPlan`
+  (`src/tools/turn.ts`) makes the one extra plan per call: `livePlanSetup` with `award: false` and no args
+  (writes nothing), then `planTurn`. `warapp_check_plan` returns `belowPlan` (absent only when the plan
+  could not be made; `belowPlanBasis` on full) and `warapp_submit_turn`'s preview warns (never refuses),
+  its history from the board cache alone (`boardHistory`'s `cacheOnly`: no GameFeed request added). Report
+  only: no plan reads it, so the golden corpus is unchanged.
 - **A hollow interior with the guard off (#275, pattern 2).** `src/analysis/breach.ts` (pure, `breachBehind`):
   a border's breach is my territories within two steps behind it (through my holdings) that face no enemy or
   fog, that no other front of mine reaches within two steps (so nothing is counted twice), and that are hollow
