@@ -428,7 +428,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `player`, and refuses when that account cannot be determined), validates on the live board
   (own deploys and sources — under Multi-Attack a move, never a deploy, may also go from a territory an
   earlier move in the list enters; each move out counts the armies moved in earlier in the list, an upper
-  bound — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
+  bound; without Multi-Attack an army moved in earlier may stand guard, so its source sends all its own with a preview warning, #292,
+  unverified live — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
   setting the income model does not compute or does not verify in full (the army cap: war.app pays
   min(income, round(cap × income) − my armies on the board), the cap on this turn's income, verified by six

@@ -3330,10 +3330,34 @@ describe('Multi-Attack in the turn tools (#130)', () => {
   it('counts armies moved in between two moves out of the same territory (attack, transfer in, attack again)', () => {
     // 161 holds 3 + 5 deployed: 7 attack 157, then 5 arrive from 159 and 5 attack 158.
     expect(run([[161, 157, 7], [159, 161, 5], [161, 158, 5]], true).warnings).toEqual([]);
-    // Without Multi-Attack the armies moved in do not move on this turn.
-    expect(() => run([[161, 157, 7], [159, 161, 5], [161, 158, 5]])).toThrow(/send 12 armies from .*\(161\).* at most 7/);
+    // Without Multi-Attack the armies moved in do not move on this turn; one of them may stand
+    // guard (#292), so 161 could send all 8 of its own, never 12.
+    expect(() => run([[161, 157, 7], [159, 161, 5], [161, 158, 5]])).toThrow(/send 12 armies from .*\(161\).* at most 8/);
     // Still bounded: only what arrived before the later move counts.
     expect(() => run([[161, 157, 7], [161, 158, 5], [159, 161, 5]], true)).toThrow(/send 12 armies from .*\(161\).* at most 7/);
+  });
+
+  it('lets an army transferred in earlier in the list stand guard, with a warning (#292)', () => {
+    // 161 holds 3 + 5 deployed = 8; 2 arrive from 159 first, so all 8 of its own may attack.
+    const out = run([[159, 161, 2], [161, 157, 8]]);
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0]).toMatch(/Territory 161 sends all 8 of its own armies/);
+    expect(out.warnings[0]).toMatch(/army moved in earlier in the list standing guard/);
+    expect(out.warnings[0]).toMatch(/unverified live/);
+    // The preview names territories by id only.
+    expect(out.warnings[0]).not.toContain(mapName(161));
+    // One army left behind needs no arrival: no warning.
+    expect(run([[159, 161, 2], [161, 157, 7]]).warnings).toEqual([]);
+    // The arrived armies still do not move on without Multi-Attack.
+    expect(() => run([[159, 161, 2], [161, 157, 9]])).toThrow(
+      /send 9 armies from .*\(161\).* at most 8 this turn \(an army moved in earlier in the list may stand guard\)/,
+    );
+  });
+
+  it('without an earlier transfer in, the guard still stays (#292)', () => {
+    // The transfer listed after the attack arrives too late to stand guard.
+    expect(() => run([[161, 157, 8], [159, 161, 2]])).toThrow(/send 8 armies from .*\(161\).* at most 7 this turn \(one army stands guard\)/);
+    expect(() => run([[161, 157, 8]])).toThrow(/at most 7 this turn \(one army stands guard\)/);
   });
 
   it('says the most a captured territory can send on is an upper bound', () => {
@@ -3372,6 +3396,22 @@ describe('Multi-Attack in the turn tools (#130)', () => {
       noSplit: true,
     });
     expect(short.warnings.join('\n')).toMatch(/No-Split: .*\(161\) → .*sends 3.*all 7/);
+  });
+
+  it('warapp_submit_turn previews an arrived army standing guard as a warning, not a refusal (#292)', async () => {
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const preview = payload(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 159, to: 161, armies: 2 },
+          { kind: 'move', from: 161, to: 157, armies: 8 },
+        ],
+      }),
+    );
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    expect((preview.preview as { warnings?: string[] }).warnings?.join('\n')).toMatch(/Territory 161 sends all 8 of its own armies.*unverified live/);
   });
 
   it('warapp_submit_turn passes the game\'s Multi-Attack setting through', async () => {

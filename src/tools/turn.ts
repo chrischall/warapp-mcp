@@ -738,33 +738,48 @@ export function validateTurn(args: {
   }
   // Walk the moves in order: each source's total sent so far against its armies, its deploys and,
   // under Multi-Attack, every army moved in earlier in the list (an attack, a transfer in, then
-  // another attack is fine). Without Multi-Attack, armies moved in do not move on this turn.
+  // another attack is fine). Without Multi-Attack, armies moved in do not move on this turn, but
+  // one of them can stand guard (#292: the wiki's guard, turn-sim and the bundle's validator), so a
+  // source with an arrival earlier in the list may send all of its own — a warning, since whether
+  // war.app accepts it live is unverified.
   const sent = new Map<number, number>();
   const inflow = new Map<number, number>();
-  let over: { from: { id: number; name: string }; armies: number; max: number } | undefined;
+  const arrived = new Map<number, number>();
+  const guardedByArrival = new Map<number, number>();
+  let over: { from: { id: number; name: string }; armies: number; max: number; arrivalGuard: boolean } | undefined;
   for (const m of moves) {
     const start = chained.has(m.from.id) ? 0 : atMoves(m.from.id);
-    const max = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
+    const strict = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
+    const arrivalGuard = args.guard && !args.multiAttack && (arrived.get(m.from.id) ?? 0) > 0;
+    const max = arrivalGuard ? start : strict;
     // A percentage order takes a share of what is left when it runs: it never over-sends, and what
     // it moves on is at most what the source could move (#165).
-    const moved = m.percent ? Math.max(0, max - (sent.get(m.from.id) ?? 0)) : m.armies;
+    const moved = m.percent ? Math.max(0, strict - (sent.get(m.from.id) ?? 0)) : m.armies;
     if (!m.percent) {
       const armies = (sent.get(m.from.id) ?? 0) + m.armies;
       sent.set(m.from.id, armies);
-      if (armies > max && !over) over = { from: m.from, armies, max };
+      if (armies > max && !over) over = { from: m.from, armies, max, arrivalGuard };
+      else if (armies > strict) guardedByArrival.set(m.from.id, armies);
     }
     if (args.multiAttack) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + moved);
+    else if (moved > 0) arrived.set(m.to.id, (arrived.get(m.to.id) ?? 0) + moved);
   }
   if (over) {
-    const { from, armies, max } = over;
+    const { from, armies, max, arrivalGuard } = over;
     throw new McpToolError(
       `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
-        `${args.guard ? ' (one army stands guard)' : ''}` +
+        `${arrivalGuard ? ' (an army moved in earlier in the list may stand guard)' : args.guard ? ' (one army stands guard)' : ''}` +
         `${airlifted.has(from.id) ? ', counting this turn\'s Airlift' : ''}` +
         `${inflow.has(from.id) ? '; that counts every army moved in earlier in the list, an upper bound: an attack\'s survivors are fewer' : ''}.`,
       { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
     );
   }
+  for (const [id, armies] of guardedByArrival)
+    warnings.push(
+      `Territory ${id} sends all ${armies} of its own armies: this relies on an army moved in earlier in the list ` +
+        'standing guard there, as the game rules allow (unverified live). If war.app keeps one of its own armies back, ' +
+        'it may refuse the orders or send one fewer.',
+    );
   // No-Split moves the whole stack (#124: the wiki, and a live turn that left every source at 0):
   // an order for fewer armies still sends them all, so say what will actually move. A source captured
   // earlier in the list (Multi-Attack) is left out: the armies standing there at the start were the
