@@ -679,7 +679,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (pure; `headroomTable`) gives, for every border of mine after my orders, the smallest single deploy on a
   neighbouring enemy stack that takes it (turn simulator, both move orders unless known; the attack is tried
   at every place in the zigzag the opponent can reach by holding it back behind filler orders — before my
-  first order, between two, after my last — so a border my later orders drain is judged as drained), the
+  first order, between two, after my last — so a border my later orders drain is judged as drained; a commander walk of the plan's goes with its move, as
+  in warapp_check_plan's table on the same orders), the
   bonuses it breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
   `headroom`, and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
   my income. A static seat (#270, `staticSeats`) gets no row: its territories are neutrals there, as the
@@ -716,7 +717,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `holdsBelowPlan`): for each border (mine at the start, beside an enemy stack in view, a teammate no enemy,
   not conceded by the plan; picked on the start-of-turn board, so one whose enemy stack the given orders
   capture still counts) what stands on it after the default plan's deploys and moves and after the given
-  ones, on the turn simulator with no opponent order (my commander as 7; card plays not carried out); a border
+  ones, on the turn simulator with no opponent order (my commander as 7, walking with the move that carries it on both sides — #274; card plays not carried out); a border
   the given orders leave lower is named with `planLeaves`, `left`, `short`, largest first. `planLeaves` is
   everything the plan leaves there (leftover, margins, idle stacks), not the least that holds it, so a border
   named may still hold (the headroom table says what takes it). `bordersBelowPlan` (`src/tools/turn.ts`)

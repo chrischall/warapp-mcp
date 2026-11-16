@@ -346,6 +346,12 @@ describe('warapp_plan_turn commander block (#274)', () => {
     const preview = payload<{ confirmToken?: string; preview?: { warnings: string[] } }>(await h.call('warapp_submit_turn', { game_id: GAME, orders: p.orders }));
     expect(preview.confirmToken).toEqual(expect.any(String));
     expect(JSON.stringify(preview)).not.toMatch(/accept_commander_risk/);
+    // #275 meets #274: the plan's own orders are compared with the plan walking the commander too, so
+    // they leave no border below it, and the plan's headroom table carries the walk as the check's does.
+    expect(JSON.stringify(preview)).not.toMatch(/below the hold/);
+    const full = payload<{ headroom: unknown[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    const checked = payload<{ headroom: unknown[] }>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: p.orders, view: 'full' }));
+    expect(full.headroom).toEqual(checked.headroom);
   });
 
   it('first_mover me: the walk keeps its transit hold, so warapp_submit_turn takes the plan\'s orders (#274 review)', async () => {

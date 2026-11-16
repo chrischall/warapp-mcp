@@ -1847,7 +1847,11 @@ export async function bordersBelowPlan(
       me: a.me.id,
       settings: setup.settings,
       ...(setup.teams ? { teams: setup.teams } : {}),
-      plan: { deploys: guess ? guess.deploys : plan.deploys, moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })) },
+      plan: {
+        deploys: guess ? guess.deploys : plan.deploys,
+        // #274: the plan's commander walk takes it along, as the given orders do.
+        moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+      },
       conceded: plan.conceded,
       given,
     });
@@ -2352,7 +2356,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         staticSeats: staticSeats(game.players, game.endRules, me.id),
         me: me.id,
         deploys: plan.deploys,
-        moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
+        // #274: the commander walk carries it along, as warapp_check_plan's table on these orders does.
+        moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
         settings,
         ...(setup.teams ? { teams: setup.teams } : {}),
         ...(mover.firstMover !== undefined && mover.verified ? { firstMover: mover.firstMover } : {}),
