@@ -1547,7 +1547,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `origin: 'host'`). With it, `createDirectFirstBridge` resolves `WARAPP_TRANSPORT` as locally
   (`auto`: direct first, the bridge its fallback, the non-GET never re-sent) from that token alone
   (the given store is not consulted); `warapp_session_status` and the healthcheck say
-  `linked: 'host-captured'` (no capture time, no age); a signed-out session's errors, log line and
+  `linked: true` with `linkedBy: 'host'` (`linked` stays a boolean, #335) (no capture time, no age); a signed-out session's errors, log line and
   hints say to use "Sign in" on the connection, or reconnect it, and that a paired war.app tab works meanwhile
   (`HOST_SIGN_IN_ADVICE`; mcp-host runs the login again, the router falls back to the bridge), never
   `warapp_link_session` (`LiveContext.hostSignIn`, `accountUnknown(ctx)`).

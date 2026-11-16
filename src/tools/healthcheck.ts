@@ -44,13 +44,13 @@ type HealthcheckDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep'> 
 
 /**
  * The non-secret facts about the linked direct session — never the token. The
- * session mcp-host captured at sign-in (hosted, #333) is `host-captured`, with
+ * session mcp-host captured at sign-in (hosted, #333) is `linked: true` with `linkedBy: 'host'` (`linked` stays a boolean), with
  * no capture time or age: this process does not know them.
  */
 function sessionSummary(env: NodeJS.ProcessEnv | undefined, now: () => number) {
   const s = readSessionSync(env);
   if (!s) return { linked: false as const };
-  if (s.origin === 'host') return { linked: 'host-captured' as const };
+  if (s.origin === 'host') return { linked: true, linkedBy: 'host' as const };
   const ageSeconds = Math.max(0, Math.round((now() - Date.parse(s.capturedAt)) / 1000));
   return { linked: true as const, capturedAt: s.capturedAt, ageSeconds };
 }
