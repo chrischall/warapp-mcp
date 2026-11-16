@@ -145,7 +145,7 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
           'assumptions). The start candidates are the territories the live board showed as pickable, kept by ' +
           'warapp_plan_picks and by warapp_submit_picks; in a game that dealt its starts automatically from a map ' +
           'distribution mode, that mode\'s territories (`starts.source` "distribution-mode"; read once from war.app\'s ' +
-          'map details and kept with the map, and `warnings` says when they are unknown); with neither and no ' +
+          'map details and kept with the map, and `warnings` says when they are unknown; `startCandidates` names the source, the count and the mode by id and name); with neither and no ' +
           'statistics, no start is guessed (`starts.source` is "none") and the rest works from what was seen. The start prior is uniform, unless the ' +
           `server runs locally with ${STATS_ENV}=1: then each candidate weighs by how often players started on it in the ` +
           'finished games warapp_map_stats already cached for the map (the sample is reported, and called weak under ' +
@@ -318,6 +318,16 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
           turns: boards.map((b) => b.turn).sort((a, b) => a - b),
           opponents: result.opponents.map(opponentView),
           prepare: result.prepare.map(prepareView),
+          // #328: where the start candidates came from, and the distribution mode that dealt them, by id and name.
+          startCandidates: candidates
+            ? {
+                source: candidates.source,
+                count: candidates.territories.length,
+                ...(candidates.mode !== undefined
+                  ? { mode: { id: candidates.mode, name: map.distributionModes.find((d) => d.id === candidates.mode)?.name ?? null } }
+                  : {}),
+              }
+            : { source: 'none', count: 0 },
           // #328: the distribution mode's territories could not be had (they are no start candidates then).
           ...(startWarnings.length ? { warnings: startWarnings } : {}),
           ...(full ? { assumptions: result.assumptions } : {}),

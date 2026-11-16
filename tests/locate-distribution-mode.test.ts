@@ -111,6 +111,7 @@ interface WherePayload {
     starts: { source: string; likely: Array<{ territory: Named; likelihood: number }>; ruledOut?: Named[]; unknown: number | null; method: string };
     presence: Array<{ territory: Named; likelihood: number; basis: string[] }>;
   }>;
+  startCandidates: { source: string; count: number; mode?: { id: number; name: string | null } };
   warnings?: string[];
   assumptions?: string[];
 }
@@ -138,6 +139,8 @@ describe('warapp_locate_opponents: a distribution mode (#328)', () => {
     ]);
     expect(o.presence.map((x) => x.territory.id)).toEqual(expect.arrayContaining([5, 6, 7, 8]));
     expect(p.assumptions!.join('\n')).toMatch(/the 6 territories of the map's distribution mode 2, which dealt the starts automatically/);
+    expect(p.startCandidates).toMatchObject({ source: 'distribution-mode', count: 6, mode: { id: 2 } });
+    expect(p.startCandidates.mode!.name).toBe('Mode two');
     expect(p).not.toHaveProperty('warnings');
   });
 
@@ -155,6 +158,7 @@ describe('warapp_locate_opponents: a distribution mode (#328)', () => {
     h = await liveHarness({ feed: [game(1)], warapp: fake.answer, bundle: bundle(), dataDir: tmp() });
     const p = await locate(h);
     expect(bob(p).starts).toMatchObject({ source: 'none', likely: [] });
+    expect(p.startCandidates).toEqual({ source: 'none', count: 0 });
     expect(p.warnings!.join('\n')).toMatch(/dealt its starts automatically from the map's distribution mode 2, whose territories are unknown/);
     expect(p.warnings!.join('\n')).toMatch(/could not be read from war\.app's map details/);
   });
