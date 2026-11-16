@@ -265,6 +265,10 @@ npm run build      # tsc --noEmit + esbuild bundle → dist/bundle.js
 npm test           # typecheck + vitest
 ```
 
+`node scripts/calibrate.mjs` (after `npm run build`) scores the opponent income estimates against finished
+games' histories and replays the opening on today's planner, aggregates only: a local dev measurement, see
+`docs/PLAN-PROFILES.md` "Calibration and the opening benchmark".
+
 ## License
 
 MIT

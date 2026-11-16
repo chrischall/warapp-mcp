@@ -1655,6 +1655,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   inputs from the data directory alone: `{ game, settings, map, playerId, boards, orders }`
   (`undefined` without a settings record; `map` absent when the store evicted it).
 
+- **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
+  the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
+  `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's
+  estimate via `planEnemyEstimates`, each ÷ the history's true income, by format and coverage band),
+  `openingBenchmark` (my real start replayed 8 turns on `planTurn` + `simulateTurn`, the opponents put back where the
+  history shows them by `overlayHistory`: no fog, no attacks on me, no cards — said in the output) and the aggregates.
+  Truth is `<dataDir>/calibrate/histories/<gameId>.json`, written only by the owner's `--fetch` (one history read per
+  finished game, the file the mark, never read again; P2). No planner decision reads any of it (P1). How to run:
+  `docs/PLAN-PROFILES.md` "Calibration and the opening benchmark".
+
 ## Commands
 
 `npm run build` (tsc --noEmit + esbuild bundle) · `npm test` (typecheck + lint + vitest) ·

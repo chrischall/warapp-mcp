@@ -134,6 +134,42 @@ throwaway script is fine.
 Verdict per habit: `trait`, `pooled only`, or `not measurable yet`. Repeat after part C has read
 twenty finished games; the second report is the one P1 is decided on.
 
+### Calibration and the opening benchmark (#318): `scripts/calibrate.mjs`
+
+A local dev script, not a tool and not run in CI; it prints aggregates only (no game id, player id or
+name). Its pure parts are `src/analysis/calibrate.ts` (tested in `tests/analysis/calibrate.test.ts`).
+
+```sh
+npm run build                                   # tsc emits dist/**, which the script imports
+node scripts/calibrate.mjs                      # the data dir: MCP_DATA_DIR, else ~/.config/warapp-mcp
+node scripts/calibrate.mjs --data-dir <dir> --turns 8 --json
+node scripts/calibrate.mjs --fetch              # OWNER ONLY: reads war.app (needs the credentials)
+```
+
+- **Truth** is each finished game's history, kept at `<dataDir>/calibrate/histories/<gameId>.json`
+  (the decoded boards by id, as the board cache keeps them, the seats' final states and the turns; 0600,
+  atomic, one file per game with a settings record; a file that does not parse is never overwritten).
+  Only `--fetch` writes it: for each game in `<dataDir>/games` whose boards are cached, one GameFeed read
+  without the history (is it finished?), then for a finished game the cached account played the history
+  ONCE (P2): the file, whatever its status (`captured`, `unreadable`, `not-a-player`, `request-failed`),
+  is the mark, and a game with one is never read again. Agents and tests never run `--fetch`.
+- **(a) Calibration.** On every turn T with a cached board whose history board T − 1 is kept, per
+  opponent with land there: the tracker's income (`calibrationSamples`, E2), the fog prior (#119, before
+  #235's blend) and the plan's estimate (`planEnemyEstimates`, as `warapp_plan_turn` calls it: my income,
+  the previous cached board and my orders on it, the tracks), each ÷ its true income (`turnIncomes`), by
+  format and coverage band (#294). Printed per band: `n`, mean, geometric mean, sd, and the shares under
+  0.5 and over 1.5. These are the numbers `LOW_COVERAGE_FACTOR` (1.5), `PRIOR_EVIDENCE_TURNS` (4) and
+  `HIDDEN_INCOME_FACTOR` (2) are judged on; changing one goes through the owner.
+- **(b) Opening benchmark.** My real start (history board 0) replayed for 8 turns on today's planner,
+  my deploys and moves resolved with `simulateTurn`, and after each turn the opponents put back where
+  the history shows them (`overlayHistory`). Compared by turn: my replayed income, my real income and the
+  winner's; after turn 4, the games with land without bonuses (11+ territories on 8 or less) and with an
+  opponent at 1.5× my income, replayed and real. **Approximated, and printed with the result:** the
+  planner sees the whole board (no fog); the opponents never attack me (no interaction) — they hold the
+  land and armies the history shows, except land I hold in the replay; a territory I really took but did
+  not take in the replay keeps its replayed state; card plays are left out; with luck or weighted
+  rounding a battle is resolved at its expectation (counted as inexact).
+
 ## 8. Part A — the in-game read
 
 ### A1. Observing (`src/analysis/opponent-profile.ts`, pure)
