@@ -13,7 +13,7 @@ import type { DeployBook } from './orders.js';
 import { PLAIN_EXPANSION_LOSS } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
-import { plainOrderCosts } from './vacated.js';
+import { notFromTransit, plainOrderCosts } from './vacated.js';
 import type { Threats } from './threats.js';
 
 /**
@@ -124,7 +124,8 @@ export function afterLeftoverCaptures(
     const t = tg.id;
     const gain = gainWith([t]);
     if (gain < 0 || !plainEligible(pc, tgt, t, false) || plainEconomy(pc, tgt, t, gain)) continue;
-    const best = tg.sources
+    // #281 × #282: a denial is never sourced from the territory my commander walks from (its transit hold).
+    const best = (tgt.denials.has(t) ? notFromTransit(pc, tg) : tg).sources
       .filter((x) => sources.includes(x))
       .map((x) => ({ x, f: spareFor(x, t) }))
       .filter((c) => c.f !== null && c.f.spare >= tg.cost)

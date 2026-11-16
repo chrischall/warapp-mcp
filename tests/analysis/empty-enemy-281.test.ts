@@ -14,6 +14,10 @@ import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlanInput, type PlannerSettings, type PlanRelation, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
+import type { BoardSpecialUnit } from '../../src/board.js';
+import { armiesToTake, COMMANDER_STRENGTH } from '../../src/analysis/combat.js';
+import { commanderSafety } from '../../src/analysis/commander-safety.js';
+import { CHEAP_EXPANSION } from '../../src/analysis/plan/vacated.js';
 import { board, mine, neutral } from './helpers.js';
 
 const ME = 10;
@@ -157,5 +161,110 @@ describe("empty enemy territory with the guard off (#281, the owner's extension)
     const p = planTurn(input(at(), { previousBoard }));
     expect(attacksOn(p, 2).map((m) => m.reason)).toEqual([expect.stringMatching(/a retake/)]);
     expect(said(p)).not.toMatch(/cheap expansion \(#281\)/);
+  });
+});
+
+describe('#281 review: the reason the sweep exempts', () => {
+  it('is one exported constant, the end of every empty enemy capture reason', () => {
+    expect(CHEAP_EXPANSION).toBe('cheap expansion (#281)');
+    const [a] = attacksOn(planTurn(input(at())), 2);
+    expect(a!.reason).toContain(`: ${CHEAP_EXPANSION}`);
+  });
+});
+
+// #281 review: a #276 second line still short when pass 3 runs keeps what it is owed.
+//
+//   T6 (A 50) ─ T5 (A's stack, 20) ─ T4 (mine, the front) ─ T1 (+5 member, 0) ─ T3 (+5 member, 6)
+//                    └─ T7 (A, empty) ─┘          └──────── T2 (+5 member, 0) ─┘
+//
+// T1 and T2 are interior members of my held +5 bonus two moves from T5's 20 (my income or more):
+// each keeps a garrison of one. T7 faces only T5, which T4 already faces: the same front.
+describe("#281 review: an empty enemy capture never takes a #276 second line's armies", () => {
+  const lineMap = (): GameMap => {
+    const map = makeMap([1, 2, 3, 4, 5, 6, 7], [[5, 4], [4, 1], [4, 2], [1, 3], [2, 3], [5, 6], [4, 7], [7, 5]]);
+    map.bonuses = [{ id: 101, name: 'B101', value: 5, territoryIds: [1, 2, 3], bonusIds: [] }];
+    return map;
+  };
+  const b = board([mine(1, 0), mine(2, 0), mine(3, 6), mine(4, 20), held(5, 20, A), held(6, 50, A), held(7, 0, A)]);
+  const dep = (p: TurnPlan, id: number) => p.deploys.find((d) => d.territoryId === id)?.armies ?? 0;
+  const net = (p: TurnPlan, id: number) =>
+    dep(p, id) + p.moves.filter((m) => m.to === id && m.kind === 'transfer').reduce((n, m) => n + m.armies, 0) - p.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
+
+  it('the second line is paid first; the capture takes what is left (here its bare cost, with the #120 warning)', () => {
+    const p = planTurn({
+      graph: buildGraph(lineMap()),
+      board: b,
+      me: ME,
+      income: 5,
+      settings: OFF,
+      game: { players: [{ id: ME }, { id: A }], turn: 9 },
+      options: { goal: 'balanced', enemyDeploy: 5 },
+    });
+    expect(said(p)).toMatch(/Second line \(#276\)/);
+    // Both short members end the turn with their garrison of one.
+    expect(net(p, 1)).toBeGreaterThanOrEqual(1);
+    expect(net(p, 2)).toBeGreaterThanOrEqual(1);
+    expect(dep(p, 2)).toBe(1);
+    // Sized for A's deploy it would need 8 from T4, more than T4 spares without the second line's deploy.
+    expect(attacksOn(p, 7)).toEqual([expect.objectContaining({ from: 4, armies: 1 })]);
+    expect(attacksOn(p, 7)[0]!.reason).toContain(CHEAP_EXPANSION);
+  });
+});
+
+// #281 × #282: my commander's holds. T1 holds my commander beside A's empty T2 and A's stack on T3;
+// T8 and T9, mine, lead inland (the walk goes T1 → T8).
+describe("#281 × #282: an empty enemy capture never spends my commander's hold", () => {
+  const commander: BoardSpecialUnit = { kind: 'commander', id: `${ME}`.padStart(32, '0'), playerId: ME };
+  const g = buildGraph(makeMap([1, 2, 3, 5, 8, 9], [[1, 2], [2, 3], [1, 3], [3, 5], [1, 8], [8, 9]]));
+  const cb = (t1: number, t3: number) =>
+    board([{ ...mine(1, t1), specialUnits: [commander] }, held(2, 0, A), held(3, t3, A), held(5, 30, A), mine(8, 2), mine(9, 2)], true);
+  const run = (t1: number, t3: number, income: number, commanderWalks: boolean) =>
+    planTurn({
+      graph: g,
+      board: cb(t1, t3),
+      me: ME,
+      income,
+      settings: OFF,
+      turn: 14,
+      game: { players: [{ id: ME, state: 'Playing' }, { id: A, state: 'Playing' }], turn: 14 },
+      options: { adapt: true, commanderWalks },
+    });
+
+  it("keeps the worst-case hold on my commander's territory (rule 1w): only the armies above it go", () => {
+    const p = run(30, 20, 10, false);
+    expect(said(p)).toContain("My commander's territory T1 (#1) is held against the worst case (#274), ~60");
+    const [a] = attacksOn(p, 2);
+    expect(a).toMatchObject({ from: 1 });
+    expect(a!.reason).toContain(CHEAP_EXPANSION);
+    const left =
+      30 +
+      (p.deploys.find((d) => d.territoryId === 1)?.armies ?? 0) +
+      p.moves.filter((m) => m.to === 1 && m.kind === 'transfer').reduce((n, m) => n + m.armies, 0) -
+      p.moves.filter((m) => m.from === 1).reduce((n, m) => n + m.armies, 0);
+    expect(armiesToTake(left + COMMANDER_STRENGTH)!).toBeGreaterThan(60);
+  });
+
+  it('never takes it from the territory my commander walks from: what stands there is its transit hold', () => {
+    // Caught: A's 79 + its whole deploy (~40) on T3 can land before the walk; all 40 deployed on T1 stay.
+    const p = run(20, 80, 40, true);
+    expect(p.moves.filter((m) => m.commander)).toEqual([expect.objectContaining({ from: 1, to: 8 })]);
+    expect(p.moves.filter((m) => m.from === 1 && m.kind === 'attack' && m.reason.includes(CHEAP_EXPANSION))).toEqual([]);
+    const check = commanderSafety({
+      graph: g,
+      board: cb(20, 80),
+      me: ME,
+      deploys: p.deploys,
+      moves: p.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+      opponents: [{ id: A, deploy: 40 }],
+      settings: OFF,
+      killedBy: false,
+    })!;
+    expect(check).toBeDefined();
+  });
+
+  it('walking and not caught, the transit hold still keeps T1 whole until the walk', () => {
+    const p = run(30, 5, 5, true);
+    expect(p.moves.filter((m) => m.commander)).toEqual([expect.objectContaining({ from: 1, to: 8 })]);
+    expect(p.moves.filter((m) => m.from === 1 && m.reason.includes(CHEAP_EXPANSION))).toEqual([]);
   });
 });

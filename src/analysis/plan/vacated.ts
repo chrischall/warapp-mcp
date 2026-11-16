@@ -28,6 +28,9 @@ import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
 
+/** The end of every empty enemy capture's reason (#281, the owner's extension): tests and sweeps match on it. */
+export const CHEAP_EXPANSION = 'cheap expansion (#281)';
+
 /** A vacated territory costing at most this many armies to take is cheap enough to deny (#281). */
 export const VACATED_MAX_COST = 2;
 
@@ -251,6 +254,7 @@ export function dropEmptyEnemyTargets(ps: PlanState, tgt: Pick<Targets, 'targets
  * so the capture is never paid from a held bonus's garrison.
  */
 export function tryEmptyEnemy(
+  pc: Pick<PlanCtx, 'commanderAt'>,
   ps: PlanState,
   book: Pick<DeployBook, 'secondLine' | 'secondLineKept'>,
   tgt: Pick<Targets, 'targets' | 'emptyEnemies'>,
@@ -258,13 +262,16 @@ export function tryEmptyEnemy(
   t: number,
 ): boolean {
   const e = tgt.emptyEnemies.get(t)!;
-  const tg = tgt.targets.get(t)!;
+  const sources0 = tgt.targets.get(t)!.sources;
+  const tg = notFromTransit(pc, tgt.targets.get(t)!);
+  if (!tg.sources.length) return false;
   let owed = 0;
   for (const [id, x] of book.secondLine) owed += Math.max(0, x.size - (book.secondLineKept.get(id) ?? 0));
   const kept = Math.min(owed, Math.max(0, ps.budget));
   ps.budget -= kept;
+  tgt.targets.set(t, tg);
   try {
-    const reason = `player ${e.player}'s territory stands empty with One Army Must Stand Guard off: cheap expansion (#281)`;
+    const reason = `player ${e.player}'s territory stands empty with One Army Must Stand Guard off: ${CHEAP_EXPANSION}`;
     if (e.sure !== null) {
       tgt.targets.set(t, { ...tg, cost: e.sure });
       caps.worstCase.set(t, e.extra);
@@ -277,5 +284,40 @@ export function tryEmptyEnemy(
     return caps.tryExpand(t, reason);
   } finally {
     ps.budget += kept;
+    const now = tgt.targets.get(t)!;
+    tgt.targets.set(t, { ...now, sources: sources0 });
+  }
+}
+
+/**
+ * #281 × #282: the territory my commander walks from this turn, or `undefined`. Everything standing
+ * there is its transit hold (`commanderTransit` sizes the hold on the whole stack until the walk runs),
+ * so no #281 capture — a denial or an empty enemy territory — is ever sourced from it. My commander's
+ * territory when it stays needs no such rule: `keepOf` keeps its worst-case hold (rule 1w) from every capture.
+ */
+export function commanderTransitFrom(pc: Pick<PlanCtx, 'commanderAt'>): number | undefined {
+  return pc.commanderAt?.retreat?.from;
+}
+
+/** `tg` without the territory my commander walks from among its sources (#281 × #282). */
+export function notFromTransit<T extends { sources: number[] }>(pc: Pick<PlanCtx, 'commanderAt'>, tg: T): T {
+  const from = commanderTransitFrom(pc);
+  return from === undefined || !tg.sources.includes(from) ? tg : { ...tg, sources: tg.sources.filter((x) => x !== from) };
+}
+
+/**
+ * #281 × #282: try a denial's capture with the territory my commander walks from left out of its
+ * sources, its sources restored after (the capture itself keeps no reference to the list).
+ */
+export function withoutTransit(pc: Pick<PlanCtx, 'commanderAt'>, tgt: Pick<Targets, 'targets'>, t: number, attempt: () => boolean): boolean {
+  const tg = tgt.targets.get(t)!;
+  const narrowed = notFromTransit(pc, tg);
+  if (narrowed === tg) return attempt();
+  if (!narrowed.sources.length) return false;
+  tgt.targets.set(t, narrowed);
+  try {
+    return attempt();
+  } finally {
+    tgt.targets.set(t, { ...tgt.targets.get(t)!, sources: tg.sources });
   }
 }

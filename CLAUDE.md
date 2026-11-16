@@ -593,7 +593,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   faces only enemy (or hidden) territories my borders beside it already face (`sameFront`, a "Take … no
   new exposure (#281)" line), while a border to a new stack is judged as before. Never a truce's covered
   territory, a #240 repulsed one or one lowering income; the #276 second line's shortfall is kept out of
-  its deploy; with the guard on nothing changes.
+  its deploy; with the guard on nothing changes. Rule 4d's same-front exemption (and the denial's) is in
+  its check (`outgrows`), so rule 4e's non-contact fallback applies it too. No #281 capture (a denial or
+  an empty enemy territory) is sourced from the territory my commander walks from (#282: all that stands
+  there is its transit hold, `commanderTransitFrom` / `notFromTransit`); a commander that stays keeps its
+  worst-case hold through `keepOf`, as from any capture.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -1072,7 +1076,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       adds an enemy border without completing a bonus is undone when the hold cost would then
       exceed the next income and the start-of-turn hold cost ("Frontier grows faster than income"),
       except cheap land a static seat left beside a live stack that would take it (#281), and, with
-      the guard off, an empty enemy territory whose border faces only what mine beside it already face.
+      the guard off, an empty enemy territory whose border faces only what mine beside it already face
+      (the exemption lives in rule 4d's check itself, `outgrows`, so it holds in rule 4e's non-contact
+      fallback too, where rule 4d is still a veto).
       Except in the contact/late no-capture fallback (rule 4e, #114), where it is a cost instead:
       the survivors a capture leaves on a border it cannot hold next turn count as armies at risk.
       In that fallback a capture that completes a bonus this turn is never ranked last for opening a

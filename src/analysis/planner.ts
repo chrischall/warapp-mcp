@@ -947,7 +947,13 @@
 //     already faces (`sameFront`: the front moves one step; a "Take … though it adds a border facing
 //     an enemy … (#281)" line says so); a border to a new stack is judged as any. Never a truce's
 //     covered territory, a #240 repulsed one, a counter-attack target, or one lowering income; what
-//     the #276 second line still lacks is kept out of the deploy it may use.
+//     the #276 second line still lacks is kept out of the deploy it may use. Both exemptions (the
+//     denial's and the same front's) live in rule 4d's check itself (`outgrows`), so they also hold
+//     in rule 4e's non-contact fallback, where rule 4d is still a veto (in contact it is a cost,
+//     #114). #281 × #282: no #281 capture (a denial or an empty enemy territory) is sourced from the
+//     territory my commander walks from — all that stands there is its transit hold (rule 1w,
+//     `commanderTransit` sizes it on the whole stack); a commander that stays keeps its worst-case
+//     hold through `keepOf`, as from any capture.
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
 //     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative
@@ -1499,7 +1505,7 @@ import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
-import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy } from './plan/vacated.js';
+import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
 import { transfers } from './plan/transfers.js';
@@ -2427,7 +2433,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (gain < 0 && !inFocus(t.id)) continue;
       if (tgt.emptyEnemies.has(t.id)) {
         // #281: never one lowering income, focused or not; sized for its owner's deploy (#120).
-        if (gain >= 0) tryEmptyEnemy(ps, book, tgt, caps, t.id);
+        if (gain >= 0) tryEmptyEnemy(pc, ps, book, tgt, caps, t.id);
         continue;
       }
       // #125: its own economy test. A member of an economic bonus is judged by that bonus; any
@@ -2447,7 +2453,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           continue;
         }
       }
-      tryExpand(t.id, 'expands territory');
+      // #281 × #282: a denial is never sourced from the territory my commander walks from (its transit hold).
+      if (tgt.denials.has(t.id)) withoutTransit(pc, tgt, t.id, () => tryExpand(t.id, 'expands territory'));
+      else tryExpand(t.id, 'expands territory');
     }
     dropEmptyEnemyTargets(ps, tgt, empties);
   }

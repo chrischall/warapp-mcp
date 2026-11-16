@@ -143,3 +143,24 @@ describe('vacated land (#281)', () => {
   });
 });
 
+
+// #281 × #282: T1 holds my commander beside A's stack on T3; it walks to T8 this turn. T2, vacated by
+// S, borders T1 and T3: a denial, but everything on T1 is the commander's transit hold until the walk.
+describe('vacated land beside the territory my commander walks from (#281 × #282)', () => {
+  const g = buildGraph(makeMap([1, 2, 3, 8, 9], [[1, 2], [2, 3], [1, 3], [1, 8], [8, 9]]));
+  const commander = { kind: 'commander' as const, id: `${ME}`.padStart(32, '0'), playerId: ME };
+  const b = (verified: boolean) =>
+    board([{ ...mine(1, 30), specialUnits: [commander] }, held(2, 0, S), held(3, 12, A), mine(8, 2), mine(9, 2)], verified);
+
+  it('is not taken from it', () => {
+    const p = planTurn({ ...input(b(true), g), options: { adapt: true } });
+    expect(p.moves.filter((m) => m.commander)).toEqual([expect.objectContaining({ from: 1, to: 8 })]);
+    expect(attacksOn(p, 2).filter((m) => m.from === 1)).toEqual([]);
+  });
+
+  it('a commander that stays takes it from the armies above its hold', () => {
+    const p = planTurn({ ...input(b(true), g), options: { adapt: true, commanderWalks: false } });
+    expect(p.moves.filter((m) => m.commander)).toEqual([]);
+    expect(attacksOn(p, 2)).toEqual([expect.objectContaining({ from: 1, armies: 1 })]);
+  });
+});
