@@ -12,7 +12,10 @@
 //                than the armies last seen there (when it held it then) plus its estimate for every
 //                turn since that board. When no board here shows it, since turn 1 and with its whole
 //                start credited (`start`: territories × armies each — every start may have walked in
-//                there); with its start unknown such a stack is not read. A stack walking in is not
+//                there); with its start unknown such a stack is not read. When a board showed it and the
+//                start is known, never below its whole stock (every start plus its estimate for every turn
+//                so far) less its armies in view elsewhere now: armies banked under the fog since early on
+//                walk in unseen, and no sighting credits them. A stack walking in is not
 //                income (#123 lesson 5): its armies that left view or shrank are credited too: for each other
 //                territory, from its latest sighting since the stack's own and when within reach (graph
 //                distance at most the turns since that sighting), its movable armies then less its
@@ -39,6 +42,10 @@
 //                (flagged in `sent`) attacks nothing, and a player a Diplomacy card may have kept at
 //                peace with me (`peace`) is not read. The target's own stack attacking my source cannot
 //                fake a trip: what it sends leaves the defence.
+// A board from GameFeed's GetHistory (`source: 'history'`, unverified and parsed loosely, as the
+// opponent-profile observer treats it) may show less than war.app did: nothing is read when the previous
+// board is one, a fog-stack's last sighting never comes from one, and with one since that sighting only
+// the stock bound reads the stack (none without the start).
 // Cards: nothing is read when an opponent may hold an Airlift (`airlift`, the caller's card clock): one
 // lands armies on any territory it holds, into a target, a fogged stack or one beside a capture, and
 // reads as income. A Reinforcement card is income: the estimate compared carries it from the turn the
@@ -94,6 +101,8 @@ export interface TripBoard {
   board: BoardState;
   /** My orders on that turn, when this server sent them. */
   orders?: MyOrders;
+  /** Read from GameFeed's GetHistory (unverified, parsed loosely): never a sighting, never the previous board. */
+  source?: 'history';
 }
 
 export interface TripInput {
@@ -120,6 +129,8 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
   const now = boards.at(-1);
   const prev = boards.at(-2);
   if (!now || !prev || prev.turn !== now.turn - 1 || input.airlift) return [];
+  // A history board may show less than war.app did: stacks would look out of the fog.
+  if (now.source === 'history' || prev.source === 'history') return [];
   const T = now.turn;
   const s = input.settings ?? {};
   // Multi-Attack on, or the settings do not say: a chain moves armies many hops in one turn.
@@ -185,24 +196,38 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     // fog-stack: out of the fog this turn.
     if (!was) {
       let last: TripBoard | undefined;
-      for (const b of boards.slice(0, -1)) if (visibleState(index(b.board).get(id))) last = b;
+      for (const b of boards.slice(0, -1)) if (b.source !== 'history' && visibleState(index(b.board).get(id))) last = b;
       // Never seen: its start may have walked in; unknown, nothing is read.
       if (!last && !input.start) continue;
+      const since = last ? boards.slice(boards.indexOf(last), -1) : [];
+      // A history board since that sighting may have hidden a stack walking in: only the stock bound reads it.
+      if (!input.start && since.some((b) => b.source === 'history')) continue;
+      const startArmies = input.start ? input.start.territories * input.start.armiesPerTerritory : 0;
       const from = last?.turn ?? 1;
       const seen = last ? visibleState(index(last.board).get(id)) : undefined;
-      const base = seen ? (playerOf(seen) === p ? seen.armies! : 0) : input.start!.territories * input.start!.armiesPerTerritory;
+      const base = seen ? (playerOf(seen) === p ? seen.armies! : 0) : startArmies;
       let deploys = 0;
       for (let k = from; k < T; k++) deploys += est(p, k);
       const turns = Math.max(1, T - from);
-      const walked = last ? walkIn(id, p, boards.slice(boards.indexOf(last), -1)) : 0;
-      trip({
-        player: p,
-        kind: 'fog-stack',
-        territory: id,
-        observed: armies,
-        allowed: base + deploys + walked,
-        implied: Math.ceil((armies - base - walked) / turns),
-      });
+      const walked = last ? walkIn(id, p, since.filter((b) => b.source !== 'history')) : 0;
+      let allowed = base + deploys + walked;
+      let implied = Math.ceil((armies - base - walked) / turns);
+      if (last && input.start) {
+        // Armies banked under the fog since early on (#123 lesson 5, #250) walk in unseen: its whole
+        // stock (every start and every turn's estimate) less its armies in view elsewhere now.
+        let stock = startArmies;
+        for (let k = 1; k < T; k++) stock += est(p, k);
+        let elsewhere = 0;
+        for (const [x, st] of cur) {
+          const v = visibleState(st);
+          if (x !== id && v && playerOf(v) === p) elsewhere += v.armies!;
+        }
+        if (stock - elsewhere > allowed) {
+          allowed = stock - elsewhere;
+          implied = Math.ceil((armies + elsewhere - startArmies) / Math.max(1, T - 1));
+        }
+      }
+      trip({ player: p, kind: 'fog-stack', territory: id, observed: armies, allowed, implied });
       continue;
     }
 

@@ -370,7 +370,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   description key is UNVERIFIED, shown through `untrustedText`.
 - **A message promises only what the plan does (B4, `src/analysis/commitments.ts`, pure; `src/tools/commitments.ts`).**
   `warapp_send_chat` takes `commitments` (no-attack, will-attack, notice, propose, accept), declared — the text is
-  never parsed — and its plan step checks each against this turn's orders (`livePlanSetup` with `award: false`,
+  never parsed — and its plan step checks each against this turn's orders (`livePlanSetup` with `award: false` and the teams as resolved — unknown, no #275 tripwire, as in warapp_plan_turn —,
   then `planTurn`; the orders this server submitted this turn, `readCachedOrders`, stand in when there are any)
   and the ledger (`agreementChange`: the same rule `recordCommitments` re-applies after the send). One not
   carried refuses the send. A notice's `ends_turn` must be the turn the agreed notice gives (0 turns of notice:
@@ -690,7 +690,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
   more), marks that opponent untrusted (a stack no board ever showed is credited its whole start, from the
   settings, and is not read when they do not give it; a stack out of the fog is credited its armies in view that
-  left or shrank within reach since — a walk-in is not income, #123 lesson 5; a held attack is not read from a
+  left or shrank within reach since — a walk-in is not income, #123 lesson 5 — and, with the start known, never
+  below its whole stock (every start plus each turn's estimate) less its armies in view elsewhere now, so armies
+  banked under the fog since early on do not trip it; a board from GameFeed history (`source: 'history'`) is no
+  sighting and no previous board — the opponent-profile observer skips them too; a held attack is not read from a
   source another stack beside it could have hit first, or that ended below what my orders left it, counts only
   what the source had left after its earlier orders — an order sends what is left —, and is not read from a
   Transfer Only order or on a player a Diplomacy card in force keeps at peace) for `UNTRUSTED_TURNS` (3).

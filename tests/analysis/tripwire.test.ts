@@ -45,18 +45,23 @@ const run = (boards: TripBoard[], estimate = 5, settings: object = STD, start: {
 
 describe('brokenEstimates (#275 b)', () => {
   it('trips on a stack out of the fog larger than the estimate times the turns it was unseen', () => {
-    // Seen with 2 on turn 3, hidden on turn 4, 60 on turn 5: two turns of a 5 deploy allow 12.
+    // Seen with 2 on turn 3, hidden on turn 4, 60 on turn 5: two turns of a 5 deploy allow 12, its whole
+    // stock (starts of 10 and four turns of 5) 30, the larger.
     const boards = [
       at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]),
       at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]),
       at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)]),
     ];
     expect(run(boards)).toEqual([
+      { player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 60, allowed: 30, implied: 13 },
+    ]);
+    // Its start unknown: the sighting and the deploys since alone.
+    expect(run(boards, 5, STD, null)).toEqual([
       { player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 60, allowed: 12, implied: 29 },
     ]);
     // 15 is within 1.5 × 12: nothing.
     boards[2] = at(5, [mine(1, 5), mine(2, 5), foe(3, 15), fogged(4)]);
-    expect(run(boards)).toEqual([]);
+    expect(run(boards, 5, STD, null)).toEqual([]);
   });
 
   it('credits its starting armies to a stack no board ever showed: an opening reveal does not trip', () => {
@@ -85,13 +90,62 @@ describe('brokenEstimates (#275 b)', () => {
     // 4 in view on turn 4 with 55: the 54 that left it since are credited.
     expect(run5([t3, at(4, [mine(1, 5), mine(2, 5), fogged(3), foe(4, 55), fogged(5)]), t5])).toEqual([]);
     // A stack that left view only counts within reach: 50 on 5, two hops from 3, on turn 4 (one turn
-    // before) could not have walked in. Allowed: 2 seen + 10 deployed.
+    // before) could not have walked in. Allowed: 2 seen + 10 deployed without the start; with it, the
+    // whole stock of 30 less the 1 still in view on 5.
     const far = [
       at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4), foe(5, 50)]),
       at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4), foe(5, 50)]),
       at(5, [mine(1, 5), mine(2, 5), foe(3, 52), fogged(4), foe(5, 1)]),
     ];
-    expect(run5(far)).toEqual([{ player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 52, allowed: 12, implied: 25 }]);
+    expect(run5(far)).toEqual([{ player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 52, allowed: 29, implied: 11 }]);
+    expect(brokenEstimates({ graph: G5, boards: far, me: ME, settings: STD, estimateAt: () => 5 })).toEqual([
+      { player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 52, allowed: 12, implied: 25 },
+    ]);
+  });
+
+  it('credits armies banked under the fog with its whole stock: a stack no board showed walking in is not income', () => {
+    // Line 1-2-3-4, estimate 5, starts 2 × 5: 4 hidden on every board; 3 shows 2 on turn 8, hidden on
+    // turn 9, 45 on turn 10. Its stock by then is 10 + 9 × 5 = 55: a stack banked on 4 explains it.
+    const bank = (t10: number, extra: TerritoryState[] = []) => [
+      at(8, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]),
+      at(9, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]),
+      at(10, [mine(1, 5), mine(2, 5), foe(3, t10), fogged(4), ...extra]),
+    ];
+    expect(run(bank(45))).toEqual([]);
+    // 90 is beyond its whole stock: it trips, allowed the stock and implied over every turn since turn 1.
+    expect(run(bank(90))).toEqual([{ player: FOE, turn: 10, kind: 'fog-stack', territory: 3, observed: 90, allowed: 55, implied: 9 }]);
+    // Its start unknown: only what was seen and deployed since, so 45 trips as before.
+    expect(run(bank(45), 5, STD, null)).toEqual([{ player: FOE, turn: 10, kind: 'fog-stack', territory: 3, observed: 45, allowed: 12, implied: 22 }]);
+    // Armies of its in view elsewhere now are not in the stack: the stock less them.
+    const G5 = buildGraph(line(5));
+    const run5 = (boards: TripBoard[]) => brokenEstimates({ graph: G5, boards, me: ME, settings: STD, start: START, estimateAt: () => 5 });
+    const five = (t10: number, on5: number) => [
+      at(8, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4), fogged(5)]),
+      at(9, [mine(1, 5), mine(2, 5), fogged(3), fogged(4), fogged(5)]),
+      at(10, [mine(1, 5), mine(2, 5), foe(3, t10), fogged(4), foe(5, on5)]),
+    ];
+    expect(run5(five(45, 1))).toEqual([]);
+    expect(run5(five(45, 30))).toEqual([{ player: FOE, turn: 10, kind: 'fog-stack', territory: 3, observed: 45, allowed: 25, implied: 8 }]);
+  });
+
+  it('reads nothing off a board from GameFeed history (unverified, loosely parsed)', () => {
+    // The previous board came from history: a stack it shows less of is not read as out of the fog.
+    const hist = (b: TripBoard): TripBoard => ({ ...b, source: 'history' });
+    const boards = [
+      at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]),
+      hist(at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)])),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)]),
+    ];
+    expect(run(boards)).toEqual([]);
+    // The last sighting from history is no sighting: with its start known, the stock bound alone.
+    const seen = [
+      hist(at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)])),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)]),
+    ];
+    expect(run(seen)).toEqual([{ player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 60, allowed: 30, implied: 13 }]);
+    // …and with it unknown, nothing is read.
+    expect(run(seen, 5, STD, null)).toEqual([]);
   });
 
   it('trips on a capture that needed more attackers than the stacks beside it plus the estimate', () => {

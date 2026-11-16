@@ -84,6 +84,7 @@ function input(sc: Scenario): PlanInput {
 
 const deployedTo = (p: TurnPlan, id: number) => p.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
 const why = (p: TurnPlan) => p.rationale.join('\n');
+const p268 = (p: TurnPlan) => p.rationale.find((l) => l.includes('(#268)')) ?? '';
 const take = (n: number) => armiesToTake(n, { offensiveKillRate: 20, defensiveKillRate: 80 })!;
 /**
  * Armies on a border after its deploys, as the leftover judges it: the idle interior armies rule 6
@@ -113,6 +114,14 @@ describe('#268 the rest of the leftover raises the smallest deploy that breaks a
     const all = [1, 2, 3].map((id) => breaks(p, id));
     expect(Math.min(...all)).toBe(57);
     expect(Math.max(...all) - Math.min(...all)).toBeLessThanOrEqual(5);
+  });
+
+  it('names an untrusted figure (#275) as what the borders are sized for, not as the estimate', () => {
+    // Player 20's estimate is 26; a tripwire mark sizes the held bonus's borders for 30 (threats.ts).
+    expect(p268(planTurn(input(ISSUE)))).toMatch(/the estimate is ~26, a floor under fog\)/);
+    const line = p268(planTurn({ ...input(ISSUE), untrusted: [{ player: FOE, deploy: 30 }] }));
+    expect(line).toMatch(/sized for ~30 \(untrusted, #275\)\)/);
+    expect(line).not.toMatch(/the estimate is/);
   });
 
   it('one border facing the opponent: unchanged, the rest goes to it', () => {

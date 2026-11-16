@@ -378,7 +378,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
         const me = await requireMe(ctx);
         // The teams, only where they matter (the team channel, a promise's audience): GameFeed's, else the
         // game list's (asked once per game, kept).
-        const { game } = channel === 'team' || promises ? await resolveTeams(ctx, feed) : { game: feed };
+        const { game, known: teamsKnown } = channel === 'team' || promises ? await resolveTeams(ctx, feed) : { game: feed, known: true };
         const account = String(me);
         const seat = game.players.find((p) => p.id === me);
         let meInGame: number | undefined;
@@ -431,7 +431,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
           // A truce changes only with its partner told (D3): the check knows who reads the message.
           const audience: MessageAudience =
             kind === 'private' ? { kind: 'private', to: shownRecipient!.id } : kind === 'team' ? { kind: 'team', team: chatChannel } : { kind: 'public' };
-          promised = await checkMessageCommitments(ctx, game, seat, promises, audience);
+          promised = await checkMessageCommitments(ctx, game, seat, promises, audience, teamsKnown);
         }
         const words =
           kind === 'private'
