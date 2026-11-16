@@ -1431,7 +1431,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `WARAPP_STATS=1`, always off when hosted (recognised by mcp-host's child-only variables —
   `HOSTED_MARKERS` in `src/hosted.ts`), and `mint.yaml` never sets `WARAPP_STATS`. GameIDFeed + GameFeed
   `GetHistory=true` through `WarappClient`, ≥ 1 s apart, finished games cached forever as
-  name-free records at `<dataDir>/stats/<mapId>/<gameId>.json`. Each game is read with
+  name-free records at `<dataDir>/stats/<mapId>/<gameId>.json`. #302: the history is read from
+  `history`, else the reply's top-level `standing<N>` / `turn<N>` / `distributionStanding` keys (shape
+  UNVERIFIED, docs/WARAPP-API.md), and an unreadable one says why, name-free (`historyReport` in
+  `src/trend.ts`: a reason and key names only) — `collected.unreadableGames` here, `historyUnreadable` /
+  `historyRead` in `warapp_get_game` with `include_history`. Each game is read with
   `GetMap=false` (a cached map is attached by its id); only a finished game on an uncached map
   costs one more request, for the map.
 - **All GameFeed traffic goes through `WarappClient` (`src/client.ts`)**, including the

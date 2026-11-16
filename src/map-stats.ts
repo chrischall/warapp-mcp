@@ -69,7 +69,7 @@ const scoringBonuses = (map: GameMap) =>
 
 /** Reduce a finished game (with `GetHistory`) to its stats record. Never throws on a bad history. */
 export function recordFromGame(game: Game, map: GameMap): GameRecord {
-  const boards = historyBoards(game.history, game.players);
+  const boards = historyBoards(game.history, game.players, game.numberOfTurns !== undefined ? { numberOfTurns: game.numberOfTurns } : {});
   const start = boards.find(({ board }) => board.territories.some((t) => t.owner.kind === 'player'));
   const later = start ? boards.filter((b) => b.turn >= start.turn) : [];
   const bonuses = scoringBonuses(map);

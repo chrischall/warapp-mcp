@@ -36,6 +36,7 @@ import { feedErrorOf, normalizeGame, normalizeMap, type Game, type GameMap } fro
 import { readGameMapId, readStoredMap, rememberGameMap, touchStoredMap, writeStoredMap } from './map-store.js';
 import { scrubSecrets, type SecretValue } from './redact.js';
 import { asInt } from './scalars.js';
+import { safeKeys } from './trend.js';
 
 const BASE_URL = 'https://war.app';
 const SERVICE = 'war.app';
@@ -327,6 +328,8 @@ export class WarappClient {
       await this.#cache.storeGame(gameId, map.id, index ? dir : undefined);
       game.map = map;
     }
+    // #302: what came instead of a history that does not read, by key name only.
+    if (opts.history) game.feedKeys = safeKeys(Object.keys(body));
     return game;
   }
 

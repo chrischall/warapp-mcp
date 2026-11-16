@@ -1300,7 +1300,7 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
       // Turn k is played on the board after k − 1 completed turns.
       for (let k = Math.max(1, turn - CACHED_TURNS); k < turn; k++) {
         if (byTurn.has(k)) continue;
-        const board = boardFromHistory(withHistory.history, k - 1, game.players);
+        const board = boardFromHistory(withHistory.history, k - 1, game.players, withHistory.numberOfTurns !== undefined ? { numberOfTurns: withHistory.numberOfTurns } : {});
         if (board) byTurn.set(k, { source: 'history', board });
       }
     } catch {

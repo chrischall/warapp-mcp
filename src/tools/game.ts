@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { WarappClient } from '../client.js';
 import { leavers, type Game, type GameSettings } from '../normalize.js';
 import { recordFinalResult } from '../outlook-log.js';
+import { historyReport } from '../trend.js';
 import { currentTurn, gameIdArg, mapSummary, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { lossReport } from './how-lost.js';
@@ -98,7 +99,11 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
         include_history: z
           .boolean()
           .optional()
-          .describe('Also fetch past turns (GetHistory; war.app documents it for finished games). Default false.'),
+          .describe(
+            'Also fetch past turns (GetHistory; war.app documents it for finished games). The result then says ' +
+              'whether the history read (`historyRead`: boards, first and last turn, layout) or why not ' +
+              '(`historyUnreadable`: reason and the reply\'s top-level key names). Default false.',
+          ),
         include_chat: z.boolean().optional().describe('Also fetch the game chat (GetChat). Default false.'),
         view: viewArg(
           VIEWS,
@@ -125,9 +130,12 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
         if (game.state === 'Finished') fold = await foldFinished(dir(), env ?? process.env, game);
       }
       const folded = { ...(fold && fold.status !== 'off' ? { profileFold: fold } : {}), ...(lost ? { howLost: lost } : {}) };
+      // #302: with the history asked for, whether it read, and if not why (key names and counts only).
+      const report = include_history ? historyReport(game) : undefined;
+      const historyRead = report ? ('read' in report ? { historyRead: report.read } : { historyUnreadable: report.unreadable }) : {};
       return respond(view, VIEWS, (rung) => {
-        if (rung === 'compact') return { ...compact(game), ...folded };
-        if (rung === 'full') return { game: { ...game, map: game.map ? mapSummary(game.map) : undefined }, ...folded };
+        if (rung === 'compact') return { ...compact(game), ...folded, ...historyRead };
+        if (rung === 'full') return { game: { ...game, map: game.map ? mapSummary(game.map) : undefined }, ...folded, ...historyRead };
         return { game };
       });
     },

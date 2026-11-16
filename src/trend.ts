@@ -27,7 +27,7 @@ import { boardFromStanding, type BoardState, type TerritoryState } from './board
 import { playersByInGameId } from './live.js';
 import type { MyOrders } from './analysis/opponents.js';
 import type { TripKind, Tripwire } from './analysis/tripwire.js';
-import type { Player } from './normalize.js';
+import type { Game, Player } from './normalize.js';
 import { asInt } from './scalars.js';
 
 export type TrendSource = 'history' | 'cache';
@@ -37,6 +37,20 @@ const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !
 
 const STANDING_KEYS = ['standing', 'standings', 'latestStanding', 'Standing'] as const;
 const NUMBER_KEYS = ['turnNumber', 'turn', 'number', 'TurnNumber'] as const;
+/** Keys that wrap a history's turns (#302: GameFeed's spelling is unverified). */
+const WRAPPER_KEYS = ['turns', 'Turns', 'history', 'History', 'standings', 'Standings'] as const;
+const DISTRIBUTION_KEYS = ['distributionStanding', 'DistributionStanding'] as const;
+const STANDING_KEY = /^standing_?(\d+)$/i;
+
+/** How a history is read (#302). */
+export interface HistoryOptions {
+  /**
+   * The game's completed turns (GameFeed `numberOfTurns`): with top-level `standing<N>` keys it
+   * decides whether `standing0` is the start (the last N reaches it) or the board after the first
+   * turn (the last N is one short). UNVERIFIED either way.
+   */
+  numberOfTurns?: number;
+}
 
 function standingOf(entry: unknown): unknown {
   if (!isRec(entry)) return entry;
@@ -44,41 +58,93 @@ function standingOf(entry: unknown): unknown {
   return entry;
 }
 
-/** History entries as (completed turns, raw standing), in any of the plausible layouts. */
-function entriesOf(history: unknown, out: Array<[number, unknown]> = []): Array<[number, unknown]> {
+/** History entries as (completed turns, raw standing), with the layout they were read in. */
+interface Parsed {
+  entries: Array<[number, unknown]>;
+  /** How the entries were found, e.g. `array`, `wrapper:turns>array`, `numbered-keys`, `standing-keys+1+distribution`. */
+  layout: string;
+  /** What the history was: `array`, `object`, `string` (did not parse as JSON), or another `typeof`. */
+  shape: string;
+}
+
+/** History entries in any of the plausible layouts (#302). Throws only on a hostile getter (callers catch). */
+function parseHistory(history: unknown, opts: HistoryOptions = {}): Parsed {
+  if (typeof history === 'string') {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(history);
+    } catch {
+      return { entries: [], layout: 'none', shape: 'string' };
+    }
+    const inner = parseHistory(parsed, opts);
+    return { ...inner, layout: `json>${inner.layout}` };
+  }
   if (Array.isArray(history)) {
-    history.forEach((e, i) => {
+    const entries: Array<[number, unknown]> = history.map((e, i) => {
       let n: number | undefined;
       if (isRec(e)) for (const k of NUMBER_KEYS) n ??= asInt(e[k]);
-      out.push([n ?? i, standingOf(e)]);
+      return [n ?? i, standingOf(e)];
     });
-    return out;
+    return { entries, layout: 'array', shape: 'array' };
   }
-  if (!isRec(history)) return out;
-  const turns = history.turns ?? history.Turns;
-  if (turns !== undefined) return entriesOf(turns, out);
+  if (!isRec(history)) return { entries: [], layout: 'none', shape: history === null ? 'null' : typeof history };
+  for (const k of WRAPPER_KEYS) {
+    const v = history[k];
+    if (v === undefined) continue;
+    const inner = parseHistory(v, opts);
+    return { ...inner, layout: `wrapper:${k}>${inner.layout}`, shape: 'object' };
+  }
+  let dist: unknown;
+  for (const k of DISTRIBUTION_KEYS) dist ??= history[k];
+  const standings: Array<[number, unknown]> = [];
   for (const [k, v] of Object.entries(history)) {
-    const m = /^(?:turn|standing)?_?(\d+)$/i.exec(k);
-    if (m) out.push([Number(m[1]), standingOf(v)]);
+    const m = STANDING_KEY.exec(k);
+    if (m) standings.push([Number(m[1]), standingOf(v)]);
   }
-  return out;
+  if (standings.length) {
+    // Top-level `standing<N>` keys (#302), `turn<N>` beside them being orders: is standing0 the
+    // start, or the board after the first turn? The game's completed turns decide when the last N
+    // reaches them or falls one short; else a distribution standing beside them puts standing0 one on.
+    const last = Math.max(...standings.map(([n]) => n));
+    const t = opts.numberOfTurns;
+    const offset = t !== undefined && last >= t ? 0 : t !== undefined && last === t - 1 ? 1 : dist !== undefined ? 1 : 0;
+    const entries: Array<[number, unknown]> = standings.map(([n, v]) => [n + offset, v]);
+    if (dist !== undefined && !entries.some(([n]) => n === 0)) entries.push([0, standingOf(dist)]);
+    return {
+      entries,
+      layout: `standing-keys${offset ? '+1' : ''}${dist !== undefined ? '+distribution' : ''}`,
+      shape: 'object',
+    };
+  }
+  const entries: Array<[number, unknown]> = [];
+  for (const [k, v] of Object.entries(history)) {
+    const m = /^(?:turn)?_?(\d+)$/i.exec(k);
+    if (m) entries.push([Number(m[1]), standingOf(v)]);
+  }
+  if (dist !== undefined && !entries.some(([n]) => n === 0)) entries.push([0, standingOf(dist)]);
+  return { entries, layout: 'numbered-keys', shape: 'object' };
 }
 
 /**
  * The standing after `completedTurns` turns from a raw `GetHistory` payload,
  * with owners keyed by GameFeed player id; `undefined` when it is absent or
  * unusable. An entry's number is read as the count of completed turns its
- * standing reflects (an assumption: the in-progress shape is unverified).
- * Never throws.
+ * standing reflects (an assumption: the shape is unverified, #302). The first
+ * entry of that number that parses wins. Never throws.
  */
 export function boardFromHistory(
   history: unknown,
   completedTurns: number,
   players: readonly Player[],
+  opts: HistoryOptions = {},
 ): BoardState | undefined {
   try {
-    const raw = entriesOf(history).find(([n]) => n === completedTurns)?.[1];
-    return feedOwners(boardFromStanding(raw), players);
+    for (const [n, raw] of parseHistory(history, opts).entries) {
+      if (n !== completedTurns) continue;
+      const board = feedOwners(boardFromStanding(raw), players);
+      if (board) return board;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -103,16 +169,17 @@ function feedOwners(board: BoardState | undefined, players: readonly Player[]): 
  * Every usable standing in a raw `GetHistory` payload, ascending by entry
  * number (completed turns, as {@link boardFromHistory} reads it), owners keyed
  * by GameFeed player id. Entries that do not parse are left out; the first of
- * two entries with one number wins. Never throws.
+ * two entries with one number that parses wins. Never throws.
  */
 export function historyBoards(
   history: unknown,
   players: readonly Player[],
+  opts: HistoryOptions = {},
 ): Array<{ turn: number; board: BoardState }> {
   try {
     const seen = new Set<number>();
     const out: Array<{ turn: number; board: BoardState }> = [];
-    for (const [turn, raw] of entriesOf(history)) {
+    for (const [turn, raw] of parseHistory(history, opts).entries) {
       if (seen.has(turn)) continue;
       const board = feedOwners(boardFromStanding(raw), players);
       if (!board) continue;
@@ -123,6 +190,82 @@ export function historyBoards(
   } catch {
     return [];
   }
+}
+
+/** At most this many key names go into a report (#302). */
+const MAX_REPORTED_KEYS = 40;
+/** A key name that may be reported: an identifier, never free text. */
+const SAFE_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+
+/** The key names of a reply or entry worth reporting: identifiers only, capped (#302). */
+export function safeKeys(keys: readonly string[]): string[] {
+  return keys.filter((k) => SAFE_KEY.test(k)).slice(0, MAX_REPORTED_KEYS);
+}
+
+/** Why a history did not read (#302), name-free: key names, counts and the layout only. */
+export interface HistoryUnreadable {
+  /**
+   * `absent`: the reply carried no history the reader knows; `not-json`: a string that did not parse;
+   * `no-turns`: a history with no entry the reader knows; `no-standing`: entries, none a board;
+   * `no-player-land`: boards on which no player of the game holds land (map statistics need one);
+   * `no-starts` (map statistics): the first board where land is held shows none of the game's players.
+   */
+  reason: 'absent' | 'not-json' | 'no-turns' | 'no-standing' | 'no-player-land' | 'no-starts';
+  /** The reply's top-level key names (identifiers only, capped). */
+  keys: string[];
+  /** What the history was (`array`, `object`, `string`, …), when there was one. */
+  shape?: string;
+  /** Entries found. */
+  turns?: number;
+  /** An object history's own key names (identifiers only, capped). */
+  historyKeys?: string[];
+  /** The first entry's key names (identifiers only, capped). */
+  entryKeys?: string[];
+}
+
+/** A history that read (#302): the boards found and the layout they were read in. */
+export interface HistoryRead {
+  turns: number;
+  first: number;
+  last: number;
+  layout: string;
+}
+
+/**
+ * Whether a game's history reads, and if not why (#302): one live call then shows GameFeed's real
+ * shape. `needPlayerLand` (map statistics) also asks that some board shows a player of the game
+ * holding land. Name-free; never throws.
+ */
+export function historyReport(
+  game: Pick<Game, 'history' | 'players' | 'numberOfTurns' | 'feedKeys'>,
+  opts: { needPlayerLand?: boolean } = {},
+): { read: HistoryRead } | { unreadable: HistoryUnreadable } {
+  const keys = safeKeys(game.feedKeys ?? []);
+  if (game.history === undefined) return { unreadable: { reason: 'absent', keys } };
+  let parsed: Parsed;
+  try {
+    parsed = parseHistory(game.history, game.numberOfTurns !== undefined ? { numberOfTurns: game.numberOfTurns } : {});
+  } catch {
+    parsed = { entries: [], layout: 'none', shape: 'object' };
+  }
+  const { entries, shape, layout } = parsed;
+  if (shape === 'string') return { unreadable: { reason: 'not-json', keys, shape } };
+  if (!entries.length) {
+    const own = isRec(game.history) ? { historyKeys: safeKeys(Object.keys(game.history)) } : {};
+    return { unreadable: { reason: 'no-turns', keys, shape, ...own } };
+  }
+  const boards = historyBoards(game.history, game.players, game.numberOfTurns !== undefined ? { numberOfTurns: game.numberOfTurns } : {});
+  if (!boards.length) {
+    const first = entries[0]![1];
+    const entryKeys = isRec(first) ? { entryKeys: safeKeys(Object.keys(first)) } : {};
+    return { unreadable: { reason: 'no-standing', keys, shape, turns: entries.length, ...entryKeys } };
+  }
+  if (opts.needPlayerLand) {
+    const ids = new Set(game.players.map((p) => p.id));
+    const land = boards.some(({ board }) => board.territories.some((t) => t.owner.kind === 'player' && ids.has(t.owner.playerId)));
+    if (!land) return { unreadable: { reason: 'no-player-land', keys, shape, turns: boards.length } };
+  }
+  return { read: { turns: boards.length, first: boards[0]!.turn, last: boards[boards.length - 1]!.turn, layout } };
 }
 
 /** Where the last planned boards of a game are cached. */

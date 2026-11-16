@@ -503,7 +503,28 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
     tracker credits each owner-only territory an opponent visibly took (the guard left there and
     the capture's cost), so `unexplained` is not simply everything it earned.
 - `GetHistory` returns turns ("assuming it's finished", per the docs). The client passes it
-  through raw. `GetChat` is passed through raw too, and it is third-party text: `src/chat.ts` reads
+  through raw. **#302 — finished games read as unreadable live:** `warapp_get_game` with
+  `include_history` showed no `history` field in any view, and `warapp_map_stats` read 25 of 25
+  finished games as unreadable. Every view shows the *normalized* game, which kept only a
+  top-level `history` key, so the reply carried none: the history came under another key, or not
+  at all. Which one is UNVERIFIED (no raw reply was kept). The reader now takes, in order:
+  `history` / `History` (a JSON string parsed), else the reply's top-level `standing<N>`,
+  `turn<N>` (orders, never read as boards) and `distributionStanding` gathered into one object
+  (the layout older Warlight-era API clients read; not seen live here), else a per-turn
+  `standings` list (one that does not read as the current board) or `turns` list. Under
+  top-level `standing<N>` keys, `standing0` is the start when the last N reaches
+  `numberOfTurns`, the board after the first turn when it is one short (or, with no count, when
+  a `distributionStanding` sits beside them) — **UNVERIFIED**. `historyReport` (`src/trend.ts`)
+  says whether it read (`historyRead`: boards, first and last entry, `layout`) or why not
+  (`historyUnreadable`: `reason` — `absent`, `not-json`, `no-turns`, `no-standing`,
+  `no-player-land`, `no-starts` — with the reply's top-level key names, and the history's or its
+  first entry's key names and entry count where they apply; identifiers only, never values or
+  owner text). `warapp_get_game` reports it in the compact and full views when the history was
+  asked for (the client keeps the key names, `Game.feedKeys`, only then), and `warapp_map_stats`
+  lists it per game (`collected.unreadableGames`, at most 10). **Live check:** one
+  `warapp_get_game` with `include_history` on a finished game: `historyRead.layout` (or the
+  `historyUnreadable` keys) names the real shape, and `historyRead.last` against
+  `numberOfTurns` settles the `standing<N>` numbering; then record it here and tighten the reader. `GetChat` is passed through raw too, and it is third-party text: `src/chat.ts` reads
   it loosely (`{ playerID, date, turn, message }`, `playerID` the in-game id — verified live 2026-11-14:
   for public messages it matched the web client's `GameRefresh` chat read in count, time, turn and
   sender, `docs/WEB-PROTOCOL.md` "Chat"). **Whether it returns
@@ -602,7 +623,9 @@ public wiki page "Game ID feed API" (read 2026-11-12, not called live):
   `games`, each a number, a numeric string or `{ id | gameID }`. Distinct, highest id first.
 - Each listed game is then loaded with `GetHistory=true&GetSettings=true` — the history of a
   **finished** game, which the docs say the feed returns. Its shape is as unverified as the
-  in-progress one above: `historyBoards` (`src/trend.ts`) reads it with the same loose parser.
+  in-progress one above: `historyBoards` (`src/trend.ts`) reads it with the same loose parser
+  (#302: every layout listed under "Board state", and each unreadable game's reason in
+  `collected.unreadableGames`).
   **Assumed:** the first board where players hold land is the starting picks, and an entry's
   number is the count of completed turns.
 - Throttle (ours, not war.app's): at most 50 new games per call (default 10), ≥ 1 s between
