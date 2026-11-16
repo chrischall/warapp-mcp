@@ -276,3 +276,44 @@ describe('guard off: a raid or retake is sized for its owner deploy (#276, #120)
   });
 });
 
+
+// #270 × #276: a player out with no AI on its seat (a static seat) deploys and attacks nothing, so its
+// territories are planned as neutrals at their armies: never a retake or a raid on a player, never sized
+// for an owner deploy, never the stack a second line answers. Same RAID map; the static seat S holds
+// T3–T6 (T5 taken from me last turn, T3 at 0 in its +4 bonus behind T2), the live ENEMY holds T2.
+describe('guard off: a static seat is land at its armies, not a raid or retake target (#270, #276)', () => {
+  const S = 30;
+  const seat = (territoryId: number, armies: number): TerritoryState => ({ territoryId, owner: { kind: 'player', playerId: S }, armies });
+  const now = board([mine(1, 30), enemy(2, 0), seat(3, 0), seat(4, 3), seat(5, 0), seat(6, 12)]);
+  const prev = board([mine(1, 30), enemy(2, 2), seat(3, 2), seat(4, 3), mine(5, 2), seat(6, 14)]);
+  const planWith = (sState: string) =>
+    planTurn({
+      graph: buildGraph(RAID),
+      board: now,
+      previousBoard: prev,
+      me: ME,
+      income: 5,
+      settings: settings(false),
+      game: { players: [{ id: ME }, { id: ENEMY }, { id: S, state: sState }], turn: 9 },
+      options: { goal: 'balanced', enemyDeploy: 5 },
+    });
+
+  it('while S plays, T5 is a retake sized for its deploy', () => {
+    const p = planWith('Playing');
+    expect(p.rationale.join('\n')).toMatch(/Retake T5 \(#5\) from T1 \(#1\) with \d+, which take it even if player 30 deploys/);
+  });
+
+  it('once S is out with no AI, T5 is taken as a neutral at its 0 armies and nothing is raided toward its land', () => {
+    const p = planWith('SurrenderAccepted');
+    valid(RAID, now, settings(false), 5, p);
+    const text = p.rationale.join('\n');
+    expect(text).not.toMatch(/Retake |Raid /);
+    expect(p.moves.some((m) => /retake|raid/.test(m.reason))).toBe(false);
+    expect(`${text}\n${p.warnings.join('\n')}`).not.toMatch(/player 30 deploys|player 30's (?:stack|bonus)/);
+    expect(p.warnings.some((w) => w.startsWith('Attack on enemy T5'))).toBe(false);
+    expect(p.expected.captures).toContain(5);
+    const take = p.moves.find((m) => m.to === 5 && m.kind === 'attack')!;
+    expect(take.reason).not.toMatch(/player 30/);
+    expect(text).toMatch(/Player 30 is out \(SurrenderAccepted\).*neutrals/);
+  });
+});
