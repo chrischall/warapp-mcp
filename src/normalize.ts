@@ -92,6 +92,12 @@ export interface DistributionMode {
   id: number;
   name: string;
   type?: string;
+  /**
+   * The territories a player may start on in this mode (#328), from war.app's map details (GetMapDetails),
+   * never from GameFeed: absent when not read yet, `null` when the read failed or listed none (unknown —
+   * never `[]` for that), else the ids, each a territory of the map (src/map-details.ts).
+   */
+  territories?: number[] | null;
 }
 
 export interface GameMap {

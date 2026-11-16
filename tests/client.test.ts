@@ -454,3 +454,47 @@ describe('WarappClient.getGameIds (GameIDFeed — response shape UNVERIFIED)', (
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("WarappClient: distribution-mode territories (#328)", () => {
+  const tmp = () => mkdtempSync(join(tmpdir(), 'warapp-client-modes-'));
+
+  it('keeps them on the cached map and in the store, so a restart reads them back', async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }, { body: WITHOUT_MAP }).fetchImpl, new MapCache(), CREDS, dir);
+    const first = await c.getGame(12345678);
+    const map = first.map!;
+    const mode = map.distributionModes[0]!.id;
+    const ids = map.territories.slice(0, 2).map((t) => t.id);
+    expect(map.distributionModes[0]).not.toHaveProperty('territories');
+    await c.keepModeTerritories(map.id, new Map([[mode, ids]]));
+    const again = await c.getGame(12345678);
+    expect(again.map!.distributionModes[0]!.territories).toEqual(ids);
+    // The base map in memory is the one with them; the stored file has them too.
+    const restarted = await client(stubFetch({ body: WITHOUT_MAP }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+    expect(restarted.map!.distributionModes[0]!.territories).toEqual(ids);
+  });
+
+  it('a new game on a map already stored keeps the territories the store holds for it', async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir);
+    const map = (await c.getGame(12345678)).map!;
+    const mode = map.distributionModes[0]!.id;
+    const ids = [map.territories[0]!.id];
+    await c.keepModeTerritories(map.id, new Map([[mode, ids]]));
+    // A fresh process meets another game on the map, unknown to the index: the feed sends the map again.
+    const other = await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    expect(other.map!.distributionModes[0]!.territories).toEqual(ids);
+    expect((await readStoredMap(dir, map.id))!.distributionModes[0]!.territories).toEqual(ids);
+  });
+
+  it('remembers a map whose details were tried, per process', () => {
+    const cache = new MapCache();
+    const c = client(stubFetch({ body: FIXTURE }).fetchImpl, cache);
+    expect(c.mapDetailsTried(42)).toBe(false);
+    c.markMapDetailsTried(42);
+    expect(c.mapDetailsTried(42)).toBe(true);
+    expect(client(stubFetch({ body: FIXTURE }).fetchImpl, cache).mapDetailsTried(42)).toBe(true);
+    cache.clear();
+    expect(c.mapDetailsTried(42)).toBe(false);
+  });
+});

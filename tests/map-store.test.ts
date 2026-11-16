@@ -11,6 +11,7 @@ import {
   readStoredMap,
   rememberGameMap,
   writeStoredMap,
+  writeStoredModeTerritories,
 } from '../src/map-store.js';
 import type { GameMap } from '../src/normalize.js';
 
@@ -141,5 +142,65 @@ describe('the persistent map store', () => {
     expect(await readStoredMap(dir, 7, { maxAgeMs: Number.POSITIVE_INFINITY })).toEqual(mapOf(7));
     writeFileSync(mapStorePath(dir, 7), JSON.stringify({ version: 1, storedAt: 'yesterday', map: mapOf(7) }));
     expect(await readStoredMap(dir, 7)).toBeUndefined();
+  });
+});
+
+describe("the stored map's distribution-mode territories (#328)", () => {
+  const withModes = (id: number): GameMap => ({
+    ...mapOf(id),
+    distributionModes: [
+      { id: 1, name: 'One' },
+      { id: 2, name: 'Two', type: 'normal' },
+    ],
+  });
+
+  it('a stored mode without territories reads as lacking them, not as empty', async () => {
+    const dir = tmp();
+    await writeStoredMap(dir, withModes(7));
+    const map = await readStoredMap(dir, 7);
+    expect(map!.distributionModes).toEqual([
+      { id: 1, name: 'One' },
+      { id: 2, name: 'Two', type: 'normal' },
+    ]);
+    expect(map!.distributionModes[0]).not.toHaveProperty('territories');
+  });
+
+  it('keeps the territories read, beside the map, without moving its storedAt', async () => {
+    const dir = tmp();
+    const storedAt = Date.now() - 1000;
+    await writeStoredMap(dir, withModes(7), storedAt);
+    expect(await writeStoredModeTerritories(dir, 7, new Map([[2, [1, 2]]]))).toBe(true);
+    const raw = JSON.parse(readFileSync(mapStorePath(dir, 7), 'utf8'));
+    expect(raw.storedAt).toBe(storedAt);
+    expect(raw.version).toBe(1);
+    expect((await readStoredMap(dir, 7))!.distributionModes).toEqual([
+      { id: 1, name: 'One' },
+      { id: 2, name: 'Two', type: 'normal', territories: [1, 2] },
+    ]);
+  });
+
+  it('an empty list is kept as known-empty; a value that is not a list of ids reads as lacking', async () => {
+    const dir = tmp();
+    await writeStoredMap(dir, withModes(7));
+    await writeStoredModeTerritories(dir, 7, new Map([[1, []]]));
+    expect((await readStoredMap(dir, 7))!.distributionModes[0]).toEqual({ id: 1, name: 'One', territories: [] });
+    const raw = JSON.parse(readFileSync(mapStorePath(dir, 7), 'utf8'));
+    raw.map.distributionModes[0].territories = null;
+    raw.map.distributionModes[1].territories = ['x'];
+    writeFileSync(mapStorePath(dir, 7), JSON.stringify(raw));
+    const modes = (await readStoredMap(dir, 7))!.distributionModes;
+    expect(modes).toEqual([
+      { id: 1, name: 'One' },
+      { id: 2, name: 'Two', type: 'normal' },
+    ]);
+  });
+
+  it('writes nothing when no usable map is stored (absent, stale or unreadable)', async () => {
+    const dir = tmp();
+    expect(await writeStoredModeTerritories(dir, 7, new Map([[1, [1]]]))).toBe(false);
+    expect(existsSync(mapStorePath(dir, 7))).toBe(false);
+    await writeStoredMap(dir, withModes(7), Date.now() - MAX_MAP_AGE_MS - 1);
+    expect(await writeStoredModeTerritories(dir, 7, new Map([[1, [1]]]))).toBe(false);
+    expect(JSON.parse(readFileSync(mapStorePath(dir, 7), 'utf8')).map.distributionModes[0]).not.toHaveProperty('territories');
   });
 });

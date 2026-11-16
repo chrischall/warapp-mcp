@@ -100,7 +100,7 @@ string email                  the signed-in account's email
 | 64 | **DeclineGame** | params: int32 gameId, bool modHook — read from the bundle, **verified live 2026-11-14** (open-seat lobby); see [DeclineGame](#declinegame-leaving-a-lobby) |
 | 67 | **Surrender** | params: int32 gameId, bool surrender, bool false — see [Surrender](#surrender) |
 | 68 | **AcceptSurrender** | params: int32 gameId, int32 in-game player id, bool accept, bool modHook — read from the bundle, UNVERIFIED live; sent by `warapp_accept_surrender` (accept only); see [Accepting a surrender](#accepting-a-surrender) |
-| 73 | GetMapDetails | no auth; params: int32 mapId |
+| 73 | GetMapDetails | no auth; params: int32 mapId — read by `warapp_get_map`'s full view for the distribution modes' territories, see [Map details](#map-details-distribution-modes) |
 | 74 | **SendOrders** | the turn commit — not yet captured |
 | 75 | SendInProgressOrders | draft save of orders |
 | 76 | SendTerritoryPicks | params: int32 gameId, bool present, int list territoryIds (priority order), bool, bool |
@@ -499,6 +499,37 @@ bridged POSTs time out while GETs still work; reloading the tab clears it.
   self-reported location — a scouting tool must not surface it.
 - Server errors arrive as envelope kind 5: `{ int32 code, string message }`; the message can
   be a long server stack trace — log the code, show a short message.
+
+## Map details: distribution modes
+
+GameFeed's map names a map's distribution modes (id, name, type) but not the territories each lets a
+player start on; the client's map preview (`SinglePlayer?PreviewMap=<id>`) reads them from
+`GetMapDetails` (73: no auth block, params int32 map id; reply `warlight.shared.MapDetails`). Traced in
+the browser on 2026-11-16 (#328): the preview makes that one call, and the CDN `.map` file it also loads
+is drawing data with no mode names.
+
+`MapDetails` reads its modes fourth (of fifteen fields, in read order): an int32-count dict of mode id →
+`warlight.shared.DistributionMode` (bool present, then the mode). The mode is read by a byte tag:
+
+- 0 → `NormalDistribution`: bool present + an int32-count list of int32 territory ids, then the base
+  fields: a description string, the int32 mode id, the name string.
+- 1 → `ScenarioDistribution`: bool present + a dict of uint16 slot → slot name, bool present + a dict of
+  int32 territory id → uint16 slot, then the same base fields. Its territories are that dict's keys.
+
+So a normal mode's bytes read: int32 mode id (the dict key), `01 00 01` (present, tag 0, present), int32
+count, that many int32 territory ids, `00` (a null description), int32 mode id again, the name — as #328
+read them by hand. The client's built-in modes (0 full, -1 random warlords, -2 random cities, -3 custom
+scenario) are not in the dict.
+
+`src/map-details.ts` decodes it with the bundle's own readers by type name (`MapDetails`,
+`NormalDistribution`, `ScenarioDistribution`; field counts checked, and each mode's own id must equal its
+key), and checks every id against the map's territories (one it lacks is dropped, with a warning).
+`warapp_get_map` (view `full`, no bonus filter) asks only when a mode of the map has no territories yet,
+at most once per map per process; the territories are kept with the map in the store
+(`distributionModes[].territories`, `src/map-store.ts`) and age out with it. A failed read, or a mode the
+reply lists none for, is unknown (`null`), never empty. **Verified live:** only what #328 shows (a normal
+mode's bytes on one map, its 79 ids all territories of the stored GameFeed map and holding the starts of a
+game on it); the decode through the bundle's readers and the scenario mode are UNVERIFIED live.
 
 ## Chat
 

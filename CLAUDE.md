@@ -1625,6 +1625,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the tests feed a page that carries a location and assert it is absent.
 - **Every GameFeed scalar is a string** (ids, counts, booleans); normalize before use —
   see `docs/PLAN.md` "Facts". Fixtures under `tests/fixtures/` are anonymized.
+- **A distribution mode's starting territories come from `GetMapDetails` (73, no auth; #328)**, never GameFeed
+  (which names the modes only): `src/map-details.ts` decodes `MapDetails` → its mode dict (fourth field) →
+  `NormalDistribution` (its id list) / `ScenarioDistribution` (its territory → slot dict's keys) by type name
+  with the bundle's readers, and drops (with a warning) any id that is not a territory of the map.
+  `withModeTerritories` (`src/tools/map-details.ts`) asks only when a caller needs them and a mode lacks them,
+  at most once per map per process (`MapCache.mapDetailsTried`); a failure or a mode listed without ids is
+  `null` (unknown), never `[]`. Read ids are kept on the cached base map and in the store
+  (`distributionModes[].territories`, `writeStoredModeTerritories`: the map's `storedAt` unchanged, so they
+  age out with it; a stored mode without them reads as not read yet; a new game on a stored map keeps them).
+  Only `warapp_get_map`'s full view (no `bonus` filter) asks; it lists each mode's `territoryCount` and
+  `territories`. UNVERIFIED live beyond #328's trace (docs/WEB-PROTOCOL.md "Map details").
 - **A game's map comes from `mapOf(game)`** (`src/tools/map.ts`), which applies the game's
   `OverriddenBonuses` (`applyBonusOverrides`); load the game with `settings: true` wherever bonus
   values matter. The JSON shape is verified live (an array of `{ bonusID, value }` numbers); overrides

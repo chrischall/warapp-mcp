@@ -97,7 +97,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerHealthcheckTool(server, fetchproxy, bridge, deps);
   // The signed-in account names a finished game's player for its end-of-game pass when no board was cached (#312).
   registerGameTool(server, client, () => dataDir(deps.env), deps.env, () => live.myInviteToken());
-  registerMapTool(server, client);
+  registerMapTool(server, client, live);
   // Opt-in (WARAPP_STATS=1), never hosted: the tool refuses before any request
   // when off. One collector per registration, so its 1 s throttle spans calls.
   registerMapStatsTool(server, {

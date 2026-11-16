@@ -33,7 +33,7 @@ import {
 } from '@chrischall/mcp-utils';
 import { readCredentials, TOKEN_URL, WarappConfigError, type WarappCredentials } from './config.js';
 import { feedErrorOf, normalizeGame, normalizeMap, type Game, type GameMap } from './normalize.js';
-import { readGameMapId, readStoredMap, rememberGameMap, touchStoredMap, writeStoredMap } from './map-store.js';
+import { readGameMapId, readStoredMap, rememberGameMap, touchStoredMap, writeStoredMap, writeStoredModeTerritories } from './map-store.js';
 import { scrubSecrets, type SecretValue } from './redact.js';
 import { asInt } from './scalars.js';
 import { safeKeys } from './trend.js';
@@ -85,6 +85,7 @@ export class MapCache {
   readonly #maps = new Map<number, GameMap>();
   readonly #gameMaps = new Map<number, number>();
   readonly #refreshed = new Set<number>();
+  readonly #detailsTried = new Set<number>();
 
   get(mapId: number): GameMap | undefined {
     return this.#maps.get(mapId);
@@ -133,10 +134,47 @@ export class MapCache {
    */
   async store(map: GameMap, dir: string | undefined, replace = false): Promise<void> {
     const known = this.#maps.has(map.id);
-    this.set(map);
+    // #328: a map new to this process may already be stored with its modes' territories (read from war.app's
+    // map details, not GameFeed): the same map within its age, so they are kept rather than read again.
+    const kept = !known && !replace && dir !== undefined ? await this.#withStoredModes(map, dir) : map;
+    this.set(kept);
     if (dir === undefined) return;
-    if (!known || replace) await writeStoredMap(dir, map);
-    else await touchStoredMap(dir, map);
+    if (!known || replace) await writeStoredMap(dir, kept);
+    else await touchStoredMap(dir, kept);
+  }
+
+  /** `map` with the mode territories its stored copy carries, where it has none of its own. */
+  async #withStoredModes(map: GameMap, dir: string): Promise<GameMap> {
+    const stored = await readStoredMap(dir, map.id);
+    const byMode = new Map((stored?.distributionModes ?? []).filter((d) => Array.isArray(d.territories)).map((d) => [d.id, d.territories!]));
+    if (!byMode.size) return map;
+    return {
+      ...map,
+      distributionModes: map.distributionModes.map((d) => (d.territories === undefined && byMode.has(d.id) ? { ...d, territories: byMode.get(d.id)! } : d)),
+    };
+  }
+
+  /**
+   * Lay the territories read for `mapId`'s modes (#328, by mode id) on the cached base map (a new object:
+   * the graph cache is keyed by map object) and keep them under `dir`. Nothing when the map is not cached.
+   */
+  async setModeTerritories(mapId: number, byMode: ReadonlyMap<number, readonly number[]>, dir: string | undefined): Promise<void> {
+    const base = this.#maps.get(mapId);
+    if (!base) return;
+    this.set({
+      ...base,
+      distributionModes: base.distributionModes.map((d) => (byMode.has(d.id) ? { ...d, territories: [...byMode.get(d.id)!] } : d)),
+    });
+    if (dir !== undefined) await writeStoredModeTerritories(dir, mapId, byMode);
+  }
+
+  /** Whether war.app's map details were already asked for `mapId` this process (#328: once per map, never in a loop). */
+  mapDetailsTried(mapId: number): boolean {
+    return this.#detailsTried.has(mapId);
+  }
+
+  markMapDetailsTried(mapId: number): void {
+    this.#detailsTried.add(mapId);
   }
 
   /** Whether `mapId` was already downloaded again this process because the feed named land it lacked. */
@@ -159,6 +197,7 @@ export class MapCache {
     this.#maps.clear();
     this.#gameMaps.clear();
     this.#refreshed.clear();
+    this.#detailsTried.clear();
   }
 }
 
@@ -329,6 +368,8 @@ export class WarappClient {
       const fresh = normalizeMap(rawMap);
       map = replace ? fresh : (this.#cache.get(fresh.id) ?? fresh);
       await this.#cache.store(map, dir, replace);
+      // The cache may hold it with what the store kept for it (#328: its modes' territories).
+      map = this.#cache.get(map.id) ?? map;
     }
     if (!map && game.settings?.mapId !== undefined) map = await this.#cache.load(game.settings.mapId, dir);
     if (map) {
@@ -342,6 +383,20 @@ export class WarappClient {
     // #302: what came instead of a history that does not read, by key name only.
     if (opts.history) game.feedKeys = safeKeys(Object.keys(body));
     return game;
+  }
+
+  /** Keep the territories read for a map's distribution modes (#328) on the cached map and in the store. */
+  async keepModeTerritories(mapId: number, byMode: ReadonlyMap<number, readonly number[]>): Promise<void> {
+    await this.#cache.setModeTerritories(mapId, byMode, this.#dir());
+  }
+
+  /** Whether war.app's map details were already asked for `mapId` this process (#328). */
+  mapDetailsTried(mapId: number): boolean {
+    return this.#cache.mapDetailsTried(mapId);
+  }
+
+  markMapDetailsTried(mapId: number): void {
+    this.#cache.markMapDetailsTried(mapId);
   }
 
   /** The data directory for the map store, or `undefined` (memory only); never throws. */
