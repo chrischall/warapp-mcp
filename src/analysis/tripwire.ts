@@ -62,8 +62,8 @@
 //                armies from beyond its stacks beside it), and not when a territory beside it was hidden.
 //                An order sends what is
 //                left, so not from a source another stack could have hit first (a territory beside the
-//                source, the target aside, hidden or holding a movable stack not mine on the previous
-//                board), nor from one that ended with fewer armies than my orders left it; and only what
+//                source, the target aside, hidden or holding a movable stack or a commander not mine on
+//                the previous board), nor from one that ended with fewer armies than my orders left it; and only what
 //                the source had left after its earlier orders in list order, so not from a source an
 //                order outside `moves` (Transfer Only, Attack Only, percentage) left too, nor with my
 //                orders cached before `sent` existed, nor when the board disagrees with them (`ordersLanded`).
@@ -559,13 +559,14 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
         // An order sends what is left: in list order, each order out of the source takes from what the
         // earlier ones left (transfers in are not counted: they may land after it).
         const sent = sentFrom(f).filter((o) => o.to === id).reduce((n, o) => n + o.armies, 0);
-        // Another stack beside the source could have shrunk it first: my attack then sent less.
+        // Another stack beside the source could have shrunk it first: my attack then sent less. An enemy
+        // commander there attacks alone as 7 even with nothing movable under the guard (#275 review).
         const exposed = neighborsOf(graph, f).some((n) => {
           if (n === id) return false;
           const t = visibleState(before.get(n));
           if (!t) return true;
           const o = playerOf(t);
-          return o !== undefined && !friend(o) && t.armies! > guard;
+          return o !== undefined && !friend(o) && (t.armies! > guard || commanders(t, o) > 0);
         });
         if (exposed) continue;
         // …or it ended below what my orders left it (survivors and transfers in only add).

@@ -235,6 +235,29 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run(plain(capture))).toMatchObject([{ kind: 'capture', observed: 16, allowed: 10 }]);
   });
 
+  it('reads no held attack from a source beside an enemy commander on a guard: it attacks alone as 7 (#275 review)', () => {
+    // Edges 1-2, 2-3, 2-5. Its commander on 1 stands on 1 army (nothing movable under the guard) but
+    // attacks my 25 on 2 as 7 and kills 4 first: my 2->3 for 24 sends 20, against 5 and a deploy of 8
+    // (13), within 1.5 × the estimate's 10. Read as 24 sent, it would claim 15 defenders.
+    const GC = buildGraph(graphOf([[1, 2], [2, 3], [2, 5]]));
+    const cmd = (t: TerritoryState): TerritoryState => ({ ...t, specialUnits: [{ kind: 'commander', id: 'c'.repeat(32), playerId: FOE }] });
+    const read = (on1: TerritoryState) =>
+      brokenEstimates({
+        graph: GC,
+        boards: [
+          at(4, [on1, mine(2, 25), foe(3, 5), mine(5, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 24 }] }),
+          at(5, [foe(1, 1), mine(2, 12), foe(3, 1), mine(5, 1)]),
+        ],
+        me: ME,
+        settings: STD,
+        start: START,
+        estimateAt: () => 5,
+      });
+    expect(read(cmd(foe(1, 1)))).toEqual([]);
+    // Without the commander a lone guard army beside the source cannot attack, and the same boards trip.
+    expect(read(foe(1, 1))).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 15, allowed: 10 }]);
+  });
+
   it('reads no held attack from a source another stack could have hit first', () => {
     // Foe's 50 on 1 beside my source 2: an attack of it on its earlier slot shrinks my attack, which
     // sends what is left; the failure says nothing about the defence of 3.
