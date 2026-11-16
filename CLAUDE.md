@@ -1126,12 +1126,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in
   `src/pick-list.ts`, written by `warapp_plan_picks` and the `warapp_submit_picks` preview; a record
-  may now hold `pickable` without a `list`, which gives no award) and, only when `statsGate` is on
+  may now hold `pickable` without a `list`, which gives no award) — else, in a game whose settings say
+  `AutomaticTerritoryDistribution` "Automatic" with a `DistributionMode` that is a mode of the map
+  (`dealtMode`, `src/tools/map-details.ts`), that mode's territories (#328, `modeStarts` over
+  `withModeTerritories`: read once per map per process from `GetMapDetails`, kept with the map; source
+  `distribution-mode`, weighed exactly as pickable ones; unknown — a failed read, none listed — is a
+  `warnings` line and no candidates, never `[]`) — and, only when `statsGate` is on
   (`WARAPP_STATS=1`, never hosted), the finished games already cached for the map
   (`cachedRecords` in `src/stats.ts`: the cache alone, never a request) as start candidates and
   prior. `seen` is the only fact in its output; everything else is a `likelihood` from a simple
-  model, with its `basis`. The planner does not use it yet. It writes the board cache like
-  `warapp_track_opponents`.
+  model, with its `basis`. The planner does not use it yet, and nothing else reads start candidates in an
+  automatic game (the award, the pick advisor and the map notes' opening are manual-pick only), so the
+  planner is unchanged. It writes the board cache like `warapp_track_opponents`.
 - **The turn planner (`src/analysis/planner.ts`) is pure and deterministic** (ties on
   ascending id, no I/O; its header comment is the full rule list) and judges every hold and
   capture with the exact combat model (`armiesToTake`, `captureCost`). Its rules, learnt from
@@ -1625,6 +1631,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the tests feed a page that carries a location and assert it is absent.
 - **Every GameFeed scalar is a string** (ids, counts, booleans); normalize before use —
   see `docs/PLAN.md` "Facts". Fixtures under `tests/fixtures/` are anonymized.
+- **A distribution mode's starting territories come from `GetMapDetails` (73, no auth; #328)**, never GameFeed
+  (which names the modes only): `src/map-details.ts` decodes `MapDetails` → its mode dict (fourth field) →
+  `NormalDistribution` (its id list) / `ScenarioDistribution` (its territory → slot dict's keys) by type name
+  with the bundle's readers, and drops (with a warning) any id that is not a territory of the map.
+  `withModeTerritories` (`src/tools/map-details.ts`; callers: `warapp_get_map`'s full view and
+  `warapp_locate_opponents` in an automatic game) asks only when a caller needs them and a mode lacks them,
+  at most once per map per process (`MapCache.mapDetailsTried`); a failure, a mode listed without ids or one
+  whose every id is dropped is `null` (unknown), never `[]` — an empty list is never kept, and a stored `[]`
+  reads as not read yet. Read ids are kept on the cached base map and in the store
+  (`distributionModes[].territories`, `writeStoredModeTerritories`: the map's `storedAt` unchanged, so they
+  age out with it; a stored mode without them reads as not read yet; a new game on a stored map keeps them, the
+  fresh download written with the stored copy's `storedAt` so they still age out on their own clock, and a mode
+  whose stored ids are not all territories of the fresh map is not carried, so it is read again).
+  Only `warapp_get_map`'s full view (no `bonus` filter) asks; it lists each mode's `territoryCount` and
+  `territories`. UNVERIFIED live beyond #328's trace (docs/WEB-PROTOCOL.md "Map details").
 - **A game's map comes from `mapOf(game)`** (`src/tools/map.ts`), which applies the game's
   `OverriddenBonuses` (`applyBonusOverrides`); load the game with `settings: true` wherever bonus
   values matter. The JSON shape is verified live (an array of `{ bonusID, value }` numbers); overrides

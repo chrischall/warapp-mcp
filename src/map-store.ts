@@ -6,6 +6,12 @@
 //   and applied by `mapOf`). Maps are public data. At most MAX_STORED_MAPS files; the least recently
 //   used (file mtime, touched on every read and on every memory hit in `MapCache`) is evicted on a
 //   write.
+//   A mode may carry `territories` (#328: the ids war.app's map details list for it, src/map-details.ts),
+//   added by `writeStoredModeTerritories` with the map's `storedAt` unchanged; a mode without them reads
+//   as not read yet (never as empty), and a file written before them reads as it did (same version).
+//   `MapCache.store` carries them onto a fresh download of the map (src/client.ts) under the stored copy's
+//   `storedAt`, so ids read from war.app never gain a new 30 days; a mode whose ids are not all territories
+//   of the fresh map is not carried (it is read again).
 //   A map maker can publish an edit under the same map id and GameFeed sends no map version, so a
 //   stored map is trusted for MAX_MAP_AGE_MS after `storedAt` (the download time, epoch ms) and then
 //   reads as absent: the game is fetched with its map again and the fresh copy replaces it (sooner when
@@ -76,6 +82,8 @@ function modeOf(d: unknown): DistributionMode | undefined {
   if (!isRec(d) || !isInt(d.id) || typeof d.name !== 'string') return undefined;
   const out: DistributionMode = { id: d.id, name: d.name };
   if (typeof d.type === 'string') out.type = d.type;
+  // #328: only a non-empty list of ids is kept knowledge; anything else (absent, null, [], junk) reads as not read yet.
+  if (isIntArray(d.territories) && d.territories.length) out.territories = d.territories;
   return out;
 }
 
@@ -119,14 +127,26 @@ function storedMapOf(raw: unknown, mapId: number, now: number, maxAgeMs: number)
  * than `maxAgeMs` ({@link MAX_MAP_AGE_MS} by default). Never throws.
  */
 export async function readStoredMap(dir: string, mapId: number, opts: ReadStoredMapOptions = {}): Promise<GameMap | undefined> {
+  return (await readStoredMapEntry(dir, mapId, opts))?.map;
+}
+
+/** A stored map with its `storedAt` (`undefined` only when read at any age without one). */
+export interface StoredMapEntry {
+  map: GameMap;
+  storedAt: number | undefined;
+}
+
+/** {@link readStoredMap} with the copy's `storedAt`. Never throws. */
+export async function readStoredMapEntry(dir: string, mapId: number, opts: ReadStoredMapOptions = {}): Promise<StoredMapEntry | undefined> {
   const path = mapStorePath(dir, mapId);
   try {
-    const map = storedMapOf(JSON.parse(await readFile(path, 'utf8')), mapId, opts.now ?? Date.now(), opts.maxAgeMs ?? MAX_MAP_AGE_MS);
-    if (map) {
-      const now = new Date();
-      await utimes(path, now, now).catch(() => {});
-    }
-    return map;
+    const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
+    const map = storedMapOf(raw, mapId, opts.now ?? Date.now(), opts.maxAgeMs ?? MAX_MAP_AGE_MS);
+    if (!map) return undefined;
+    const now = new Date();
+    await utimes(path, now, now).catch(() => {});
+    const at = isRec(raw) ? raw.storedAt : undefined;
+    return { map, storedAt: typeof at === 'number' && Number.isFinite(at) ? at : undefined };
   } catch {
     return undefined;
   }
@@ -156,6 +176,31 @@ export async function writeStoredMap(dir: string, map: GameMap, storedAt: number
     await writeJsonAtomic(mapStorePath(dir, map.id), mapsDir(dir), { version: VERSION, storedAt, map });
     await evictMaps(dir, map.id).catch(() => {});
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keep the territories read for the stored map's distribution modes (#328, by mode id) in its file,
+ * leaving its `storedAt` alone: they came from war.app's map details for the same map, so they age out
+ * with the GameFeed copy (a fresh download replaces the file, and they are read again). Only a stored
+ * map still trusted is updated; a mode not in `byMode` keeps what it had. `true` when written; never throws.
+ */
+export async function writeStoredModeTerritories(dir: string, mapId: number, byMode: ReadonlyMap<number, readonly number[]>): Promise<boolean> {
+  const path = mapStorePath(dir, mapId);
+  try {
+    return await withPathLock(path, async () => {
+      const raw: unknown = JSON.parse(await readFile(path, 'utf8'));
+      if (!storedMapOf(raw, mapId, Date.now(), MAX_MAP_AGE_MS) || !isRec(raw) || !isRec(raw.map) || !Array.isArray(raw.map.distributionModes)) {
+        return false;
+      }
+      raw.map.distributionModes = raw.map.distributionModes.map((d: unknown) =>
+        isRec(d) && isInt(d.id) && byMode.get(d.id)?.length ? { ...d, territories: [...byMode.get(d.id)!] } : d,
+      );
+      await writeJsonAtomic(path, mapsDir(dir), raw);
+      return true;
+    });
   } catch {
     return false;
   }

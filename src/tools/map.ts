@@ -6,6 +6,7 @@ import type { WarappClient } from '../client.js';
 import type { Game, GameMap } from '../normalize.js';
 import { gameIdArg, graphOf, mapSummary, readAnnotations, respond, round2, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
+import { modeRow, withModeTerritories, type MapDetailsContext } from './map-details.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const DEFAULT_LIMIT = 25;
@@ -76,7 +77,7 @@ function chokepoints(g: MapGraph, limit?: number) {
   }));
 }
 
-export function registerMapTool(server: McpServer, client: WarappClient): void {
+export function registerMapTool(server: McpServer, client: WarappClient, live: MapDetailsContext): void {
   server.registerTool(
     'warapp_get_map',
     {
@@ -86,6 +87,8 @@ export function registerMapTool(server: McpServer, client: WarappClient): void {
           'territory count, border territories to defend, entry points, value per territory, ease score) and the ' +
           'map\'s chokepoints (articulation points, bridges between regions, narrow connectors). Filter with ' +
           '`bonus` (part of a bonus name) to see one bonus\'s territories, borders and entry points by name. ' +
+          'View "full" also lists the map\'s distribution modes with the territories each lets a player start on ' +
+          '(read once from war.app\'s map details through the web-client channel (direct or bridge), then kept with the map; unknown is null). ' +
           'Map-only — needs no board, so it works in a lobby. Read-only.',
       ),
       _meta: lookupMeta(['warzone map', 'best bonuses', 'easiest bonus', 'chokepoints']),
@@ -101,7 +104,8 @@ export function registerMapTool(server: McpServer, client: WarappClient): void {
         view: viewArg(
           VIEWS,
           `compact (default) keeps positive-value bonuses as one-line rows (counts, value per territory, score) and the top ${COMPACT_CHOKEPOINTS} chokepoints; ` +
-            '"full" lists every bonus (zero and negative included) with member, border and entry-point territories by name, and every chokepoint.',
+            '"full" lists every bonus (zero and negative included) with member, border and entry-point territories by name, every chokepoint, ' +
+            'and each distribution mode with its starting territory count and ids.',
         ),
       }),
     },
@@ -110,6 +114,8 @@ export function registerMapTool(server: McpServer, client: WarappClient): void {
       const game = await client.getGame(game_id, { settings: true });
       const map = mapOf(game);
       const g = graphOf(map);
+      // #328: only the full table lists the modes' starting territories, so only it may ask war.app for them.
+      const modes = view === 'full' && !bonus?.trim() ? await withModeTerritories(live, map) : undefined;
       const order = SORTS[sort ?? 'easiest'];
       return respond(view, VIEWS, (rung) => {
         const all = analyzeBonuses(g);
@@ -133,6 +139,8 @@ export function registerMapTool(server: McpServer, client: WarappClient): void {
             bonuses: shown.map((b) => detail(g, b)),
             bonusesShown: `${shown.length} of ${sorted.length}`,
             chokepoints: chokepoints(g),
+            distributionModes: (modes?.map ?? map).distributionModes.map(modeRow),
+            ...(modes?.warnings.length ? { warnings: modes.warnings } : {}),
           };
         }
         const positive = all.filter((b) => b.value >= 1).sort(order);

@@ -454,3 +454,116 @@ describe('WarappClient.getGameIds (GameIDFeed — response shape UNVERIFIED)', (
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("WarappClient: distribution-mode territories (#328)", () => {
+  const tmp = () => mkdtempSync(join(tmpdir(), 'warapp-client-modes-'));
+
+  it('keeps them on the cached map and in the store, so a restart reads them back', async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }, { body: WITHOUT_MAP }).fetchImpl, new MapCache(), CREDS, dir);
+    const first = await c.getGame(12345678);
+    const map = first.map!;
+    const mode = map.distributionModes[0]!.id;
+    const ids = map.territories.slice(0, 2).map((t) => t.id);
+    expect(map.distributionModes[0]).not.toHaveProperty('territories');
+    await c.keepModeTerritories(map.id, new Map([[mode, ids]]));
+    const again = await c.getGame(12345678);
+    expect(again.map!.distributionModes[0]!.territories).toEqual(ids);
+    // The base map in memory is the one with them; the stored file has them too.
+    const restarted = await client(stubFetch({ body: WITHOUT_MAP }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678);
+    expect(restarted.map!.distributionModes[0]!.territories).toEqual(ids);
+  });
+
+  it('a new game on a map already stored keeps the territories the store holds for it', async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir);
+    const map = (await c.getGame(12345678)).map!;
+    const mode = map.distributionModes[0]!.id;
+    const ids = [map.territories[0]!.id];
+    await c.keepModeTerritories(map.id, new Map([[mode, ids]]));
+    // A fresh process meets another game on the map, unknown to the index: the feed sends the map again.
+    const other = await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    expect(other.map!.distributionModes[0]!.territories).toEqual(ids);
+    expect((await readStoredMap(dir, map.id))!.distributionModes[0]!.territories).toEqual(ids);
+  });
+
+  it("carrying them onto a fresh download keeps the stored copy's storedAt, so they still age out", async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir);
+    const map = (await c.getGame(12345678)).map!;
+    const mode = map.distributionModes[0]!.id;
+    const ids = [map.territories[0]!.id];
+    await c.keepModeTerritories(map.id, new Map([[mode, ids]]));
+    // The ids were read 20 days ago.
+    const path = mapStorePath(dir, map.id);
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    const old = Date.now() - 20 * 24 * 60 * 60 * 1000;
+    raw.storedAt = old;
+    writeFileSync(path, JSON.stringify(raw));
+    const other = await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    expect(other.map!.distributionModes[0]!.territories).toEqual(ids);
+    expect(JSON.parse(readFileSync(path, 'utf8')).storedAt).toBe(old);
+    // Past MAX_MAP_AGE_MS from when they were read, the copy (ids and all) is no longer trusted.
+    expect(await readStoredMap(dir, map.id, { now: old + MAX_MAP_AGE_MS + 1 })).toBeUndefined();
+  });
+
+  it('a fresh download with nothing to carry is stamped now', async () => {
+    const dir = tmp();
+    const mapId = (await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678)).map!.id;
+    const path = mapStorePath(dir, mapId);
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    const old = Date.now() - 20 * 24 * 60 * 60 * 1000;
+    raw.storedAt = old;
+    writeFileSync(path, JSON.stringify(raw));
+    await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    expect(JSON.parse(readFileSync(path, 'utf8')).storedAt).toBeGreaterThan(old);
+  });
+
+  it('a stored mode listing an id the fresh map lacks is not carried, so it is read again', async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir);
+    const map = (await c.getGame(12345678)).map!;
+    const [m1, m2] = map.distributionModes;
+    const good = [map.territories[0]!.id];
+    const gone = Math.max(...map.territories.map((t) => t.id)) + 1000;
+    await c.keepModeTerritories(
+      map.id,
+      new Map([
+        [m1!.id, [map.territories[1]!.id, gone]],
+        [m2!.id, good],
+      ]),
+    );
+    const other = await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    const modes = other.map!.distributionModes;
+    expect(modes[0]).not.toHaveProperty('territories');
+    expect(modes[1]!.territories).toEqual(good);
+  });
+
+  it('an empty list is never kept as known-empty: in memory, in the store or carried onto a fresh download', async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }, { body: WITHOUT_MAP }).fetchImpl, new MapCache(), CREDS, dir);
+    const map = (await c.getGame(12345678)).map!;
+    const mode = map.distributionModes[0]!.id;
+    await c.keepModeTerritories(map.id, new Map([[mode, []]]));
+    expect((await c.getGame(12345678)).map!.distributionModes[0]).not.toHaveProperty('territories');
+    expect(JSON.parse(readFileSync(mapStorePath(dir, map.id), 'utf8')).map.distributionModes[0]).not.toHaveProperty('territories');
+    // A store that does hold [] (an older write) is not carried either.
+    const path = mapStorePath(dir, map.id);
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    raw.map.distributionModes[0].territories = [];
+    writeFileSync(path, JSON.stringify(raw));
+    const other = await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    expect(other.map!.distributionModes[0]).not.toHaveProperty('territories');
+  });
+
+  it('remembers a map whose details were tried, per process', () => {
+    const cache = new MapCache();
+    const c = client(stubFetch({ body: FIXTURE }).fetchImpl, cache);
+    expect(c.mapDetailsTried(42)).toBe(false);
+    c.markMapDetailsTried(42);
+    expect(c.mapDetailsTried(42)).toBe(true);
+    expect(client(stubFetch({ body: FIXTURE }).fetchImpl, cache).mapDetailsTried(42)).toBe(true);
+    cache.clear();
+    expect(c.mapDetailsTried(42)).toBe(false);
+  });
+});

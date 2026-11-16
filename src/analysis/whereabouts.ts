@@ -92,13 +92,19 @@ export interface WhereSettings extends PlannerSettings {
   distributionNeutralArmies?: number;
 }
 
-/** Where the start candidates came from. */
-type CandidateSource = 'pickable' | 'statistics';
+/**
+ * Where the start candidates came from: the territories the live board showed as pickable (manual picks),
+ * the territories of the map's distribution mode an automatically distributed game dealt its starts among
+ * (#328, war.app's map details), or the starts of the finished games cached for the map.
+ */
+type CandidateSource = 'pickable' | 'distribution-mode' | 'statistics';
 
 /** The territories a player could start on. */
 export interface StartCandidates {
   territories: readonly number[];
   source: CandidateSource;
+  /** The distribution mode's id, with source `distribution-mode`. */
+  mode?: number;
 }
 
 /** A prior weight per candidate (a candidate without one weighs 1). Absent: every candidate weighs the same. */
@@ -1361,6 +1367,11 @@ function baseAssumptions(input: WhereInput, w: World): string[] {
   const n = w.candidates.size;
   if (!c) out.push('No start candidates are known (no pickable territories were kept, and no statistics are in use), so no start is guessed: the rest works from what was seen.');
   else if (c.source === 'pickable') out.push(`Start candidates: the ${n} ${plural(n, 'territory', 'territories')} the live board showed as pickable during distribution.`);
+  else if (c.source === 'distribution-mode')
+    out.push(
+      `Start candidates: the ${n} ${plural(n, 'territory', 'territories')} of the map's distribution mode${c.mode !== undefined ? ` ${c.mode}` : ''}, ` +
+        "which dealt the starts automatically among them (read from war.app's map details); the ones nobody was dealt stay neutral.",
+    );
   else out.push(`Start candidates: the ${n} ${plural(n, 'territory', 'territories')} players started on in the finished games cached for this map; a start nobody used there is missed.`);
   if (c) {
     if (input.prior)
