@@ -137,7 +137,7 @@ describe('warapp_plan_turn', () => {
     expect(p.deploys.reduce((n, d) => n + d.armies, 0)).toBe(1);
     const w = p.warnings.join('\n');
     expect(w).toMatch(/2 × 5 = 10, less your 9 armies on the board, is 1: income 1, not 5/);
-    expect(w).toMatch(/two live cases/);
+    expect(w).toMatch(/verified by six live cases/);
     expect(w).not.toMatch(/army cap[^\n]*does not apply it/);
   });
 

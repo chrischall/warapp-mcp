@@ -1,11 +1,12 @@
-// Rule 5, the leftover deploy (#72, #102, #103, #121, #124, #125, #163, #215, #218, #265; #133): the
+// Rule 5, the leftover deploy (#72, #102, #103, #121, #124, #125, #163, #215, #218, #265, #268; #133): the
 // income no capture or hold took goes, in order, to a conceded border it can make hold after all (its
 // withdrawal taken back; only without a strike stack, where the leftover would buy comfort), to
 // each member of a bonus this turn's captures complete that falls to the enemy beside it (#265), to
 // the borders that fall without the armies withdrawn into them unless I am known to move first
 // (#215), to the borders short of their hold before the strike stack, then to the strike
 // stack, the short borders' comfortable margins (#218: the rest on the step's source when it
-// defends as well), the step it saves toward, the expansion stack (#218: with no front in view,
+// defends as well; #268: else spread over the borders facing one opponent for equal headroom
+// over its deploy), the step it saves toward, the expansion stack (#218: with no front in view,
 // the territory central to what I hold instead when the stack lies far from it), the most fogged
 // border or the biggest stack — split against a Bomb when it concentrates for
 // nothing — and under Local Deployment each pool's rest inside its bonus. planPass runs it where
@@ -55,7 +56,7 @@ export function leftoverDeploy(
 ) {
   const { g, territories: state, label, bonusName, mine, mineSet, armiesOf, unitsAt, toTake, noSplit, bombOn } = pc;
   const { warnings, rationale, deployed, avail, locked, captured, moves, incoming } = ps;
-  const { orderOf, deploy, pools, roomAt, valueOf } = book;
+  const { orderOf, deploy, undeploy, pools, roomAt, valueOf } = book;
   const { borders } = threats;
   const { conceded, kept, garrisoned, stood, threatened, stayAt } = hd;
   const { committing, byCloseness, bonusTarget, targets, repulsed } = tgt;
@@ -505,6 +506,90 @@ export function leftoverDeploy(
         deploy(b.id, d);
         keepFromMargin(b.id);
       }
+    /**
+     * #268: once every short border has its comfortable margin (`marginFirst`: `lead`'s is still to
+     * give, the one short border), the rest is spread over the open borders facing `lead`'s opponent
+     * alone that protect something, an army at a time to the one that breaks at the smallest deploy —
+     * its armies' take less the stacks beside it, which is the deploy it falls to — ties to the most
+     * at stake, then by id:
+     * the smallest deploy that breaks any of them is as large as it can be (live, the rest on the
+     * border protecting the most left two others to break at ~1.5× the estimate, the third at ~3.5×).
+     * One opponent picks one border for its deploy, as the border guess (#204) reads it. Spent through
+     * the deploy book, so Local Deployment's pools are respected (a border its pool cannot reach gets
+     * nothing more). `undefined`, with nothing spent, when fewer than two such borders exist or every
+     * army would go to `lead` anyway (the old rule's deploy, kept as it was).
+     */
+    const headroomSpread = (lead: Border, marginFirst: boolean): Map<number, number> | undefined => {
+      const attacksFrom = (id: number) => moves.some((m) => m.from === id && m.kind === 'attack');
+      // My commander's territory is must-hold (#61): the rest stays on it whatever it protects.
+      if (attacksFrom(lead.id) || pc.myCommanders.has(lead.id)) return undefined;
+      /** Facing `lead`'s opponent alone: its threat is that player's, and no other opponent's stack is beside it. */
+      const one = (b: Border) =>
+        b.alone === undefined &&
+        (b.split?.players ?? [b.player]).every((x) => x === lead.player) &&
+        neighborsOf(g, b.id).every((n) => {
+          const st = state.get(n);
+          return captured.has(n) || st?.owner.kind !== 'player' || !pc.foe(st.owner.playerId) || st.owner.playerId === lead.player;
+        });
+      const group = [...borders.values()].filter(
+        (b) =>
+          b.player === lead.player &&
+          one(b) &&
+          open(b.id) &&
+          !orderOf(b.id) &&
+          // A border an attack leaves from takes no spread: armies there may size its attack up
+          // (#120) rather than stay. When it is `lead`, the old rule's rest stays on it.
+          !attacksFrom(b.id) &&
+          // Weighted by what it protects: a border protecting nothing draws no armies from one that
+          // protects something (all of them when the one with the most at stake protects nothing).
+          (valueOf(b.id) > 0 || valueOf(lead.id) <= 0),
+      );
+      if (group.length < 2 || !group.some((b) => b.id === lead.id)) return undefined;
+      const got = new Map<number, number>();
+      const give = (id: number) => {
+        deploy(id, 1);
+        got.set(id, (got.get(id) ?? 0) + 1);
+      };
+      if (marginFirst)
+        while (ps.budget > 0 && roomAt(lead.id) > 0) {
+          const take = toTake(stays(lead.id) + unitsAt(lead.id));
+          if (take === null || take > COMFORT_MARGIN * lead.threat) break;
+          give(lead.id);
+        }
+      const breaksAt = (b: Border) => {
+        const take = toTake(stays(b.id) + unitsAt(b.id));
+        return take === null ? Infinity : take - (b.threat - b.deploy);
+      };
+      while (ps.budget > 0) {
+        const next = group
+          .filter((b) => roomAt(b.id) > 0)
+          .sort((a, b) => breaksAt(a) - breaksAt(b) || valueOf(b.id) - valueOf(a.id) || a.id - b.id)[0];
+        if (!next) break;
+        give(next.id);
+      }
+      if (got.size === 0 || (got.size === 1 && got.has(lead.id))) {
+        for (const [id, n] of got) undeploy(id, n);
+        return undefined;
+      }
+      const total = [...got.values()].reduce((a, b) => a + b, 0);
+      const parts = group
+        .filter((b) => got.has(b.id))
+        .sort((a, b) => a.id - b.id)
+        .map((b) => `${label(b.id)} +${got.get(b.id)}`);
+      const least = Math.min(...group.map(breaksAt));
+      rationale.push(
+        `Spread the leftover ${total} over the borders facing player ${lead.player} (#268), so the smallest deploy that breaks one of them is as large as possible: ${parts.join(', ')}${
+          marginFirst ? '' : ', once every short border has its comfortable margin'
+        }: none of them now falls to a deploy of less than ~${least} on top of the stacks beside it (the estimate is ~${lead.deploy}, a floor under fog); all of it on ${label(lead.id)}, the one with the most at stake (protects +${valueOf(lead.id)}), would leave another to fall to less.`,
+      );
+      for (const id of got.keys()) {
+        locked.add(id);
+        keepFromMargin(id);
+      }
+      return got;
+    };
+    /** #268: the rest spread by {@link headroomSpread}, already deployed: nothing is left for `where`. */
+    let spreadRest: Map<number, number> | undefined;
     let where: number;
     let why: string;
     let lock = false;
@@ -561,6 +646,7 @@ export function leftoverDeploy(
         }${spread ? ', once every short border has its comfortable margin' : ''}`;
       } else {
         where = short[0].id;
+        spreadRest = headroomSpread(short[0], !spread);
         why = spread
           ? `the rest, once every short border has its comfortable margin, to the one with the most at stake (protects +${valueOf(where)})`
           : `the held border with the most at stake (protects +${valueOf(where)}), still short of a comfortable margin over the ~${short[0].threat} threat`;
@@ -610,7 +696,8 @@ export function leftoverDeploy(
     // half the leftover, so one bomb halves only one of them (same opponent first, then the bigger
     // stack, then id). Never a strike, saving or expansion stack: each concentrates for one attack
     // (the strike this turn, #72), and a split would halve it for certain where a bomb only may.
-    if (bombOn && n >= 2 && borders.has(where) && !concentrating) {
+    // #268: a spread rest is already on two or more stacks, which a bomb halves one of.
+    if (bombOn && n >= 2 && borders.has(where) && !concentrating && !spreadRest) {
       const facingP = borders.get(where)!.player;
       const second = [...borders.values()]
         .filter((b) => b.id !== where && open(b.id) && !orderOf(b.id) && notSoftening(b.id) && roomAt(b.id) >= 1)
@@ -631,7 +718,7 @@ export function leftoverDeploy(
         n = roomAt(where);
       }
     }
-    if (n > 0) {
+    if (n > 0 && !spreadRest) {
       rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
       deploy(where, n);
       // Keep a strike or expansion stack there: the transfer step must not walk it back as "idle

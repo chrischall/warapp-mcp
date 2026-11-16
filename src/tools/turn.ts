@@ -1697,8 +1697,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
-          'With an army cap, `income` is what the cap leaves, min(income, cap × income − your armies on the board) (two ' +
-          'live cases; the line names a cut), and `incomeCapped` gives the arithmetic; Reinforcement card armies come on top. ' +
+          'With an army cap, `income` is what the cap leaves, min(income, cap × income − your armies on the board) (verified by ' +
+          'six live cases; the line names a cut), and `incomeCapped` gives the arithmetic; Reinforcement card armies come on top. ' +
           'In a free-for-all, `relations` reports each truce recorded with warapp_record_agreement as the plan treated it ' +
           '(no covered territory of the partner attacked while it is active or in notice; a covered border facing only ' +
           'the partner held against its stacks with no deploy, except your commander\'s, a valuable border, or while trust ' +

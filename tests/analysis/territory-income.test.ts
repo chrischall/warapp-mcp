@@ -4,6 +4,7 @@
 // base armies)"), then adds held bonuses. Live: base 4, per 1, 1 territory → 4;
 // base 20, per 1, 164 territories → 164; base 2, per 1, 3 territories → 3 (5 was
 // refused, 3 accepted). Synthetic maps and ids only.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
@@ -220,10 +221,11 @@ describe('the army cap (#253): received = min(income, round(cap × income) − m
     expect(incomeDetail(g, s, ME, settings({ minimumArmyBonus: 52, armyCap: 8 }))).toEqual({ income: 52, capUnknown: true });
   });
 
-  it('the uncertainty states the formula, that it rests on two live cases, and that card armies are outside it', () => {
+  it('the uncertainty states the formula, that six live cases verify it, and that card armies are outside it', () => {
     const text = incomeUncertainties(settings({ minimumArmyBonus: 52, armyCap: 8 })).join('\n');
     expect(text).toMatch(/min\(income, 8 × income − your armies on the board\)/);
-    expect(text).toMatch(/two live cases/);
+    expect(text).toMatch(/verified by six live cases/);
+    expect(text).not.toMatch(/two live cases/);
     expect(text).toMatch(/this turn's income/);
     expect(text).toMatch(/Reinforcement card/);
     expect(text).not.toMatch(/does not apply it/);
@@ -231,6 +233,12 @@ describe('the army cap (#253): received = min(income, round(cap × income) − m
       armyCap: { uncapped: 52, cap: 8, armies: 375, limit: 416, received: 41, cut: true },
     }).join('\n');
     expect(computed).toMatch(/8 × 52 = 416, less your 375 armies on the board, is 41: income 41, not 52/);
-    expect(computed).toMatch(/two live cases/);
+    expect(computed).toMatch(/verified by six live cases/);
+  });
+
+  it('the API notes no longer say the army cap rests on two data points', () => {
+    const api = readFileSync(new URL('../../docs/WARAPP-API.md', import.meta.url), 'utf8');
+    expect(api).not.toMatch(/two data points/);
+    expect(api).toMatch(/deploy check use the cut figure; the formula is verified by six live cases/);
   });
 });

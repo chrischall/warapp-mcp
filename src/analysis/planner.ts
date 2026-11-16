@@ -871,7 +871,7 @@
 //     border or already ordered), the holds (it would fit without what they took), or its size
 //     (its cost against the movable armies and deploys that can reach it); #235: when the leftover
 //     then stages on another source toward that step (rule 5), the warning names that source. Army cap (`armyCap`, × income): war.app
-//     pays min(income, round(cap × income) − my armies on the board) (#253, two live cases, the cap on
+//     pays min(income, round(cap × income) − my armies on the board) (#253, verified by six live cases, the cap on
 //     this turn's income), so the
 //     caller passes the cut income and `incomeCap`, its arithmetic. When the cap cuts this turn's
 //     income, armies left standing cost income next turn, so the same fallback fires in any phase,
@@ -1014,7 +1014,17 @@
 //     an open border of equal defensive value (the same player's threat, the same size, from the
 //     same enemy territories, protecting as much, in the same bonuses): then every short border
 //     first gets its margin (a lone one too), and the rest goes to that source, saving toward the
-//     step; a margin itself stays on its border — else (#125) it saves toward a capture this turn cannot afford:
+//     step; a margin itself stays on its border. #268: otherwise, once every short border has its
+//     margin (a lone short border gets its own first), the rest is spread over the open borders
+//     facing that border's opponent alone (its threat that player's, no other opponent's stack
+//     beside it; not an attack's source, no order under No-Split; one protecting nothing only when
+//     the first protects nothing too), an army at a time to the one that breaks at the smallest
+//     deploy (its armies' take less the stacks beside it), ties to the most at stake: the smallest
+//     deploy that breaks any of them is as large as it can be, the estimate being only a floor
+//     ("Spread the leftover N over the borders facing player P (#268) …"; Local Deployment's pools
+//     respected, no Bomb split, since it already makes several stacks). With fewer than two such
+//     borders, when the first is my commander's or an attack's source, or when every army would go
+//     to the first anyway, the rest goes to the first as before — else (#125) it saves toward a capture this turn cannot afford:
 //     rule 4e's top-ranked step when it stood still for want of armies, else (rule 4f committing)
 //     the closest bonus's cheapest missing member in reach when this turn made no capture into
 //     that bonus, and only when its armies free plus what may still be deployed there fall short

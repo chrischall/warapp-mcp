@@ -282,11 +282,11 @@ describe('never stand still in the opening (#104)', () => {
     expect(q.rationale.join('\n')).not.toMatch(/army cap/);
   });
 
-  it('the army cap warning states the formula and its two live cases (#253)', () => {
+  it('the army cap warning states the formula and the six live cases that verify it (#253)', () => {
     const s = { armyCap: 8, cards: [] } as unknown as GameSettings;
     const w = incomeUncertainties(s).join('\n');
     expect(w).toMatch(/army cap \(8× income\)/);
-    expect(w).toMatch(/two live cases/);
+    expect(w).toMatch(/verified by six live cases/);
     expect(w).not.toMatch(/does not apply it/);
   });
 });

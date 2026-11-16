@@ -372,9 +372,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   earlier move in the list enters; each move out counts the armies moved in earlier in the list, an upper
   bound — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
-  setting the income model does not compute or rests on few live cases (the army cap: war.app pays
-  min(income, round(cap × income) − my armies on the board), the cap on this turn's income, verified by two
-  live cases on 2026-11-15, `incomeDetail`, #253; an unreadable army count of mine leaves it uncut, and plan
+  setting the income model does not compute or does not verify in full (the army cap: war.app pays
+  min(income, round(cap × income) − my armies on the board), the cap on this turn's income, verified by six
+  live cases on 2026-11-15 — received 41, 49, 25, 27 and 71 where it bit, the binding case through
+  `warapp_submit_turn` among them, and a 61 room it did not bind — `incomeDetail`, #253; an unreadable army count of mine leaves it uncut, and plan
   and submit preview both say so; card armies are
   outside it; plan, submit and `warapp_check_plan` deploy on the cut figure, `warapp_plan_turn` reports `incomeCapped`;
   the fog prior, the standing and check_plan's leader test read my income before the cut, the truces'
@@ -890,6 +891,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     bonuses), and counts toward the step; with no enemy territory in view the leftover stays on the
     territory central to what I hold (fewest hops through my land to my farthest border) rather than
     ride an expansion stack more than `CENTRE_SLACK` hops farther out whose attacks land without it.
+    #268: otherwise the rest, once every short border has its margin, is spread over the open borders
+    facing that border's opponent alone (no other opponent's stack beside them, no attack leaving
+    them; one protecting nothing only when the first protects nothing too), an army at a time to the
+    one that breaks at the smallest deploy, ties to the most at stake, so the smallest deploy that
+    breaks any of them is as large as it can be (live: the rest on the border protecting the most left
+    two others to fall at ~1.5× the estimate). One such border, my commander's, or an attack's source
+    keeps the old rule; the pools of Local Deployment are respected.
     #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
     reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
     sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,
