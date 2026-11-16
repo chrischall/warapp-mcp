@@ -45,7 +45,7 @@ describe('lesson notes (#300): the data', () => {
   it('the gate budget states the arithmetic: stack plus whole deploy at the kill rate, per gate', () => {
     const t = note('1v1-gate-budget')!.text;
     expect(t).toMatch(/whole deploy/);
-    expect(t).toMatch(/kill rate/);
+    expect(t).toMatch(/× the game's offensive kill rate/);
     expect(t).toMatch(/each/i);
     expect(t).toMatch(/uncontested|nobody contests/);
   });
@@ -73,6 +73,10 @@ describe('lesson notes (#300): the data', () => {
     // first_mover is who moves first THIS turn: alternate from the turn read, never pass that turn's value.
     expect(t).not.toMatch(/that turn as first_mover/);
     expect(t).toMatch(/first_mover: me/);
+    expect(t).toMatch(/only when sure/);
+    // the opponent is named, never "his", "he" or "it"
+    expect(t).toMatch(/the opponent/);
+    expect(t).not.toMatch(/\b(his|he|it)\b/i);
     expect(t).toMatch(/inference/);
     expect(t).toMatch(/0% luck/);
     expect(t).toMatch(/check_plan/);

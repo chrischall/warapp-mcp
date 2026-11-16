@@ -96,12 +96,42 @@ describe('skill files', () => {
     const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
     const start = md.indexOf('*Move order.*');
     const line = md.slice(start, md.indexOf('(#299)', start));
-    expect(line).not.toMatch(/Pass that turn as `first_mover`/);
     expect(line).toMatch(/turn N\+1/);
     expect(line).toMatch(/`first_mover: me`/);
     expect(line).toMatch(/inference/);
     expect(line).toMatch(/0% luck/);
     expect(line).toMatch(/warapp_check_plan/);
+  });
+
+  it('a contested game gets a six-line check before every submit (#300 comment)', () => {
+    const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
+    const start = md.indexOf('**Before every submit in a contested game');
+    expect(start).toBeGreaterThan(0);
+    const block = md.slice(start, md.indexOf('\n\n', start));
+    expect([...block.matchAll(/^\s+\d\. /gm)]).toHaveLength(6);
+    for (const item of [
+      /seen deploy[\s\S]*your income/,
+      /gates[\s\S]*each side can add/,
+      /income over five turns/,
+      /first move/,
+      /strike on a topped-up stack/,
+      /step-back review is due/,
+    ]) {
+      expect(block).toMatch(item);
+    }
+    expect(block).toMatch(/`headroom`/);
+    expect(block).toMatch(/`belowPlan`/);
+  });
+
+  it('tempo belongs to the player with the longer clock (#300 comment)', () => {
+    const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
+    const start = md.indexOf('**Tempo belongs to the player with the longer clock.**');
+    expect(start).toBeGreaterThan(0);
+    const para = md.slice(start, md.indexOf('\n\n', start));
+    for (const tool of ['warapp_track_opponents', 'warapp_locate_opponents', 'warapp_strategy']) {
+      expect(para).toContain(tool);
+    }
+    expect(para).toMatch(/step-back/);
   });
 });
 

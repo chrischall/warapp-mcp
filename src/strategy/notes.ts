@@ -333,7 +333,7 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     when: on({ format: ['1v1'], phase: ['opening', 'expansion', 'contact'] }),
     text:
       'Before you open a contact, count the single-entry gates it makes. Each must hold more than (the stack ' +
-      "beside it + the opponent's whole deploy) × its offensive kill rate, and each new gate costs that again. " +
+      "beside it + the opponent's whole deploy) × the game's offensive kill rate, and each new gate costs that again. " +
       'Take the cheap bonuses nobody contests first, and open a gate only when your income pays for all of them.',
     source: S.oneVsOne,
     basis: 'derived',
@@ -1319,9 +1319,10 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'timing',
     when: on({ format: ['1v1'], moveOrder: ['Cycle', 'NoLuckCycle'], phase: ['contact', 'late'] }),
     text:
-      'Unsure who moved first? At 0% luck, a first order whose target held more than any deploy it could have had, ' +
-      'or whose stack had left, means his ran first: an inference, so test it with warapp_check_plan. It alternates: ' +
-      'he ran first on turn N, so on N+1 pass first_mover: me. Save a big strike for a turn you move first.',
+      'Who moved first? At 0% luck, a first order whose target held more than any deploy the opponent could ' +
+      'have had, or whose stack had left, means the opponent ran first: an inference; test with warapp_check_plan. ' +
+      'Turns alternate: the opponent first on N, so on N+1 pass first_mover: me, only when sure. ' +
+      'Strike big on turns you move first.',
     source: S.moveOrder,
     basis: 'derived',
   },

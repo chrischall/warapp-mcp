@@ -366,7 +366,7 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `1v1-contact-ground` — foresee where you will meet; a bonus behind a narrow front is worth some
   income. **Advice only** (the map notes list the bottlenecks). Source: Good 1v1 strategies.
 - `1v1-gate-budget` — before opening a contact, count the single-entry gates it makes: each must
-  hold more than (the stack beside it + the opponent's whole deploy) × its offensive kill rate, and
+  hold more than (the stack beside it + the opponent's whole deploy) × the game's offensive kill rate, and
   each new gate costs that again, so take cheap uncontested bonuses first. **Advice only** (the
   planner does not count gates yet, #297), derived; from the lost 1v1s of #300. Source: Good 1v1 strategies.
 - `ffa-strike-last` — let rivals fight each other and move in after. **Advice only.** Source: FFA strategy.
@@ -853,8 +853,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `timing-read-first-mover-strike` — unsure who moved first in a cyclic 1v1, read your own first
   order: at 0% luck, a target that held more than any deploy its owner could have had, or whose
   stack had left, means the opponent's order ran first. That is an inference (test it with
-  `warapp_check_plan`). `first_mover` is who moves first this turn, so alternate: he ran first on
-  turn N, so on turn N+1 pass `first_mover: me`. Save a big strike for a turn you move first. **Advice only** (the planner
+  `warapp_check_plan`). `first_mover` is who moves first this turn, so alternate: the opponent ran
+  first on turn N, so on turn N+1 pass `first_mover: me`, only when sure (#215: a given first mover
+  sizes holds; otherwise leave it out and let `warapp_check_plan` try both orders). Save a big strike for a turn you move first. **Advice only** (the planner
   does not infer it yet, #299), derived; from the lost 1v1s of #300. Source: <https://war.app/wiki/Move_order>
 - `timing-delay-pairs` — Orders run in pairs: moving first, your 2nd and 3rd run back to back
   (then 4th and 5th); moving second, your 1st and 2nd. So one more dummy order helps only every

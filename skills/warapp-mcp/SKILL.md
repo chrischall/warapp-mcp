@@ -940,7 +940,7 @@ do not send a backlog of turns unread. Override it when one of these shows up:
 
 8. **Lessons from lost 1v1s (#300): check these yourself until the planner does.**
    - *Gate budget.* Before opening a contact, count the single-entry gates it makes: each must hold
-     more than (the stack beside it + his whole deploy) × his offensive kill rate, and every gate costs
+     more than (the stack beside it + his whole deploy) × the game's offensive kill rate, and every gate costs
      that again. Two may fit your income; a third can leave you short every turn. Take cheap
      uncontested bonuses first (#297).
    - *Local Deployment.* A front receives his free income, the pool of a bonus he holds that it stands
@@ -988,6 +988,29 @@ Every ~3 turns, step back and compare income trends (yours vs each opponent), fr
 income, and what `warapp_scout_player` shows. Override early, because a lost bonus costs every
 turn after. If a committed turn turns out to be wrong, `warapp_uncommit_turn` withdraws it before
 the turn advances. Then re-plan and submit again.
+
+**Before every submit in a contested game** (an opponent in contact, a border or bonus at stake),
+run a six-line check (#300), and say each answer to the user in one line:
+  1. His seen deploy against your income: the largest deploy he was observed making (the plan's
+     estimate warning, `warapp_track_opponents`) beside yours; if his reaches yours, size holds on it.
+  2. The gates, and what each side can add: each single-entry border, the stack beside it plus his
+     whole deploy against what you can put there this turn. `headroom` gives each border's breaking
+     deploy; one below your income falls if his estimate is wrong.
+  3. Your income over five turns: rising, flat or falling since five turns ago, and the plan's
+     `expected.nextIncome`; a falling line, or a plan whose next income is below this turn's, needs a
+     reason.
+  4. Whose first move it is: `firstMover` and its source; when unknown, `warapp_check_plan` without
+     `first_mover` tries both.
+  5. Any strike on a topped-up stack: an attack into a stack he grew this turn is sized for the
+     armies there plus his deploy, or not made.
+  6. Whether a step-back review is due (every ~3 turns, above). After a hand edit, also read
+     `warapp_check_plan`'s `belowPlan` (and the submit preview's): a border left below what the default
+     plan leaves there needs a reason.
+
+**Tempo belongs to the player with the longer clock.** A live opponent answering in minutes does
+not oblige a reply in minutes: the boot timer is the deadline, not his pace. Never skip
+`warapp_track_opponents`, `warapp_locate_opponents`, `warapp_strategy` or the step-back review to
+keep up with a fast opponent.
 
 ## Conventions
 
