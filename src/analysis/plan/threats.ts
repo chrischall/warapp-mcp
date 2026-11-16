@@ -12,6 +12,8 @@ import { incomeBasis, LOST_STACK_TURNS } from '../opponents.js';
 import {
   HIDDEN_POOL_INCOMES,
   MAX_NAMED_REVEALS,
+  coverageText,
+  LOW_COVERAGE,
   MIN_ENEMY_DEPLOY,
   openingArmies,
   ownerShown,
@@ -857,6 +859,20 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           rationale.push(
             `Observed deploy for player ${p}, ${turns}: +${e.observedRaw}/turn over ${o.counted.length} territories visible on both boards (${o.captured.length} captured${o.captured.length ? `, ${o.fromFog.length} from the fog` : ''}); ${o.reveals.length} skipped as fog reveals${o.reveals.length ? ` (${shown}${more}): not shown with an owner and armies last turn (fogged, armies hidden, or not yet picked), so what they hold is not income` : ''}.`,
           );
+          // #294: each grown stack's growth split three ways, so the arithmetic can be checked on the board.
+          if (o.stacks.length) {
+            const grown = [...o.stacks].sort((a, b) => b.growth - a.growth || a.territoryId - b.territoryId);
+            const parts = grown.slice(0, MAX_NAMED_REVEALS).map((x) => {
+              const why = [
+                ...x.moved.map((m) => `${m.armies} could be a move from ${label(m.from)} in view`),
+                ...(x.fog ? [`${x.fog} could have come out of the fog`] : []),
+                ...(x.deploy ? [`${x.deploy} can only be deploy`] : []),
+              ];
+              return `${label(x.territoryId)} +${x.growth} (${why.join(', ')})`;
+            });
+            const rest = grown.length > MAX_NAMED_REVEALS ? ` and ${grown.length - MAX_NAMED_REVEALS} more` : '';
+            rationale.push(`Player ${p}'s growth by stack, ${turns}: ${parts.join('; ')}${rest}.`);
+          }
           // A stack that arrived from the fog by a capture is a threat, never income (#86).
           for (const id of o.fromFog) {
             const where = neighborsOf(g, id).some((n) => mineSet.has(n)) ? 'stack next to you' : 'stack';
@@ -910,7 +926,14 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           const track = input.tracks!.find((t) => t.playerId === p)!;
           const used = track.turns.filter((x) => e.trackedTurns.includes(x.from));
           rationale.push(
-            `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+            `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog${e.coverage ? `, read from ${coverageText(e.coverage)}` : ''}; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+          );
+        }
+        // #294: a tracked figure read from little of its frontier keeps a floor above it.
+        if (e.coverageFloor) {
+          const f = e.coverageFloor;
+          warnings.push(
+            `Player ${p}'s tracked ~${f.tracked} was read from ${coverageText({ ...e.coverage!, hiddenBonuses: 0 }).replace(/\)$/, `, under ${Math.round(LOW_COVERAGE * 100)}%)`)}: the estimate is at least ~${f.tracked} × ${f.factor} = ${f.figure} (the factor is unmeasured), since the fog hid most of where it deploys.`,
           );
         }
         // #164: a Reinforcement card the clock says it may hold, on top of its income.
@@ -966,7 +989,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               e.priorBlend
                 ? ` — shrunk toward its ${
                     e.priorBlend.toward === e.tracked ? `tracked ~${e.tracked}` : `visible ${e.priorBlend.toward}`
-                  } by the evidence: ${e.priorBlend.turns} observed ${e.priorBlend.turns === 1 ? 'turn' : 'turns'} with ${Math.round(e.priorBlend.share * 100)}% of its edge in view keep ${Math.round(e.priorBlend.weight * 100)}% of the gap from ${e.priorBlend.prior}`
+                  } by the evidence: ${e.priorBlend.turns} observed ${e.priorBlend.turns === 1 ? 'turn' : 'turns'} with ${Math.round(e.priorBlend.share * 100)}% of its ${e.coverage ? 'frontier read' : 'edge in view'} keep ${Math.round(e.priorBlend.weight * 100)}% of the gap from ${e.priorBlend.prior}`
                 : ''
             }; ${visible}${e.tracked !== null ? `, tracked ~${e.tracked}` : e.observed !== null ? `, observed +${e.observed}/turn` : ''})${withCard}; observed deploys are lower bounds under fog, and it could deploy more.`,
           );
@@ -974,7 +997,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
         }
         if (e.source === 'tracked') {
           warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${income} (tracked over ${e.trackedTurns.length} observed turns, more than ${visible})${withCard}; it holds income the fog hides, and could deploy more.`,
+            `Enemy deploy estimate for player ${p}: ~${income} (tracked over ${e.trackedTurns.length} observed turns, ${e.coverage ? `read from ${coverageText(e.coverage)}; ` : ''}more than ${visible})${withCard}; it holds income the fog hides, and could deploy more.`,
           );
           continue;
         }

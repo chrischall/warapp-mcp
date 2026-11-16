@@ -331,9 +331,12 @@
 //     free-for-all with no teams that gets no prior says why (`game.unevenStart`, a player out — never
 //     listed among the opponents beside the fog). The
 //     prior shrinks with evidence: with a usable track it keeps PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS
-//     + its consecutive observed turns up to the newest board, none when the run stopped earlier, × the
-//     share of its edge in view) of its lead over the larger of
+//     + the sum of each turn's frontier coverage (#294, `frontierCoverage`) over its consecutive observed
+//     turns up to the newest board, none when the run stopped earlier) of its lead over the larger of
 //     its tracked income and its visible income (`priorBlend`), and the warning names both.
+//     #294: while the tracked figure, above its visible income, was read from under LOW_COVERAGE (0.5)
+//     of its frontier, the estimate is at least tracked × LOW_COVERAGE_FACTOR (1.5), at most what it
+//     could earn (`coverageFloor`); the warning says what it was read from. Both unmeasured.
 //     In a 1v1 too, so it trades #119's prior back toward tracked figures #119 found 2-3x low:
 //     PRIOR_EVIDENCE_TURNS (4) is unmeasured against a finished 1v1.
 //     #164, exact income: under a fog setting that shows every owner (`OWNERS_SHOWN_FOG`: No, Light

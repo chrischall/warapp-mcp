@@ -61,6 +61,8 @@ function estimate(over: Partial<EnemyDeployEstimate>): EnemyDeployEstimate {
     couldHold: 3,
     prior: null,
     priorBlend: null,
+    coverage: null,
+    coverageFloor: null,
     priorCap: null,
     fogBeside: false,
     source: 'visible',

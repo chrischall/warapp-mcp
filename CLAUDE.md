@@ -661,13 +661,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the territories the board hides and of the bonuses it could still hold, its own in full), and the
   warning calls it a prior — every observed figure is
   a lower bound under fog, and without it a finished game's true deploys read 2–3× low. #235: the
-  prior shrinks with evidence: with a usable track it keeps `PRIOR_EVIDENCE_TURNS` (4) / (4 + its
-  consecutive observed turns up to the newest board — a run that stopped earlier counts none — × the
-  visible share of its edge) of its lead over the tracked figure (or the visible one, when larger;
-  `priorBlend`; the warning names both figures). This applies in a 1v1 too,
+  prior shrinks with evidence: with a usable track it keeps `PRIOR_EVIDENCE_TURNS` (4) / (4 + the sum,
+  over its consecutive observed turns up to the newest board — a run that stopped earlier counts none —,
+  of each turn's frontier coverage, #294) of its lead over the tracked figure (or the visible one, when
+  larger; `priorBlend`; the warning names both figures; a turn built by hand without a coverage counts the
+  visible share of its edge on this board). This applies in a 1v1 too,
   pulling #119's prior back toward the tracked figures #119 found 2–3× low (8 turns with the whole
-  edge in view keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
-  against a finished 1v1. A
+  frontier read keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
+  against a finished 1v1. **Frontier coverage (#294).** Each observed turn carries `coverage`
+  (`frontierCoverage`, pure, in `src/analysis/plan/shared.ts`): its territories in view with a neighbour
+  not its own, plus every territory beside them whose owner is hidden (it could hold it: the "~M"), read
+  when in view with armies on both boards, and the positive bonuses it could hold with a hidden member;
+  the track (`OpponentTrack.coverage`, `trackCoverage` over the income window: Σ read ÷ Σ frontier) and
+  the estimate (`EnemyDeployEstimate.coverage`) carry it, warapp_track_opponents shows it, and the tracked
+  warning says "read from N of ~M frontier territories (P%)". While that share is under `LOW_COVERAGE`
+  (0.5) and the tracked figure beats its visible base + bonuses, the estimate never falls below tracked ×
+  `LOW_COVERAGE_FACTOR` (1.5), at most what it could earn (`coverageFloor`, its own warning); both
+  constants are unmeasured (the play session's long fogged games tracked a half to a quarter of the
+  income later seen). A tracked figure no higher than its visible income gets no floor. Each observed
+  deploy also carries `stacks` (`DeployObservation`): every stack of the opponent held in view on both
+  boards that grew, its growth split into what a neighbour in view of its own visibly sent (each shrink
+  claimed once, in id order), then what could have come out of the fog (beside a hidden territory) or can
+  only be deploy; the plan's rationale has one "growth by stack" line per opponent. A
   free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
   out; a player out is never listed among the opponents beside the fog). The newest observed turn
   never lifts a usable track (#235 1c): a stack walking in beside the fog is not income (#123 lesson

@@ -69,6 +69,18 @@ export const TRACKED_MIN_TURNS = 2;
  * the gap. Unmeasured: four observed turns with its whole edge in view meet half-way.
  */
 export const PRIOR_EVIDENCE_TURNS = 4;
+/**
+ * #294: an opponent's tracked income was read from less than this share of its frontier
+ * ({@link frontierCoverage}, over its income window): it is read as low, and the estimate never
+ * falls below the tracked figure × {@link LOW_COVERAGE_FACTOR}. Unmeasured.
+ */
+export const LOW_COVERAGE = 0.5;
+/**
+ * #294: while coverage is under {@link LOW_COVERAGE}, the estimate is at least the tracked figure ×
+ * this (at most what it could earn). Unmeasured: the play session's long fogged games tracked a half
+ * to a quarter of the income later seen, so 1.5 is a cautious floor, not a correction.
+ */
+export const LOW_COVERAGE_FACTOR = 1.5;
 
 /** Fog reveals named in the observed-deploy rationale before "and N more". */
 export const MAX_NAMED_REVEALS = 6;
@@ -968,10 +980,25 @@ export interface EnemyDeployEstimate {
    * it: `prior` (the figure above) keeps `weight` of its lead over `toward` (its tracked income, or its
    * visible income when larger), `weight` = {@link PRIOR_EVIDENCE_TURNS} / (PRIOR_EVIDENCE_TURNS
    * + `turns` × `share`), where `turns` is its run of consecutive observed turns up to the newest and
-   * `share` the part of its edge in view (the territories next to its visible ones, not its own, whose
-   * owner shows). The estimate is then `figure`. `null` otherwise.
+   * `share` (#294) the mean frontier coverage of those turns ({@link FrontierCoverage}: the evidence is
+   * the sum of each turn's share); a turn that carries none (a track built by hand) counts the part of
+   * its edge in view on this board (the territories next to its visible ones, not its own, whose owner
+   * shows), as before #294. The estimate is then `figure`. `null` otherwise.
    */
   priorBlend: { prior: number; toward: number; turns: number; share: number; weight: number; figure: number } | null;
+  /**
+   * #294: how much of its frontier its tracked income was read from ({@link trackCoverage} over the
+   * track's income window); `null` without a usable track or when its turns carry no coverage.
+   */
+  coverage: TrackCoverage | null;
+  /**
+   * #294: the coverage was under {@link LOW_COVERAGE}, its tracked income read more than its visible
+   * base + bonuses (a figure read from its deploys, not the board), and its estimate would have fallen
+   * below `tracked` × {@link LOW_COVERAGE_FACTOR}: it is `figure` (that product rounded up, at most
+   * `couldEarn`). `null` otherwise, and with an exact income (a track no higher than its visible income
+   * says nothing the board does not, and the fog prior, where asked for, covers the rest).
+   */
+  coverageFloor: { tracked: number; share: number; factor: number; figure: number } | null;
   /**
    * #235: in a free-for-all (`EnemyIncomePrior.opponents`), the cap on the prior: its visible
    * territories and bonuses plus an even share of the territories the board hides and of the bonuses
@@ -1078,8 +1105,122 @@ export function ownerShown(t: TerritoryState | undefined): TerritoryState | unde
   return t;
 }
 
+/**
+ * #294: how much of an opponent's frontier one observed turn (`previous` → `board`) could read. Its
+ * frontier is approximate: its territories `board` shows as its with a neighbour not visibly its, plus
+ * every territory beside one of those whose owner `board` hides (it could hold it, and deploy there
+ * unseen). A frontier territory is read when it is in view with its armies on both boards (as
+ * {@link observeDeploy} counts it). Deep fog no visible territory borders is left out, so the share is
+ * an upper bound on what the turn saw.
+ */
+export interface FrontierCoverage {
+  /** Its frontier territories in view with armies on both boards: its deploy there was read. */
+  inView: number;
+  /** Its frontier on `board`, approximately (the "~M" of the warning). */
+  frontier: number;
+  /** inView ÷ frontier; 0 with no frontier and none of its territories shown, 1 with no frontier but some shown. */
+  share: number;
+  /** Positive bonuses it could still hold (no member visibly another's) with a member whose owner `board` hides. */
+  hiddenBonuses: number;
+}
+
+/** #294: {@link FrontierCoverage} of one opponent on one observed turn. Pure. */
+export function frontierCoverage(g: MapGraph, board: BoardState, previous: BoardState, playerId: number): FrontierCoverage {
+  const now = new Map(board.territories.map((t) => [t.territoryId, t]));
+  const before = new Map(previous.territories.map((t) => [t.territoryId, t]));
+  const its = (id: number) => {
+    const st = ownerShown(now.get(id));
+    return st?.owner.kind === 'player' && st.owner.playerId === playerId;
+  };
+  const shownIts = [...g.territoryById.keys()].filter(its);
+  const frontier = new Set<number>();
+  let inView = 0;
+  for (const t of shownIts) {
+    const ns = neighborsOf(g, t);
+    if (ns.every(its)) continue;
+    frontier.add(t);
+    const a = visibleState(now.get(t));
+    const b = visibleState(before.get(t));
+    if (a && b) inView++;
+    for (const n of ns) if (!ownerShown(now.get(n))) frontier.add(n);
+  }
+  let hiddenBonuses = 0;
+  for (const bonus of g.map.bonuses) {
+    const ts = bonusTerritories(g, bonus.id);
+    if (bonus.value <= 0 || !ts.length) continue;
+    const taken = ts.some((t) => {
+      const st = ownerShown(now.get(t));
+      return st !== undefined && !(st.owner.kind === 'player' && st.owner.playerId === playerId);
+    });
+    if (!taken && ts.some((t) => !ownerShown(now.get(t)))) hiddenBonuses++;
+  }
+  const share = frontier.size ? inView / frontier.size : shownIts.length ? 1 : 0;
+  return { inView, frontier: frontier.size, share, hiddenBonuses };
+}
+
+/** #294: an opponent's {@link FrontierCoverage} over several observed turns (its income window). */
+export interface TrackCoverage {
+  /** The `from` turns that carried a coverage, oldest first. */
+  turns: number[];
+  /** The fewest and the most frontier territories a turn read. */
+  inView: { min: number; max: number };
+  /** The smallest and the largest frontier of a turn. */
+  frontier: { min: number; max: number };
+  /** Σ inView ÷ Σ frontier (each turn's share when every frontier is 0: their mean). */
+  share: number;
+  /** The newest of those turns' hidden bonuses. */
+  hiddenBonuses: number;
+}
+
+/** #294: {@link TrackCoverage} over `turns` (those carrying a coverage); `null` when none does. */
+export function trackCoverage(turns: readonly { from: number; coverage?: FrontierCoverage }[]): TrackCoverage | null {
+  const withIt = turns.filter((x) => x.coverage !== undefined);
+  if (!withIt.length) return null;
+  const inView = withIt.reduce((n, x) => n + x.coverage!.inView, 0);
+  const frontier = withIt.reduce((n, x) => n + x.coverage!.frontier, 0);
+  const range = (xs: number[]) => ({ min: Math.min(...xs), max: Math.max(...xs) });
+  return {
+    turns: withIt.map((x) => x.from),
+    inView: range(withIt.map((x) => x.coverage!.inView)),
+    frontier: range(withIt.map((x) => x.coverage!.frontier)),
+    share: frontier ? inView / frontier : withIt.reduce((n, x) => n + x.coverage!.share, 0) / withIt.length,
+    hiddenBonuses: withIt.at(-1)!.coverage!.hiddenBonuses,
+  };
+}
+
+/**
+ * #294: "1 of ~4 frontier territories (25%)" (a range, "1–2 of ~4–5", when the turns differ; the share
+ * is Σ read ÷ Σ frontier), and ", N bonus(es) it could hold out of view" when any: the words beside a
+ * tracked figure.
+ */
+export function coverageText(c: TrackCoverage): string {
+  const b = c.hiddenBonuses;
+  const range = (r: { min: number; max: number }) => (r.min === r.max ? `${r.min}` : `${r.min}–${r.max}`);
+  return `${range(c.inView)} of ~${range(c.frontier)} frontier territories (${Math.round(c.share * 100)}%)${b ? `, ${b} ${b === 1 ? 'bonus' : 'bonuses'} it could hold out of view` : ''}`;
+}
+
+/**
+ * #294: one of an opponent's stacks that grew (held by it, in view with armies on both boards), its
+ * growth split: what its neighbours in view, its own on both boards, visibly sent away could have
+ * moved in (each shrink claimed once, stacks in id order), then — beside a territory hidden on either
+ * board — what could have come out of the fog, else what can only be deploy.
+ */
+export interface StackGrowth {
+  territoryId: number;
+  /** after − before, plus what my failed attacks killed there (#226). */
+  growth: number;
+  /** The neighbours in view whose shrink could have moved in, and how much of it. */
+  moved: { from: number; armies: number }[];
+  /** The rest, beside the fog: it could have come out of it (or been deployed). */
+  fog: number;
+  /** The rest, with no hidden neighbour: it can only be deploy. */
+  deploy: number;
+}
+
 /** What {@link observeDeploy} read off two boards for one opponent. */
 export interface DeployObservation {
+  /** #294: its stacks that grew, each growth split ({@link StackGrowth}), in territory id order. */
+  stacks: StackGrowth[];
   /** Its observed deploy last turn, floored at 0. */
   deploy: number;
   /** Its territories now that were visible last turn too (held both times, or captured), by id. */
@@ -1646,6 +1787,27 @@ export function observeSigned(
   for (const t of board.territories)
     if (g.territoryById.has(t.territoryId) && heldBothTimes(t.territoryId))
       shrinkLeft.set(t.territoryId, Math.max(0, visibleState(before.get(t.territoryId))!.armies! - t.armies! - killsAt(t.territoryId)));
+  /** Not shown with armies on both boards: armies could have left it unseen. */
+  const hidden = (id: number) => !visibleState(now.get(id)) || !visibleState(before.get(id));
+  // #294: each grown stack's growth split, against its own copy of the shrinks (captures claim theirs below).
+  const stacks: StackGrowth[] = [];
+  const shrinkForSplit = new Map(shrinkLeft);
+  for (const id of [...shrinkLeft.keys()].sort(byNum)) {
+    const growth = visibleState(now.get(id))!.armies! - visibleState(before.get(id))!.armies! + killsAt(id);
+    if (growth <= 0) continue;
+    let left = growth;
+    const moved: StackGrowth['moved'] = [];
+    for (const n of [...neighborsOf(g, id)].sort(byNum)) {
+      const can = shrinkForSplit.get(n);
+      if (!can || !left) continue;
+      const take = Math.min(can, left);
+      shrinkForSplit.set(n, can - take);
+      left -= take;
+      moved.push({ from: n, armies: take });
+    }
+    const beside = neighborsOf(g, id).some(hidden);
+    stacks.push({ territoryId: id, growth, moved, fog: beside ? left : 0, deploy: beside ? 0 : left });
+  }
   /**
    * #271 (3): its territories shown with armies on the earlier board and hidden on the later one: what
    * each could have sent (its armies less the guard), the most a capture beside it can have received
@@ -1664,8 +1826,6 @@ export function observeSigned(
   let arrivals = 0;
   const unseenAttackers: number[] = [];
   let unseenAttackerArmies = 0;
-  /** Not shown with armies on both boards: armies could have left it unseen. */
-  const hidden = (id: number) => !visibleState(now.get(id)) || !visibleState(before.get(id));
   for (const t of [...board.territories].sort((a, b) => a.territoryId - b.territoryId)) {
     if (!g.territoryById.has(t.territoryId) || !visibleState(t)) continue;
     if (t.owner.kind !== 'player' || t.owner.playerId !== playerId) continue;
@@ -1795,6 +1955,7 @@ export function observeSigned(
       : { territories: [], floor: 0 };
   const floor = repelled.floor;
   return {
+    stacks,
     deploy: Math.max(0, total, floor),
     signed: total,
     counted,
@@ -2048,8 +2209,12 @@ export function enemyDeployEstimates(
         for (let i = run.length - 1; turns > 0 && i > 0 && run[i - 1]!.from === run[i]!.from - 1; i--) turns++;
         const edge = new Set<number>();
         for (const t of theirs) for (const n of neighborsOf(g, t)) if (!theirs.has(n)) edge.add(n);
-        const share = edge.size ? [...edge].filter((n) => ownerShown(seenNow.get(n)) !== undefined).length / edge.size : 0;
-        const weight = PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS + turns * share);
+        const edgeShare = edge.size ? [...edge].filter((n) => ownerShown(seenNow.get(n)) !== undefined).length / edge.size : 0;
+        // #294: each turn of the run weighs what it read of its frontier (this board's edge for a turn
+        // that carries no coverage).
+        const evidence = run.slice(run.length - turns).reduce((n, x) => n + (x.coverage?.share ?? edgeShare), 0);
+        const share = turns ? evidence / turns : edgeShare;
+        const weight = PRIOR_EVIDENCE_TURNS / (PRIOR_EVIDENCE_TURNS + evidence);
         const figure = toward + Math.ceil(weight * (priorFigure - toward) - 1e-9);
         priorBlend = { prior: priorFigure, toward, turns, share, weight, figure };
       }
@@ -2060,7 +2225,17 @@ export function enemyDeployEstimates(
     const exact = ownersAll && !opening ? Math.max(0, base + bonusIncome) : null;
     const source: EnemyDeployEstimate['source'] =
       exact !== null ? 'exact' : priorUsed !== null && priorUsed > seen ? 'prior' : seenSource;
-    const income = source === 'exact' ? exact! : source === 'prior' ? priorUsed! : seen;
+    // #294: what its tracked figure was read from; while that is little, the estimate never falls below
+    // the tracked figure × LOW_COVERAGE_FACTOR (the fog hid most of where it deploys).
+    const coverage = usable ? trackCoverage(usable.turns.filter((x) => usable.incomeTurns.includes(x.from))) : null;
+    const chosen = source === 'exact' ? exact! : source === 'prior' ? priorUsed! : seen;
+    const lowFloor =
+      source !== 'exact' && tracked !== null && tracked > visible && coverage !== null && coverage.share < LOW_COVERAGE
+        ? Math.min(couldEarn, Math.ceil(tracked * LOW_COVERAGE_FACTOR - 1e-9))
+        : null;
+    const coverageFloor: EnemyDeployEstimate['coverageFloor'] =
+      lowFloor !== null && lowFloor > chosen ? { tracked: tracked!, share: coverage!.share, factor: LOW_COVERAGE_FACTOR, figure: lowFloor } : null;
+    const income = coverageFloor ? coverageFloor.figure : chosen;
     // #164: a Reinforcement card, from the turn the clock says one can be in hand, until a deployment
     // above its income is seen; the next card is due a card's capturing turns after the last one
     // (pieces carry over while a card is held), never before the turn after the play.
@@ -2115,6 +2290,8 @@ export function enemyDeployEstimates(
       trackedTurns: usable ? usable.incomeTurns : [],
       prior: priorFigure,
       priorBlend,
+      coverage,
+      coverageFloor,
       priorCap,
       fogBeside,
       source,
