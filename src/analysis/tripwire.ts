@@ -25,6 +25,8 @@
 //                territory, every drop of its movable armies between two consecutive sightings since the
 //                stack's own, and from the latest sighting to now (all of them when hidden now or another's),
 //                each when within reach (graph distance at most the turns from the earlier sighting to now).
+//                Not read when Gift may be in play (`gift`) and the territory was last seen another player's:
+//                that player (a third one in a free-for-all) may have gifted it with its stack.
 //                Under Multi-Attack,
 //                or when the settings do not say, a chain covers many hops in one turn: every such
 //                territory is within reach, whatever its distance;
@@ -54,7 +56,12 @@
 //                order outside `moves` (Transfer Only, Attack Only, percentage) left too, nor with my
 //                orders cached before `sent` existed. A Transfer Only order
 //                (flagged in `sent`) attacks nothing, and a player a Diplomacy card may have kept at
-//                peace with me (`peace`) is not read. The target's own stack attacking my source cannot
+//                peace with me (`peace`) is not read, nor anyone while a Diplomacy card may have been in
+//                force on the turn the attack ran (`diplomacy`: the cards in effect now do not say). A
+//                source that lost nothing (it ended at or above what my orders left it plus the armies
+//                the attack sent) did not fight: a failed attack on a defender always costs attackers, so
+//                the attack never ran (a Diplomacy card, or orders withdrawn in the web client after this
+//                server cached them). The target's own stack attacking my source cannot
 //                fake a trip: what it sends leaves the defence.
 // A board from GameFeed's GetHistory (`source: 'history'`, unverified and parsed loosely, as the
 // opponent-profile observer treats it) may show less than war.app did: nothing is read when the previous
@@ -73,8 +80,9 @@
 // with a teammate (`teams`), whose armies may have walked in. A Reinforcement card is income: the estimate compared carries it from the turn the
 // card clock says one can be in hand (#164).
 // It carries one card at most, and an opponent may bank several (up to MaxCardsHold) and play them in one
-// turn: a capture or a held attack allows every card it may hold (`banked`, the caller's card clock), and
-// is not read at all when those cannot be counted. The fog-stack stock bound already credits a card a turn.
+// turn: a capture, a held attack and a stack out of the fog with its start unknown allow every card it may
+// hold (`banked`, the caller's card clock), and are not read at all when those cannot be counted. With the
+// start known a stack out of the fog is bounded by its stock, which credits a card every turn so far.
 // `implied` is the deploy per turn the observation needs: what the estimate should have been.
 // The estimate compared is the one the plan used that turn (`estimateAt`), the caller's to supply.
 
@@ -147,6 +155,8 @@ export interface TripInput {
   staticSeats?: ReadonlySet<number> | ReadonlyMap<number, unknown>;
   /** Players a Diplomacy card in force may have kept from my attacks: no held attack is read on them. */
   peace?: ReadonlySet<number>;
+  /** A Diplomacy card may have been in force on the previous turn (the cards in effect now do not say): no held attack is read. */
+  diplomacy?: boolean;
   /** The deploy estimate the plan used for `player` on turn `turn`; undefined when it has none (the player is not read). */
   estimateAt: (player: number, turn: number) => number | undefined;
   /**
@@ -154,12 +164,16 @@ export interface TripInput {
    * every one is). Its stock (the start and every turn's estimate) bounds a stack only when every turn is.
    */
   estimateKept?: (player: number, turn: number) => boolean;
-  /** Gift may be in play: with my card plays not recorded (`orders.cards` absent), no capture of mine is read. */
+  /**
+   * Gift may be in play: with my card plays not recorded (`orders.cards` absent), no capture of mine is read,
+   * and no stack out of the fog on a territory last seen another player's (it may have been gifted with its stack).
+   */
   gift?: boolean;
   /**
    * Reinforcement armies an opponent may have banked and played at once beyond its estimate (which carries
-   * at most one card, #164): added to what a capture or a held attack allows. `Infinity` (the cards cannot
-   * be counted): no capture or held attack is read. A stack out of the fog keeps its own bound.
+   * at most one card, #164): added to what a capture, a held attack or a stack out of the fog with its start
+   * unknown allows. `Infinity` (the cards cannot be counted): none of them is read. With the start known a
+   * stack out of the fog keeps its stock bound.
    */
   banked?: number;
 }
@@ -303,12 +317,16 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       const startArmies = start ? start.territories * start.armiesPerTerritory : 0;
       const from = last?.turn ?? 1;
       const seen = last ? visibleState(index(last.board).get(id)) : undefined;
+      // Last seen another player's: with Gift in play it may have given the territory with its stack.
+      if (input.gift && seen && seen.owner.kind === 'player' && playerOf(seen) !== p) continue;
+      // With no stock to bound it, Reinforcement cards banked before the sighting may all land after it.
+      if (!start && !Number.isFinite(bank)) continue;
       const base = seen ? (playerOf(seen) === p ? seen.armies! : 0) : startArmies;
       let deploys = 0;
       for (let k = from; k < T; k++) deploys += est(p, k);
       const turns = Math.max(1, T - from);
       const walked = last ? walkIn(id, p, since.filter((b) => b.source !== 'history')) : 0;
-      let allowed = base + deploys + walked;
+      let allowed = base + deploys + walked + (start ? 0 : bank);
       let implied = Math.ceil((armies - base - walked) / turns);
       if (last && start) {
         // Armies banked under the fog since early on (#123 lesson 5, #250) walk in unseen: its whole
@@ -363,7 +381,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       const o = playerOf(visibleState(before.get(n)));
       return o !== undefined && o !== p && !friend(o);
     });
-    if (wasOwner === p && exact && !chains && !input.bomb && Number.isFinite(bank) && !otherBeside && myOrders && clearAround(id) && !input.peace?.has(p)) {
+    if (wasOwner === p && exact && !chains && !input.bomb && Number.isFinite(bank) && !otherBeside && myOrders && clearAround(id) && !input.peace?.has(p) && !input.diplomacy) {
       const transferOnly = new Set(myOrders.sent!.filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
       const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id && !transferOnly.has(`${m.from}:${id}`)).map((m) => m.from))].sort(byNum);
       let attackers = 0;
@@ -396,7 +414,11 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
         // …or it ended below what my orders left it (survivors and transfers in only add).
         const outAll = myOrders.moves.filter((m) => m.from === f).reduce((n, m) => n + m.armies, 0);
         const inAll = myOrders.moves.filter((m) => m.to === f).reduce((n, m) => n + m.armies, 0);
-        if (after!.armies! < src!.armies! + added - outAll + inAll) continue;
+        const floor = src!.armies! + added - outAll + inAll;
+        if (after!.armies! < floor) continue;
+        // …or it lost nothing: a failed attack on a defender always costs attackers, so it never ran (a
+        // Diplomacy card in force then, or orders withdrawn in the web client after this server cached them).
+        if (after!.armies! >= floor + sent) continue;
         attackers = Math.max(attackers, sent);
       }
       if (attackers <= 0) continue;

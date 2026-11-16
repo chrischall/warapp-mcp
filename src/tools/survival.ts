@@ -51,7 +51,8 @@ export function bankedReinforcement(settings: GameSettings | undefined, turn: nu
  * boards that this turn's estimates (or the ones kept for the turns it reads) cannot explain. None while
  * the teams are unknown (`teamsKnown: false`: a game of 3+ seats whose teams could not be read, where an
  * opponent may be a teammate), and no observation once an opponent may hold an Airlift card (the card
- * clock); no capture or held attack once one may hold a Bomb, and each allows the Reinforcement cards one
+ * clock); no capture or held attack once one may hold a Bomb, no held attack once anyone may have held a
+ * Diplomacy card on the previous turn, and each allows the Reinforcement cards one
  * may have banked (`bankedReinforcement`). A static seat (#270) and a player with no
  * estimate this turn or kept are never read. While the teams are unknown the stored marks are kept unchanged (`keep`), never applied. Never throws.
  */
@@ -100,6 +101,9 @@ export async function readTripwires(a: {
       ...(a.peace ? { peace: new Set(a.peace) } : {}),
       ...(opponentCanHold(a.gameSettings, 'Airlift', a.turn) ? { airlift: true } : {}),
       ...(opponentCanHold(a.gameSettings, 'Bomb', a.turn) ? { bomb: true } : {}),
+      // A Diplomacy card in force on the turn my attack ran may have worn off since: the cards in effect
+      // now (`peace`) do not say. Any player may hold one by then: no held attack is read.
+      ...(opponentCanHold(a.gameSettings, 'Diplomacy', a.turn - 1) ? { diplomacy: true } : {}),
       ...(banked > 0 ? { banked } : {}),
       ...(a.staticSeats?.size ? { staticSeats: a.staticSeats } : {}),
       // The estimate the plan of that turn used when kept, else a stand-in: the most it was kept at or is

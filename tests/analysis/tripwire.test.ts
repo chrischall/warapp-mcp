@@ -488,6 +488,63 @@ describe('brokenEstimates (#275 b)', () => {
     expect(runKept(never, 2)).toEqual([]);
   });
 
+  it('reads no held attack whose source lost nothing: the attack never ran (#275 review)', () => {
+    // A Diplomacy card in force on turn 4 and worn off by 5, or orders withdrawn in the web client: the
+    // board is unchanged, my 40 still on 2. A failed attack on a defender always costs attackers.
+    const order = { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] };
+    const still = [at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], order), at(5, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)])];
+    expect(run(still)).toEqual([]);
+    // A loss of one army is a fight: it trips.
+    still[1] = at(5, [mine(1, 1), mine(2, 39), foe(3, 4), foe(4, 1)]);
+    expect(run(still)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
+  });
+
+  it('reads no held attack when a Diplomacy card may have been in force the turn it ran (#275 review)', () => {
+    // The cards in effect now do not say what was in force on the turn my attack ran.
+    const boards = [
+      at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] }),
+      at(5, [mine(1, 1), mine(2, 20), foe(3, 4), foe(4, 1)]),
+    ];
+    const dip = (diplomacy: boolean) =>
+      brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, ...(diplomacy ? { diplomacy } : {}), estimateAt: () => 5 });
+    expect(dip(true)).toEqual([]);
+    expect(dip(false)).toMatchObject([{ kind: 'held-attack', territory: 3 }]);
+  });
+
+  it('allows the Reinforcement cards an opponent may bank on a stack out of the fog when no stock bounds it (#275 review)', () => {
+    // Start unknown, 4 in view throughout: 2 seen on 3, hidden, then 52. Two turns of 15 (5 income and a
+    // card of 10) allow 32; four banked cards of 10 played after the sighting make 52 exactly.
+    const boards = [
+      at(9, [mine(1, 5), mine(2, 5), foe(3, 2), mine(4, 5)]),
+      at(10, [mine(1, 5), mine(2, 5), fogged(3), mine(4, 5)]),
+      at(11, [mine(1, 5), mine(2, 5), foe(3, 52), mine(4, 5)]),
+    ];
+    const bank = (b: number | undefined) =>
+      brokenEstimates({ graph: G, boards, me: ME, settings: STD, ...(b !== undefined ? { banked: b } : {}), estimateAt: () => 15 });
+    expect(bank(undefined)).toMatchObject([{ kind: 'fog-stack', observed: 52, allowed: 32 }]);
+    expect(bank(40)).toEqual([]);
+    // A bank that cannot be counted: not read.
+    expect(bank(Infinity)).toEqual([]);
+    // Beyond the bank too, it trips, the bank in what was allowed.
+    boards[2] = at(11, [mine(1, 5), mine(2, 5), foe(3, 120), mine(4, 5)]);
+    expect(bank(40)).toMatchObject([{ kind: 'fog-stack', observed: 120, allowed: 72 }]);
+  });
+
+  it("reads no stack out of the fog on a territory last seen another player's when Gift may be in play (#275 review)", () => {
+    // A free-for-all: player 30's 40 on 3, hidden, then 40 of player 20's. Its 3s on 4 and 5 stay in view:
+    // no capture of its explains them, but player 30 may have gifted it the territory with its stack.
+    const Q = 30;
+    const G5 = buildGraph(line(5));
+    const boards = [
+      at(3, [mine(1, 5), mine(2, 5), mine(3, 40, Q), foe(4, 3), foe(5, 3)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), foe(4, 3), foe(5, 3)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 40), foe(4, 3), foe(5, 3)]),
+    ];
+    const ffa = (gift: boolean) => brokenEstimates({ graph: G5, boards, me: ME, settings: STD, ...(gift ? { gift } : {}), estimateAt: () => 5 });
+    expect(ffa(true)).toEqual([]);
+    expect(ffa(false)).toMatchObject([{ kind: 'fog-stack', territory: 3, observed: 40, allowed: 10 }]);
+  });
+
   it('needs the previous board: no reading across a gap', () => {
     const boards = [at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]), at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)])];
     expect(run(boards)).toEqual([]);

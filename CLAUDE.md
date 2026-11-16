@@ -703,9 +703,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   break lowered, so then the stack is read as with the start unknown (a stack no board showed is not read); an opponent commander counts as 7 on
   the target of a held attack and on its stacks beside a capture or a held attack; a board from GameFeed history (`source: 'history'`) is no
   sighting and no previous board — the opponent-profile observer skips them too; a held attack is not read from a
-  source another stack beside it could have hit first, or that ended below what my orders left it, counts only
+  source another stack beside it could have hit first, or that ended below what my orders left it, nor from one
+  that lost nothing (at or above that plus what the attack sent: a failed attack on a defender always costs
+  attackers, so it never ran — a Diplomacy card, or orders withdrawn in the web client), counts only
   what the source had left after its earlier orders — an order sends what is left —, and is not read from a
-  Transfer Only order or on a player a Diplomacy card in force keeps at peace; my orders count as known only with
+  Transfer Only order or on a player a Diplomacy card in force keeps at peace, nor at all once anyone may have held
+  a Diplomacy card on the turn it ran (the cards in effect now do not say what was in force then); my orders count as known only with
   `sent`, an older cache as unknown, and a Transfer Only, Attack Only or percentage order — in `sent`, left out
   of `moves` — out of my territory, into the neutral or out of my attack's source means that one is not read)
   for `UNTRUSTED_TURNS` (3).
@@ -715,11 +718,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   income; a Reinforcement card is already in the estimate (#164), one at most, so a capture or a held attack also
   allows every card the clock says an opponent can hold (at most `MaxCardsHold`) when that is more than one
   (`bankedReinforcement`: banked cards played at once), and neither is read when those cannot be counted
-  (pieces a turn unstated, armies not fixed). No capture or held attack is read once one
+  (pieces a turn unstated, armies not fixed); so does a stack out of the fog with its start unknown (with it known,
+  its stock credits a card every turn), likewise not read when they cannot be counted. No capture or held attack is read once one
   may hold a Bomb (it runs before the attacks and halves my source or the territory taken; a stack out of the fog
   still is). A territory my own Gift card gave it (`MyOrders.cards`) is no capture, and with my card plays not
   recorded (an older cache) no capture of mine is read when Gift is in play (`gift`: the settings list it, or
-  are unread). Another player's armies are never its: no held attack is read with any player but it beside the
+  are unread), nor a stack out of the fog on a territory last seen another player's (it may have been gifted
+  with its stack). Another player's armies are never its: no held attack is read with any player but it beside the
   target (a teammate may have sent armies in), and no fog stack of a player with a teammate. A static seat
   (#270) is never read, nor a player with no estimate now (never compared against 0). Nothing is read either while `resolveTeams`
   says the teams are unknown (`known: false`): an opponent may be a teammate, and the stored marks are applied
