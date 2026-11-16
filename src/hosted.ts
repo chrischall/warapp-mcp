@@ -3,10 +3,12 @@
 // mcp-host gives this server no explicit "hosted" flag, so a hosted child is
 // recognised by the variables only the host sets ({@link HOSTED_MARKERS}).
 // Consulted by the map statistics (always off when hosted, src/stats.ts) and by
-// the direct transport, which is LOCAL-ONLY: when hosted the session store
-// reads as empty and refuses writes (src/direct/session.ts), the router is
-// pinned to the browser bridge (src/direct/transport.ts), and
-// warapp_link_session is not registered (src/tools/session.ts).
+// the direct transport: when hosted no session file is ever read or written
+// (src/direct/session.ts) and warapp_link_session is not registered
+// (src/tools/session.ts). The direct leg then serves only from the AuthToken
+// mcp-host captured at sign-in (WARAPP_AUTH_TOKEN, in memory, #333), the
+// bridge its fallback; without one the router is pinned to the browser bridge
+// (src/direct/transport.ts).
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 
 /**

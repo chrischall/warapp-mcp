@@ -10,14 +10,18 @@ slug: warapp
 # `bridgePortEnv: WARAPP_WS_PORT` (with a runtime that supports a bridge) —
 # registration fields this manifest has no schema for.
 #
-# Direct transport is LOCAL-ONLY. A local install can link the signed-in
-# war.app session (warapp_link_session) and then talk to war.app directly
-# without a browser (WARAPP_TRANSPORT=auto/direct). That stores a full-account
-# AuthToken on the machine, so hosting never uses it: a hosted child keeps the
-# browser bridge above and stores no session token — enforced in code
-# (src/hosted.ts): when hosted, warapp_link_session is not registered, the
-# session store reads as empty and the transport is pinned to the bridge.
-# Nothing in this manifest enables direct mode.
+# Direct transport. A local install can link the signed-in war.app session
+# (warapp_link_session, stored on that machine) and then talk to war.app
+# directly without a browser (WARAPP_TRANSPORT=auto/direct). A hosted child
+# never stores a session and never registers warapp_link_session (src/hosted.ts):
+# it rides the direct leg only from the AuthToken mcp-host captures at sign-in
+# into the per-user secret WARAPP_AUTH_TOKEN (#333: the war.app password is asked
+# once in an authFlow and never stored; the token is held in memory), with the
+# bridge above as its fallback on the same registration. Without that token it
+# is pinned to the bridge, as before. The war.app sign-in tool the authFlow
+# calls is not built yet, so this manifest declares no flow and nothing here
+# enables direct mode yet. WARAPP_AUTH_TOKEN is deliberately not in `env`: it is
+# a capture target, and a capture into a host-set variable is refused.
 summary: >-
   war.app (Warzone) advisor: games waiting on you, maps, scouting, chat and
   turn plans in your war.app tab. Joining, leaving or surrendering games,
@@ -82,7 +86,9 @@ env:
     help: >-
       How the live-game tools reach war.app on a LOCAL install: auto (default —
       the chrome-less direct transport when a session is linked, else the
-      browser bridge), direct, or fetchproxy. A hosted child keeps the bridge.
+      browser bridge), direct, or fetchproxy. A hosted child keeps the bridge
+      unless mcp-host captured a war.app session at sign-in (WARAPP_AUTH_TOKEN);
+      then it reads this as a local install does.
   - name: WARAPP_PLAYER_RECORD
     required: false
     help: >-

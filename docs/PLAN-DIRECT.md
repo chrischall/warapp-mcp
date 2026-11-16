@@ -27,9 +27,16 @@ capture (or re-capture) the token.
   dir `0700`, written atomically (tmp + rename).
 - **Tests and agents never see the real token and never hit war.app.** Use a fake token
   (`"test-auth-token"`) and a stubbed `fetch`/bridge. `git grep` the real email before any commit.
-- **Direct mode is LOCAL-ONLY.** The hosted path (`mint.yaml`, `identity.perUserChild` + the
-  GameFeed token) is **unchanged** — do not store an AuthToken on mcp-host. Direct mode is a
-  local-runtime transport the owner opts into; say so in the docs.
+- **Hosted, direct mode runs only on the token mcp-host captured (#333, superseding "local-only").**
+  The owner chose "Build it, token only": the war.app password is asked once in an mcp-host
+  `authFlow` and **never stored**; only war.app's `AuthToken` is captured, as the per-user secret
+  `WARAPP_AUTH_TOKEN`, and the hosted child reads it into memory (`hostedSession`,
+  `src/direct/session.ts`), never into a file. The bridge stays the fallback on the same
+  registration. A hosted child still never reads or writes a session file and never registers
+  `warapp_link_session`; without the captured token it is pinned to the bridge exactly as before.
+  Part A (built) is the transport, status and hints; part B is the war.app sign-in tool the
+  `authFlow` calls and the `mint.yaml` flow — its form and endpoint are traced live by the owner's
+  play session first, never guessed.
 - **The owner does the live capture and verification.** No agent captures or replays the real
   token; the capture flow is exercised in tests with a synthetic cookie string only.
 
@@ -119,11 +126,11 @@ capture (or re-capture) the token.
   is linked + its age (never the token); on `direct` the probe is the credential probe, on
   `fetchproxy` the bridge probe — keep both working.
 - Docs: README (a "Direct transport (no browser)" section: link once, then no Chrome; the
-  security note; local-only), CLAUDE.md (a new bullet: the AuthToken fact, the one-injection
-  design, local-only, never log the token), `docs/WEB-PROTOCOL.md` (AuthToken cookie
+  security note), CLAUDE.md (a new bullet: the AuthToken fact, the one-injection
+  design, hosted only from the host-captured token, never log the token), `docs/WEB-PROTOCOL.md` (AuthToken cookie
   authenticates `/Services` and the pages — mark **verified 2026-11-12**), `docs/WARAPP-API.md`
-  if it lists transports, and the skill if it documents transports. `mint.yaml`: a comment that
-  direct mode is local-only and hosting keeps the bridge (no stored token on the host).
+  if it lists transports, and the skill if it documents transports. `mint.yaml`: a comment on
+  how hosting reaches the direct leg (#333: a host-captured token only, never a stored session).
 - **Strict surface lint 0 warnings** (same recipe as `docs/PLAN-TURN.md` T4).
 
 ## Not in scope (note as follow-ups)

@@ -66,13 +66,14 @@ describe('warapp_session_status is wired to the shared direct-first bridge', () 
 });
 
 /**
- * Direct mode is local-only, enforced in code (src/hosted.ts): on a hosted
+ * Without a host-captured token (WARAPP_AUTH_TOKEN, #333; see hosted-direct.test.ts)
+ * the direct mode stays off hosted, enforced in code (src/hosted.ts): on a hosted
  * child (any HOSTED_MARKERS variable set) the link tool is not served, the
  * session store reads as empty — a session file already in the data dir is
  * never read — the router is pinned to the browser bridge whatever
  * WARAPP_TRANSPORT says, and no hint points at linking a session.
  */
-describe('hosted: the direct transport is never used', () => {
+describe('hosted without a captured token: the direct transport is never used', () => {
   const FAKE_TOKEN = 'test-hosted-auth-token';
   const LINK = 'warapp_link_session';
 

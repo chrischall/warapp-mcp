@@ -85,7 +85,7 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
     async ({ game_id }) => {
       const gameId = parseGameId(game_id);
       const identity = await ctx.myIdentity().catch(() => undefined);
-      if (!identity) throw accountUnknown(ctx.hosted, 'your team cannot be read');
+      if (!identity) throw accountUnknown(ctx, 'your team cannot be read');
       const read = await ctx.client.getGame(gameId, { settings: true, chat: true });
       const { game, source } = await resolveTeams(ctx, read);
       const me = game.players.find((p) => p.id === identity.token);

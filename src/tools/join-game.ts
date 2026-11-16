@@ -286,7 +286,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
         // token TEXT, #130), so the already-joined check is for that same account. A join always
         // acts as the signed-in account, so it is refused when that cannot be read (#133).
         const [html, me] = await Promise.all([openGamesPage(ctx), ctx.myIdentity({ fresh: true })]);
-        if (me === undefined) throw accountUnknown(ctx.hosted);
+        if (me === undefined) throw accountUnknown(ctx);
         const { token, inGameId: myId } = me;
         const bundle = await ctx.bundle();
         const parsed = parseOpenGamesPage(html, bundle);

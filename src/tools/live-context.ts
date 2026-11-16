@@ -16,6 +16,7 @@ import {
 import { WarappRpc } from '../protocol/rpc.js';
 import type { ReadyFetchBridge } from '../direct/transport.js';
 import { BRIDGE_DOMAINS } from '../transport-bridge.js';
+import { hostedSession } from '../direct/session.js';
 import { isHosted } from '../hosted.js';
 
 export interface LiveContext {
@@ -50,8 +51,10 @@ export interface LiveContext {
   fetchPage: (url: string) => Promise<string>;
   /** Where state that survives a restart lives (bundle cache, last planned boards); none: nothing is cached. */
   dataDir?: string;
-  /** A hosted child (src/hosted.ts): no direct transport, so no hint suggests linking a session. */
+  /** A hosted child (src/hosted.ts): no session is ever linked there, so no hint suggests linking one. */
   hosted?: boolean;
+  /** A hosted child signed in by mcp-host (a captured WARAPP_AUTH_TOKEN, #333): hints point at its "Sign in". */
+  hostSignIn?: boolean;
 }
 
 /**
@@ -292,6 +295,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     fetchPage: fetchText,
     dataDir: dir,
     hosted: isHosted(opts.env ?? process.env),
+    hostSignIn: hostedSession(opts.env ?? process.env) !== null,
     client: opts.client,
     rpc,
     decoderReport: () => lastBundle?.report?.(),

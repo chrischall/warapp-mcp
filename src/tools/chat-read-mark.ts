@@ -91,7 +91,7 @@ export function registerMarkChatReadTool(server: McpServer, ctx: LiveContext): v
         const game = await ctx.client.getGame(game_id, { chat: true, map: false });
         // The gate binds the account read fresh (the write rules); its in-game id keys the private marks.
         const me = await ctx.myIdentity({ fresh: true }).catch(() => undefined);
-        if (!me) throw accountUnknown(ctx.hosted);
+        if (!me) throw accountUnknown(ctx);
         const read = await readChat(ctx, game, me);
         // A filled web read (#313) still carries the web messages' ids; GameFeed's added lines carry none and mark nothing.
         if (!read || read.source === 'gamefeed') {

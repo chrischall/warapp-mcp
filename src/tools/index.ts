@@ -75,9 +75,10 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   // browser bridge otherwise (WARAPP_TRANSPORT: auto default | direct |
   // fetchproxy). WarappRpc, the page fetches, the healthcheck and the push
   // socket all take this one bridge, so they all gain direct mode at once.
-  // Direct mode is LOCAL-ONLY (src/hosted.ts): on a hosted child the router is
-  // pinned to the browser bridge, the session store reads as empty and
-  // warapp_link_session is not registered.
+  // Hosted (src/hosted.ts) no session file is read or written and
+  // warapp_link_session is not registered: the direct leg serves only from the
+  // AuthToken mcp-host captured at sign-in (WARAPP_AUTH_TOKEN, in memory,
+  // #333), and without one the router is pinned to the browser bridge.
   const hosted = isHosted(env ?? process.env);
   const bridge = createDirectFirstBridge({
     store: { read: () => readSession(deps.env) },

@@ -1507,7 +1507,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   war.app; the owner does live verification.
 - **The in-game player id is the GameFeed id minus two check digits each end**
   (`id.slice(2, -2)`); the digits vary per player.
-- **A chrome-less "direct" transport, LOCAL-ONLY** (`src/direct/`, phase 7 — `docs/PLAN-DIRECT.md`).
+- **A chrome-less "direct" transport** (`src/direct/`, phase 7 — `docs/PLAN-DIRECT.md`; hosted, #333).
   The signed-in session is carried by a durable **`AuthToken`** cookie, and that cookie **alone**
   authenticates both the server-rendered pages and a `/Services` POST (**verified 2026-11-12**).
   So the bridge has a direct-first router wrapped around it (`createDirectFirstBridge` in
@@ -1527,14 +1527,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `WARAPP_SESSION_FILE` (default `<dataDir>/session.json`). One injection point: `index.ts` builds
   this one bridge and passes it to `WarappRpc`, the page fetches, the healthcheck and the push
   socket, so they all get direct mode at once. `warapp_link_session` (write, confirm-gated,
-  local-only) captures the cookie once through the bridge; `warapp_session_status` reports the
+  local only) captures the cookie once through the bridge; `warapp_session_status` reports the
   linked state, age and active leg. **The `AuthToken` is a full-account credential:** file `0600`,
   dir `0700` (macOS: no ACL on either), atomic write; scrubbed by value from every upstream error string (mcp-utils
   `stripBearer` + `scrubToken`); never logged, never in a tool result, never in an error/hint.
-  **Direct mode is local-only, enforced in code:** on a hosted child (`isHosted`, `src/hosted.ts`)
-  `warapp_link_session` is not registered, the session store reads as empty and refuses writes
-  (`src/direct/session.ts`), the router is pinned to the browser bridge whatever `WARAPP_TRANSPORT`
-  says (`createDirectFirstBridge`), and no hint suggests linking; `mint.yaml` keeps the bridge.
+  **Hosted, the direct leg serves only from the token mcp-host captured (#333, owner choice "token
+  only"), enforced in code:** on a hosted child (`isHosted`, `src/hosted.ts`) `warapp_link_session` is
+  not registered and the session FILE is never read or written (`writeSession` refuses;
+  `src/direct/session.ts`). The war.app password is asked once in an mcp-host `authFlow` and never
+  stored; only war.app's `AuthToken` is captured, as the per-user secret `WARAPP_AUTH_TOKEN`
+  (`HOST_TOKEN_ENV`). `hostedSession` reads it into memory, read-only (trimmed, a leading
+  `AuthToken=` dropped; a value that is not 16–4096 printable characters without `;` `,` `"` `\`
+  is `malformed`, treated as absent and never echoed; `capturedAt` is `HOST_CAPTURED_AT`,
+  `origin: 'host'`). With it, `createDirectFirstBridge` resolves `WARAPP_TRANSPORT` as locally
+  (`auto`: direct first, the bridge its fallback, the non-GET never re-sent) from that token alone
+  (the given store is not consulted); `warapp_session_status` and the healthcheck say
+  `linked: 'host-captured'` (no capture time, no age); a signed-out session's errors, log line and
+  hints say to use "Sign in" on the connection (`HOST_SIGN_IN_ADVICE`; mcp-host runs the login
+  again), never `warapp_link_session` and never a tab (`LiveContext.hostSignIn`, `accountUnknown(ctx)`).
+  Without it a hosted child is byte-identical to before: the store reads as empty, the router is
+  pinned to the browser bridge whatever `WARAPP_TRANSPORT` says, and no hint suggests linking.
+  Locally `WARAPP_AUTH_TOKEN` is ignored: only the session file counts. The war.app sign-in tool
+  the `authFlow` calls (part B) is not built yet, so `mint.yaml` declares no flow.
 - **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
   needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback;
   #228: the surrender preview reads the game with `settings: true`, which carries it — without them it

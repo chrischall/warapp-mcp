@@ -9,7 +9,8 @@ import { HOSTED_MARKERS, isHosted } from '../../src/hosted.js';
 import * as stats from '../../src/stats.js';
 import type { WarappBridge } from '../../src/transport-bridge.js';
 
-// Direct mode is local-only, enforced in code: on a hosted child the session
+// Without a host-captured token (WARAPP_AUTH_TOKEN, #333: hosted-direct.test.ts)
+// direct mode stays off hosted, enforced in code: on a hosted child the session
 // store reads as empty and refuses writes, and the router is pinned to the
 // browser bridge whatever WARAPP_TRANSPORT says. A FAKE token only.
 const FAKE_TOKEN = 'test-hosted-auth-token';
@@ -41,7 +42,7 @@ for (const marker of HOSTED_MARKERS) {
 
     it('refuses to store a session on the host', async () => {
       const other = join(dir, 'other.json');
-      await expect(writeSession(session, { ...hosted(), WARAPP_SESSION_FILE: other })).rejects.toThrow(/local-only/);
+      await expect(writeSession(session, { ...hosted(), WARAPP_SESSION_FILE: other })).rejects.toThrow(/never stores/);
       expect(existsSync(other)).toBe(false);
       expect(existsSync(sessionFilePath({ MCP_DATA_DIR: dir }))).toBe(true);
     });

@@ -16,6 +16,7 @@ import {
   type OpenGame,
 } from '../open-games.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
+import { HOST_SIGN_IN_ADVICE } from '../direct/transport.js';
 import { noBrowserNote } from './session.js';
 import { lookupMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
@@ -28,8 +29,10 @@ export async function openGamesPage(ctx: LiveContext): Promise<string> {
     throw new McpToolError(`Could not read war.app's open games page: ${e instanceof Error ? e.message : String(e)}`, {
       kind: 'unknown',
       hint:
-        (ctx.hosted ? 'Make sure' : 'Link a session with warapp_link_session to read it without a browser, or make sure') +
-        ' a signed-in war.app tab is open and paired (reload or focus it if it is frozen), then retry.',
+        ctx.hosted && ctx.hostSignIn
+          ? `${HOST_SIGN_IN_ADVICE} Then retry.`
+          : (ctx.hosted ? 'Make sure' : 'Link a session with warapp_link_session to read it without a browser, or make sure') +
+            ' a signed-in war.app tab is open and paired (reload or focus it if it is frozen), then retry.',
       cause: e,
     });
   }

@@ -44,6 +44,7 @@ game chat.
 | `WARAPP_WS_PORT` | no | The fetchproxy bridge port (default `37149`, shared by the whole fetchproxy fleet and ContextMint Bridge). Override it only for local testing, or when a host injects a per-registration port. |
 | `WARAPP_TRANSPORT` | no | How the live-game tools reach war.app: `auto` (default — try the chrome-less direct transport when a session is linked, else the browser bridge), `direct` (only direct), or `fetchproxy` (only the browser bridge, today's behaviour). See [Direct transport](#direct-transport-no-browser). |
 | `WARAPP_SESSION_FILE` | no | Where the linked direct-transport session is stored (default `<data dir>/session.json`). Local-only; a full-account credential, kept at file mode `0600`. Its directory is made `0700`, so name a file in a directory of its own. |
+| `WARAPP_AUTH_TOKEN` | no | **Hosted only, set by mcp-host:** the war.app session cookie its sign-in captured (a full-account credential, held in memory, never stored or shown). Ignored on a local install. See [Direct transport](#direct-transport-no-browser). |
 | `WARAPP_STATS` | no | `1` turns on `warapp_map_stats` on a **local** install (off by default; always off when hosted). It then fetches finished ladder games — at most `max_new_games` a call, one request a second — and caches them under `<data dir>/stats/`. |
 | `WARAPP_PLAYER_PROFILE` | no | Opponent profiling (on by default, locally and hosted; `off` turns it off): what each opponent did on the turns your boards showed, as counts (gameplay only — no name, chat or time of play), kept per game under `<data dir>/profiles/games/` for `warapp_profile_opponents`, and folded when a game finishes into name-free cross-game counts (`profiles/players.json`, keyed by a salted hash shared with the player record; `profiles/population.json`, pooled by format and for AI seats) that fade per game. It also switches off the end-of-game pass (#312): once per finished game you played, its history read once and kept name-free at `<data dir>/finished/<hash>.json` (its boards included, owners by the same salted hash, no clock; at most 500), then folded into the profiles, into a per-map record (`<data dir>/maps-record/<mapId>.json`: outcomes, your start and income curve, the winner's start and pace after turns 4 and 8) and into the lessons (`<data dir>/lessons.json`: how each game was lost, when your income went flat, and the tracked estimates against the true incomes, aggregates only). |
 | `WARAPP_DEBUG` | no | Truthy logs the bridge's role and lifecycle to stderr. |
@@ -105,9 +106,18 @@ active. `warapp_healthcheck` reports the same.
 
 > **Security.** The stored session cookie is a **full-account credential** — anything your war.app
 > account can do, it can do. It never leaves this machine (it is sent only to war.app), is never
-> logged, and is never shown in a tool result. **Direct mode is local-only:** the hosted
-> (mcp-host) deployment always uses the browser bridge and stores no session token. Use direct
-> mode only on a machine you control; `rm` the session file (or let it expire) to unlink.
+> logged, and is never shown in a tool result. Use direct mode only on a machine you control;
+> `rm` the session file (or let it expire) to unlink.
+
+**Hosted (mcp-host).** A hosted server never stores a session file and never offers
+`warapp_link_session`. It rides the direct transport only when mcp-host signed it in to war.app:
+the host captures war.app's session cookie into the per-user secret `WARAPP_AUTH_TOKEN` (your
+war.app password is asked once at sign-in and never stored), and the server holds it in memory,
+falling back to the browser bridge if it stops working. `warapp_session_status` then reports
+`linked: "host-captured"` (no capture time or age), and a signed-out session says to use
+**Sign in** on the connection. Without that token the hosted server uses the browser bridge, as
+before. (The war.app sign-in step mcp-host runs is not built yet: until it is, a hosted connection
+uses the browser bridge.) Locally `WARAPP_AUTH_TOKEN` is ignored.
 
 ## Tools
 
