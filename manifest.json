@@ -197,11 +197,11 @@
     },
     {
       "name": "warapp_get_chat",
-      "description": "Read a game's chat"
+      "description": "Read a game's chat; mark_seen also marks it read on war.app"
     },
     {
       "name": "warapp_chat_inbox",
-      "description": "Read the unseen chat across all your games in one call"
+      "description": "Read the unseen chat across all your games in one call; mark_seen also marks it read on war.app"
     },
     {
       "name": "warapp_get_notifications",

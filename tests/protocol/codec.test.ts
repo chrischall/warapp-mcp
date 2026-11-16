@@ -479,6 +479,7 @@ describe('methods', () => {
       GameRefresh: 39,
       GetLatestGameInfo: 40,
       SendChat: 42,
+      RegisterChatView: 43,
       GetGameSettings: 48,
       GetMyGames: 50,
       AcceptGame: 60,

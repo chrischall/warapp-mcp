@@ -50,6 +50,8 @@ export interface ChatLine {
   team?: number;
   /** A private message's recipient (in-game id). */
   to?: number;
+  /** A game-group message's group (web source; its channel is `unknown`). */
+  group?: number;
 }
 
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
@@ -83,6 +85,7 @@ function webLine(m: unknown): ChatLine | undefined {
     line.to = to;
   } else if (group !== null) {
     line.channel = 'unknown';
+    line.group = group;
   } else if (channel === PUBLIC_CHANNEL) {
     line.channel = 'public';
   } else {
@@ -144,6 +147,54 @@ export function readSendChatReply(bundle: ClassReader, body: Reader): ChatLine[]
   } catch {
     return undefined;
   }
+}
+
+// ---------- Read marks (RegisterChatView, #311) ----------
+
+/** What RegisterChatView is sent to mark a game's chat read: per channel, the highest message id read. */
+export interface ChatViewMarks {
+  /** Absent: the public channel is not marked (sent as `-1`). */
+  public?: string;
+  /** Absent: the team channel is not marked (sent as `-1`). */
+  team?: string;
+  /** Per private conversation: the counterpart's in-game id → its mark. */
+  private: Map<number, string>;
+  /** Per game group: the group id → its mark. */
+  groups: Map<number, string>;
+  /** The channels a mark covers, in CHAT_CHANNELS order (`unknown` = the game groups). */
+  channels: ChatChannel[];
+}
+
+const MESSAGE_ID = /^\d{1,20}$/;
+const higher = (a: string | undefined, b: string): string => (a === undefined || BigInt(b) > BigInt(a) ? b : a);
+
+/**
+ * The read marks of web-client `lines` on `channels` (pure): per channel the highest message id among
+ * them, mine included, as the client keeps it. A private conversation is keyed by its counterpart — the
+ * recipient of a message I sent, else its sender — and a game group (`unknown`) by its group. Lines
+ * without a message id (GameFeed's) mark nothing. `undefined` when nothing would be marked.
+ */
+export function chatViewMarks(lines: readonly ChatLine[], meInGame: number, channels: readonly ChatChannel[]): ChatViewMarks | undefined {
+  const want = new Set(channels);
+  const out: ChatViewMarks = { private: new Map(), groups: new Map(), channels: [] };
+  for (const l of lines) {
+    if (l.id === undefined || !MESSAGE_ID.test(l.id) || !want.has(l.channel)) continue;
+    if (l.channel === 'public') out.public = higher(out.public, l.id);
+    else if (l.channel === 'team') out.team = higher(out.team, l.id);
+    else if (l.channel === 'private') {
+      const other = l.sender === meInGame ? l.to : l.sender;
+      if (other === undefined || other === null) continue;
+      out.private.set(other, higher(out.private.get(other), l.id));
+    } else if (l.group !== undefined) out.groups.set(l.group, higher(out.groups.get(l.group), l.id));
+  }
+  const has: Record<ChatChannel, boolean> = {
+    public: out.public !== undefined,
+    team: out.team !== undefined,
+    private: out.private.size > 0,
+    unknown: out.groups.size > 0,
+  };
+  out.channels = CHAT_CHANNELS.filter((c) => has[c]);
+  return out.channels.length ? out : undefined;
 }
 
 // ---------- GameFeed ----------

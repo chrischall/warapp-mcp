@@ -11,6 +11,7 @@ export const Method = {
   GameRefresh: 39,
   GetLatestGameInfo: 40,
   SendChat: 42,
+  RegisterChatView: 43,
   GetGameSettings: 48,
   GetMyGames: 50,
   AcceptGame: 60,
@@ -331,6 +332,51 @@ export function writeGameRefreshParams(w: Writer, p: GameRefreshParams): void {
     .bool(p.lobby)
     .bool(false)
     .bool(false);
+}
+
+/** A chat read mark: a message id as decimal text, or `-1` (the client's "no mark"). */
+export const CHAT_MARK = /^(-1|\d{1,20})$/;
+
+/** What RegisterChatView marks read: per channel, the highest message id seen (decimal text). */
+export interface RegisterChatViewParams {
+  gameId: number;
+  /** The public channel's mark; `-1` (default) marks nothing there. */
+  publicMark?: string;
+  /** The team channel's mark; `-1` (default) marks nothing there. */
+  teamMark?: string;
+  /** Per private conversation: the counterpart's in-game id → its mark. Absent or empty: no dict. */
+  privateMarks?: ReadonlyMap<number, string>;
+  /** Per game group: the group id → its mark. Absent or empty: no dict. */
+  groupMarks?: ReadonlyMap<number, string>;
+}
+
+function writeMarkDict(w: Writer, marks: ReadonlyMap<number, string> | undefined): void {
+  if (!marks || marks.size === 0) {
+    w.bool(false);
+    return;
+  }
+  w.bool(true).dict(
+    marks,
+    (ww, k) => ww.int32(k),
+    (ww, v) => ww.string(v),
+  );
+}
+
+/**
+ * RegisterChatView(auth, …) — marks a game's chat read (#311). READ FROM THE CLIENT BUNDLE's writer, NOT
+ * VERIFIED LIVE: the int32 game id, the public and team marks (strings of decimal text: the highest message
+ * id seen on that channel; the client sends `-1` for a channel it is not marking), then two optional dicts
+ * (present flag, int32 count, int32 key, string mark): per private counterpart (in-game id), and per game
+ * group. No result payload: the effect is read back from GetMyGames' unread flags.
+ */
+export function writeRegisterChatViewParams(w: Writer, p: RegisterChatViewParams): void {
+  const marks = [p.publicMark, p.teamMark, ...(p.privateMarks?.values() ?? []), ...(p.groupMarks?.values() ?? [])];
+  for (const m of marks) if (m !== undefined && !CHAT_MARK.test(m)) throw new RangeError(`not a chat mark: ${JSON.stringify(m)}`);
+  w.int32(p.gameId)
+    .string(p.publicMark ?? NO_CHAT_MARKER)
+    .string(p.teamMark ?? NO_CHAT_MARKER);
+  writeMarkDict(w, p.privateMarks);
+  writeMarkDict(w, p.groupMarks);
 }
 
 interface SendChatParams {
