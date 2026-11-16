@@ -1547,8 +1547,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   again), never `warapp_link_session` and never a tab (`LiveContext.hostSignIn`, `accountUnknown(ctx)`).
   Without it a hosted child is byte-identical to before: the store reads as empty, the router is
   pinned to the browser bridge whatever `WARAPP_TRANSPORT` says, and no hint suggests linking.
-  Locally `WARAPP_AUTH_TOKEN` is ignored: only the session file counts. The war.app sign-in tool
-  the `authFlow` calls (part B) is not built yet, so `mint.yaml` declares no flow.
+  Locally `WARAPP_AUTH_TOKEN` is ignored: only the session file counts. The flow is
+  `docs/examples/warapp-auth-flow.json` (one masked password prompt on a step that calls the
+  read-only `warapp_session_status`; the capture is the sign-in itself, `warapp_sign_in` with
+  `email` from `WARAPP_EMAIL` and that password, `authToken` into `WARAPP_AUTH_TOKEN`: one war.app
+  attempt, the token never in the gateway-readable bag); the captcha / no-password fallback pastes
+  the cookie (`warapp-auth-flow-paste.json`). `tests/auth-flow-doc.test.ts` checks both against
+  mcp-host's rules offline. `warapp_sign_in` (part B) is not built yet, so `mint.yaml` declares no
+  flow; the design, trade-off and registration change are in `docs/PLAN-DIRECT.md`.
 - **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
   needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback;
   #228: the surrender preview reads the game with `settings: true`, which carries it — without them it

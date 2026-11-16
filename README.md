@@ -116,8 +116,8 @@ war.app password is asked once at sign-in and never stored), and the server hold
 falling back to the browser bridge if it stops working. `warapp_session_status` then reports
 `linked: "host-captured"` (no capture time or age), and a signed-out session says to use
 **Sign in** on the connection. Without that token the hosted server uses the browser bridge, as
-before. (The war.app sign-in step mcp-host runs is not built yet: until it is, a hosted connection
-uses the browser bridge.) Locally `WARAPP_AUTH_TOKEN` is ignored.
+before. (The war.app sign-in step mcp-host runs — `docs/examples/warapp-auth-flow.json`, one password
+page — is not built yet: until it is, a hosted connection uses the browser bridge.) Locally `WARAPP_AUTH_TOKEN` is ignored.
 
 ## Tools
 

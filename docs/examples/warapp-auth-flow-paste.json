@@ -1,0 +1,28 @@
+{
+  "steps": [
+    {
+      "tool": "warapp_session_status",
+      "args": {},
+      "prompt": [
+        {
+          "name": "cookie",
+          "label": "war.app AuthToken cookie",
+          "type": "password",
+          "help": "In a browser signed in to war.app, open the developer tools, then Application (Storage), Cookies, https://war.app, and copy the value of AuthToken. It is a full-account credential: paste it here only."
+        }
+      ],
+      "title": "Paste your war.app session",
+      "description": "For when war.app's sign-in asks for a captcha the connector cannot answer. The cookie is checked against war.app once and kept as your own secret on this connection; no password is asked or stored. If it stops working, use Sign in on this connection again with a fresh one."
+    }
+  ],
+  "capture": {
+    "tool": "warapp_sign_in",
+    "args": {
+      "auth_token": {
+        "from": "cookie"
+      }
+    },
+    "path": "authToken",
+    "into": "WARAPP_AUTH_TOKEN"
+  }
+}
