@@ -135,6 +135,12 @@ export const boardCachePath = (dir: string, gameId: number) => join(dir, 'boards
  * after a hand override) still finds the board of the turn before it.
  */
 export const CACHED_TURNS = 10;
+/**
+ * Turns of the survival store's estimates kept per game (#275 review): every turn of a game, not only the
+ * boards' newest {@link CACHED_TURNS}, since the tripwire's stock bound reads every turn's kept estimate
+ * from turn 1 (and reads no stock with a turn missing). Numbers only, a few per turn.
+ */
+export const SURVIVAL_TURNS = 200;
 
 /** A game's cached boards not written for this long are deleted (finished or abandoned games). */
 export const BOARD_CACHE_MAX_AGE_MS = 60 * 86_400_000;
@@ -222,13 +228,13 @@ async function readCachedTurns(dir: string, gameId: number, playerId: number): P
   return (await readCache(dir, gameId, playerId)).turns;
 }
 
-/** The newest {@link CACHED_TURNS} numeric keys of `rec` at or below `upTo`, ascending. */
-function newestTurns(rec: Record<string, unknown>, upTo = Infinity): number[] {
+/** The newest `keep` ({@link CACHED_TURNS} by default) numeric keys of `rec` at or below `upTo`, ascending. */
+function newestTurns(rec: Record<string, unknown>, upTo = Infinity, keep = CACHED_TURNS): number[] {
   return Object.keys(rec)
     .filter((k) => /^\d+$/.test(k) && Number(k) <= upTo)
     .map(Number)
     .sort((a, b) => b - a)
-    .slice(0, CACHED_TURNS)
+    .slice(0, keep)
     .sort((a, b) => a - b);
 }
 
@@ -472,7 +478,7 @@ export interface Survival {
 export async function readSurvival(dir: string, gameId: number, playerId: number): Promise<Survival> {
   const cache = await readCache(dir, gameId, playerId);
   const estimates = new Map<number, Map<number, number>>();
-  for (const turn of newestTurns(cache.estimates)) {
+  for (const turn of newestTurns(cache.estimates, Infinity, SURVIVAL_TURNS)) {
     const rec = cache.estimates[String(turn)];
     if (!isRec(rec)) continue;
     const row = new Map<number, number>();
@@ -485,7 +491,7 @@ export async function readSurvival(dir: string, gameId: number, playerId: number
 
 /**
  * Keep turn `turn`'s opponent estimates and the untrusted marks now running (#275 b) for `gameId` as
- * `playerId`, with the newest {@link CACHED_TURNS} turns of estimates; the marks replace those kept.
+ * `playerId`, with the newest {@link SURVIVAL_TURNS} turns of estimates; the marks replace those kept.
  * Never throws.
  */
 export async function writeSurvival(
@@ -499,7 +505,7 @@ export async function writeSurvival(
     const cache = await readCache(dir, gameId, playerId);
     const all = { ...cache.estimates, [String(turn)]: Object.fromEntries([...s.estimates].map(([p, e]) => [String(p), e])) };
     const estimates: Record<string, unknown> = {};
-    for (const n of newestTurns(all)) estimates[String(n)] = all[String(n)];
+    for (const n of newestTurns(all, Infinity, SURVIVAL_TURNS)) estimates[String(n)] = all[String(n)];
     await writeCache(dir, {
       gameId,
       playerId,

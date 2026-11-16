@@ -84,9 +84,22 @@ export async function readTripwires(a: {
       ...(opponentCanHold(a.gameSettings, 'Airlift', a.turn) ? { airlift: true } : {}),
       ...(opponentCanHold(a.gameSettings, 'Bomb', a.turn) ? { bomb: true } : {}),
       ...(a.staticSeats?.size ? { staticSeats: a.staticSeats } : {}),
-      // The estimate the plan of that turn used when kept, else this turn's; none for a player with no
-      // estimate now (a static seat is neutralized, #270): it is not read.
-      estimateAt: (p, t) => (estimatesNow.has(p) ? (survival.estimates.get(t)?.get(p) ?? estimatesNow.get(p)) : undefined),
+      // The estimate the plan of that turn used when kept, else a stand-in: the most it was kept at or is
+      // now (#275 review: today's figure alone under-counts an opponent whose estimate a bonus break has
+      // lowered since). None for a player with no estimate now (a static seat is neutralized, #270): it is
+      // not read. The stock bound reads only kept figures (`estimateKept`).
+      estimateAt: (p, t) => {
+        const now = estimatesNow.get(p);
+        if (now === undefined) return undefined;
+        const kept = survival.estimates.get(t)?.get(p);
+        if (kept !== undefined) return kept;
+        let most = now;
+        for (const row of survival.estimates.values()) most = Math.max(most, row.get(p) ?? 0);
+        return most;
+      },
+      estimateKept: (p, t) => survival.estimates.get(t)?.has(p) === true,
+      // My Gift of a territory is no capture; with my card plays unrecorded, captures of mine are unknown.
+      ...(!a.gameSettings || a.gameSettings.cards.includes('Gift') ? { gift: true } : {}),
     });
   } catch {
     // A board this reader cannot follow: no observation.

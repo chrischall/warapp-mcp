@@ -405,6 +405,62 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run([at(4, before, { deploys: [], moves }), after])).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22, allowed: 10 }]);
   });
 
+  it('credits a stack that shrank between two sightings, not only since its latest one (#275 review)', () => {
+    // Line 1-6, me on 1, 2 and 6, estimate 5, start unknown. Turn 3: neutral 2 on 3, its 5 on 4 and 50
+    // on 5. Turn 4: 3 and 4 hidden, its 1 on 5. Turn 5: 60 on 3. The 49 that left 5 between turns 3 and
+    // 4 (two hops, two turns) walked in with the 4 from 4: 10 deployed + 53 walked allow 63.
+    const G6 = buildGraph(line(6));
+    const boards = [
+      at(3, [mine(1, 5), mine(2, 5), neutral(3, 2), foe(4, 5), foe(5, 50), mine(6, 5)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4), foe(5, 1), mine(6, 5)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4), foe(5, 1), mine(6, 5)]),
+    ];
+    expect(brokenEstimates({ graph: G6, boards, me: ME, settings: STD, estimateAt: () => 5 })).toEqual([]);
+    // 100 is beyond every army that could have walked in: it still trips.
+    boards[2] = at(5, [mine(1, 5), mine(2, 5), foe(3, 100), fogged(4), foe(5, 1), mine(6, 5)]);
+    expect(brokenEstimates({ graph: G6, boards, me: ME, settings: STD, estimateAt: () => 5 })).toEqual([
+      { player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 100, allowed: 63, implied: 24 },
+    ]);
+  });
+
+  it('reads no capture of a territory my Gift card gave it, nor one of mine when my card plays are unknown and Gift may be in play', () => {
+    // My 40 on 3 were gifted: its 3 on 4 did not take them.
+    const G5 = buildGraph(line(5));
+    const before = [mine(1, 5), mine(2, 5), mine(3, 40), foe(4, 3), fogged(5)];
+    const after = at(5, [mine(1, 5), mine(2, 5), foe(3, 40), foe(4, 3), fogged(5)]);
+    const run5 = (b: TripBoard, gift?: boolean) =>
+      brokenEstimates({ graph: G5, boards: [b, after], me: ME, settings: STD, ...(gift ? { gift } : {}), estimateAt: () => 5 });
+    const gifted = at(4, before, { deploys: [], moves: [], sent: [], cards: [{ card: 'Gift', target: 3 }] });
+    expect(run5(gifted)).toEqual([]);
+    expect(run5(gifted, true)).toEqual([]);
+    // Card plays not recorded (a cache from before them) in a game that may have Gift: unknown, not read.
+    const noCards = at(4, before, { deploys: [], moves: [], sent: [] });
+    expect(run5(noCards, true)).toEqual([]);
+    // Without Gift in the game, or with my card plays recorded and none a Gift of 3, it trips.
+    expect(run5(noCards)).toMatchObject([{ kind: 'capture', territory: 3, observed: 66, allowed: 7 }]);
+    expect(run5(at(4, before, { deploys: [], moves: [], sent: [], cards: [] }), true)).toMatchObject([{ kind: 'capture', territory: 3 }]);
+  });
+
+  it('bounds no stack by its stock when a turn has no kept estimate: a figure lowered since would under-count it', () => {
+    // As the first case: 4 hidden on every board since the sighting on turn 3. Every turn kept, its stock
+    // (starts of 10 and four turns of 5) bounds it; a turn not kept (today's figure standing in for it) may
+    // under-count what it earned and banked, so the stack is read as with no start: not read.
+    const boards = [
+      at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)]),
+    ];
+    const kept = (from: number) => (_p: number, t: number) => t >= from;
+    const runKept = (b: TripBoard[], from: number) =>
+      brokenEstimates({ graph: G, boards: b, me: ME, settings: STD, start: START, estimateAt: () => 5, estimateKept: kept(from) });
+    expect(runKept(boards, 1)).toMatchObject([{ kind: 'fog-stack', allowed: 30 }]);
+    expect(runKept(boards, 2)).toEqual([]);
+    // A stack no board showed is credited its start and every turn's estimate: not read either.
+    const never = [at(2, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]), at(3, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)])];
+    expect(runKept(never, 1)).toHaveLength(1);
+    expect(runKept(never, 2)).toEqual([]);
+  });
+
   it('needs the previous board: no reading across a gap', () => {
     const boards = [at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]), at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)])];
     expect(run(boards)).toEqual([]);

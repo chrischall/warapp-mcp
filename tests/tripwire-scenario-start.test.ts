@@ -2,13 +2,17 @@
 // A custom scenario sets each player's start by hand (a large starting stack is the creator's call), so
 // the settings' TerritoryLimit × InitialPlayerArmiesPerTerritory says nothing of it: no start, and a
 // stack never seen is not read. Synthetic map and ids only.
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../src/board.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import type { EnemyDeployEstimate } from '../src/analysis/plan/shared.js';
 import type { TurnBoard } from '../src/analysis/opponents.js';
 import type { GameMap, GameSettings } from '../src/normalize.js';
 import { readTripwires } from '../src/tools/survival.js';
+import { writeSurvival } from '../src/trend.js';
 import { board, fogged, mine } from './analysis/helpers.js';
 
 const ME = 10;
@@ -27,9 +31,15 @@ const BOARDS: TurnBoard[] = [
   { turn: 2, board: board([mine(1, 5), mine(2, 5), fogged(3), fogged(4)]) },
   { turn: 3, board: board([mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)]) },
 ];
+// Every turn's estimate kept (#275 review: the stock bounds a stack only then).
+let dataDir: string;
+beforeAll(async () => {
+  dataDir = mkdtempSync(join(tmpdir(), 'warapp-tripwire-start-'));
+  for (const turn of [1, 2]) await writeSurvival(dataDir, 1, ME, turn, { estimates: new Map([[FOE, 5]]), tripwires: [] });
+});
 const read = (gameSettings: Partial<GameSettings> & { raw?: Record<string, unknown> }) =>
   readTripwires({
-    dataDir: undefined,
+    dataDir,
     gameId: 1,
     me: ME,
     turn: 3,

@@ -9,6 +9,7 @@ import {
   boardCachePath,
   boardFromHistory,
   CACHED_TURNS,
+  SURVIVAL_TURNS,
   readBoardCache,
   readBoardHistory,
   readCachedOrders,
@@ -385,10 +386,15 @@ describe('the survival side store (#275 b)', () => {
 
   it('reads loosely and keeps only the newest turns of estimates', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    // #275 review: every turn of a game, not only the boards' newest CACHED_TURNS: the tripwire's stock
+    // bound reads every turn's kept estimate from turn 1.
     for (let t = 1; t <= CACHED_TURNS + 2; t++) await writeSurvival(dir, 42, ANN.id, t, { estimates: new Map([[BOB.id, t]]), tripwires: [] });
+    expect((await readSurvival(dir, 42, ANN.id)).estimates.size).toBe(CACHED_TURNS + 2);
+    for (let t = CACHED_TURNS + 3; t <= SURVIVAL_TURNS + 2; t++) await writeSurvival(dir, 42, ANN.id, t, { estimates: new Map([[BOB.id, t]]), tripwires: [] });
     const { estimates } = await readSurvival(dir, 42, ANN.id);
-    expect(estimates.size).toBe(CACHED_TURNS);
-    expect(estimates.has(1)).toBe(false);
+    expect(estimates.size).toBe(SURVIVAL_TURNS);
+    expect(estimates.has(2)).toBe(false);
+    expect(estimates.has(3)).toBe(true);
     writeFileSync(
       boardCachePath(dir, 7),
       JSON.stringify({ gameId: 7, playerId: ANN.id, turns: {}, estimates: { '2': { '5': 'x', '6': 3 } }, tripwires: [{ player: 'x' }, wire] }),
