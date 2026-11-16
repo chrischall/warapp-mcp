@@ -33,7 +33,7 @@ import {
 } from '@chrischall/mcp-utils';
 import { readCredentials, TOKEN_URL, WarappConfigError, type WarappCredentials } from './config.js';
 import { feedErrorOf, normalizeGame, normalizeMap, type Game, type GameMap } from './normalize.js';
-import { readGameMapId, readStoredMap, rememberGameMap, touchStoredMap, writeStoredMap, writeStoredModeTerritories } from './map-store.js';
+import { readGameMapId, readStoredMap, readStoredMapEntry, rememberGameMap, touchStoredMap, writeStoredMap, writeStoredModeTerritories } from './map-store.js';
 import { scrubSecrets, type SecretValue } from './redact.js';
 import { asInt } from './scalars.js';
 import { safeKeys } from './trend.js';
@@ -136,22 +136,37 @@ export class MapCache {
     const known = this.#maps.has(map.id);
     // #328: a map new to this process may already be stored with its modes' territories (read from war.app's
     // map details, not GameFeed): the same map within its age, so they are kept rather than read again.
-    const kept = !known && !replace && dir !== undefined ? await this.#withStoredModes(map, dir) : map;
+    const carried = !known && !replace && dir !== undefined ? await this.#withStoredModes(map, dir) : undefined;
+    const kept = carried?.map ?? map;
     this.set(kept);
     if (dir === undefined) return;
-    if (!known || replace) await writeStoredMap(dir, kept);
+    // Carried ids keep the age of the copy they were read with, so they age out on its clock, not this download's.
+    if (!known || replace) await writeStoredMap(dir, kept, carried?.storedAt);
     else await touchStoredMap(dir, kept);
   }
 
-  /** `map` with the mode territories its stored copy carries, where it has none of its own. */
-  async #withStoredModes(map: GameMap, dir: string): Promise<GameMap> {
-    const stored = await readStoredMap(dir, map.id);
-    const byMode = new Map((stored?.distributionModes ?? []).filter((d) => Array.isArray(d.territories)).map((d) => [d.id, d.territories!]));
-    if (!byMode.size) return map;
-    return {
-      ...map,
-      distributionModes: map.distributionModes.map((d) => (d.territories === undefined && byMode.has(d.id) ? { ...d, territories: byMode.get(d.id)! } : d)),
-    };
+  /**
+   * `map` with the mode territories its stored copy carries, where it has none of its own, and that copy's
+   * `storedAt`; `undefined` when nothing is carried. A mode whose stored ids are not all territories of
+   * `map` (its maker edited it since) is not carried: it reads as not read yet, so war.app is asked again
+   * and the fresh reply's ids are checked (and any the map lacks dropped with a warning) as on a first read.
+   */
+  async #withStoredModes(map: GameMap, dir: string): Promise<{ map: GameMap; storedAt: number } | undefined> {
+    const stored = await readStoredMapEntry(dir, map.id);
+    if (!stored || stored.storedAt === undefined) return undefined;
+    const land = new Set(map.territories.map((t) => t.id));
+    const byMode = new Map(
+      stored.map.distributionModes
+        .filter((d) => Array.isArray(d.territories) && d.territories.every((id) => land.has(id)))
+        .map((d) => [d.id, d.territories!]),
+    );
+    let any = false;
+    const distributionModes = map.distributionModes.map((d) => {
+      if (d.territories !== undefined || !byMode.has(d.id)) return d;
+      any = true;
+      return { ...d, territories: byMode.get(d.id)! };
+    });
+    return any ? { map: { ...map, distributionModes }, storedAt: stored.storedAt } : undefined;
   }
 
   /**

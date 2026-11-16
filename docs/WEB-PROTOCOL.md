@@ -508,7 +508,7 @@ player start on; the client's map preview (`SinglePlayer?PreviewMap=<id>`) reads
 the browser on 2026-11-16 (#328): the preview makes that one call, and the CDN `.map` file it also loads
 is drawing data with no mode names.
 
-`MapDetails` reads its modes fourth (of fifteen fields, in read order): an int32-count dict of mode id →
+`MapDetails` reads its modes fourth (of fourteen fields, in read order): an int32-count dict of mode id →
 `warlight.shared.DistributionMode` (bool present, then the mode). The mode is read by a byte tag:
 
 - 0 → `NormalDistribution`: bool present + an int32-count list of int32 territory ids, then the base
@@ -526,7 +526,9 @@ scenario) are not in the dict.
 key), and checks every id against the map's territories (one it lacks is dropped, with a warning).
 `warapp_get_map` (view `full`, no bonus filter) asks only when a mode of the map has no territories yet,
 at most once per map per process; the territories are kept with the map in the store
-(`distributionModes[].territories`, `src/map-store.ts`) and age out with it. A failed read, or a mode the
+(`distributionModes[].territories`, `src/map-store.ts`) and age out with it (carried onto a fresh download
+of the same map, they keep the stored copy's `storedAt`; a mode whose stored ids the fresh map does not all
+have is not carried, and is read again). A failed read, or a mode the
 reply lists none for, is unknown (`null`), never empty. **Verified live:** only what #328 shows (a normal
 mode's bytes on one map, its 79 ids all territories of the stored GameFeed map and holding the starts of a
 game on it); the decode through the bundle's readers and the scenario mode are UNVERIFIED live.

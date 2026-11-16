@@ -1,7 +1,7 @@
 // A hand-written synthetic bundle carrying the classes a GetMapDetails reply reads (#328): MapDetails →
 // DistributionMode (a byte tag: 0 NormalDistribution, 1 ScenarioDistribution), in the same *shape* as
 // war.app's generated readers (docs/WEB-PROTOCOL.md, "Map details: distribution modes"). MapDetails reads
-// fifteen fields, its fourth the modes (an int32-count dict, mode id → mode); a normal mode reads its
+// fourteen fields, its fourth the modes (an int32-count dict, mode id → mode); a normal mode reads its
 // territory ids (an int32-count list), then the base fields (a description, the id, the name); a scenario
 // mode reads its slot names (uint16 → string) and its territories (territory id → uint16 slot), then the
 // same base fields. Every var, field name and value here is made up; nothing is taken from the real bundle.
@@ -19,7 +19,7 @@ export const MAP_DETAILS_BUNDLE = [
     'e.m3=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Dmx.Ha(a,e,d):null}):null;' +
     'e.m4=a.Ua()?P.wc(a):null;e.m5=P.Ya(a);e.m6=P.Ya(a);e.m7=P.Td(a);e.m8=P.Yc(a);e.m9=P.uq(a);' +
     'e.m10=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return P.Ya(a)}):null;' +
-    'e.m11=P.Ya(a);e.m12=P.wc(a);e.m13=P.Ya(a);e.m14=P.Yc(a);return e};',
+    'e.m11=P.Ya(a);e.m12=P.wc(a);e.m13=P.Ya(a);return e};',
   'W["warlight.shared.DistributionMode"]=Dmx;',
   'Dmx.Ha=function(a,b,d){return Dmx.rd(a,b)};',
   'Dmx.rd=function(a,b){var d=a.bc();switch(d){case 0:return Ndx.rd(a,b);case 1:return Scx.rd(a,b);' +
@@ -94,5 +94,5 @@ export function writeMapDetailsResult(
   w.date(new Date(Date.UTC(2026, 0, 2)));
   w.bool(false).u8(0);
   w.bool(false);
-  w.int32(4).string('x').int32(5).bool(false);
+  w.int32(4).string('x').int32(5);
 }

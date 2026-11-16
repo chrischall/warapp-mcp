@@ -487,6 +487,58 @@ describe("WarappClient: distribution-mode territories (#328)", () => {
     expect((await readStoredMap(dir, map.id))!.distributionModes[0]!.territories).toEqual(ids);
   });
 
+  it("carrying them onto a fresh download keeps the stored copy's storedAt, so they still age out", async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir);
+    const map = (await c.getGame(12345678)).map!;
+    const mode = map.distributionModes[0]!.id;
+    const ids = [map.territories[0]!.id];
+    await c.keepModeTerritories(map.id, new Map([[mode, ids]]));
+    // The ids were read 20 days ago.
+    const path = mapStorePath(dir, map.id);
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    const old = Date.now() - 20 * 24 * 60 * 60 * 1000;
+    raw.storedAt = old;
+    writeFileSync(path, JSON.stringify(raw));
+    const other = await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    expect(other.map!.distributionModes[0]!.territories).toEqual(ids);
+    expect(JSON.parse(readFileSync(path, 'utf8')).storedAt).toBe(old);
+    // Past MAX_MAP_AGE_MS from when they were read, the copy (ids and all) is no longer trusted.
+    expect(await readStoredMap(dir, map.id, { now: old + MAX_MAP_AGE_MS + 1 })).toBeUndefined();
+  });
+
+  it('a fresh download with nothing to carry is stamped now', async () => {
+    const dir = tmp();
+    const mapId = (await client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir).getGame(12345678)).map!.id;
+    const path = mapStorePath(dir, mapId);
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    const old = Date.now() - 20 * 24 * 60 * 60 * 1000;
+    raw.storedAt = old;
+    writeFileSync(path, JSON.stringify(raw));
+    await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    expect(JSON.parse(readFileSync(path, 'utf8')).storedAt).toBeGreaterThan(old);
+  });
+
+  it('a stored mode listing an id the fresh map lacks is not carried, so it is read again', async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }).fetchImpl, new MapCache(), CREDS, dir);
+    const map = (await c.getGame(12345678)).map!;
+    const [m1, m2] = map.distributionModes;
+    const good = [map.territories[0]!.id];
+    const gone = Math.max(...map.territories.map((t) => t.id)) + 1000;
+    await c.keepModeTerritories(
+      map.id,
+      new Map([
+        [m1!.id, [map.territories[1]!.id, gone]],
+        [m2!.id, good],
+      ]),
+    );
+    const other = await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    const modes = other.map!.distributionModes;
+    expect(modes[0]).not.toHaveProperty('territories');
+    expect(modes[1]!.territories).toEqual(good);
+  });
+
   it('remembers a map whose details were tried, per process', () => {
     const cache = new MapCache();
     const c = client(stubFetch({ body: FIXTURE }).fetchImpl, cache);

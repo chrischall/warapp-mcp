@@ -1633,7 +1633,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   at most once per map per process (`MapCache.mapDetailsTried`); a failure or a mode listed without ids is
   `null` (unknown), never `[]`. Read ids are kept on the cached base map and in the store
   (`distributionModes[].territories`, `writeStoredModeTerritories`: the map's `storedAt` unchanged, so they
-  age out with it; a stored mode without them reads as not read yet; a new game on a stored map keeps them).
+  age out with it; a stored mode without them reads as not read yet; a new game on a stored map keeps them, the
+  fresh download written with the stored copy's `storedAt` so they still age out on their own clock, and a mode
+  whose stored ids are not all territories of the fresh map is not carried, so it is read again).
   Only `warapp_get_map`'s full view (no `bonus` filter) asks; it lists each mode's `territoryCount` and
   `territories`. UNVERIFIED live beyond #328's trace (docs/WEB-PROTOCOL.md "Map details").
 - **A game's map comes from `mapOf(game)`** (`src/tools/map.ts`), which applies the game's

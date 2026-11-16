@@ -21,7 +21,7 @@ export const SCENARIO_DISTRIBUTION = 'warlight.shared.ScenarioDistribution';
 
 /** MapDetails: the position of its mode dict in read order, and its whole field count. */
 const MD = { modes: 3 } as const;
-export const MAP_DETAILS_FIELDS = 15;
+export const MAP_DETAILS_FIELDS = 14;
 /** NormalDistribution: its territory list, then the base fields (description, id, name). */
 const ND = { territories: 0, id: 2 } as const;
 export const NORMAL_DISTRIBUTION_FIELDS = 4;
