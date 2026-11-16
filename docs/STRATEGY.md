@@ -365,6 +365,10 @@ delays the orders listed after it; under No-Split the whole stack moves).
   rather than trading armies. **Advice only.** Source: Good 1v1 strategies.
 - `1v1-contact-ground` — foresee where you will meet; a bonus behind a narrow front is worth some
   income. **Advice only** (the map notes list the bottlenecks). Source: Good 1v1 strategies.
+- `1v1-gate-budget` — before opening a contact, count the single-entry gates it makes: each must
+  hold more than (the stack beside it + the opponent's whole deploy) × its offensive kill rate, and
+  each new gate costs that again, so take cheap uncontested bonuses first. **Advice only** (the
+  planner does not count gates yet, #297), derived; from the lost 1v1s of #300. Source: Good 1v1 strategies.
 - `ffa-strike-last` — let rivals fight each other and move in after. **Advice only.** Source: FFA strategy.
 - `ffa-pick-fights` — avoid a war on two borders at once. **Advice only**, derived. Source: FFA strategy.
 - `ffa-diplomacy` — a truce frees armies; without chat a quiet border is often answered in kind; with chat fix
@@ -477,6 +481,11 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `settings-local-deployments` — each bonus pays only inside itself; base income, territory income
   and Reinforcement cards go anywhere; a cut in income is shared evenly by the pools. **Encoded:**
   deploy pools (`src/analysis/local-deploy.ts`). Source: <https://war.app/wiki/Local_deployments>
+- `settings-local-deploy-front` — under Local Deployment a front receives only the opponent's free
+  income, the pool of a bonus it holds that the front stands in, and next turn what walks up from a
+  pooled bonus behind it; size each border on that, not on its total income (contact and after).
+  **Advice only** (the planner still sizes on the total, #293), derived; from the lost 1v1s of #300.
+  Source: <https://war.app/wiki/Local_deployments>
 - `settings-no-split` — a territory that moves sends everything, once a turn; stage armies
   ahead and do not move a territory that must hold. **Encoded:** one move per source, each sending
   the whole stack, and no move from a territory that must hold (#124). Source: No-Split mode.
@@ -725,6 +734,11 @@ delays the orders listed after it; under No-Split the whole stack moves).
   territory shows its size only if it captured, and only where you can see that territory's
   armies. Note each with its turn: it fixes a stack you cannot otherwise see. **Advice only.**
   Source: <https://war.app/wiki/Fog>
+- `reading-split-growth` — before calling a game even, split each enemy stack's growth into what a
+  neighbour in view could have moved in, what came out of the fog, and what can only be deploy; only
+  the last is income, and while most of its frontier is hidden a low estimate is a floor (fog,
+  contact and after). **Advice only** (the planner does not state that split yet, #294), derived;
+  from the lost 1v1s of #300. Source: Good 1v1 strategies.
 - `reading-stack-arrival` — When a stack you saw goes out of view, count the turns it needs to
   walk to each of your borders and expect it from that turn on. Do not advance toward where it
   must be unless you are sure to move first; and when a deployment drops with no fight to
@@ -836,6 +850,11 @@ delays the orders listed after it; under No-Split the whole stack moves).
   move. A Transfer Only that cannot transfer, or an order from a territory with nothing left to
   send, delays nothing: pad a late attack with real transfers of spare armies or cheap captures.
   **Advice only.** Source: <https://war.app/wiki/Move_order>
+- `timing-read-first-mover-strike` — unsure who moved first in a cyclic 1v1, read your own first
+  order: a target that held more than its armies plus its owner's whole deploy, or whose stack had
+  left, means the opponent's order ran first. It alternates from there: give the planner that turn
+  as `first_mover`, and save a big strike for a turn you move first. **Advice only** (the planner
+  does not infer it yet, #299), derived; from the lost 1v1s of #300. Source: <https://war.app/wiki/Move_order>
 - `timing-delay-pairs` — Orders run in pairs: moving first, your 2nd and 3rd run back to back
   (then 4th and 5th); moving second, your 1st and 2nd. So one more dummy order helps only every
   other time. Count the orders the opponent can make, pad a late attack just past that (one
@@ -900,6 +919,12 @@ delays the orders listed after it; under No-Split the whole stack moves).
   places makes the defender guess. Do not spend the main stack breaking a large blockade when
   another route or bonus pays sooner. **Advice only.** Source:
   <https://docs.google.com/document/d/18vq7hPEy3WORXujZJiQVgRPCdaQ-iys9RmFNv7_yq7U>
+- `fighting-contested-bonus-mass` — a bonus a member or two short that an enemy stack keeps retaking
+  will not fall to a few armies a turn: mass for one turn (its stack plus its owner's deploy on every
+  missing member) or leave it, and while the stack roams inside the bonus, garrison the members it
+  can reach first. **Advice only** (the planner does not stop the piecemeal attacks yet, #298),
+  derived; from the lost 1v1s of #300. Source:
+  <https://docs.google.com/document/d/e/2PACX-1vS5eO54w3LgnkcwbLqM3DhynuQGoChrPn313QXIMm0QZ3ApILPuvcunEdmG_nZflHKcfRwCpZfvHA8L/pub>
 - `fighting-hidden-stack` — A transfer between two territories the opponent cannot see is
   invisible to it. Build a stack one step behind the front and, on a turn you are sure to move
   first, transfer it with your first order into the territory its stack is about to take, enough

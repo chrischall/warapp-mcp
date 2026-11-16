@@ -938,6 +938,42 @@ do not send a backlog of turns unread. Override it when one of these shows up:
    armies off the territory your commander stands on or walks to, and a draw the submit's commander
    check would refuse is dropped (a warning says so).
 
+8. **Lessons from lost 1v1s (#300): check these yourself until the planner does.**
+   - *Gate budget.* Before opening a contact, count the single-entry gates it makes: each must hold
+     more than (the stack beside it + his whole deploy) × his offensive kill rate, and every gate costs
+     that again. Two may fit your income; a third can leave you short every turn. Take cheap
+     uncontested bonuses first (#297).
+   - *Local Deployment.* A front receives his free income, the pool of a bonus he holds that it stands
+     in, and next turn what walks up from a pooled bonus behind it. Size a border on that, not on his
+     tracked total, and hold by hand a border the plan concedes on the total (#293).
+   - *A contested bonus fed piecemeal.* A bonus whose last member or two his stack keeps retaking
+     will not fall to your free income each turn: mass for one turn (his stack + his deploy on every
+     missing member) or leave it. While his stack roams inside it, garrison the members it can reach
+     before retaking the one it left (#298).
+   - *Move order.* When `firstMover` is null in a cyclic 1v1, read it from your own first order: a
+     target that held more than its armies plus his whole deploy, or whose stack had already left,
+     means his order ran first. Pass that turn as `first_mover` (it alternates from there) and put
+     big strikes on turns you move first (#299).
+   - *Reconcile estimates on the board.* Before telling the user a game is even, split each of his
+     stacks' growth into "could be a move from a neighbour in view", "came out of the fog" and
+     "can only be deploy", and say how much of his frontier was in view; a tracked income read off one or
+     two territories is a floor (#294).
+   - *One stack beside a border (#285):* when a border (or two) faces a single stack, compare holding
+     against stack + deploy with capturing it sized for the deploy (a second source as follow-up),
+     which makes those borders interior.
+   - *A bonus completed this turn (#286):* give each member at least the armies that beat the stack
+     already beside it, even when the full hold does not fit.
+   - *The leftover (#288):* when the next step toward the closest bonus starts from a territory taken
+     this turn, send the leftover with that capture; never leave it on a source with nothing left to
+     attack.
+   - *Picks (#289):* when `warapp_plan_picks` warns that its fallback outscores the primary, weigh
+     listing the fallback first (it is scored with the primary taken, so the two are not like for like).
+   - *The leftover spread (#290):* weight it by what each border protects; a high-value border beside
+     a stack that grew this turn gets up to the whole observed deploy before low-value ones get headroom.
+   - *Chokepoints (#291):* before accepting a conceded gate, count what its loss opens (the territories
+     and bonuses reachable only through it), and keep a hold on the territory right behind a conceded
+     border against the stack two steps away.
+
 A bad plan is re-planned — with `focus`, `enemy_deploy` or `reserve` — never replaced by a
 deploy-only turn while captures are in reach. When editing by hand, keep the plan's card orders
 (an unplayed Reinforcement wastes its armies), size attacks by the submit preview's `attacks`

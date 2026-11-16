@@ -81,6 +81,16 @@ describe('skill files', () => {
   it('the helper runs curl with URL globbing off', () => {
     expect(read(HELPER)).toMatch(/curl\s[^\n]*(--globoff|\s-g\b)/);
   });
+
+  it("warapp-mcp's planner supervision carries the lessons of #300, one line per planner issue", () => {
+    const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
+    const section = md.slice(md.indexOf('## Supervising the planner'), md.indexOf('## Conventions'));
+    expect(section).toMatch(/Lessons from lost 1v1s \(#300\)/);
+    for (const lesson of [/Gate budget/, /Local Deployment/, /mass for one turn/, /first_mover/, /can only be deploy/]) {
+      expect(section).toMatch(lesson);
+    }
+    for (const n of [285, 286, 288, 289, 290, 291, 293, 294, 297, 298, 299]) expect(section, `#${n}`).toContain(`#${n}`);
+  });
 });
 
 // ---------------------------------------------------------------------------
