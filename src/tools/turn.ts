@@ -1842,6 +1842,8 @@ export async function bordersBelowPlan(
     const rows = holdsBelowPlan({
       graph: setup.graph,
       board: setup.board,
+      // #270: a static seat's territories are neutrals, as in the plan compared.
+      staticSeats: staticSeats(setup.gameContext.players, setup.gameContext.endRules, a.me.id),
       me: a.me.id,
       settings: setup.settings,
       ...(setup.teams ? { teams: setup.teams } : {}),
@@ -2135,7 +2137,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const whatIf = goal !== undefined || enemy_deploy !== undefined;
       if (ctx.dataDir && turn !== null)
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
-      // #275 (b): this turn's estimates and the untrusted marks, for the next turns' tripwire.
+      // #275 (b): this turn's estimates and the untrusted marks, for the next turns' tripwire. Kept on a
+      // what-if plan too, unlike its neighbours: both come from the boards alone — the estimates are the
+      // default ones (planEnemyEstimates never reads enemy_deploy or goal) and a mark is an observation —
+      // so a what-if writes exactly what the default plan would, and skipping it could drop a mark.
       await keepTripwires(ctx.dataDir, game.id, me.id, turn, setup.trip);
       // The opponent profile (docs/PLAN-PROFILES.md A2): the turns these boards show, never on a what-if plan.
       if (ctx.dataDir && turn !== null && !whatIf)
@@ -2343,6 +2348,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const headroom = safeHeadroom({
         graph,
         board,
+        // #270: a static seat's territories are neutrals, as the plan reads them.
+        staticSeats: staticSeats(game.players, game.endRules, me.id),
         me: me.id,
         deploys: plan.deploys,
         moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
@@ -3137,6 +3144,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             safeHeadroom({
               graph: graphOf(map),
               board,
+              // #270: a static seat deploys nothing; its territories are neutrals here.
+              staticSeats: staticSeats(game.players, game.endRules, me.id),
               me: me.id,
               deploys: givenDeploys,
               moves: givenMoves,

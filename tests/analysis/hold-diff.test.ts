@@ -118,3 +118,11 @@ describe('holdsBelowPlan (#275 pattern 3)', () => {
     ]);
   });
 });
+
+describe('holdsBelowPlan and static seats (#270)', () => {
+  it('names no border beside a static seat only: its territories are neutrals', () => {
+    const given = { deploys: [{ territoryId: 3, armies: 2 }, { territoryId: 1, armies: 3 }], moves: [] };
+    expect(diff({ given })).toHaveLength(1);
+    expect(diff({ given, staticSeats: new Set([FOE]) })).toEqual([]);
+  });
+});

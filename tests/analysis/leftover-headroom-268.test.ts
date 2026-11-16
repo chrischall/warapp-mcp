@@ -103,7 +103,7 @@ describe('#268 the rest of the leftover raises the smallest deploy that breaks a
     // of ~37, A at ~40, D only at ~102.
     expect(why(p)).not.toMatch(/Deploy the leftover \d+ to T3 \(#3\): the rest/);
     expect(why(p)).toMatch(
-      /Spread the leftover 13 over the borders facing player 20 \(#268\), so the smallest deploy that breaks one of them is as large as possible: T1 \(#1\) \+4, T2 \(#2\) \+4, T3 \(#3\) \+5, once every short border has its comfortable margin: none of them now falls to a deploy of less than ~57/,
+      /Spread the leftover 13 over the borders facing player 20 \(#268\), so the smallest deploy that breaks one of them is as large as possible: T1 \(#1\) \+4, T2 \(#2\) \+4, T3 \(#3\) \+5, once every short border has its comfortable margin: none of them now falls to a deploy of less than ~57 on top of the stacks beside it \(threat arithmetic on the deploys, before any move: the headroom table carries out the whole turn and may differ;/,
     );
     // All 29 still deployed, and the same totals on the three borders.
     expect(p.deploys.reduce((n, d) => n + d.armies, 0)).toBe(29);

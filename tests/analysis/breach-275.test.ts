@@ -1,15 +1,15 @@
 // #275 (pattern 2): a hollow interior with the guard off. Every interior territory may hold 0, so one
 // breach by a large stack puts everything behind the border one move away. The breach cost of a border
 // (src/analysis/breach.ts) — the income within two moves behind it that only it shields — is reported
-// in the headroom table and, with the guard off, counted in the border's value (BREACH_WEIGHT); and a
-// stack larger than my income two moves from a held bonus makes the member it reaches next keep a
-// small second line (plan/second-line.ts). Synthetic maps; every id is made up.
+// in the headroom table and, with the guard off, counted in the border's value (BREACH_WEIGHT). The garrison
+// behind such a border is #276's second line (plan/guard-off.ts), not a rule of its own here. Synthetic
+// maps; every id is made up.
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { breachBehind } from '../../src/analysis/breach.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { headroomTable } from '../../src/analysis/headroom.js';
-import { BREACH_WEIGHT, SECOND_LINE_ARMIES } from '../../src/analysis/plan/shared.js';
+import { BREACH_WEIGHT } from '../../src/analysis/plan/shared.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
@@ -146,63 +146,29 @@ describe('the planner prices a border by its breach with the guard off (#275 pat
   });
 });
 
-describe('a second line behind a border a large stack can break (#275 pattern 2)', () => {
+describe('one second line with the guard off: #276\'s, never a second one from #275', () => {
   //   1 (enemy stack) ─ 2 (my border) ─ 3 ─ 4: Home (+5) = 3, 4. 3 is the member the stack reaches next.
-  //   Neutral 5 off 4 (2 armies) is expansion the income still pays for.
+  //   Neutral 5 off 4 (2 armies) is expansion the income still pays for. #275 brings only the breach
+  //   price; the garrison behind a border is #276's second line (plan/guard-off.ts).
   const MAP = makeMap(5, [[1, 2], [2, 3], [3, 4], [4, 5]], [[100, 5, [3, 4]]]);
-  const plan = (settings: PlannerSettings, stack: number, over: Partial<PlanInput> = {}): TurnPlan =>
+  const plan = (settings: PlannerSettings, stack: number): TurnPlan =>
     planTurn({
       graph: buildGraph(MAP),
       board: board([foe(1, stack), mine(2, 1), mine(3, 0), mine(4, 3), neutral(5, 1)]),
       me: ME,
       income: 10,
       settings,
-      ...over,
     });
-  const deployedAt = (p: TurnPlan, id: number) => p.deploys.find((d) => d.territoryId === id)?.armies ?? 0;
-  const leaving = (p: TurnPlan, id: number) => p.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
 
-  it('keeps a small second line on the member a stack larger than my income reaches next', () => {
+  it('names only #276\'s second line, and still makes the capture the income pays for', () => {
     const p = plan(OFF, 40);
-    expect(deployedAt(p, 3) - leaving(p, 3)).toBeGreaterThanOrEqual(SECOND_LINE_ARMIES);
-    expect(p.rationale.some((r) => /^Second line \(#275\): T3 \(#3\) keeps 2 armies/.test(r))).toBe(true);
-  });
-
-  it('still makes the capture the income pays for', () => {
-    const p = plan(OFF, 40);
+    const text = p.rationale.join('\n');
+    expect(text).toContain('Second line (#276)');
+    expect(text).not.toContain('Second line (#275)');
     expect(p.moves.some((m) => m.kind === 'attack' && m.to === 5)).toBe(true);
   });
 
-  it('keeps none with the guard on, or against a stack no larger than my income', () => {
-    for (const p of [plan(ON, 40), plan(OFF, 10)]) expect(p.rationale.some((r) => /Second line/.test(r))).toBe(false);
-  });
-
-  it('keeps none behind a border that holds against the stack and its deploy', () => {
-    const p = planTurn({
-      graph: buildGraph(MAP),
-      board: board([foe(1, 12), mine(2, 60), mine(3, 0), mine(4, 3), neutral(5, 1)]),
-      me: ME,
-      income: 10,
-      settings: OFF,
-    });
-    expect(p.rationale.some((r) => /Second line/.test(r))).toBe(false);
-  });
-
-  it('keeps the line out of rule 6\'s transfer of idle armies, and says so', () => {
-    //   1 (enemy, 40) ─ 2 (mine, 1) ─ 3 (mine, 6) ─ 4; 3 ─ 5 (mine, 1) ─ 6 (enemy, 3). Home (+5) = 3, 4.
-    //   3's idle armies go toward the front at 5; two of them stay as the line against the stack on 1.
-    const map = makeMap(6, [[1, 2], [2, 3], [3, 4], [3, 5], [5, 6]], [[100, 5, [3, 4]]]);
-    const p = planTurn({
-      graph: buildGraph(map),
-      board: board([foe(1, 40), mine(2, 1), mine(3, 6), mine(4, 0), mine(5, 1), foe(6, 3)]),
-      me: ME,
-      income: 10,
-      settings: OFF,
-    });
-    // 6 on it, plus what the plan deployed there, less what leaves: the line stays.
-    expect(6 + deployedAt(p, 3) - leaving(p, 3)).toBe(SECOND_LINE_ARMIES);
-    expect(leaving(p, 3)).toBeGreaterThan(0);
-    expect(p.rationale.some((r) => /^Second line \(#275\): T3 \(#3\) keeps 2 armies —/.test(r))).toBe(true);
-    expect(p.rationale.some((r) => /from T3 \(#3\).*\(2 stay: its second line, #275\)/.test(r))).toBe(true);
+  it('keeps none with the guard on', () => {
+    expect(plan(ON, 40).rationale.some((r) => /Second line/.test(r))).toBe(false);
   });
 });

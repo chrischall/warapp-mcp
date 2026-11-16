@@ -39,10 +39,6 @@ export const PAYBACK_TURNS = 10;
  * next turn, and a border may still be retaken or the stack turned elsewhere.
  */
 export const BREACH_WEIGHT = 0.5;
-/** #275: the armies a second line keeps on the member of a held bonus a large stack reaches next. */
-export const SECOND_LINE_ARMIES = 2;
-/** #275: second lines are paid from the leftover only, and all of them together at most this share of the income. */
-export const SECOND_LINE_SHARE = 0.2;
 /** #201: the shortest payback horizon once the game is decided. */
 export const DECIDED_PAYBACK_MIN = 3;
 /** …or when one remaining territory alone costs more than this many times its value (a wasteland). */

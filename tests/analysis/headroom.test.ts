@@ -129,3 +129,11 @@ describe('headroomTable (#275 a)', () => {
     expect(rows[0]!.armies).toBe(9 - 1);
   });
 });
+
+describe('headroomTable and static seats (#270)', () => {
+  it('gives a static seat no row: its territories are neutrals, as the planner reads them', () => {
+    const entries = [mine(1, 1), mine(2, 10), foe(3, 3)];
+    expect(table(LINE3, entries)).toHaveLength(1);
+    expect(table(LINE3, entries, { staticSeats: new Map([[FOE, 'SurrenderAccepted']]) })).toEqual([]);
+  });
+});

@@ -22,6 +22,7 @@ import type { BoardState } from '../board.js';
 import { COMMANDER_STRENGTH } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';
+import { neutralizeSeats } from './static-seats.js';
 import { simTerritories, simulateTurn, type SimOrder, type SimSettings, type SimTerritory } from './turn-sim.js';
 
 export interface HoldOrders {
@@ -42,6 +43,11 @@ export interface HoldDiffInput {
   conceded?: readonly number[];
   /** The orders given. */
   given: HoldOrders;
+  /**
+   * #270: static seats (src/analysis/static-seats.ts `staticSeats`): their territories are read as
+   * neutrals, so they get no row, as the planner reads them.
+   */
+  staticSeats?: ReadonlySet<number> | ReadonlyMap<number, unknown>;
 }
 
 export interface HoldShortfall {
@@ -56,7 +62,8 @@ export interface HoldShortfall {
 
 /** Every border the given orders leave below what the default plan leaves there, the largest shortfall first. */
 export function holdsBelowPlan(input: HoldDiffInput): HoldShortfall[] {
-  const { graph, board, me, teams } = input;
+  const { graph, me, teams } = input;
+  const board = input.staticSeats ? neutralizeSeats(input.board, input.staticSeats) : input.board;
   const start = simTerritories(board);
   const sameTeam = (a: number, b: number) => teams !== undefined && teams.get(a) !== undefined && teams.get(a) === teams.get(b);
   const enemy = (owner: SimTerritory['owner'] | undefined) => typeof owner === 'number' && owner !== me && !sameTeam(owner, me);

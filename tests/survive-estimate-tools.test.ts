@@ -24,10 +24,12 @@ const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.
 
 // A 1v1 (the fixture's other seats dropped: with nine seats and no team read, the teams are unknown) with
 // no Airlift in play (one lands armies anywhere: the tripwire reads nothing then).
-function game(turnsDone = '2', o: { allSeats?: boolean; airlift?: boolean } = {}): Record<string, unknown> {
+function game(turnsDone = '2', o: { allSeats?: boolean; airlift?: boolean; bobOut?: boolean } = {}): Record<string, unknown> {
   const f = lobbyFixture();
   const players = (f.players as Array<Record<string, string>>)
-    .map((p, i) => (i === 0 ? { ...p, id: ANN.feed, name: 'Ann' } : i === 1 ? { ...p, id: BOB.feed, name: 'Bob' } : p))
+    .map((p, i) =>
+      i === 0 ? { ...p, id: ANN.feed, name: 'Ann' } : i === 1 ? { ...p, id: BOB.feed, name: 'Bob', ...(o.bobOut ? { state: 'SurrenderAccepted' } : {}) } : p,
+    )
     .slice(0, o.allSeats ? undefined : 2);
   const settings = { ...(f.settings as object), SanctionsCard: 'none', ...(o.airlift ? {} : { AirliftCard: 'none' }) };
   return { ...f, state: 'Playing', numberOfTurns: turnsDone, players, settings };
@@ -150,6 +152,11 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     expect(p.warnings[0]).not.toMatch(/are sized for/);
     expect(p.warnings[0]).toMatch(/would be sized for 14 /);
     expect(p.warnings[0]).toMatch(/This what-if plan sizes every border for enemy_deploy 3 instead/);
+    // The mark and the default estimate are kept as the default plan keeps them: both come from the
+    // boards, never from enemy_deploy.
+    const kept = await readSurvival(dir, GAME, Number(ANN.feed));
+    expect(kept.tripwires.map((w) => [w.player, w.implied])).toEqual([[Number(BOB.feed), 14]]);
+    expect(kept.estimates.get(3)?.get(Number(BOB.feed))).not.toBe(3);
   });
 
   it('warapp_check_plan tries the untrusted figure by default and says so first, writing nothing', async () => {
@@ -228,6 +235,16 @@ describe('warapp_submit_turn warns of a held bonus left below my income (#275 c)
       { kind: 'move', from: 159, to: 161, armies: 9 },
     ]);
     expect(text).toMatch(/Territory 159 guards bonus 118 .*player 7176543229 \(may be a teammate: this game's teams could not be read\)/);
+  });
+
+  it('says nothing of a static seat (#270): a player out whose seat no AI plays deploys nothing', async () => {
+    h = await live(held, undefined, [game('2', { bobOut: true })]);
+    const text = await preview([
+      { kind: 'deploy', territory: 157, armies: 7 },
+      { kind: 'move', from: 159, to: 161, armies: 9 },
+    ]);
+    expect(text).toMatch(/confirmToken/);
+    expect(text).not.toMatch(/#275 headroom/);
   });
 
   it('says nothing when every border of the bonus has headroom above my income', async () => {

@@ -682,7 +682,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   first order, between two, after my last — so a border my later orders drain is judged as drained), the
   bonuses it breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
   `headroom`, and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
-  my income. `src/analysis/tripwire.ts` (pure) reads my two latest boards: a stack out of the fog, a capture,
+  my income. A static seat (#270, `staticSeats`) gets no row: its territories are neutrals there, as the
+  planner reads them (`HeadroomInput.staticSeats`; the hold diff below takes the same). Its figure is not
+  #268's "falls to a deploy of less than ~D" line: that one is the planner's threat arithmetic on the
+  deploys before any move (the border's take less the stacks beside it), this one carries out the whole
+  turn, so the two may differ for one border, and the #268 line says so. `src/analysis/tripwire.ts` (pure) reads my two latest boards: a stack out of the fog, a capture,
   or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
   more), marks that opponent untrusted (a stack no board ever showed is credited its whole start, from the
   settings, and is not read when they do not give it; a stack out of the fog is credited its armies in view that
@@ -734,15 +738,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   planner, **guard off only**, adds `BREACH_WEIGHT` (0.5) × that income (plus its per-territory income; hollow
   = below the largest visible foe stack beside the border plus its owner's deploy; #235's cut not counted
   twice) to the border's protected value (`breachAt` in the deploy book), with a rationale line ("… alone
-  shields …"). And rule 5s (`plan/second-line.ts`), guard off and not under No-Split: a member of a bonus
-  held in full that faces no enemy and stands two moves from a visible foe stack larger than my income keeps
-  `SECOND_LINE_ARMIES` (2), paid from the leftover only (before rule 5, after every hold and capture), all
-  lines together at most `SECOND_LINE_SHARE` (20%) of the income, kept through `coverKeep` (and
-  `ps.secondLine`, for rule 6's wording). Only through a territory between that the stack can break (not mine, given up, or
-  falling after this plan to the stack plus its owner's deploy). Measured on the golden corpus (916 guard-off
-  boards: orders changed on 27, no capture lost, next income never lower, warnings never more) and on 40
-  cached real guard-off boards (orders changed on 5, no capture lost, next income and concessions unchanged;
-  second lines deployed 4 armies in all, at most 10% of a turn's income).
+  shields …"). It brings no garrison of its own: the second line behind a border is #276's
+  (`secondLineOf` / `fillSecondLine`, `plan/guard-off.ts`), and this rule only prices the hollow interior.
+  Measured on the golden corpus against the planner without it (916 guard-off boards): plans changed on 59,
+  orders on 7, no capture lost, next income never lower, 5 fewer concessions, never more warnings; no
+  guard-on plan changes.
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
   turn, income = the most of the last three observed turns (or its stock and flow when more),
@@ -1071,7 +1071,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     one that breaks at the smallest deploy, ties to the most at stake, so the smallest deploy that
     breaks any of them is as large as it can be (live: the rest on the border protecting the most left
     two others to fall at ~1.5× the estimate). One such border, my commander's, or an attack's source
-    keeps the old rule; the pools of Local Deployment are respected.
+    keeps the old rule; the pools of Local Deployment are respected. Its "~D" is the threat arithmetic on
+    the deploys before any move, not #275's `headroom` (the whole turn carried out), and its line says so.
     #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
     reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
     sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,

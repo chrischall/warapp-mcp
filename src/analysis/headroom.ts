@@ -32,6 +32,7 @@
 import type { BoardState } from '../board.js';
 import { bonusTerritories } from './bonuses.js';
 import { breachBehind } from './breach.js';
+import { neutralizeSeats } from './static-seats.js';
 import { armiesToTake, COMMANDER_STRENGTH } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';
@@ -50,6 +51,11 @@ export interface HeadroomInput {
   firstMover?: 'me' | 'opponent';
   /** I play an Order Priority card this turn. */
   orderPriority?: boolean;
+  /**
+   * #270: static seats (src/analysis/static-seats.ts `staticSeats`): their territories are read as
+   * neutrals, so they get no row, as the planner reads them.
+   */
+  staticSeats?: ReadonlySet<number> | ReadonlyMap<number, unknown>;
 }
 
 export interface HeadroomRow {
@@ -82,7 +88,8 @@ export const HEADROOM_CAP = 100_000;
 const byNum = (a: number, b: number) => a - b;
 
 export function headroomTable(input: HeadroomInput): HeadroomRow[] {
-  const { graph, board, me } = input;
+  const { graph, me } = input;
+  const board = input.staticSeats ? neutralizeSeats(input.board, input.staticSeats) : input.board;
   const teams = input.teams;
   const start = simTerritories(board);
   const sameTeam = (a: number, b: number) => teams !== undefined && teams.get(a) !== undefined && teams.get(a) === teams.get(b);
