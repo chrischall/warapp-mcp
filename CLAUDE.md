@@ -494,9 +494,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   wait for the opponent's is unverified (docs/WEB-PROTOCOL.md). Order Delay may be combined with
   other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
-  **The targeted cards (PLAN-TEAMS part D, UNVERIFIED live, V9):** Spy, Reconnaissance, Surveillance
+  The Blockade play (tag 18, phase 60; card by name, target territory by id) was verified live 2026-11-16: the
+  territory turned neutral at the end of the turn at its armies × the game's multiplier. Order Priority (card by
+  name, no target) committed and resolved live 2026-11-16, but whether my first move ran first cannot be told from
+  the result: that effect stays unverified.
+  **The targeted cards (PLAN-TEAMS part D, V9):** Spy, Reconnaissance, Surveillance
   (phase 15), Airlift (43), Gift (47), Diplomacy (75), Sanctions (80), tags and fields from each
-  `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). `warapp_submit_turn` takes their targets
+  `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). The Airlift play (card by name, `from`, `to`, `armies`) was
+  verified live 2026-11-16 (the source lost the armies, the target gained them, the card left the hand); every
+  other targeted card is UNVERIFIED live (the preview still warns for Airlift until `UNVERIFIED_CARD_PLAYS` drops
+  it). `warapp_submit_turn` takes their targets
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
   never gifted or airlifted to a teammate; no Spy on me or a teammate, nor on the neutral — target 0 — unless
   the game's `SpyCard.CanSpyOnNeutral`; no Diplomacy between teammates, nor naming a player out — the

@@ -120,7 +120,7 @@ path stays soft.
 | V6 | `GetTerritoryPicks` with a teammate's player id | Team picks (C2) |
 | V7 | What a plain move onto a teammate's territory does; `attack_teammates` (#165) | Team planner (C3) |
 | V8 | How a team's hand and its limit are keyed (#163) | Team cards (C3, D) |
-| V9 | Gift, Diplomacy, Sanctions, Spy, Airlift play orders | Part D |
+| V9 | Gift, Diplomacy, Sanctions, Spy, Airlift play orders — **Airlift verified live 2026-11-16** (#296); the others still open | Part D |
 | V10 | Which pushed method, if any, announces a chat message | Chat push (A1) |
 
 The play session's saved game settings already show a `PrivateMessaging` boolean.

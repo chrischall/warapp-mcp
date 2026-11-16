@@ -664,3 +664,35 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
     }
   });
 });
+
+describe('card plays verified live (#296)', () => {
+  const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const claude = doc('../CLAUDE.md');
+  const protocol = doc('../docs/WEB-PROTOCOL.md');
+  const teams = doc('../docs/PLAN-TEAMS.md');
+  const row = (card: string) => protocol.split('\n').find((l) => l.startsWith(`| ${card} |`)) ?? '';
+
+  it('WEB-PROTOCOL.md marks the Airlift and Blockade plays verified live 2026-11-16, the other targeted cards not', () => {
+    expect(row('Airlift')).toMatch(/verified live 2026-11-16/);
+    expect(row('Airlift')).not.toMatch(/UNVERIFIED/);
+    expect(row('Blockade')).toMatch(/verified live 2026-11-16/);
+    for (const card of ['Spy, Reconnaissance, Surveillance', 'Gift', 'Diplomacy', 'Sanctions']) {
+      expect(row(card), card).toMatch(/UNVERIFIED live/);
+    }
+    const layout = protocol.slice(protocol.indexOf('PlayCard*'), protocol.indexOf('Discard         byte 09'));
+    expect(layout).toMatch(/12 Airlift[^;]*;\s*UNVERIFIED live:/);
+    expect(layout.slice(layout.indexOf('UNVERIFIED live:'))).not.toContain('Airlift');
+    const targeted = protocol.slice(protocol.indexOf('**Targeted card plays'), protocol.indexOf('**The hold limit'));
+    expect(targeted).toMatch(/Airlift[^.]*verified live 2026-11-16/);
+    expect(targeted).toMatch(/Bomb[^.]*Emergency Blockade[^.]*UNVERIFIED/);
+    expect(protocol).toMatch(/Order Priority[^.]*ran first[^.]*UNVERIFIED/i);
+  });
+
+  it('CLAUDE.md and the V9 row say the same', () => {
+    expect(claude).toMatch(/Airlift[^.]*verified live 2026-11-16/);
+    expect(claude).toMatch(/Blockade[^.]*verified live 2026-11-16/);
+    expect(claude).toMatch(/Order Priority[^.]*ran first[^.]*unverified/i);
+    const v9 = teams.split('\n').find((l) => l.startsWith('| V9 |')) ?? '';
+    expect(v9).toMatch(/Airlift[^|]*verified live 2026-11-16/);
+  });
+});
