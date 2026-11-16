@@ -82,8 +82,8 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
           'lastTurnTime, whose meaning is unverified). Optional game history and chat. ' +
           'A finished game I lost says how (`howLost`): a surrender or boot by my state; an elimination from the boards ' +
           'this server cached while it played — the turn (certain only when the game ended on it), my commander\'s territory ' +
-          'that fell with what it held, the attackers that needed and who bordered it, or else my last territories (inferred, ' +
-          'never seen). ' +
+          'that fell with what it held, the attackers that needed and who bordered it (at a commander walk\'s destination, ' +
+          'which may instead have fallen before the walk ran), or else my last territories (inferred, never seen). ' +
           'A finished game is folded once into the opponent profiles (`profileFold`; from the turns kept while it was played, ' +
           'else from the boards cached then — a backfill; no other request), as warapp_profile_opponents reads them. ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',

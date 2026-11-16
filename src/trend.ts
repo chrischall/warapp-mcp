@@ -230,12 +230,17 @@ function ordersOf(o: unknown): MyOrders | undefined {
       .map((d) => ({ territoryId: d.territoryId as number, armies: d.armies as number })),
     moves: (o.moves as unknown[])
       .filter((m): m is Rec => isRec(m) && isNum(m.from) && isNum(m.to) && isNum(m.armies))
-      .map((m) => ({ from: m.from as number, to: m.to as number, armies: m.armies as number })),
+      .map((m) => ({ from: m.from as number, to: m.to as number, armies: m.armies as number, ...(m.commander === true ? { commander: true as const } : {}) })),
     ...(Array.isArray(o.sent)
       ? {
           sent: (o.sent as unknown[])
             .filter((m): m is Rec => isRec(m) && isNum(m.from) && isNum(m.to))
-            .map((m) => ({ from: m.from as number, to: m.to as number, ...(m.transferOnly === true ? { transferOnly: true as const } : {}) })),
+            .map((m) => ({
+              from: m.from as number,
+              to: m.to as number,
+              ...(m.transferOnly === true ? { transferOnly: true as const } : {}),
+              ...(m.commander === true ? { commander: true as const } : {}),
+            })),
         }
       : {}),
     ...(Array.isArray(o.cards)

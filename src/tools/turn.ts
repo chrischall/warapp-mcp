@@ -1202,11 +1202,21 @@ export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
     // or Attack Only order may not happen at all (it runs only if the target's owner suits it).
     moves: orders.flatMap((o) =>
       o.kind === 'move' && !o.byPercent && (o.mode === undefined || o.mode === AttackTransferMode.AttackTransfer)
-        ? [{ from: o.from, to: o.to, armies: o.armies }]
+        ? [{ from: o.from, to: o.to, armies: o.armies, ...(o.commander ? { commander: true as const } : {}) }]
         : [],
     ),
+    // #274: a move that takes my commander along is flagged, so a loss report reads where it went.
     sent: orders.flatMap((o) =>
-      o.kind === 'move' ? [{ from: o.from, to: o.to, ...(o.mode === AttackTransferMode.Transfer ? { transferOnly: true as const } : {}) }] : [],
+      o.kind === 'move'
+        ? [
+            {
+              from: o.from,
+              to: o.to,
+              ...(o.mode === AttackTransferMode.Transfer ? { transferOnly: true as const } : {}),
+              ...(o.commander ? { commander: true as const } : {}),
+            },
+          ]
+        : [],
     ),
     // Profiles A1: an Airlift or a Gift changes what my territories hold or who holds them.
     cards: orders.flatMap((o) =>

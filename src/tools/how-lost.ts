@@ -36,10 +36,15 @@ function report(loss: HowLost, game: Game): Record<string, unknown> {
   let line: string;
   const c = loss.commander;
   if (c) {
+    const range = c.held ? `${c.held.low}${c.held.high !== c.held.low ? `–${c.held.high}` : ''}` : '';
     const held = c.held
-      ? ` It held ${c.held.low}${c.held.high !== c.held.low ? `–${c.held.high}` : ''} armies and the commander (${c.armies} at the start of the turn, +${c.deployed} deployed, −${c.movedOut} moved out, +${c.movedIn} moved in); taking that needs at least ${c.attackersNeeded} attackers${c.exact ? '' : ' (at the expectation: the game has luck)'}.`
-      : ` It started the turn with ${c.armies} armies and the commander; my orders that turn are not cached, so what it held is unknown.`;
-    line = `${when}: my commander's territory ${named(c.territoryId)} fell${by} (inferred: losing the commander ends the game for me).${held}${bordered}`;
+      ? ` It held ${c.held.uncertain ? `about ${range}` : range} armies and the commander (${c.armies} at the start of the turn, +${c.deployed} deployed, −${c.movedOut} moved out, +${c.movedIn} moved in${c.walk ? `, the walk's ${c.walk.armies} among them` : ''}); taking that needs at least ${c.attackersNeeded} attackers${c.exact ? '' : ' (at the expectation: the game has luck)'}${c.held.uncertain ? ' — a bound only: an order this count leaves out (a percentage, Attack Only or Transfer Only order, or a card play) touched it' : ''}.`
+      : c.walk
+        ? ` My orders that turn do not say what it held there${c.walk.armies === null ? ' (the walk was a percentage order)' : ''}.`
+        : ` It started the turn with ${c.armies} armies and the commander; my orders that turn are not cached, so what it held is unknown.`;
+    line = c.walk
+      ? `${when}: my commander walked from ${named(c.walk.from)} to ${named(c.territoryId)} that turn; it fell on ${named(c.territoryId)}${by}, or on ${named(c.walk.from)} before the walk ran (inferred: losing the commander ends the game for me; which of the two is not known).${held}${bordered}`
+      : `${when}: my commander's territory ${named(c.territoryId)} fell${by} (inferred: losing the commander ends the game for me).${held}${bordered}`;
   } else if (loss.cause === 'last-territories') {
     const ids = (loss.lastTerritories ?? []).map((t) => named(t.territoryId)).join(', ');
     line = `${when}: my last ${loss.territoriesHeld} territor${loss.territoriesHeld === 1 ? 'y' : 'ies'} fell${by} (${ids}${loss.territoriesHeld > (loss.lastTerritories?.length ?? 0) ? ', …' : ''}).${bordered}`;

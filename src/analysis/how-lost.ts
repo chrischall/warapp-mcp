@@ -12,7 +12,13 @@
 //   there is a range: `low` = armies + my deploys − my moves out (the attack after they left, before my
 //   moves in landed), `high` = armies + my deploys + my moves in (after they landed, before any left); the attack that took it needed at least
 //   `armiesToTake(low + COMMANDER_STRENGTH)` at the game's kill rates (exact only at 0% luck under
-//   straight rounding; with luck an expectation).
+//   straight rounding; with luck an expectation). `held.uncertain` marks a range my orders cannot pin:
+//   an order `moves` leaves out (a percentage, Attack Only or Transfer Only one, kept only in `sent`) or
+//   an Airlift or other card play touches the territory.
+//   When that turn's orders walk the commander (a move flagged `commander`), it is read at the walk's
+//   destination, `territoryCertain: false` (it may have fallen on its start before the walk ran): the
+//   range there is from after the walk landed (its armies in `low`), and the neighbours are both
+//   territories'. A walk known only from `sent` (a percentage order) has no army count and no range.
 // - `last-territories`: no commander of mine on the board (and the game was not known to have
 //   commanders): the territories I still held, which all fell.
 // - `unknown`: the game had commanders but the board shows none of mine (a board cached before
@@ -36,15 +42,23 @@ export interface LossNeighbour {
 }
 
 export interface CommanderLoss {
+  /** Where the commander was read to fall: its walk's destination when that turn's orders walked it. */
   territoryId: number;
+  /** `false` when the orders walked the commander: it may instead have fallen on `walk.from` before the walk ran. */
+  territoryCertain: boolean;
+  /** That turn's commander walk; `armies` is `null` when only the orders sent record it (a percentage order). */
+  walk?: { from: number; to: number; armies: number | null };
   /** The armies on it at the start of the turn (the commander not counted). */
   armies: number;
   /** My deploys there, moves out of it and moves into it that turn; `null` when my orders are not cached. */
   deployed: number | null;
   movedOut: number | null;
   movedIn: number | null;
-  /** What stood there when attacked: `low` after my moves out and before my moves in, `high` the reverse. */
-  held: { low: number; high: number } | null;
+  /**
+   * What stood there when attacked: `low` after my moves out and before my moves in (a walk's armies in
+   * at its destination), `high` the reverse. `uncertain` when an order the count leaves out touched it.
+   */
+  held: { low: number; high: number; uncertain: boolean } | null;
   /** The fewest attackers that take `held.low` armies and the commander; `null` without the orders. */
   attackersNeeded: number | null;
   /** `false` with luck or weighted rounding: the size is then the expectation's. */
@@ -132,18 +146,36 @@ export function howLost(input: HowLostInput): HowLost | undefined {
   };
   let fallen: number[] = [];
   if (cmd) {
-    const armies = cmd.armies ?? 0;
     const orders = input.orders.get(turn);
-    const id = cmd.territoryId;
-    const deployed = orders ? orders.deploys.filter((d) => d.territoryId === id).reduce((s, d) => s + d.armies, 0) : null;
-    const movedOut = orders ? orders.moves.filter((m) => m.from === id).reduce((s, m) => s + m.armies, 0) : null;
-    const movedIn = orders ? orders.moves.filter((m) => m.to === id).reduce((s, m) => s + m.armies, 0) : null;
+    const start = cmd.territoryId;
+    const walkMove = orders?.moves.find((m) => m.commander && m.from === start);
+    const walkSent = orders?.sent?.find((m) => m.commander && m.from === start);
+    const walk = walkMove
+      ? { from: start, to: walkMove.to, armies: walkMove.armies }
+      : walkSent
+        ? { from: start, to: walkSent.to, armies: null }
+        : undefined;
+    const id = walk ? walk.to : start;
+    const at = walk ? board.territories.find((t) => t.territoryId === id) : cmd;
+    const armies = at && ownerId(at) === me ? (at.armies ?? 0) : 0;
+    const sum = (xs: readonly { armies: number }[]) => xs.reduce((s, x) => s + x.armies, 0);
+    const deployed = orders ? sum(orders.deploys.filter((d) => d.territoryId === id)) : null;
+    const movedOut = orders ? sum(orders.moves.filter((m) => m.from === id)) : null;
+    const movedIn = orders ? sum(orders.moves.filter((m) => m.to === id)) : null;
+    // An order `moves` leaves out (kept only in `sent`), or a card play, touching it: the count is a bound.
+    const touches = (m: { from?: number; to?: number; target?: number }) => m.from === id || m.to === id || m.target === id;
+    const uncertain =
+      !!orders && ((orders.sent?.filter(touches).length ?? 0) > orders.moves.filter(touches).length || (orders.cards ?? []).some(touches));
+    // At a walk's destination the commander stands only once the walk has landed: its armies are in `low`.
+    const walkIn = walk ? walk.armies : 0;
     const held =
-      deployed !== null && movedOut !== null && movedIn !== null
-        ? { low: Math.max(0, armies + deployed - movedOut), high: armies + deployed + movedIn }
+      deployed !== null && movedOut !== null && movedIn !== null && walkIn !== null && (!walk || (at && ownerId(at) === me))
+        ? { low: Math.max(0, armies + deployed - movedOut + walkIn), high: armies + deployed + movedIn, uncertain }
         : null;
     out.commander = {
       territoryId: id,
+      territoryCertain: !walk,
+      ...(walk ? { walk } : {}),
       armies,
       deployed,
       movedOut,
@@ -152,7 +184,7 @@ export function howLost(input: HowLostInput): HowLost | undefined {
       attackersNeeded: held ? armiesToTake(held.low + COMMANDER_STRENGTH, input.rates) : null,
       exact: luckFraction(input.rates.luck) === 0 && input.rates.rounding !== 'WeightedRandom',
     };
-    fallen = [id];
+    fallen = walk ? [start, id] : [id];
   } else if (cause === 'last-territories') {
     const sorted = [...mine].sort((a, b) => a.territoryId - b.territoryId);
     out.lastTerritories = sorted.slice(0, MAX_LAST_TERRITORIES).map((t) => ({ territoryId: t.territoryId, armies: t.armies }));

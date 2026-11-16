@@ -146,13 +146,14 @@ export interface TurnBoard {
 /** My orders on one turn (#119): my deploys and the moves I sent (attacks and transfers alike). */
 export interface MyOrders {
   deploys: readonly { territoryId: number; armies: number }[];
-  moves: readonly { from: number; to: number; armies: number }[];
+  /** `commander` (#274): the move took my commander along. Absent in caches written before it. */
+  moves: readonly { from: number; to: number; armies: number; commander?: true }[];
   /**
    * B4: every move order sent, in order, a Transfer Only one flagged (it attacks nothing); percentage
    * and Attack Only orders kept, which `moves` leaves out. What a chat commitment is checked against.
    * Absent in caches written before it. Never read by opponent tracking.
    */
-  sent?: readonly { from: number; to: number; transferOnly?: true }[];
+  sent?: readonly { from: number; to: number; transferOnly?: true; commander?: true }[];
   /**
    * Profiles A1: every card play sent, by card name, with the territories it touches (an Airlift's
    * `from` and `to`, a Gift's or Blockade's `target`). Empty when none was played; absent in caches

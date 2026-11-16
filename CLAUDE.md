@@ -1169,11 +1169,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   or boot by its state; an elimination from the newest cached board where it held a territory (the
   turn, `turnCertain` only when the game ended on it): my commander there → its territory fell
   (inferred), with what stood there after my cached orders (`low` after my moves out, `high` after my
-  moves in) and `armiesToTake(low + 7)` at the game's kill rates (`exact: false` with luck); no
+  moves in) and `armiesToTake(low + 7)` at the game's kill rates (`exact: false` with luck;
+  `held.uncertain` when an order `moves` leaves out — kept only in `sent` — or a card play touches it).
+  When that turn's cached orders walk the commander (`commander: true` on `MyOrders.moves` / `sent`,
+  cached by `myOrdersOf`), it is read at the walk's destination, `territoryCertain: false` (it may
+  have fallen on the start before the walk ran), the neighbours of both. No
   commander → the last territories; a Commanders game whose board shows none → `unknown`. The
   neighbours by owner (fog `null`), `by` only when one player alone borders it. Kept as `loss` in the
-  outlook log (ids and figures; a log may hold only that) and read from there once the boards are gone;
-  names go out through `untrustedText`.
+  outlook log (ids and figures; a log may hold only that; never written over another account's log) and
+  read from there once the boards are gone; names go out through `untrustedText`.
   An opponent the outlook cannot measure (nothing in view now, or no observed income) gets a
   peer-paced likely high (#214, `peerPace` in `src/analysis/outlook.ts`, pure and exported for the
   planner): each turn 2 × the higher of my income and the most any opponent was tracked earning, the

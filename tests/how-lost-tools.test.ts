@@ -5,8 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../src/board.js';
-import { outlookLogPath, readOutlookLog } from '../src/outlook-log.js';
-import { writeBoardCache, writeOrdersCache } from '../src/trend.js';
+import type { Game } from '../src/normalize.js';
+import { outlookLogPath, readOutlookLog, recordLoss } from '../src/outlook-log.js';
+import { lossReport } from '../src/tools/how-lost.js';
+import { myOrdersOf } from '../src/tools/turn.js';
+import { readCachedOrders, writeBoardCache, writeOrdersCache } from '../src/trend.js';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
 
 const GAME = 12345678;
@@ -140,5 +144,68 @@ describe('warapp_get_game: how the game was lost (#274)', () => {
     const dir = await seed();
     h = await liveHarness({ feed: [finished('Booted')], dataDir: dir });
     expect((payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>).howLost).toMatchObject({ cause: 'booted' });
+  });
+  it('caches a commander walk as such and reads the loss at its destination, saying it may have fallen before the walk', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-howlost-'));
+    await writeBoardCache(dir, GAME, ME, 3, board());
+    // The orders as warapp_submit_turn caches them: my commander walks 3 → 6 with 10 armies.
+    const sent = myOrdersOf([
+      { kind: 'deploy', territoryId: 6, armies: 5 },
+      { kind: 'move', from: 3, to: 6, armies: 10, commander: { id: '00000000-0000-0000-0000-000000000001', owner: 10 } },
+    ]);
+    expect(sent.moves).toEqual([{ from: 3, to: 6, armies: 10, commander: true }]);
+    expect(sent.sent).toEqual([{ from: 3, to: 6, commander: true }]);
+    await writeOrdersCache(dir, GAME, ME, 3, sent);
+    expect((await readCachedOrders(dir, GAME, ME)).get(3)?.moves).toEqual([{ from: 3, to: 6, armies: 10, commander: true }]);
+    h = await liveHarness({ feed: [finished('Eliminated')], dataDir: dir });
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+    expect(p.howLost.commander).toMatchObject({ territoryId: 6, territoryCertain: false, walk: { from: 3, to: 6, armies: 10 }, held: { low: 35, high: 35 } });
+    expect(p.howLost.line).toMatch(/my commander walked from 3 ⟦Thenn⟧ to 6 /);
+    expect(p.howLost.line).toContain('it fell on 6');
+    expect(p.howLost.line).toContain('or on 3 ⟦Thenn⟧ before the walk ran');
+  });
+
+  it('says what it held is a bound when an order the moves leave out touches the commander territory', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-howlost-'));
+    await writeBoardCache(dir, GAME, ME, 3, board());
+    await writeOrdersCache(dir, GAME, ME, 3, { deploys: [], moves: [], sent: [{ from: 3, to: 1 }], cards: [] });
+    h = await liveHarness({ feed: [finished('Eliminated')], dataDir: dir });
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+    expect(p.howLost.commander.held).toMatchObject({ uncertain: true });
+    expect(p.howLost.line).toContain('an order this count leaves out');
+  });
+
+  it('says the cause is unknown when the game had commanders but the cached board shows none of mine', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-howlost-'));
+    const plain = board();
+    plain.territories = plain.territories.map(({ specialUnits: _u, ...rest }) => rest);
+    await writeBoardCache(dir, GAME, ME, 3, plain);
+    const g = finished('Eliminated');
+    h = await liveHarness({ feed: [{ ...g, settings: { ...(g.settings as object), Commanders: true } }], dataDir: dir });
+    const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+    expect(p.howLost).toMatchObject({ cause: 'unknown', turn: 3 });
+    expect(p.howLost.line).toBe('Eliminated on turn 3; the cached board does not show my commander, so the cause is unknown.');
+  });
+
+  it('never throws: a failure while reading gives no report', async () => {
+    const dir = await seed();
+    const game = {
+      id: GAME,
+      state: 'Finished',
+      get players(): never {
+        throw new Error('boom');
+      },
+    } as unknown as Game;
+    await expect(lossReport(dir, game)).resolves.toBeUndefined();
+  });
+
+  it("never writes the loss over another account's outlook log", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-howlost-'));
+    mkdirSync(join(dir, 'outlook'), { recursive: true });
+    const other = { gameId: GAME, playerId: OPP, turns: { '2': { mine: 5, low: 5, high: 5, ratio: 1, state: 'even' } } };
+    writeFileSync(outlookLogPath(dir, GAME), JSON.stringify(other));
+    const loss = { turn: 3, turnCertain: true, cause: 'last-territories' as const, territoriesHeld: 1, neighbours: null, by: null };
+    expect(await recordLoss(dir, GAME, ME, loss)).toBe(false);
+    expect(JSON.parse(readFileSync(outlookLogPath(dir, GAME), 'utf8'))).toEqual(other);
   });
 });

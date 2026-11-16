@@ -113,10 +113,14 @@ export async function readOutlookPlayer(dir: string, gameId: number): Promise<nu
 
 /**
  * Keep how `gameId` was lost (#274) in its log, starting one when this server logged no outlook for
- * it (the boards were cached by another tool); `true` when written. Name-free: ids and figures. Best effort.
+ * it (the boards were cached by another tool); `true` when written, `false` (nothing written) when the
+ * log is another account's. Name-free: ids and figures. Best effort.
  */
 export async function recordLoss(dir: string, gameId: number, playerId: number, loss: HowLost): Promise<boolean> {
   try {
+    // Another account's log (its calibration turns) is never replaced.
+    const owner = await readOutlookPlayer(dir, gameId);
+    if (owner !== undefined && owner !== playerId) return false;
     const log = (await readOutlookLog(dir, gameId, playerId)) ?? { gameId, playerId, turns: {} };
     if (JSON.stringify(log.loss) === JSON.stringify(loss)) return true;
     await write(dir, { ...log, loss });
