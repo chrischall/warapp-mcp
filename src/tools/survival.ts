@@ -144,6 +144,7 @@ export function headroomView(rows: readonly HeadroomRow[], map: GameMap, myIncom
     bonuses: r.bonuses.map((b) => ({ id: b.id, name: bonusName.get(b.id) ?? String(b.id), value: b.value })),
     behind: r.behind.map(name),
     behindIncome: r.behindIncome,
+    breach: { territories: r.breach.territories.map(name), income: r.breach.income },
     ...(mayBeTeammate ? { mayBeTeammate: true as const } : {}),
   }));
 }

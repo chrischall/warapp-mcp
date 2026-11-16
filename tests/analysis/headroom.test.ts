@@ -41,7 +41,7 @@ describe('headroomTable (#275 a)', () => {
     // 10 defenders need 16 attackers; the stack of 3 sends 2 + its deploy: 14.
     const rows = table(LINE3, [mine(1, 1), mine(2, 10), foe(3, 3)]);
     expect(rows).toEqual([
-      { territory: 2, armies: 10, opponent: FOE, from: 3, deploy: 14, bonuses: [{ id: 100, value: 4 }], behind: [1], behindIncome: 3 },
+      { territory: 2, armies: 10, opponent: FOE, from: 3, deploy: 14, bonuses: [{ id: 100, value: 4 }], behind: [1], behindIncome: 3, breach: { territories: [1], income: 3 } },
     ]);
   });
 

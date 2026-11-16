@@ -327,6 +327,10 @@ export function transfers(
             ? ` (the ${centralKeep.get(t)!} of the leftover kept central stay)`
             : k < n && !ifFail && truceHold > 0
             ? ` (${truceHold} stay: they hold it beside a truce's covered territory)`
+            : k < n && !ifFail && ps.secondLine.has(t)
+            ? ` (${ps.secondLine.get(t)!} stay: its second line, #275)`
+            : k < n && !ifFail
+            ? ` (${n - k} stay: they cover a finished-off player's exit)`
             : k < n
             ? ` (${stayAt(t)} stay: it is interior only once ${pending.map(label).join(', ')} falls, and until then they hold it against ~${ifFail!.threat})`
             : ''

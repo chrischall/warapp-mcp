@@ -16,6 +16,7 @@
 //   4e. never stand still ...................................... plan/stand-still.ts
 //   4h. the army cap prices idle armies (#253) .................. plan/cap-spend.ts
 //   5. the leftover deploy, 3b's short borders (#121) ........... plan/leftover.ts
+//   #275 second line, before the leftover deploy ............... plan/second-line.ts
 //   5b. a neutral the leftover pays for (#218) ................. plan/after-leftover.ts
 //   6. transfers, #125 staging ................................. plan/transfers.ts
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
@@ -464,7 +465,14 @@
 //     income) in its protected value, their armies in its worth (/ PAYBACK_TURNS) — and a
 //     rationale line names the cut ("… links my holdings: losing it cuts off …") when it can change
 //     the judgement: income, or at least PAYBACK_TURNS armies (never a 1-army leaf). The cut's
-//     per-territory share uses my start-of-turn count, as the border's own does. Its hold cost is the fewest
+//     per-territory share uses my start-of-turn count, as the border's own does. #275 (pattern 2),
+//     guard off only: a border also protects BREACH_WEIGHT (0.5) of its breach cost
+//     (src/analysis/breach.ts, the deploy book's `breachAt`): the positive bonuses held in full (its own
+//     left out) with a member among my territories within two steps behind it that face no enemy or
+//     fog, that no other front reaches within two steps, and that are hollow (none of mine beside
+//     them, themselves included, holds the largest visible foe stack beside the border plus its
+//     owner's deploy), plus their per-territory income; what #235 cuts off is not counted twice. A
+//     rationale line names it ("… alone shields … (#275)"). Its hold cost is the fewest
 //     deploys making `armiesToTake(armies + d) > threat`. Every border facing one
 //     opponent is sized for that opponent's whole deploy (#69): it picks where to land
 //     after I commit, so that is each border's worst case, and a sure hold of several
@@ -1092,6 +1100,16 @@
 //     affords on its surplus may still fall to a combined capture (rule 3a), whose softeners and
 //     finisher keep what holds a safe border too; in rule 4e a step
 //     that fails only because of a keep is reported as the hold it would leave short.
+//  5s. A second line (#275, pattern 2; plan/second-line.ts), guard off and not under No-Split only.
+//     Right before the leftover deploy, after every hold and capture: for each bonus I hold in full at
+//     the start (most valuable first), each member that faces no enemy or fog and stands two moves
+//     from a visible foe stack larger than my income (its commander counted), through a territory
+//     between that the stack can break (not mine, given up, or falling after this plan's deploys to
+//     the stack plus its owner's deploy), keeps SECOND_LINE_ARMIES (2): the armies already there count, the rest is deployed, and
+//     all second lines together take at most SECOND_LINE_SHARE (20%) of the income. What a line keeps
+//     goes into `coverKeep`, so rule 6, the strike stack, 5b and #226's margins leave it; a rationale
+//     line per member ("Second line (#275): …"). Paid from the leftover only, it never takes a capture's
+//     armies (measured: no guard-off golden board and no cached real guard-off board lost a capture).
 //  5. Deploys cover only the shortfall of a chosen capture; leftover income never
 //     goes to a conceded border. #265: first (after #121's hold after all, when that runs), each
 //     weak member of a bonus this turn completes (rule 3a's #265) is brought to its hold — a
@@ -1510,6 +1528,7 @@ import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from '
 import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
+import { secondLine } from './plan/second-line.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
@@ -2573,6 +2592,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   caps.rebalanceCombined(completedMembers(pc, ps, threats, open, stays).weakMember, stays);
   // ---- concentrate (#72, rule 0p.3c): the 1v1 strike stack's border (plan/strike.ts) ----
   const { stack, smallExpansion } = chooseStrikeStack(pc, ps, book, threats, open, stays);
+  // ---- #275: a small second line behind a border a large stack can break (plan/second-line.ts) ----
+  secondLine(pc, ps, book, open, stays);
   // ---- 5. the leftover deploy (plan/leftover.ts) ----
   // ---- #276: guard off — the second line's shortfall, before the leftover (plan/guard-off.ts) ----
   fillSecondLine(pc, ps, book);

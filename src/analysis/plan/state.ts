@@ -217,6 +217,8 @@ export interface PlanState {
   coverKeep: Map<number, number>;
   /** #218 (comment): the leftover kept central with no front to go to (rule 5): rule 6 never moves it away. */
   centralKeep: Map<number, number>;
+  /** #275: the second lines (plan/second-line.ts), in `avail` terms; each is also in `coverKeep`. */
+  secondLine: Map<number, number>;
   /**
    * #226 review: borders rule 5's leftover deployed to for defence (a comfortable margin, a hold
    * before the strike stack) or to save toward a step: the #226 margin takes nothing from them.
@@ -315,6 +317,7 @@ export function newPlanState(): PlanState {
     locked: new Set(),
     coverKeep: new Map(),
     centralKeep: new Map(),
+    secondLine: new Map(),
     leftoverKept: new Set(),
     spared: new Set(),
     unabsorbed: new Set(),

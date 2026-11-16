@@ -56,6 +56,7 @@ interface HeadroomView {
   needsFirstMove?: string;
   belowMyIncome: boolean;
   bonuses: Array<{ id: number; value: number }>;
+  breach: { territories: Array<{ id: number }>; income: number };
 }
 interface Checked {
   headroom: HeadroomView[];
@@ -81,6 +82,8 @@ describe('the headroom table (#275 a)', () => {
       [159, 25, 39, 158, false],
     ]);
     expect(p.headroom[0]!.opponent).toBe(Number(BOB.feed));
+    // #275 pattern 2: each row says what a breach of it opens; both borders face Bob, nothing lies behind.
+    for (const r of p.headroom) expect(r.breach).toEqual({ territories: [], income: 0 });
   });
 
   it('warapp_plan_turn gives it on the plan\'s orders', async () => {

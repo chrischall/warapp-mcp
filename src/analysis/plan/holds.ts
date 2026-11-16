@@ -9,6 +9,7 @@ import { bfsDistances, neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
 import { twoStepReaches, type TwoStepReach } from '../lookahead.js';
 import {
+  BREACH_WEIGHT,
   CITE_CLOSE,
   CITE_OPEN,
   CITE_SEP,
@@ -537,7 +538,7 @@ export function holdOrConcede(
 ) {
   const { goal, paybackTurns, label, unitsAt, bombOn, toTake, myCommanders } = pc;
   const { warnings, rationale, locked } = ps;
-  const { deploy, valueOf, stakeAt, cutOff } = book;
+  const { deploy, valueOf, stakeAt, cutOff, breachAt } = book;
   const { borders, recentlyTakenFrom } = threats;
   const { threatened, conceded } = hb;
   const { stayAt } = prev;
@@ -547,6 +548,8 @@ export function holdOrConcede(
    */
   /** #235: the borders whose cut is already named. */
   const cutNoted = new Set<number>();
+  /** #275: the borders whose breach is already named. */
+  const breachNoted = new Set<number>();
   /** Rule 1a's pre-deploy threat warning per border, restated once the deploys are known. */
   const threatWarnings = new Map<number, { text: string; threat: number }>();
   const assessThreats = () => {
@@ -576,6 +579,16 @@ export function holdOrConcede(
           `${label(b.id)} links my holdings: losing it cuts off ${named}${more} (${cut.armies} armies${cut.income > 0 ? `, +${cut.income} income` : ''}) from the rest, so ${
             cut.income > 0 ? `it protects +${cut.income} more and ` : ''
           }its worth counts those ${cut.armies} armies (/ ${paybackTurns} turns) (#235).`,
+        );
+      }
+      // #275: with the guard off, a border whose breach opens earning territory behind it says so.
+      const breach = breachAt(b.id);
+      if (breach && !breachNoted.has(b.id)) {
+        breachNoted.add(b.id);
+        const named = breach.ids.slice(0, MAX_CUT_NAMED).map(label).join(', ');
+        const more = breach.ids.length > MAX_CUT_NAMED ? ` and ${breach.ids.length - MAX_CUT_NAMED} more` : '';
+        rationale.push(
+          `${label(b.id)} alone shields ${named}${more} within two moves behind it (+${breach.income} income): with the guard off a breach walks straight in, so its value counts ${BREACH_WEIGHT * 100}% of that (+${breach.worth}) (#275).`,
         );
       }
       const from = recentlyTakenFrom(b.id);
@@ -1555,7 +1568,7 @@ export function reconsiderAndGarrison(
 ) {
   const { g, guarded, reserve, paybackTurns, label, bonusName, mine, mineSet, unitsAt, toTake, myCommanders } = pc;
   const { warnings, rationale, deployed, locked, captured, moves } = ps;
-  const { orderOf, deploy, pools, valueCache, cutCache, valueOf } = book;
+  const { orderOf, deploy, pools, valueCache, cutCache, breachCache, valueOf } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { borders } = threats;
   const { conceded, kept, garrisoned } = hb;
@@ -1570,6 +1583,7 @@ export function reconsiderAndGarrison(
     ps.holdings = new Set([...mine, ...captured]);
     valueCache.clear();
     cutCache.clear();
+    breachCache.clear();
     if (!conceded.size) return;
     for (const t of [...conceded].sort(byNum)) {
       // Already withdrawn from (rule 1b ran first): its armies are gone, and it stays conceded.

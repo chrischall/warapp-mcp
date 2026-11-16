@@ -705,6 +705,24 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`borderGuess`' `untrusted`, reason `untrusted`: a split drawn from the estimate would undo it), `warapp_check_plan`
   tries that figure by default (source `untrusted`), and both say so in the first warning (under `enemy_deploy`
   `warapp_check_plan` says nothing of it and `warapp_plan_turn`'s warning names the what-if figure it used).
+- **A hollow interior with the guard off (#275, pattern 2).** `src/analysis/breach.ts` (pure, `breachBehind`):
+  a border's breach is my territories within two steps behind it (through my holdings) that face no enemy or
+  fog, that no other front of mine reaches within two steps (so nothing is counted twice), and that are hollow
+  (the caller's test), with the bonuses I hold in full that they are in, the border's own left out. Every
+  `headroom` row carries `breach` (territories, income; hollow = none of mine beside it, itself included,
+  holds the stack that takes the border at its headroom; no deploy takes it → empty), guard on or off. The
+  planner, **guard off only**, adds `BREACH_WEIGHT` (0.5) × that income (plus its per-territory income; hollow
+  = below the largest visible foe stack beside the border plus its owner's deploy; #235's cut not counted
+  twice) to the border's protected value (`breachAt` in the deploy book), with a rationale line ("… alone
+  shields …"). And rule 5s (`plan/second-line.ts`), guard off and not under No-Split: a member of a bonus
+  held in full that faces no enemy and stands two moves from a visible foe stack larger than my income keeps
+  `SECOND_LINE_ARMIES` (2), paid from the leftover only (before rule 5, after every hold and capture), all
+  lines together at most `SECOND_LINE_SHARE` (20%) of the income, kept through `coverKeep` (and
+  `ps.secondLine`, for rule 6's wording). Only through a territory between that the stack can break (not mine, given up, or
+  falling after this plan to the stack plus its owner's deploy). Measured on the golden corpus (916 guard-off
+  boards: orders changed on 27, no capture lost, next income never lower, warnings never more) and on 40
+  cached real guard-off boards (orders changed on 5, no capture lost, next income and concessions unchanged;
+  second lines deployed 4 armies in all, at most 10% of a turn's income).
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
   turn, income = the most of the last three observed turns (or its stock and flow when more),

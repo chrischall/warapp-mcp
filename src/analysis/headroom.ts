@@ -21,10 +21,17 @@
 //
 // What falls with it: the bonuses I hold after my orders that it is in, and `behind` — my territories
 // beside it that face no enemy, one step behind it — with `behindIncome`, the bonuses they complete
-// that the border's own fall does not already break.
+// that the border's own fall does not already break. And `breach` (#275, pattern 2): the territories
+// within two steps behind it that only it shields (src/analysis/breach.ts: none faces an enemy or the
+// fog, and no other front of mine is within two steps of them), with the bonuses I hold that they are
+// in (the border's own left out) — what a breach walks into when the interior holds nothing: only a
+// territory none of mine beside it (itself included) holds the stack that takes the border at its
+// headroom counts, and with no deploy taking it the breach is empty. The
+// planner counts BREACH_WEIGHT of it in the border's value with the guard off; the row gives it always.
 
 import type { BoardState } from '../board.js';
 import { bonusTerritories } from './bonuses.js';
+import { breachBehind } from './breach.js';
 import { armiesToTake, COMMANDER_STRENGTH } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { neighborsOf } from './graph.js';
@@ -62,6 +69,11 @@ export interface HeadroomRow {
   behind: number[];
   /** The positive bonuses those complete that its own fall does not already break. */
   behindIncome: number;
+  /**
+   * #275: what a breach of it opens — my territories within two steps behind it that only it shields
+   * (ascending), and the income of the bonuses I hold that they are in, its own left out.
+   */
+  breach: { territories: number[]; income: number };
 }
 
 /** The largest deploy searched; a border no deploy up to it takes has `deploy: null`. */
@@ -170,7 +182,12 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
   const value = (id: number) => graph.bonusById.get(id)?.value ?? 0;
   /** A territory of mine beside an enemy stack (its owner shown, armies in view). */
   const facesEnemy = (id: number) => neighborsOf(graph, id).some((n) => enemy(start.get(n)?.owner));
+  /** #275: a territory of mine beside an enemy stack or the fog (an owner the board does not show). */
+  const front = (id: number) => neighborsOf(graph, id).some((n) => enemy(start.get(n)?.owner) || (start.get(n)?.owner ?? 'unknown') === 'unknown');
 
+  /** What `player`'s stack on `s` sends with no deploy (its commander counted). */
+  const sendsFrom = (s: number, player: number) =>
+    Math.max(0, (start.get(s)?.armies ?? 0) - guard) + (start.get(s)?.commander === player ? COMMANDER_STRENGTH : 0);
   const rows: HeadroomRow[] = [];
   for (const b of [...mineAfter].sort(byNum)) {
     const stacks = neighborsOf(graph, b)
@@ -187,7 +204,7 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
       const found = orders.map((first) => {
         // A guess from the board after my orders: what takes it, less what the stack sends.
         const defenders = there.armies + (there.commander === me ? COMMANDER_STRENGTH : 0);
-        const sends = Math.max(0, (start.get(s)?.armies ?? 0) - guard) + (start.get(s)?.commander === player ? COMMANDER_STRENGTH : 0);
+        const sends = sendsFrom(s, player);
         const guess = Math.max(0, (armiesToTake(defenders, rates) ?? HEADROOM_CAP) - sends);
         const fills = fillerCounts(b, s, first);
         return { first, deploy: smallest((d) => takes(d, first, fills), Math.min(guess, HEADROOM_CAP)) };
@@ -205,6 +222,15 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
     const behindIncome = held
       .filter((id) => !bonuses.includes(id) && bonusTerritories(graph, id).some((t) => behind.includes(t)))
       .reduce((n, id) => n + Math.max(0, value(id)), 0);
+    // The stack that takes it at its headroom; a territory behind is hollow when none of mine beside
+    // it (itself included) holds as many after my orders. No deploy takes it: nothing to breach.
+    const taker = best!.deploy === null ? 0 : sendsFrom(best!.from, best!.opponent) + best!.deploy;
+    const hollow = (x: number) =>
+      [x, ...neighborsOf(graph, x)].every((y) => {
+        const at = baseline.territories.get(y);
+        return y === b || !mineAfter.has(y) || (at?.armies ?? 0) + (at?.commander === me ? COMMANDER_STRENGTH : 0) < taker;
+      });
+    const breach = taker > 0 ? breachBehind(graph, mineAfter, front, b, new Set(), hollow) : { ids: [], income: 0 };
     rows.push({
       territory: b,
       armies: there.armies,
@@ -215,6 +241,7 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
       bonuses: bonuses.map((id) => ({ id, value: value(id) })),
       behind,
       behindIncome,
+      breach: { territories: breach.ids, income: breach.income },
     });
   }
   return rows.sort((a, b) => (a.deploy ?? Infinity) - (b.deploy ?? Infinity) || a.territory - b.territory);
