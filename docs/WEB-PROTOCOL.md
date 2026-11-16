@@ -100,7 +100,7 @@ string email                  the signed-in account's email
 | 64 | **DeclineGame** | params: int32 gameId, bool modHook — read from the bundle, **verified live 2026-11-14** (open-seat lobby); see [DeclineGame](#declinegame-leaving-a-lobby) |
 | 67 | **Surrender** | params: int32 gameId, bool surrender, bool false — see [Surrender](#surrender) |
 | 68 | **AcceptSurrender** | params: int32 gameId, int32 in-game player id, bool accept, bool modHook — read from the bundle, UNVERIFIED live; sent by `warapp_accept_surrender` (accept only); see [Accepting a surrender](#accepting-a-surrender) |
-| 73 | GetMapDetails | no auth; params: int32 mapId — read by `warapp_get_map`'s full view for the distribution modes' territories, see [Map details](#map-details-distribution-modes) |
+| 73 | GetMapDetails | no auth; params: int32 mapId — read by `warapp_get_map`'s full view for the distribution modes' territories, and by `warapp_locate_opponents` for the start candidates of a game dealt automatically from a map mode, see [Map details](#map-details-distribution-modes) |
 | 74 | **SendOrders** | the turn commit — not yet captured |
 | 75 | SendInProgressOrders | draft save of orders |
 | 76 | SendTerritoryPicks | params: int32 gameId, bool present, int list territoryIds (priority order), bool, bool |
@@ -524,7 +524,9 @@ scenario) are not in the dict.
 `src/map-details.ts` decodes it with the bundle's own readers by type name (`MapDetails`,
 `NormalDistribution`, `ScenarioDistribution`; field counts checked, and each mode's own id must equal its
 key), and checks every id against the map's territories (one it lacks is dropped, with a warning).
-`warapp_get_map` (view `full`, no bonus filter) asks only when a mode of the map has no territories yet,
+`warapp_get_map` (view `full`, no bonus filter) and `warapp_locate_opponents` (a game whose settings say
+`AutomaticTerritoryDistribution` "Automatic" with a `DistributionMode` of the map, and no pickable territories
+kept: the mode's territories are its start candidates) ask only when a mode of the map has no territories yet,
 at most once per map per process; the territories are kept with the map in the store
 (`distributionModes[].territories`, `src/map-store.ts`) and age out with it (carried onto a fresh download
 of the same map, they keep the stored copy's `storedAt`; a mode whose stored ids the fresh map does not all

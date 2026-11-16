@@ -675,6 +675,27 @@ describe('who is an opponent, and determinism', () => {
   });
 });
 
+describe('starts — a distribution mode (#328)', () => {
+  // An automatically distributed game: the map's mode 4 deals starts among 1, 4, 7 and 9; I start on 9.
+  const graph = mkGraph(line(9));
+  const turn1 = at(1, own(9, 5), neutral(8, 2));
+  const mode = { territories: [1, 4, 7, 9], source: 'distribution-mode' as const, mode: 4 };
+
+  it('weighs the mode\'s territories as the pickable ones are weighed, less mine', () => {
+    const r = locate({ graph, boards: [turn1], settings: { ...STD, startsPerPlayer: 2 }, candidates: mode });
+    const o = theFoe(r);
+    expect(o.starts).toMatchObject({ source: 'distribution-mode', proven: [], ruledOut: [9], unknown: 2, method: 'enumerated' });
+    const viaPickable = theFoe(locate({ graph, boards: [turn1], settings: { ...STD, startsPerPlayer: 2 }, candidates: pickable(1, 4, 7, 9) }));
+    expect(o.starts.likely).toEqual(viaPickable.starts.likely);
+    expect(o.presence).toEqual(viaPickable.presence);
+  });
+
+  it('names the mode in its assumptions', () => {
+    const text = locate({ graph, boards: [turn1], candidates: mode }).assumptions.join('\n');
+    expect(text).toMatch(/Start candidates: the 4 territories of the map's distribution mode 4, which dealt the starts automatically/);
+  });
+});
+
 describe('above the enumeration limit', () => {
   // A line of 45: forty candidates, three starts each: 9880 sets.
   const graph = mkGraph(line(45));

@@ -30,7 +30,10 @@ const CAT = { feed: '5524681355', inGame: 246813 };
 const ME = Number(ANN.feed);
 const SIGNED_IN_ANN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
 
-/** A game of the first `seats` players of the fixture on turn `turn`: two starts each, 5 armies on a start. */
+/**
+ * A game of the first `seats` players of the fixture on turn `turn`: two starts each, 5 armies on a start, picked
+ * by hand (an automatic one dealt from a map mode reads war.app's map details: tests/locate-distribution-mode.test.ts).
+ */
 function game(turn = 1, settings: Record<string, unknown> = {}, seats = 2, state = 'Playing'): Record<string, unknown> {
   const f = lobbyFixture();
   const ids = [ANN, BOB, CAT];
@@ -42,7 +45,7 @@ function game(turn = 1, settings: Record<string, unknown> = {}, seats = 2, state
     state,
     numberOfTurns: String(turn - 1),
     players,
-    settings: { ...(f.settings as object), InitialPlayerArmiesPerTerritory: 5, TerritoryLimit: 2, ...settings },
+    settings: { ...(f.settings as object), AutomaticTerritoryDistribution: 'Manual', InitialPlayerArmiesPerTerritory: 5, TerritoryLimit: 2, ...settings },
   };
 }
 

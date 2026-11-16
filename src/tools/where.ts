@@ -1,7 +1,8 @@
 // Where the opponents are and what they are doing, as a tool: the model of
 // src/analysis/whereabouts.ts over the boards this server saw of the game (the live board plus the
 // cached history, as warapp_track_opponents reads them), the opponent tracks, the starts the award
-// of picks proves (src/tools/award.ts), the territories that were pickable (src/pick-list.ts) and,
+// of picks proves (src/tools/award.ts), the territories that were pickable (src/pick-list.ts) or, in a
+// game dealt automatically from a map distribution mode, that mode's territories (#328, src/tools/map-details.ts) and,
 // on a local install with WARAPP_STATS=1, the finished games already cached for the map
 // (src/stats.ts — the cache alone, never a request). Read-only on war.app; it caches the board it
 // read, like warapp_track_opponents. The turn planner does not use any of it yet.
@@ -33,6 +34,7 @@ import { gameIdArg, graphOf, namer, readAnnotations, respond, round2, untrustedD
 import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
+import { dealtMode, modeStarts, type MapDetailsContext } from './map-details.js';
 import { mapOf } from './map.js';
 import { recordProfile } from './profile-hook.js';
 import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
@@ -70,32 +72,39 @@ export async function keepPickable(
 
 /**
  * Where a player could have started, and how the candidates weigh: the pickable territories kept
- * during distribution, else (statistics on) every territory a player started on in the finished
- * games cached for the map; the prior counts those starts, plus one, when statistics are on and
- * some game is cached. Only files this server already wrote are read.
+ * during distribution; else, in a game that dealt its starts automatically from a map distribution
+ * mode, that mode's territories (#328: read once from war.app's map details and kept with the map);
+ * else (statistics on) every territory a player started on in the finished games cached for the map.
+ * The prior counts those starts, plus one, when statistics are on and some game is cached. Only files
+ * this server already wrote are read, and war.app only for the map details. `warnings` says when the
+ * mode's territories are unknown. Never throws on the map details.
  */
 async function startKnowledge(
-  ctx: Pick<LiveContext, 'dataDir'>,
+  ctx: Pick<LiveContext, 'dataDir'> & MapDetailsContext,
   env: EnvSource | undefined,
   game: Game,
   map: GameMap,
   me: number,
-): Promise<{ candidates?: StartCandidates; prior?: StartPrior }> {
-  if (!ctx.dataDir) return {};
+): Promise<{ candidates?: StartCandidates; prior?: StartPrior; warnings: string[] }> {
   const onMap = new Set(map.territories.map((t) => t.id));
-  const kept = (await readPickRecord(ctx.dataDir, game.id, me))?.pickable?.filter((t) => onMap.has(t)) ?? [];
+  const kept = ctx.dataDir ? ((await readPickRecord(ctx.dataDir, game.id, me))?.pickable?.filter((t) => onMap.has(t)) ?? []) : [];
+  const warnings: string[] = [];
+  let candidates: StartCandidates | undefined = kept.length ? { territories: kept, source: 'pickable' } : undefined;
+  const dealt = candidates ? undefined : dealtMode(game.settings, map);
+  if (dealt) {
+    const read = await modeStarts(ctx, map, dealt.id);
+    if (read.territories) candidates = { territories: read.territories, source: 'distribution-mode', mode: dealt.id };
+    else warnings.push(...read.warnings);
+  }
+  if (!ctx.dataDir) return { ...(candidates ? { candidates } : {}), warnings };
   const records = statsGate(env).enabled ? await cachedRecords(ctx.dataDir, map.id) : [];
   /** Territory → the players who started on it, over the cached games. */
   const started = new Map<number, number>();
   for (const r of records)
     for (const p of r.players) for (const t of new Set(p.starts)) if (onMap.has(t)) started.set(t, (started.get(t) ?? 0) + 1);
-  const candidates: StartCandidates | undefined = kept.length
-    ? { territories: kept, source: 'pickable' }
-    : started.size
-      ? { territories: [...started.keys()].sort((a, b) => a - b), source: 'statistics' }
-      : undefined;
-  if (!candidates) return {};
-  if (!records.length) return { candidates };
+  candidates ??= started.size ? { territories: [...started.keys()].sort((a, b) => a - b), source: 'statistics' } : undefined;
+  if (!candidates) return { warnings };
+  if (!records.length) return { candidates, warnings };
   return {
     candidates,
     prior: {
@@ -105,6 +114,7 @@ async function startKnowledge(
       sample: records.length,
       weak: records.length < MIN_SAMPLE,
     },
+    warnings,
   };
 }
 
@@ -133,14 +143,16 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
           'them as guesses, and `seen` as what is known. The model assumes one capture per turn along a path, pooled ' +
           'armies when it grows a start, that a start is never abandoned, and ignores cards (the full view lists its ' +
           'assumptions). The start candidates are the territories the live board showed as pickable, kept by ' +
-          'warapp_plan_picks and by warapp_submit_picks; with none kept and no statistics, no start is guessed ' +
-          '(`starts.source` is "none") and the rest works from what was seen. The start prior is uniform, unless the ' +
+          'warapp_plan_picks and by warapp_submit_picks; in a game that dealt its starts automatically from a map ' +
+          'distribution mode, that mode\'s territories (`starts.source` "distribution-mode"; read once from war.app\'s ' +
+          'map details and kept with the map, and `warnings` says when they are unknown); with neither and no ' +
+          'statistics, no start is guessed (`starts.source` is "none") and the rest works from what was seen. The start prior is uniform, unless the ' +
           `server runs locally with ${STATS_ENV}=1: then each candidate weighs by how often players started on it in the ` +
           'finished games warapp_map_stats already cached for the map (the sample is reported, and called weak under ' +
           `${MIN_SAMPLE} games), and with no pickable territories kept those starts are the candidates. It reads only boards ` +
           `this server already saw (the last ${CACHED_TURNS} turns warapp_plan_turn, warapp_track_opponents and this tool cached, ` +
           'or the game history when war.app sends it) plus those files: no war.app request beyond the live board and ' +
-          `the game feed warapp_track_opponents reads. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it ` +
+          `the game feed warapp_track_opponents reads, and the map details once per map for a mode's territories. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it ` +
           'caches the board it read. warapp_plan_turn does not use these guesses yet.',
       ),
       _meta: lookupMeta(['where is my opponent', 'locate opponents', 'where did they start', 'what is my opponent doing', 'what should i prepare for']),
@@ -177,7 +189,7 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
       const award = await loadAward(ctx.dataDir, game, me, board, turn);
       const proven = new Map<number, readonly number[]>();
       if (award?.opponent && award.reading.opponentStarts.length) proven.set(award.opponent.id, award.reading.opponentStarts);
-      const { candidates, prior } = await startKnowledge(ctx, deps.env, game, map, me.id);
+      const { candidates, prior, warnings: startWarnings } = await startKnowledge(ctx, deps.env, game, map, me.id);
       const s = game.settings;
       const whereSettings: WhereSettings = {
         ...settings,
@@ -306,6 +318,8 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
           turns: boards.map((b) => b.turn).sort((a, b) => a - b),
           opponents: result.opponents.map(opponentView),
           prepare: result.prepare.map(prepareView),
+          // #328: the distribution mode's territories could not be had (they are no start candidates then).
+          ...(startWarnings.length ? { warnings: startWarnings } : {}),
           ...(full ? { assumptions: result.assumptions } : {}),
         };
       });

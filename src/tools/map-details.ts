@@ -5,7 +5,7 @@
 // UNVERIFIED live beyond #328's trace (src/map-details.ts).
 
 import { applyModeTerritories, readMapDetailsModes } from '../map-details.js';
-import type { DistributionMode, GameMap } from '../normalize.js';
+import type { DistributionMode, GameMap, GameSettings } from '../normalize.js';
 import { Method, writeGetMapDetailsParams } from '../protocol/methods.js';
 import type { LiveContext } from './live-context.js';
 
@@ -67,5 +67,39 @@ export function modeRow(d: DistributionMode) {
     ...(d.type !== undefined ? { type: d.type } : {}),
     territoryCount: ids ? ids.length : null,
     territories: ids,
+  };
+}
+
+/**
+ * The map distribution mode an automatically distributed game dealt its starts from (#328): its settings say
+ * `AutomaticTerritoryDistribution` "Automatic" and name, as `DistributionMode`, a mode of the map. `undefined`
+ * otherwise — manual picks (the live board's pickable territories say where then), full distribution (-1),
+ * random or custom distributions (no map mode), or settings that do not say.
+ */
+export function dealtMode(settings: Pick<GameSettings, 'distributionMode' | 'raw'> | undefined, map: GameMap): DistributionMode | undefined {
+  if (settings?.raw.AutomaticTerritoryDistribution !== 'Automatic' || settings.distributionMode === undefined) return undefined;
+  return map.distributionModes.find((d) => d.id === settings.distributionMode);
+}
+
+/** {@link modeStarts}' answer: the mode's territories, else why they are unknown (one line per reason). */
+export type ModeStarts = { mode: number; territories: number[] } | { mode: number; territories: null; warnings: string[] };
+
+/**
+ * The territories `mode` (a mode of `map`) dealt starts among: what the map already has, else read once from
+ * war.app's map details ({@link withModeTerritories}). Unknown (`null`, with the reasons) when the read failed or
+ * listed none for it. Never throws.
+ */
+export async function modeStarts(ctx: MapDetailsContext, map: GameMap, mode: number): Promise<ModeStarts> {
+  const read = await withModeTerritories(ctx, map);
+  const ids = read.map.distributionModes.find((d) => d.id === mode)?.territories;
+  if (Array.isArray(ids) && ids.length) return { mode, territories: ids };
+  return {
+    mode,
+    territories: null,
+    warnings: [
+      `The game dealt its starts automatically from the map's distribution mode ${mode}, whose territories are unknown, ` +
+        'so they are not used as start candidates.',
+      ...read.warnings,
+    ],
   };
 }
