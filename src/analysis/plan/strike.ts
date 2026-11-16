@@ -24,6 +24,7 @@ import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Breakable, Targets } from './targets.js';
 import type { Threats } from './threats.js';
+import { commanderStaysLine, commanderTransit } from './commander.js';
 import { byNum, pct } from './util.js';
 
 
@@ -48,7 +49,7 @@ export function strikesPhase(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
   const { finishOff } = finishOffHelper(pc, ps, book, threats, hd, tgt, cap);
   const { struck, unstruck } = commanderStrikes(pc, ps, book, threats, hd, tgt, cap);
   finishOffPass(pc, ps, book, threats, tgt, cap, finishOff, struck);
-  relieveCaptured(pc, ps, threats, hd, unstruck);
+  relieveCaptured(pc, ps, threats, hd, unstruck, book);
   guardOffBreaks(pc, ps, book, hd, tgt);
   return { struck };
 }
@@ -710,6 +711,18 @@ export function commanderStrikes(pc: PlanCtx, ps: PlanState, book: DeployBook, t
         limits.push(
           `${label(x)} can send at most ${unkept(x)}${local ? ` (Local Deployment: only ${roomLeft.get(x)} may be deployed there)` : ''}`,
         );
+    // #274 review 2: under No-Split my commander's walk is its territory's one order; a kill that
+    // territory alone could make is named, never silently dropped (a 1v1 ends with it).
+    const walk = adjacent.find((x) => x === pc.commanderAt?.retreat?.from && orderOf(x)?.commander === true);
+    if (walk !== undefined && !could.length && Math.max(0, avail.get(walk)!) + Math.max(0, spareAt(walk)) >= cost) {
+      unstruck.push({
+        t,
+        text: `${at} is in reach: ${label(walk)} could send the ${cost} attackers killing it needs (${sizing}), but under No-Split my commander's walk is ${label(walk)}'s one order (#274): not attacked. ${
+          profile.format === '1v1' ? 'Killing it ends the game (a 1v1)' : `Killing it eliminates player ${p}`
+        }: to strike instead, send ${label(walk)} → ${label(t)} by hand, and my commander stays on ${label(walk)}.`,
+      });
+      continue;
+    }
     unstruck.push({
       t,
       text: `${at} is in reach, but killing it needs ${cost} attackers (${sizing}), more than my territories next to it can send this turn${limits.length ? ` (${limits.join('; ')})` : ''}: not attacked.`,
@@ -843,7 +856,14 @@ export function finishOffPass(
 }
 
 /** The strikes not made, the borders the strikes and finishing off relieve, and triage on what is left. */
-export function relieveCaptured(pc: PlanCtx, ps: PlanState, threats: Threats, hd: Holds, unstruck: readonly { t: number; text: string }[]) {
+export function relieveCaptured(
+  pc: PlanCtx,
+  ps: PlanState,
+  threats: Threats,
+  hd: Holds,
+  unstruck: readonly { t: number; text: string }[],
+  book: Pick<DeployBook, 'deploy' | 'roomAt' | 'guardAt'>,
+) {
   const { g, label, myCommanders } = pc;
   const { warnings, rationale, captured } = ps;
   const { borders, borderAt } = threats;
@@ -860,13 +880,16 @@ export function relieveCaptured(pc: PlanCtx, ps: PlanState, threats: Threats, hd
       if (b) borders.set(id, b);
       else borders.delete(id);
     }
+  // #274: the territory my commander walks from holds it until my first order runs: after the
+  // strikes (a struck stack threatens nothing there), before triage (plan/commander.ts).
+  commanderTransit(pc, ps, book, threats, fallen);
   assessThreats();
   triage();
 
-  if (myCommanders.size)
-    rationale.push(
-      `My commander stays on ${[...myCommanders].map(label).join(', ')}: planned moves carry armies only, never the commander.`,
-    );
+  // #274: a commander that walks says so in its order and the first warning; one that stays says why.
+  if (pc.commanderAt && !pc.commanderAt.retreat) rationale.push(commanderStaysLine(pc.commanderAt, label));
+  else if (!pc.commanderAt && myCommanders.size)
+    rationale.push(`My commander stays on ${[...myCommanders].map(label).join(', ')}: with more than one commander of mine, none is walked to safety.`);
 }
 
 /** #165: with the guard off, one army breaks a bonus on an empty enemy territory next to mine. */

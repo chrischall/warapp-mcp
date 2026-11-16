@@ -232,8 +232,9 @@ function ruleBreaks(c: Case, g: MapGraph, plan: TurnPlan): string[] {
 
   // Moves: from my territory (or, under Multi-Attack, one an earlier move entered), to a neighbour,
   // whole positive armies, each source/target pair once, one order per source under No-Split, and
-  // never more than the source can send (armies + deploys − guard; a commander is never the guard
-  // and never sent by these orders; under Multi-Attack, plus what moved in earlier — an upper bound).
+  // never more than the source can send (armies + deploys − guard; a commander is never the guard;
+  // under Multi-Attack, plus what moved in earlier — an upper bound). #274: one commander move at
+  // most, a transfer from its territory onto mine, which may carry no armies.
   const entered = new Set<number>();
   const pairs = new Set<string>();
   const sources = new Map<number, number>();
@@ -244,7 +245,14 @@ function ruleBreaks(c: Case, g: MapGraph, plan: TurnPlan): string[] {
     if (!isMine(m.from) && !chained) out.push(`move from T${m.from}, not mine`);
     if (!near(m.from, m.to)) out.push(`T${m.from} → T${m.to}: not adjacent`);
     if (m.from === m.to) out.push(`T${m.from} → itself`);
-    if (!Number.isInteger(m.armies) || m.armies < 1) out.push(`T${m.from} → T${m.to}: ${m.armies} armies`);
+    // #274: my commander's walk may carry no armies (0 is only for a commander moving alone).
+    if (!Number.isInteger(m.armies) || m.armies < (m.commander ? 0 : 1)) out.push(`T${m.from} → T${m.to}: ${m.armies} armies`);
+    if (m.commander) {
+      const home = c.board.territories.find((t) => t.territoryId === m.from)?.specialUnits?.some((u) => u.kind === 'commander' && u.playerId === ME);
+      if (!home) out.push(`T${m.from} → T${m.to}: takes a commander that does not stand there`);
+      if (m.kind !== 'transfer' || !isMine(m.to)) out.push(`T${m.from} → T${m.to}: a commander walks only onto my own land`);
+      if (plan.moves.filter((x) => x.commander).length > 1) out.push('the commander moves twice');
+    }
     const pair = `${m.from}>${m.to}`;
     if (pairs.has(pair)) out.push(`T${m.from} → T${m.to} twice`);
     pairs.add(pair);
@@ -404,7 +412,8 @@ describe('order legality on seeded random boards (#133)', () => {
       const named = (id: number) => ({ id, name: `P${id}` });
       for (const m of plan.moves) if (m.kind === 'attack' && theirs.includes(m.to)) problems.push(`${c.describe}: attacks covered T${m.to}`);
       for (const m of plan.moves)
-        if (m.kind === 'transfer' && plan.moves.some((x) => x.kind === 'transfer' && x.from === m.to && x.to === m.from))
+        // #274: my commander's walk carries its own stack, whatever rule 6 moves toward the front.
+        if (m.kind === 'transfer' && !m.commander && plan.moves.some((x) => x.kind === 'transfer' && !x.commander && x.from === m.to && x.to === m.from))
           problems.push(`${c.describe}: transfers both ways between T${m.from} and T${m.to}`);
       // T5: a capped border ends at most at the cap, or a warning names it.
       const cap = input.relations![0]!.borderCap;

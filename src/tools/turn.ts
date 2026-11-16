@@ -137,6 +137,9 @@ import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, tea
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
+import { stressOpponents } from './stress-opponents.js';
+import { myCommanderTerritory } from '../analysis/commander-safety.js';
+import { commanderCheckOn, guessKeepsCommander, type CommanderCheck, type CommanderCheckInput, type CommanderRisk } from './commander-check.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
@@ -393,6 +396,8 @@ interface TurnState {
   cardPlayCheck?: string;
   /** B2: the agreements these orders break (`break_agreement: true`), recorded broken-by-me once committed. */
   breaks?: string[];
+  /** #274: the commander risk accepted with `accept_commander_risk`, recorded in the result. */
+  commanderRisk?: CommanderRisk;
 }
 
 /**
@@ -1187,11 +1192,21 @@ export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
     // or Attack Only order may not happen at all (it runs only if the target's owner suits it).
     moves: orders.flatMap((o) =>
       o.kind === 'move' && !o.byPercent && (o.mode === undefined || o.mode === AttackTransferMode.AttackTransfer)
-        ? [{ from: o.from, to: o.to, armies: o.armies }]
+        ? [{ from: o.from, to: o.to, armies: o.armies, ...(o.commander ? { commander: true as const } : {}) }]
         : [],
     ),
+    // #274: a move that takes my commander along is flagged, so a loss report reads where it went.
     sent: orders.flatMap((o) =>
-      o.kind === 'move' ? [{ from: o.from, to: o.to, ...(o.mode === AttackTransferMode.Transfer ? { transferOnly: true as const } : {}) }] : [],
+      o.kind === 'move'
+        ? [
+            {
+              from: o.from,
+              to: o.to,
+              ...(o.mode === AttackTransferMode.Transfer ? { transferOnly: true as const } : {}),
+              ...(o.commander ? { commander: true as const } : {}),
+            },
+          ]
+        : [],
     ),
     // Profiles A1: an Airlift or a Gift changes what my territories hold or who holds them.
     cards: orders.flatMap((o) =>
@@ -1228,7 +1243,8 @@ export interface BoardHistory {
  * last {@link TREND_TURNS} turns are cached. Each carries the deploys and moves
  * `warapp_submit_turn` sent that turn, when it sent them (#119). Empty otherwise; never throws.
  */
-export async function boardHistory(ctx: LiveContext, game: Game, me: Player, turn: number | null): Promise<BoardHistory> {
+/** `cacheOnly` (#274): the cached boards alone, never a GameFeed request (warapp_submit_turn's commander check). */
+export async function boardHistory(ctx: LiveContext, game: Game, me: Player, turn: number | null, opts: { cacheOnly?: boolean } = {}): Promise<BoardHistory> {
   if (turn === null || turn < 2) return { boards: [] };
   const byTurn = new Map<number, { source: TrendSource; board: BoardState }>();
   if (ctx.dataDir)
@@ -1239,7 +1255,7 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
   // and is not fetched at all when the last {@link TREND_TURNS} turns are cached: the threat trend
   // and tracked incomes (#94) need two earlier turns, not just the previous one (#131).
   const recent = Array.from({ length: Math.min(TREND_TURNS, turn - 1) }, (_, i) => turn - 1 - i);
-  if (!recent.every((k) => byTurn.has(k))) {
+  if (!opts.cacheOnly && !recent.every((k) => byTurn.has(k))) {
     try {
       const withHistory = await ctx.client.getGame(game.id, { history: true });
       // Turn k is played on the board after k − 1 completed turns.
@@ -1630,6 +1646,67 @@ export async function livePlanSetup(
   };
 }
 
+/**
+ * #274: whether these orders leave my commander takeable by a single-deploy reply (`commanderCheckOn`,
+ * src/tools/commander-check.ts: the one check, which warapp_check_plan reports too), each reply sized at
+ * the larger of the opponent's estimate (as warapp_check_plan has it, from the cached boards only: no
+ * GameFeed request) and my own income. One computation for warapp_submit_turn's refusal and
+ * warapp_plan_turn's commander block, so the plan never calls safe what the submit refuses. Undefined
+ * when my commander is not on the board.
+ */
+async function commanderCheck(
+  ctx: LiveContext,
+  a: {
+    game: Game;
+    me: Player;
+    map: GameMap;
+    seen: BoardState;
+    turn: number | null;
+    info: unknown;
+    hand: readonly Card[];
+    income: number;
+  } & Omit<CommanderCheckInput, 'graph' | 'me' | 'settings' | 'so' | 'income'>,
+): Promise<CommanderCheck | undefined> {
+  if (myCommanderTerritory(a.seen, a.me.id) === undefined) return undefined;
+  const graph = graphOf(a.map);
+  const settings = plannerSettings(a.game.settings);
+  const [history, award] = await Promise.all([
+    boardHistory(ctx, a.game, a.me, a.turn, { cacheOnly: true }),
+    loadAward(ctx.dataDir, a.game, a.me, a.seen, a.turn),
+  ]);
+  const opening = openingThreat(award, a.game, graph, a.seen, a.turn);
+  // stressOpponents reads a static seat's territories as neutrals (#270), on its own `board` too.
+  const so = stressOpponents({
+    graph,
+    map: a.map,
+    game: a.game,
+    me: a.me,
+    board: award?.board ?? a.seen,
+    seen: a.seen,
+    boards: history.boards,
+    ...(history.previous ? { previous: history.previous.board } : {}),
+    turn: a.turn,
+    settings,
+    hand: a.hand,
+    info: a.info,
+    ...(opening ? { opening } : {}),
+  });
+  return commanderCheckOn({
+    graph,
+    me: a.me.id,
+    settings,
+    so,
+    income: a.income,
+    deploys: a.deploys,
+    moves: a.moves,
+    orderPriority: a.orderPriority,
+    ...(a.floor !== undefined ? { floor: a.floor } : {}),
+    ...(a.killedBy !== undefined ? { killedBy: a.killedBy } : {}),
+    ...(a.airlifts ? { airlifts: a.airlifts } : {}),
+    ...(a.cardTargets ? { cardTargets: a.cardTargets } : {}),
+  });
+}
+
 export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { env?: EnvSource } = {}): void {
   /**
    * B2: after `warapp_submit_turn` with `break_agreement`, mark the agreements its orders broke
@@ -1698,6 +1775,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'start for certain (in a two-player game they are planned as the opponent\'s while still fogged, with the ' +
           'starting armies on turn 1), whether you were awarded first or second and who moves first this turn under ' +
           "a `Cycle` move order, and with commanders the opponent's first award when the award pins it. " +
+          'In a Commanders game, `commander` reports your commander every turn: its territory, the armies there after the ' +
+          'plan, `movesToEnemy` (to the nearest enemy or fogged territory), `killedBy` (the smallest deploy, made by each ' +
+          'opponent, at which a reply kills it, with `player` and, when two opponents striking together are that reply, ' +
+          '`partner`; null when none reaches it this turn) and whether it holds at the larger of the estimate and your income ' +
+          '(`safe`, `needs`); when it does not, the first warning says so and whether warapp_submit_turn would refuse such ' +
+          'orders (not without Commanders in the settings, nor when only an `enemy_deploy` what-if makes it unsafe). ' +
+          'Within three moves of an enemy or the fog, with a safer territory of yours reachable, your commander walks one ' +
+          'step a turn toward safety: a move in `orders` with `commander: true` (encoding not yet verified live), said in ' +
+          'the first warning. ' +
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board. ' +
@@ -1961,7 +2047,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...cards.discards.filter((c) => c.id !== playedDelay).map((c) => ({ kind: 'discard' as const, card: c.id })),
         ...plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
-        ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies })),
+        // #274: my commander's walk takes it along (the #165 option, encoding unverified live).
+        ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
         // #186: the advised Order Delay, placed above its move (war.app accepted the placement live;
         // whether the later moves wait for the opponent's is not yet seen in a replay).
         ...(advice.view.orderDelay ? [advice.view.orderDelay.order] : []),
@@ -1984,6 +2071,69 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         turn,
         ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
       });
+      // #274: my commander every turn (a Commanders game, it on the board): where the plan leaves it, the
+      // armies there, the moves to the nearest enemy or fog, and the smallest single deploy that kills it.
+      // The very check warapp_submit_turn runs on these orders (commanderCheck: its opponents, teams,
+      // free-for-all lead and Order Priority, each reply at the larger of its estimate and my income), so
+      // the block never calls safe what the submit would refuse; enemy_deploy only raises the replies.
+      const checked = await commanderCheck(ctx, {
+        game,
+        me,
+        map,
+        seen,
+        turn,
+        info,
+        hand,
+        income: setup.boardIncome,
+        deploys: plan.deploys,
+        moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+        orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+        ...(enemy_deploy !== undefined ? { floor: enemy_deploy } : {}),
+        killedBy: true,
+      });
+      const guard = checked?.safety;
+      const replyDeploy = checked?.replyDeploy ?? 0;
+      const commanderLine = guard
+        ? `Your commander on territory ${guard.territory}: ${guard.armies} armies there after the plan, ${
+            guard.distance === null ? 'no enemy or fog on the map' : `${guard.distance} move${guard.distance === 1 ? '' : 's'} from the nearest enemy or fog`
+          }; ${
+            guard.killedBy
+              ? `a deploy of ${guard.killedBy.deploy} by each opponent kills it (${
+                  guard.killedBy.partner !== undefined
+                    ? `players ${guard.killedBy.opponent} and ${guard.killedBy.partner} striking it together`
+                    : `player ${guard.killedBy.opponent}'s reply`
+                })`
+              : 'no single deploy reaches it this turn'
+          }.`
+        : undefined;
+      if (checked?.text) {
+        // Name the submit's refusal only when the submit would make it (#274 review): it checks only a
+        // Commanders game, and sizes the replies without enemy_deploy.
+        let submit: string;
+        if (game.settings?.commanders !== true) {
+          submit = 'warapp_submit_turn does not check the commander in this game (Commanders is not on in its settings).';
+        } else if (enemy_deploy === undefined) {
+          submit = 'warapp_submit_turn refuses these orders unless accept_commander_risk is true.';
+        } else {
+          const plain = await commanderCheck(ctx, {
+            game,
+            me,
+            map,
+            seen,
+            turn,
+            info,
+            hand,
+            income: setup.boardIncome,
+            deploys: plan.deploys,
+            moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+            orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+          });
+          submit = plain?.text
+            ? 'warapp_submit_turn refuses these orders unless accept_commander_risk is true (it finds the risk without enemy_deploy too).'
+            : `This is under enemy_deploy ${enemy_deploy}: warapp_submit_turn, which sizes the replies without it, would not refuse these orders.`;
+        }
+        warnings.unshift(`${commanderLine} ${checked.text} ${submit}`);
+      }
       const guessed = borderGuess({
         graph,
         // #270: a static seat's territories are neutrals here, as in the plan the guess splits.
@@ -1996,7 +2146,33 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(gameContext.players ? { players: gameContext.players } : {}),
         seed: guessSeed(game.id, turn, await guessSalt(ctx.dataDir)),
       });
-      const guess = guessed.kind === 'guess' ? guessed : undefined;
+      let guess = guessed.kind === 'guess' ? guessed : undefined;
+      let guessSkip: { reason: string; message: string } | undefined = guessed.kind === 'skipped' ? { reason: guessed.reason, message: guessed.message } : undefined;
+      // #274: the draw's deploys go through the submit's own commander check too. The guess keeps the
+      // plan's deploy where my commander stands or walks to; should its draw still leave the commander
+      // takeable where the plan's orders do not, warapp_submit_turn would refuse it: no guess then.
+      if (guess && checked) {
+        const drawn = await commanderCheck(ctx, {
+          game,
+          me,
+          map,
+          seen,
+          turn,
+          info,
+          hand,
+          income: setup.boardIncome,
+          deploys: guess.deploys,
+          moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+          orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+          ...(enemy_deploy !== undefined ? { floor: enemy_deploy } : {}),
+        });
+        if (!guessKeepsCommander(checked, drawn)) {
+          const message = `The border guess was dropped: its draw leaves your commander on territory ${drawn!.safety.territory} takeable (${drawn!.safety.killers} of the replies tried), where the plan's own split does not, and warapp_submit_turn would refuse it.`;
+          warnings.push(message);
+          guess = undefined;
+          guessSkip = { reason: 'commander', message };
+        }
+      }
       const guessOrders = guess ? guessOrdersOf(orders, guess) : undefined;
 
       return respond(view, VIEWS, (rung) => ({
@@ -2046,6 +2222,27 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #194: since last turn, when the previous turn's board or plan is known.
         ...(since && turn !== null
           ? { sinceLastTurn: sinceLastView(since, turn - 1, trend !== undefined, map, game.players, rung) }
+          : {}),
+        // #274: my commander, every turn of a Commanders game while it is on the board.
+        ...(guard
+          ? {
+              commander: {
+                text: commanderLine!,
+                territory: name(guard.territory),
+                armies: guard.armies,
+                movesToEnemy: guard.distance,
+                killedBy: guard.killedBy
+                  ? {
+                      deploy: guard.killedBy.deploy,
+                      player: playerRef(guard.killedBy.opponent),
+                      ...(guard.killedBy.partner !== undefined ? { partner: playerRef(guard.killedBy.partner) } : {}),
+                    }
+                  : null,
+                safe: guard.killers === 0 && !guard.lostUnanswered,
+                needs: guard.needs,
+                replyDeploy,
+              },
+            }
           : {}),
         conceded: plan.conceded.map(name),
         // #163: Order Delay when it is the only card advised (it is then in cards.advice.orderDelay too).
@@ -2122,6 +2319,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           to: name(m.to),
           armies: m.armies,
           kind: m.kind,
+          ...(m.commander ? { commander: true } : {}),
           ...(m.winChance !== undefined ? { winChance: Math.round(m.winChance * 1000) / 1000 } : {}),
           ...(rung === 'full' ? { reason: m.reason } : {}),
         })),
@@ -2265,8 +2463,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               guess: guessView(guess, rung, name, game.players.find((p) => p.id === guess.opponent)?.name ?? null),
               guessOrders,
             }
-          : rung === 'full' && guessed.kind === 'skipped'
-            ? { guessSkipped: { reason: guessed.reason, message: guessed.message } }
+          : rung === 'full' && guessSkip
+            ? { guessSkipped: guessSkip }
             : {}),
         ...(rung === 'full'
           ? {
@@ -2313,6 +2511,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'it on purpose — the preview names the agreement, and once the orders are committed the ledger records it ' +
           'broken-by-me (the partner\'s player record too). Without it such orders are refused. Ask the owner first.',
       ),
+    accept_commander_risk: z
+      .boolean()
+      .optional()
+      .describe(
+        'Only in a Commanders game, when the orders leave your commander takeable by a single-deploy reply (the refusal ' +
+          'says so and names the armies that would hold): true submits them anyway, and the result records the risk ' +
+          'taken (`commanderRiskAccepted`). Losing the commander loses the game: ask the owner first.',
+      ),
   });
 
   defineGatedWrite(
@@ -2355,7 +2561,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'several attacks on one target in the order listed, each against what the earlier ones leave) ' +
         'and warns about one that cannot capture. An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
-        'and, once the orders are committed, the ledger records it broken-by-me. Always sent as ' +
+        'and, once the orders are committed, the ledger records it broken-by-me. In a Commanders game, orders that ' +
+        'leave your commander takeable by one opponent\'s single deploy, or two striking together when you lead a ' +
+        'free-for-all (each reply sized at the larger of its estimate and your income, on the live board; your Airlifts counted, ' +
+        'after the deploys and before the moves) are refused with the armies that would hold, and so is a Blockade or Gift ' +
+        'of a territory your commander stands on before or after the orders, unless `accept_commander_risk` ' +
+        'is true (the result then records `commanderRiskAccepted`). Always sent as ' +
         'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
         `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
@@ -2366,7 +2577,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         openWorld: true,
       }),
       inputSchema: submitSchema,
-      async plan({ game_id, player, orders, income: givenIncome, break_agreement }) {
+      async plan({ game_id, player, orders, income: givenIncome, break_agreement, accept_commander_risk }) {
         const feed = await ctx.client.getGame(parseGameId(game_id), { settings: true });
         requireTurnPhase(feed);
         // The bridge always acts as the signed-in account: an explicit `player` naming anyone
@@ -2662,6 +2873,60 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               'among the moves (unverified live).',
           );
         }
+        // #274: in a Commanders game, orders that leave my commander takeable by one deploy are refused
+        // unless accepted on purpose; each reply sized at the larger of the opponent's estimate and my income.
+        const commanderChecked =
+          game.settings?.commanders === true
+            ? await commanderCheck(ctx, {
+                game,
+                me,
+                map,
+                seen: board,
+                turn: turnNumber,
+                info,
+                hand,
+                income: givenIncome ?? modelled,
+                deploys: deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })),
+                moves: moves.map((m) => ({
+                  from: m.from.id,
+                  to: m.to.id,
+                  armies: m.armies,
+                  ...(m.mode === 'attack-only' || m.mode === 'transfer-only' ? { mode: m.mode } : {}),
+                  ...(m.percent ? { byPercent: true } : {}),
+                  ...(m.commander ? { withCommander: true } : {}),
+                  ...(m.attackTeammates ? { attackTeammates: true } : {}),
+                })),
+                orderPriority: plays.some((p) => p.kind === 'OrderPriority'),
+                // The Airlifts are simulated (after the deploys, before the moves); a Blockade or Gift of the
+                // commander's territory is not, and is refused there unless accepted.
+                airlifts: plays.flatMap((p) =>
+                  p.kind === 'Airlift' && p.targets?.from && p.targets.to
+                    ? [{ from: p.targets.from.id, to: p.targets.to.id, armies: p.targets.armies ?? 0, ...(p.targets.commander ? { commander: true } : {}) }]
+                    : [],
+                ),
+                cardTargets: plays.flatMap((p) => {
+                  const t = p.target ?? p.targets?.territory;
+                  return t ? [{ kind: p.kind, territory: t.id }] : [];
+                }),
+              })
+            : undefined;
+        const commanderRisk = commanderChecked?.risk && commanderChecked.text ? { risk: commanderChecked.risk, text: commanderChecked.text } : undefined;
+        if (commanderRisk && accept_commander_risk !== true) {
+          const anyway = 'To submit these orders anyway (ask the owner first), resend with accept_commander_risk: true.';
+          // Under Local Deployment a deploy there must come from a pool that reaches it (#274 review).
+          const local = game.settings?.localDeployments === true
+            ? ' Under Local Deployment only free income or the pool of a bonus that contains that territory may be deployed there; an Airlift onto it is the other way.'
+            : '';
+          throw new McpToolError(`${commanderRisk.text} Nothing was sent.`, {
+            hint:
+              commanderRisk.risk.replies === 0 && commanderChecked?.cards?.length
+                ? `Play the card on a territory your commander does not stand on, or keep the commander off it. ${anyway}`
+                : commanderRisk.risk.needs !== null
+                  ? `Put at least ${commanderRisk.risk.needs} armies on territory ${commanderRisk.risk.territory} after your orders (deploy more there, airlift fewer off it, or move fewer out), or move the commander away from the enemy; warapp_check_plan shows every reply.${local} ${anyway}`
+                  : `Move the commander away from the enemy; warapp_check_plan shows every reply. ${anyway}`,
+          });
+        }
+        if (commanderRisk) warnings.unshift(`accept_commander_risk is true: ${commanderRisk.text}`);
         const attacks = attackSizes(
           territories,
           playerId,
@@ -2755,6 +3020,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             ...(placedDelays.length ? { orderDelayCheck: orderDelayCheck(placedDelays.map((p) => placedAt(p)!)) } : {}),
             ...(unverifiedPlays.length ? { cardPlayCheck: cardPlayCheck(unverifiedPlays) } : {}),
             ...(breaks.length ? { breaks: breaks.map((b) => b.agreement) } : {}),
+            ...(commanderRisk ? { commanderRisk: commanderRisk.risk } : {}),
           } satisfies TurnState,
         };
       },
@@ -2815,8 +3081,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             return unconfirmed(`The orders were sent, but the game does not yet show them committed or the turn advanced. ${check}`);
           },
         });
-        if (!st.breaks?.length) return result;
-        return { ...result, agreementsBroken: await recordBreaks(st, result.outcome === 'confirmed') };
+        const withRisk = st.commanderRisk ? { ...result, commanderRiskAccepted: st.commanderRisk } : result;
+        if (!st.breaks?.length) return withRisk;
+        return { ...withRisk, agreementsBroken: await recordBreaks(st, result.outcome === 'confirmed') };
 
       },
     },

@@ -20,7 +20,8 @@ attack and defence values and whether it dies last). Count special units in atta
 (a stack with a commander defends as armies + its value). My commander's territory is must-hold:
 never conceded, never left takeable at the worst-case enemy deploy if the budget allows (warn if it
 cannot), and the plan never moves the commander out into danger (keep it out of planned moves unless
-its destination is safer). An enemy commander that is reachable is a priority target: size the
+its destination is safer; since #274 it walks one step a turn toward a safer territory of mine, see
+`src/analysis/plan/commander.ts`). An enemy commander that is reachable is a priority target: size the
 attack against its defence plus the owner's full estimated deploy and prefer it over expansion
 (rationale: killing a commander eliminates that player). Tests: my commander's border not conceded
 in the issue-like case; an adjacent 0-army enemy commander attacked first; a commander counted in a

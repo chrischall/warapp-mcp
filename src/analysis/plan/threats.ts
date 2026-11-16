@@ -74,6 +74,12 @@ export interface Border extends Force {
    * single opponent's threat, lower, which the holds fall back to when the joint hold does not pay.
    */
   alone?: number;
+  /**
+   * #274: my commander's territory, sized for the worst case above the visible threat: the
+   * opponents' (team's, or as the FFA leader everyone's) whole deploy, at least my own income,
+   * plus every stack of theirs within two moves. Its parts, for the rationale.
+   */
+  commanderWorst?: { deploy: number; stacks: number; players: number[] };
 }
 
 /** The threats phase's helpers, for the phases after it. */
@@ -646,7 +652,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     armiesOf, unitsAt, uncounted, uncountedKind, bombOn, toTake, turnNow, holdPasses, myCommanders, s, baseIncome, rates,
   } = pc;
   const { warnings, rationale } = ps;
-  const { growthOf, holdArmies, hiddenFoe, lostAt } = src;
+  const { growthOf, holdArmies, hiddenFoe, lostAt, teamOf, deployReaching, bombSized } = src;
   /** #226: the game pays per territory (BonusArmyPer). */
   const perTerritory = (s.bonusArmyPer ?? 0) > 0;
   /** #226: what the bonuses it could still hold add to what it could earn (its territories' pay aside). */
@@ -661,11 +667,63 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
    * next to it. Pure: callers judge hypothetical boards with it, so what a border is actually sized
    * for (its `worst` included, #201) is read from `borders`, never from a side table.
    */
+  /**
+   * #274: the worst case on my commander's territory `t`: per opponent (a team together; as the
+   * FFA leader every opponent together), its whole deploy — at least my own income, as
+   * warapp_submit_turn sizes its replies, unless the caller gave `enemyDeploy` — plus the movable
+   * armies of every visible stack of its within two moves of `t` (`gone` excluded). `undefined`
+   * with none in reach.
+   */
+  const commanderWorstAt = (t: number, gone: (n: number) => boolean): (Border['commanderWorst'] & { threat: number }) | undefined => {
+    const within = new Set<number>();
+    for (const n of neighborsOf(g, t)) {
+      within.add(n);
+      for (const m of neighborsOf(g, n)) if (m !== t) within.add(m);
+    }
+    const groups = new Map<string, { players: Map<number, number[]>; stacks: number }>();
+    for (const n of [...within].sort(byNum)) {
+      const st = state.get(n);
+      if (gone(n) || st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) continue;
+      const p = st.owner.playerId;
+      const team = teamOf.get(p);
+      const key = pc.ffaLeader ? 'all' : team !== undefined ? `team ${team}` : `player ${p}`;
+      const gr = groups.get(key) ?? { players: new Map<number, number[]>(), stacks: 0 };
+      gr.players.set(p, [...(gr.players.get(p) ?? []), n]);
+      gr.stacks += Math.max(0, st.armies - pc.guard) + unitsAt(n);
+      groups.set(key, gr);
+    }
+    // A what-if `enemyDeploy` is the caller's plausible income: taken as it stands.
+    const mineIncome = custom ? 0 : Math.max(0, pc.income - pc.cardArmies);
+    let worst: (Border['commanderWorst'] & { threat: number }) | undefined;
+    for (const gr of groups.values()) {
+      const deploy = Math.max(mineIncome, [...gr.players].reduce((n, [p, on]) => n + deployReaching(p, on), 0));
+      const threat = deploy + gr.stacks;
+      if (!worst || threat > worst.threat) worst = { deploy, stacks: gr.stacks, players: [...gr.players.keys()].sort(byNum), threat };
+    }
+    return worst;
+  };
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
     // #235: a leader's border whose joint hold does not pay is sized for each opponent alone.
     const solo = ps.soloHeld.has(t);
     const f = forceAt(t, gone, { trend: true, allPlayers: true, solo });
-    if (!f) return null;
+    // #274 review: under Multi-Attack a stack two moves away can chain through my land onto my
+    // commander's territory (the chains of forceAt never go through it): its worst case sizes it too,
+    // where the commander stays. Not on the step it walks to: a chain onto it runs through the territory
+    // it walks from, whose transit hold (plan/commander.ts) is what stops it.
+    if (!f) {
+      if (!myCommanders.has(t) || s.multiAttack !== true || pc.commanderAt?.retreat?.to === t) return null;
+      const w = commanderWorstAt(t, gone);
+      if (!w) return null;
+      const threat = bombSized(t, w.threat);
+      return { id: t, player: w.players[0]!, movable: w.stacks, growth: 0, deploy: w.deploy, threat, commanderWorst: { deploy: w.deploy, stacks: w.stacks, players: w.players } };
+    }
+    // #274: my commander's territory is held against the worst case, never less than the visible threat.
+    if (myCommanders.has(t)) {
+      const w = commanderWorstAt(t, gone);
+      const threat = w ? bombSized(t, w.threat) : 0;
+      if (w && threat > f.threat) return { id: t, ...f, threat, commanderWorst: { deploy: w.deploy, stacks: w.stacks, players: w.players } };
+      return { id: t, ...f };
+    }
     // #235: the leader's joint threat, with the strongest single opponent's beside it.
     const alone = (): number | undefined => {
       if (solo || !pc.ffaLeader || !f.split || f.split.players.length < 2) return undefined;
@@ -695,6 +753,12 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     for (const l of lostAt.get(t) ?? []) if (estimates.has(l.player)) facing.add(l.player);
     const b = borderAt(t, () => false);
     if (b) borders.set(t, b);
+    if (b?.commanderWorst) {
+      const w = b.commanderWorst;
+      rationale.push(
+        `My commander's territory ${label(t)} is held against the worst case (#274), ~${b.threat}: ${w.players.length > 1 ? `players ${w.players.join(' and ')}` : `player ${w.players[0]}`}'s whole deploy, ~${w.deploy} (never below my own income), plus the ${w.stacks} movable armies ${w.players.length > 1 ? 'they have' : 'it has'} within two moves of it.`,
+      );
+    }
   }
   // #199: say where a Multi-Attack chain sets a border's threat.
   for (const b of [...borders.values()].filter((x) => x.chain).sort((x, y) => y.chain!.armies - x.chain!.armies || x.id - y.id).slice(0, MAX_NAMED_REVEALS)) {

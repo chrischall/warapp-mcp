@@ -9,6 +9,7 @@ import { deployBook } from '../../src/analysis/plan/orders.js';
 import { newPlanState } from '../../src/analysis/plan/state.js';
 import { threatsPhase } from '../../src/analysis/plan/threats.js';
 import { syntheticInput } from './golden/corpus.js';
+import { phaseWarnings } from './helpers.js';
 
 // These tests loop over hundreds of synthetic boards: v8 coverage (CI runs `npm run test:coverage`)
 // slows them about 6x, past vitest's default 5 s.
@@ -32,7 +33,7 @@ describe('plan/orders and plan/threats (#133)', { timeout: SEEDED_LOOP_TIMEOUT }
       threatsPhase(ctx, state, input);
       const plan = planner.planTurn(input);
       expect(plan.rationale.slice(0, state.rationale.length)).toEqual(state.rationale);
-      expect(plan.warnings.slice(0, state.warnings.length)).toEqual(state.warnings);
+      expect(phaseWarnings(plan.warnings).slice(0, state.warnings.length)).toEqual(state.warnings);
       checked += state.rationale.length + state.warnings.length - opening;
     }
     expect(checked).toBeGreaterThan(0);

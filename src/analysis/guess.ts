@@ -15,7 +15,10 @@
 // value of the matrix game (a small simplex over the allocations × targets matrix).
 //
 // Only the deploys the plan puts on these borders are redistributed (`budget`): expansion and
-// every other order of the plan are untouched. Pure and deterministic (ties on ascending id),
+// every other order of the plan are untouched. #274: the territory my commander stands on, and any a
+// commander move of the plan walks it to, keep at least the plan's deploy in every allocation: the
+// planner sizes that hold at my income and every stack within two moves, more than this model's one
+// deploy, and warapp_submit_turn refuses orders that leave the commander takeable. Pure and deterministic (ties on ascending id),
 // no I/O; the sample is drawn from a caller's seed with mulberry32.
 
 import type { BoardState, TerritoryState } from '../board.js';
@@ -35,7 +38,7 @@ const MAX_GUESS_BORDERS = 7;
 /** What of the plan the guess reads: its deploys, its moves (out of a border) and its enemy deploy. */
 export interface GuessPlan {
   deploys: readonly PlannedDeploy[];
-  moves: readonly Pick<TurnPlan['moves'][number], 'from' | 'to' | 'armies'>[];
+  moves: readonly Pick<TurnPlan['moves'][number], 'from' | 'to' | 'armies' | 'commander'>[];
   /** The plan's enemy deploy (its largest estimate): the fallback when no per-opponent estimate is given. */
   enemyDeploy: number;
 }
@@ -279,6 +282,11 @@ export function borderGuess(input: GuessInput): GuessResult {
     while ((armiesToTake(d, rates) ?? Infinity) <= attack) d++;
     return d;
   };
+  /** #274: where my commander stands or walks to this turn. */
+  const commanderAt = new Set([
+    ...mine.filter((id) => (state.get(id)!.specialUnits ?? []).some((u) => u.kind === 'commander' && u.playerId === me)),
+    ...plan.moves.filter((m) => m.commander).map((m) => m.to),
+  ]);
   const borders = ids.map((id) => {
     const t = state.get(id)!;
     const armies = t.armies ?? 0;
@@ -318,15 +326,19 @@ export function borderGuess(input: GuessInput): GuessResult {
       holdAlone: Math.max(0, need(stack) - strength),
       holdFull: Math.max(0, need(stack + D) - strength),
       planDeploy: planDeploy.get(id) ?? 0,
+      ...(commanderAt.has(id) ? { pinned: true as const } : {}),
     };
   });
   const k = borders.length;
   const budget = borders.reduce((a, b) => a + b.planDeploy, 0);
   const richest = borders.reduce((best, b, i) => (b.worth > borders[best]!.worth ? i : best), 0);
 
-  // Allocations: each border at one of its distinct levels within the budget, the rest on the richest.
+  // Allocations: each border at one of its distinct levels within the budget, the rest on the richest;
+  // a pinned border (#274) at the plan's deploy only.
   const levels = borders.map((b) =>
-    [...new Set([b.minDeploy, Math.max(b.minDeploy, b.holdAlone - b.base), Math.max(b.minDeploy, b.holdFull - b.base)])].sort(byNum),
+    b.pinned
+      ? [Math.max(b.minDeploy, b.planDeploy)]
+      : [...new Set([b.minDeploy, Math.max(b.minDeploy, b.holdAlone - b.base), Math.max(b.minDeploy, b.holdFull - b.base)])].sort(byNum),
   );
   const seen = new Set<string>();
   const allocs: number[][] = [];

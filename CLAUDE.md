@@ -89,6 +89,59 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `src/analysis/lookahead.ts` (`twoStepReaches`), one computation shared with the planner's two-step
   hold (#172, applied wherever armies leave a guarded territory: attacks and their softeners,
   transfers, staging, top-ups): change it there, and `exposedNextTurn` and the planner move together.
+- **Commander safety (#274, `src/analysis/commander-safety.ts`, pure).** One question of the stress test: of
+  the single-deploy replies that strike my commander's territory after my orders (`stressPlan`'s `targets`,
+  no look-ahead), which kill it, and the armies it needs there to survive them all (`needs`, searched by adding
+  armies on its starting territory); plus the smallest deploy, the same for every opponent, that kills it
+  (`killedBy`) and the moves to the nearest enemy or fog. `warapp_submit_turn` refuses, in a Commanders game,
+  orders that leave it takeable with replies sized at max(each opponent's estimate, my income) — estimates from
+  `src/tools/stress-opponents.ts` (shared with `warapp_check_plan`), the cached boards only, never a GameFeed
+  request — unless `accept_commander_risk: true`, which the preview warns of first and the result records
+  (`commanderRiskAccepted`); never refused without commanders or with the commander safe. One check serves all
+  three tools (`commanderCheckOn`, `src/tools/commander-check.ts`; `stressOpponents` reads a static seat (#270) as
+  neutral land, never a killer): the same opponents, teams, free-for-all lead — two opponents striking together
+  when I lead — Order Priority and Airlifts, each reply at max(estimate, my income), `enemy_deploy` only raising
+  it, both move orders always (`first_mover` is not passed). `warapp_check_plan` reports `commander` (with
+  `replyDeploy` and `sizing`) by that check, so its count and `needs` may differ from the stress test's
+  `atRisk.commander`, which tries the estimates, and leads its summary with it when a reply kills it;
+  `warapp_plan_turn` carries a `commander` block every turn (and a first warning when the plan's orders would be
+  refused) by the same check, so it never calls safe what the submit refuses;
+  its first warning names the submit's refusal only when the submit would make it (Commanders on, and the risk
+  found without `enemy_deploy`). `killedBy` is one deploy made by every opponent at once, with `partner` when the
+  killing reply is a joint strike. My Airlifts are simulated (`airlifts`: applied with my deploys before the moves,
+  the commander moved with one that takes it); a Blockade or Gift of a territory the commander stands on before or
+  after the orders is not simulated and is refused unless accepted. The submit skips the `killedBy` search.
+- **The planner walks my commander to safety and holds it for the worst case (#274 items 2–3,
+  `src/analysis/plan/commander.ts`, rule 1w).** Within `COMMANDER_CLEAR_MOVES` (3) moves of an enemy or
+  fogged territory, with a territory of mine strictly farther from all of them reachable through my land
+  (never onto one nearer an enemy than where it stands, nor onto one beside an enemy or the fog: taken
+  first, the step would turn the transfer into an attack), it walks one step a turn: a transfer with
+  `commander: true` (the #165 option, encoding UNVERIFIED live; `warapp_plan_turn`'s `orders` carry it, and its
+  commander block and the submit's check follow the commander there) — the move to that step when the plan has
+  one, else its own 0-army transfer; under No-Split the territory's one order, reserved before any pass, with
+  the whole stack. The step is my commander's territory for rule 1k that turn; where it stood is held only for
+  its own worth (its 7 not counted there), except that after the strikes and before triage it gets the deploys
+  that survive what may land there before the walk (`commanderTransit`), after the step's own hold — even when I
+  am known to move first, since the submit's commander check is not told who moves first and tries the opponent
+  first too. Moving first, a walk that is not my first order runs after two of the opponent's orders (me1, opp1,
+  opp2, me2), so the hold is sized for every enemy stack beside it attacking in turn, each player's deploy on one
+  (review 2); when that does not fit, for each player's strongest attack only, and the walk is then my first
+  order with no Order Priority advised (`ps.commanderWalkFirst`; a warning if a strike or kill still goes first);
+  when neither fits, all that is left goes there, with a warning (`ps.commanderCaught`). The walk goes early; it is
+  my first order (after a protected strike or kill) in those two cases or when the fog borders it, and Order
+  Priority is advised for it only when caught; otherwise the first order is chosen as before. Every other move
+  out of its territory waits for the walk (`scheduleMoves`' `beforeWalk`: only a strike that ends a player may
+  go first). A walk carrying no armies never waits behind a move into its territory (one carrying armies does).
+  Under No-Split the walk wins over a strike or kill from that territory; a commander kill that territory alone
+  could send is a warning naming it (and that a 1v1 ends with it). The commander check (`targets`) also tries
+  every stack beside its territory converging on it, the deploy on each in turn (the all-attack puts it on the
+  largest stack, which may face elsewhere). A what-if `enemyDeploy` below my income sizes the plan's holds for
+  the what-if while the check sizes replies at my income: such a plan can read unsafe (pinned by a test). The plan's first
+  warning says it walks; with nowhere safer it stays, and a hold it cannot fund is the first warning. Rule 1k's
+  threat is now the worst case: per opponent (a team together; the FFA leader's every opponent) its whole deploy,
+  at least my income (a what-if `enemyDeploy` as given), plus the movable armies of every stack of its within two
+  moves — under Multi-Attack even with no enemy beside it (a chain through my land). `PlanOptions.commanderWalks:
+  false` keeps it where it is (the #61 tests use it). Golden: every commander board changed, no other.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or
@@ -409,7 +462,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   interleaves both players' attacks, so a strike never removes its owner's other stacks from
   this turn's threats. R3 never vetoes a strike; when what stays on my commander's territory
   after the plan's orders falls to the stacks next to it (the struck one included), `cardAdvice`
-  is Order Priority when I hold one. Planned moves never carry the commander.
+  is Order Priority when I hold one. Planned moves carry the commander only on its walk to safety (#274).
 - **Cards (`src/cards.ts`).** The hand is read from the live board (`LatestGameInfo` standing →
   my in-game id → GUID → card instance, by bundle type name); the card **type is `Gb`, the LAST
   integer field** (the base reader sets it last) and a Reinforcement card's armies are `tc`, the
@@ -1052,6 +1105,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   no fixed split holds them all and the mix beats it by `MIN_GUESS_GAIN` of the worth at stake. It
   redistributes only the plan's deploys on those borders and never changes the planner or the plan's
   `orders`; with no guess both fields are absent, and the skip reason is `guessSkipped` in `full` only.
+  #274: the territory my commander stands on, and any a commander move of the plan walks it to, keeps the
+  plan's deploy in every allocation (the planner's hold there is sized above this model's), and the draw goes
+  through the submit's commander check: when it leaves the commander takeable where the plan's orders do not
+  (`guessKeepsCommander`), the guess is dropped with a warning (`guessSkipped.reason: 'commander'`).
 - **The client bundle is fetched at runtime, never vendored.** Board replies are decoded by
   interpreting war.app's own reader functions (`src/protocol/interp.ts`). `src/protocol/bundle.ts`
   discovers the current `ujs.js?v=<n>` from a war.app page (through the bridge), downloads it
@@ -1114,6 +1171,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   needed, the result reading unchanged).
   `warapp_plan_turn` logs each turn's outlook name-free at `<dataDir>/outlook/<gameId>.json`
   (`warapp_get_game` adds the final result); the surrender preview reads the latest from there.
+  **How a lost game was lost (#274, `src/analysis/how-lost.ts` pure, `src/tools/how-lost.ts`):**
+  `warapp_get_game` on a finished game the cached account did not win reports `howLost` — a surrender
+  or boot by its state; an elimination from the newest cached board where it held a territory (the
+  turn, `turnCertain` only when the game ended on it): my commander there → its territory fell
+  (inferred), with what stood there after my cached orders (`low` after my moves out, `high` after my
+  moves in) and `armiesToTake(low + 7)` at the game's kill rates (`exact: false` with luck;
+  `held.uncertain` when an order `moves` leaves out — kept only in `sent` — or a card play touches it).
+  When that turn's cached orders walk the commander (`commander: true` on `MyOrders.moves` / `sent`,
+  cached by `myOrdersOf`), it is read at the walk's destination, `territoryCertain: false` (it may
+  have fallen on the start before the walk ran), the neighbours of both. No
+  commander → the last territories; a Commanders game whose board shows none → `unknown`. The
+  neighbours by owner (fog `null`), `by` only when one player alone borders it. Kept as `loss` in the
+  outlook log (ids and figures; a log may hold only that; never written over another account's log) and
+  read from there once the boards are gone; names go out through `untrustedText`.
   An opponent the outlook cannot measure (nothing in view now, or no observed income) gets a
   peer-paced likely high (#214, `peerPace` in `src/analysis/outlook.ts`, pure and exported for the
   planner): each turn 2 × the higher of my income and the most any opponent was tracked earning, the

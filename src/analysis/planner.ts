@@ -19,11 +19,13 @@
 //   5b. a neutral the leftover pays for (#218) ................. plan/after-leftover.ts
 //   6. transfers, #125 staging ................................. plan/transfers.ts
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
+//   1w. my commander walks, its transit hold (#274) ............. plan/commander.ts
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
 //   T1–T9. truces (B2, `relations`): the rule logic .............. plan/relations.ts
 //   PLAN-TEAMS C3.3–C3.6, `team`, the team focus (C3.4) ........ plan/team.ts
 // Rule 1k's commander reserve is read by every phase that spends armies: captures, strike and
-// stand-still keep what holds my commander's territory. `byNum` and `pct` live in plan/util.ts.
+// stand-still keep what holds my commander's territory (#274: where it walks to, when it walks).
+// `byNum` and `pct` live in plan/util.ts.
 // plan/shared.ts is a leaf (it imports no phase and not planner.ts), and the phases import one
 // another for types only, so the import graph has no cycle.
 // Still inline in planPass (ordering dependencies on the shared state): rules 0p.1 / 0p.2 and
@@ -591,9 +593,43 @@
 //     (#121: the enemy takes that next), it never transfers out (a capture that makes it
 //     interior can still fail). A held bonus containing it leaves
 //     its hold, once fully funded here, out of the bonus's cost and payback test (rule 1h):
-//     neither its hold cost nor the stack it saves counts for the unit. The
-//     commander itself never moves: planned moves carry armies only (the order encoder
-//     sends no special units).
+//     neither its hold cost nor the stack it saves counts for the unit.
+//     #274: its threat is the worst case, never less than the visible one: per opponent (a team
+//     together; as the FFA leader every opponent together) its whole deploy, at least my own
+//     income (as warapp_submit_turn sizes its replies; a what-if `enemyDeploy` as given), plus the
+//     movable armies of every stack of its within two moves of it. Under Multi-Attack this holds
+//     even with no enemy beside it: a stack two moves away may chain through my land onto it.
+//  1w. My commander walks (#274, plan/commander.ts). Within COMMANDER_CLEAR_MOVES (3) moves of an
+//     enemy or fogged territory, with a territory of mine strictly farther from all of them
+//     reachable through my land — never onto one nearer an enemy than where it stands, nor onto
+//     one beside an enemy or the fog (taken first, the step would turn the transfer into an
+//     attack) — it walks one step a turn along that path (`commander: true` on a transfer, the
+//     #165 option, encoding unverified live): on the move out of its territory to that step when
+//     the plan has one, else its own transfer carrying no armies (under No-Split, the territory's
+//     one order, entered before any pass plans, with the whole stack: it wins over a commander
+//     strike or a kill that territory could have made, which the passes then leave out; a commander
+//     kill it alone could have sent is named in a warning, with how to send it by hand). The step,
+//     not where it stood, is my commander's territory for rule 1k this turn; where it stood is held
+//     only for its own worth, its commander's 7 not counted there — except that after the strikes
+//     and before triage it gets the deploys that survive what may land there before the walk
+//     (each stack plus its owner's whole deploy, at least my income; my commander counted), after
+//     the hold the step needs. Moving first, a walk that is not my first order runs after two of
+//     the opponent's (me1, opp1, opp2, me2), so the hold is sized for every enemy stack beside it
+//     attacking in turn (#274 review 2); when that does not fit, for each player's strongest attack
+//     only, and the walk is then my first order (`commanderWalkFirst`, no Order Priority advised for
+//     it: the hold covers what lands before it; a warning if a strike or kill still goes first); when
+//     neither fits, all that is left goes there, with a warning. It does so even when I am known to
+//     move first: warapp_submit_turn's commander check is not told who moves first and tries the
+//     opponent first too. The walk goes early; it is my first order after a strike that protects my
+//     commander or ends a player when the hold covers only the first attacks, or when my commander
+//     may be caught before it runs — the transit hold falls short, or the fog borders where it
+//     stands — and only then is Order Priority advised for it when I hold one, whatever it carries;
+//     otherwise the first order is chosen as before. Every other move out of its territory waits for
+//     the walk (the armies there hold it until it leaves), except a strike that ends a player. A walk
+//     carrying no armies never waits behind a move into its territory (one carrying armies does:
+//     they may be arriving). The plan's first warning says it
+//     walks. With no such territory it stays, rule 1k holds it against the worst case, and a hold it
+//     cannot fund is the first warning. `commanderWalks: false` keeps it where it is.
 //  1s. Commander strike (every goal, before finishing off, triage and any expansion; #61).
 //     A visible enemy commander next to a territory I held at the start of the turn is
 //     attacked first — killing it eliminates its owner — sized for its armies + the
@@ -1443,6 +1479,7 @@ import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
 import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
+import { commanderMoveWarning, placeCommanderMove, reserveCommanderMove } from './plan/commander.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
 import { teamFocusLine, teamReport } from './plan/team.js';
@@ -1614,6 +1651,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- the deploy book (plan/orders.ts): budget, guard, deploys, pools, protected value ----
   const book = deployBook(pc, ps);
+  // #274: under No-Split my commander's walk is its territory's one order, entered before any pass plans.
+  reserveCommanderMove(pc, ps);
   const {
     guardAt, coverOf, heldNow, gainWith, orderOf, deploy, pools, roomAt, spareAt,
   } = book;
@@ -2813,6 +2852,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- Order Priority for a strike (rule 1s) (plan/move-order.ts) ----
   const { strikeCard, strikeWho } = strikeOrderPriority(pc, ps, threats, hd, struck);
+  // #274: my commander's step toward safety, once every other order is planned (plan/commander.ts).
+  placeCommanderMove(pc, ps);
 
   // ---- expected, frontier, two-step holds, gambled and shared borders (plan/report.ts) ----
   const expected = reportExpected(pc, ps, book, threats, hd, tgt, caps);
@@ -2860,5 +2901,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   for (const u of units)
     if (u.contested && !u.conceded) for (const m of u.members) if (!heldBorders.has(m.id)) unheld.add(m.id);
   runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
+  // #274: a plan that walks my commander says so first.
+  if (pc.commanderAt?.retreat) plan.warnings.unshift(commanderMoveWarning(pc.commanderAt.retreat, label));
   return plan;
 }

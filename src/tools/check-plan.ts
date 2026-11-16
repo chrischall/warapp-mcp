@@ -6,17 +6,15 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart } from '../analysis/index.js';
 import { stressPlan, type StressDodge, type StressExposure, type StressJoint, type StressReply } from '../analysis/stress.js';
-import { neutralizeSeats, seatEndRules, seatTerritories, staticSeats } from '../analysis/static-seats.js';
+import { neutralizeSeats, seatTerritories, staticSeats } from '../analysis/static-seats.js';
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
-import { handOwners, opponentReinforcement } from './card-advice.js';
-import { boardCardsInEffect, sanctionMyIncome } from './card-effects.js';
+import { handOwners } from './card-advice.js';
+import { sanctionMyIncome } from './card-effects.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand, type Card } from '../cards.js';
 import { claimedCardUses, claimedCardWarning, teamCardClaims, teamHandLeft, unclaimedFirst } from '../team-cards.js';
 import { boardStateFromLive } from '../live.js';
 import { withTeammateOrders } from '../team-orders.js';
-import { carriesTeam } from '../teams.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
 import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
@@ -37,6 +35,10 @@ import {
   turnOrdersArg,
 } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
+import { stressOpponents } from './stress-opponents.js';
+import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
+import { COMMANDER_SIZING, commanderCheckOn } from './commander-check.js';
+import type { CardPlayKind } from '../protocol/methods.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -49,6 +51,14 @@ const ORDER_PRIORITY = cardTypeByName('Order Priority');
 const UNSIMULATED_CARDS = new Map<number | undefined, (on: string) => string>([
   [cardTypeByName('Bomb'), (on) => `The Bomb${on} is not simulated: the test fights at its armies before the Bomb halves them.`],
   [cardTypeByName('Emergency Blockade'), (on) => `The Emergency Blockade${on} is not simulated: the test keeps it yours, armies unchanged.`],
+]);
+
+/** #274: the card plays the commander check reads (an Airlift simulated, the others named on its territory). */
+const COMMANDER_CARD_KINDS = new Map<number | undefined, CardPlayKind>([
+  [cardTypeByName('Airlift'), 'Airlift'],
+  [cardTypeByName('Blockade'), 'Blockade'],
+  [cardTypeByName('Emergency Blockade'), 'EmergencyBlockade'],
+  [cardTypeByName('Gift'), 'Gift'],
 ]);
 
 /** What the stress test does not try, said with every answer so "safe" is never read as more. */
@@ -89,7 +99,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'fog, where nothing could be tested, and `exposedNextTurn`: territories no enemy stack touches today ' +
           'that one could take next turn by first taking the territory in between (yours or neutral), each with ' +
           'the armies it would need to hold, if you add nothing next turn. Decide on the fields (`safe`, ' +
-          '`worst`, `exposedNextTurn`), not on the wording of `summary`, which may change. Exact with no luck and ' +
+          '`worst`, `exposedNextTurn`), not on the wording of `summary`, which may change. With your commander on the ' +
+          'board, `commander` says where it stands after the orders, the armies there and `needs`: the armies its ' +
+          'territory needs to survive every reply tried, by the check warapp_submit_turn refuses on (each reply at the larger ' +
+          'of the estimate and your income, enemy_deploy only raising it, both move orders, your Airlifts counted); when a ' +
+          'reply kills it, the summary starts with it. Exact with no luck and ' +
           'straight rounding; otherwise battles are resolved at their expectation and `exact` is false. It does not ' +
           `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. When this server kept your pick list, \`award\` says what the ` +
           "award of picks showed (as in warapp_plan_turn): the opponent's proven starts stand on the board the " +
@@ -182,6 +196,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         if (card) uses.push({ card, kind });
       };
       let orderPriority = false;
+      const airlifts: CommanderAirlift[] = [];
+      const cardTargets: { kind: CardPlayKind; territory: number }[] = [];
       const ignored: string[] = [];
       const unsimulatedCards: string[] = [];
       const friends = friendsOf(game.players, me);
@@ -234,85 +250,44 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             }
             unsimulatedCards.push(unsimulated(on));
           }
+          // #274: the commander check simulates my Airlifts, and names a Blockade or Gift of the commander's
+          // territory, as warapp_submit_turn does.
+          const kindOf = type !== undefined ? COMMANDER_CARD_KINDS.get(type) : undefined;
+          try {
+            if (kindOf === 'Airlift' && o.from !== undefined && o.to !== undefined)
+              airlifts.push({
+                from: resolveTerritory(map, o.from).id,
+                to: resolveTerritory(map, o.to).id,
+                armies: o.armies ?? 0,
+                ...(o.commander ? { commander: true } : {}),
+              });
+            else if (kindOf && kindOf !== 'Airlift' && o.target !== undefined) cardTargets.push({ kind: kindOf, territory: resolveTerritory(map, o.target).id });
+          } catch {
+            // A territory not on the map: warapp_submit_turn refuses it; the check goes without it.
+          }
           if (type !== undefined && type === ORDER_PRIORITY) orderPriority = true;
           else if (type === undefined || cardTypeName(type) !== 'Reinforcement') ignored.push('a card play other than Order Priority or Reinforcement');
         }
       }
 
-      // The same per-opponent estimates warapp_plan_turn works from.
-      const tracks =
-        turn !== null
-          ? trackOpponents(graph, [...history.boards, { turn, board: seen }], me.id, settings, trackGame(game.players, game.settings, map, game.endRules))
-          : undefined;
-      // #253: what the army cap leaves me (the deploy check, the truces' trust and the Sanctions read
-      // it, as warapp_plan_turn's do) and what I earn before the cut (the fog prior and the leader
-      // test compare economies, and the cap is mine alone, as in the plan's standing).
-      const incomeOnBoard = incomeDetail(graph, board, me.id, game.settings);
-      const income = incomeOnBoard.income;
-      const earnedIncome = incomeOnBoard.cap ? incomeOnBoard.cap.uncapped : income;
-      // PLAN-TEAMS D3: the cards in effect the decoder is sure of (G2: Sanctions on another player cut
-      // its estimate read off the board, as warapp_plan_turn does).
-      const effect = boardCardsInEffect(game, me, turn, info);
-      const { estimates } = planEnemyEstimates({
+      // The same per-opponent estimates warapp_plan_turn works from (stress-opponents.ts).
+      const so = stressOpponents({
         graph,
+        map,
+        game,
+        me,
         board,
-        me: me.id,
-        income,
-        ...(incomeOnBoard.cap ? { incomeCap: incomeOnBoard.cap } : {}),
-        settings,
-        ...(history.previous ? { previousBoard: neutralizeSeats(history.previous.board, seats) } : {}),
-        // #226: my orders on that turn, when this server sent them, as warapp_plan_turn has them.
-        ...(history.previous && turn !== null && history.boards.find((b) => b.turn === turn - 1)?.orders
-          ? { previousOrders: history.boards.find((b) => b.turn === turn - 1)!.orders! }
-          : {}),
-        ...(tracks ? { tracks } : {}),
-        // The fog prior in a 1v1 that started even (#119) and the turn (#128), as warapp_plan_turn has them.
-        game: {
-          players: game.players.map((p) => ({
-            id: p.id,
-            ...(p.team !== undefined ? { team: p.team } : {}),
-            ...(p.state !== undefined ? { state: p.state } : {}),
-            ...(p.humanTurnedIntoAI ? { humanTurnedIntoAI: true } : {}),
-          })),
-          ...(game.endRules && Object.keys(seatEndRules(game.endRules)).length ? { endRules: seatEndRules(game.endRules) } : {}),
-          turn,
-          symmetricStart: symmetricStart(game.settings),
-          // #235: why not, when it was not (the plan says so in a free-for-all).
-          ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
-          // #166: the opponent's opening simulated from the starts the award proved, as the prior.
-          ...(opening ? { opening } : {}),
-          // #164: exact income where the fog shows every owner, and an opponent's Reinforcement card.
-          ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
-          ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
-        },
+        seen,
+        boards: history.boards,
+        ...(history.previous ? { previous: history.previous.board } : {}),
         turn,
-        ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
+        settings,
+        hand,
+        info,
+        ...(opening ? { opening } : {}),
+        ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
       });
-      const myTeam = carriesTeam(me.team) ? me.team : undefined;
-      const teamOf = new Map(game.players.map((p) => [p.id, p.team]));
-      const friend = (id: number) => id === me.id || (myTeam !== undefined && teamOf.get(id) === myTeam);
-      // Whoever holds a stack on the board can use it, whatever GameFeed says of the player (a booted
-      // seat may be an AI): every owner in view, then every other player still in the game. A static
-      // seat's territories are neutral on `board` already (#270), so it is never among them.
-      const onBoard = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' ? [t.owner.playerId] : [])));
-      const stillIn = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').map((p) => p.id);
-      const base = settings.baseIncome ?? 0;
-      const opponents = [...new Set([...onBoard, ...stillIn])]
-        .filter((id) => !friend(id))
-        .sort((a, b) => a - b)
-        .map((id) => {
-          const e = estimates.find((x) => x.playerId === id);
-          return { id, deploy: enemy_deploy ?? e?.estimate ?? base, base: e?.base ?? base };
-        });
-      const teams = new Map<number, number>();
-      for (const p of game.players) if (carriesTeam(p.team)) teams.set(p.id, p.team);
-      const inView = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.armies !== null ? [t.owner.playerId] : [])));
-      // #180: in a free-for-all I lead when my income beats every estimate of an opponent in view
-      // (two at least; enemy_deploy is a what-if, not the game's standing): then any two of them
-      // may strike one territory of mine together.
-      const rivals = opponents.filter((o) => inView.has(o.id));
-      const estimateOf = (id: number) => estimates.find((x) => x.playerId === id)?.estimate ?? base;
-      const leader = teams.size === 0 && rivals.length >= 2 && rivals.every((o) => earnedIncome > estimateOf(o.id));
+      const { tracks, income, effect, friend, opponents, teams, inView, leader } = so;
 
       // B2 T6: the truces in force (the ledger, as warapp_plan_turn reads it). Their partners stay among
       // the opponents tried, so `safe` still means safe against a break; `safeIfTruceHolds` leaves the
@@ -350,6 +325,23 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         leader,
         ...(binding.length ? { truces: binding.map((r) => ({ player: r.player, covered: r.coveredMine })) } : {}),
       });
+      // #274: my commander, by the check warapp_submit_turn refuses on (commander-check.ts): the same
+      // opponents, each reply at the larger of its estimate and my income (enemy_deploy only raises it),
+      // both move orders whatever first_mover says, my Airlifts simulated.
+      const checked = commanderCheckOn({
+        graph,
+        me: me.id,
+        settings,
+        so,
+        income,
+        deploys,
+        moves,
+        orderPriority,
+        ...(enemy_deploy !== undefined ? { floor: enemy_deploy } : {}),
+        airlifts,
+        cardTargets,
+      });
+      const guard = checked?.safety;
 
       const name = namer(map);
       const playerName = new Map(game.players.map((p) => [p.id, p.name]));
@@ -527,12 +519,16 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             : report.safe === false && report.safeIfTruceHolds === null
               ? ' Every reply tried breaks a truce (safeIfTruceHolds is null).'
               : '';
+      // The count and `needs` come from one run (the commander check's), so the line never pairs a count
+      // the full run found with armies the targeted run says hold.
+      const commanderLine = guard ? commanderText(guard, guard.killers) : undefined;
       const summary =
-        report.safe === null
+        (guard && (guard.killers > 0 || guard.lostUnanswered) && commanderLine ? `${commanderLine} ` : '') +
+        (report.safe === null
           ? `Nothing could be tested this turn: no opposing stack in view touches you.${blind}${ahead}`
           : report.safe
             ? `None of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried costs you a territory, a capture or a bonus.${blind}${inexact}${dodged}${ahead}`
-            : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${truceLine}${inexact}${dodged}${ahead}`;
+            : `${report.harmful} of the ${report.considered} ${plural(report.considered, 'reply', 'replies')} tried ${plural(report.harmful, 'costs', 'cost')} you something. Worst: ${sentence(report.worst!)}${truceLine}${inexact}${dodged}${ahead}`);
       const deployed = deploys.reduce((n, d) => n + d.armies, 0);
       const warnings = [
         ...(award ? assumedWarning(award) : []),
@@ -638,6 +634,24 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         // #180: each stack you attack moving out first (compact: those that get away), and
         // territories two opponents take together.
         dodges: (rung === 'full' ? report.dodges : escapes).slice(0, LIST_MAX).map(dodgeView),
+        // #274: my commander (only when it is on the board): where it ends up, the armies there and what holds it.
+        ...(guard
+          ? {
+              commander: {
+                text: commanderLine!,
+                territory: name(guard.territory),
+                armies: guard.armies,
+                needs: guard.needs,
+                replies: guard.killers,
+                distance: guard.distance,
+                // The deploy the worst reply was sized at: as warapp_submit_turn sizes it.
+                replyDeploy: checked!.replyDeploy,
+                sizing: COMMANDER_SIZING,
+                // A Blockade or Gift of its territory, which the check does not simulate (the submit refuses it).
+                ...(checked!.cards ? { cards: checked!.cards } : {}),
+              },
+            }
+          : {}),
         jointFalls: report.jointFalls.slice(0, LIST_MAX).map(jointView),
         ...(report.jointFalls.length > LIST_MAX ? { jointFallsMore: report.jointFalls.length - LIST_MAX } : {}),
         blindBorders: report.blindBorders.map(name),
@@ -649,4 +663,16 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       }));
     },
   );
+}
+
+/** #274: my commander in one sentence, by id: how many replies kill it and the armies that hold. */
+export function commanderText(c: CommanderSafety, replies: number): string {
+  const where = `Your commander on territory ${c.territory}`;
+  if (c.lostUnanswered) return `${where} is lost to your own orders, with nobody answering.`;
+  if (replies === 0) return `${where} survives every reply tried (${c.armies} armies there after your orders).`;
+  const hold =
+    c.needs === null
+      ? 'no number of armies there holds it against all of them'
+      : `it needs ${c.needs} armies there (${c.armies} after your orders) to survive every one`;
+  return `${where} falls to ${replies} of the replies tried (${COMMANDER_SIZING}, as warapp_submit_turn sizes them): ${hold}.`;
 }

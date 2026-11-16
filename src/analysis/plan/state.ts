@@ -24,6 +24,7 @@ import type {
   PlannerSettings,
   PlanOptions,
 } from './shared.js';
+import type { CommanderPlace } from './commander.js';
 
 /** The opponents, their estimates, the game profile and the goal it picks (rule 0p). */
 export interface OpponentsCtx {
@@ -124,6 +125,11 @@ export interface BoardCtx {
   territoryShare: (k: number) => number;
   plainWorth: (_t: number, gain: number) => number;
   inFocus: (t: number) => boolean;
+  /**
+   * #274: where my commander stands and, when it walks toward safety this turn (plan/commander.ts),
+   * its step. Absent with no commander of mine on the board (or more than one).
+   */
+  commanderAt: CommanderPlace | undefined;
 }
 
 /** The combat model: kill rates, luck, rounding, and what a capture or a hold costs. */
@@ -180,6 +186,18 @@ export interface PlanState {
   holdings: ReadonlySet<number>;
   /** The card to play this turn, if any (rule 1s; rule 1b's withdrawals): reassigned as orders are made. */
   cardAdvice: CardAdvice | null;
+  /**
+   * #274 review: my commander walks from a territory the opponent's first attack may take before
+   * the walk runs (the transit hold falls short, or a fogged neighbour): only then is the walk my
+   * first order, for Order Priority (plan/commander.ts `commanderTransit`).
+   */
+  commanderCaught?: true;
+  /**
+   * #274 review 2: the transit hold covers only what lands before my first order (some player has two
+   * stacks beside it, and holding against them all does not fit): the walk is my first order, with no
+   * Order Priority advised for it (plan/commander.ts `commanderTransit`).
+   */
+  commanderWalkFirst?: true;
   warnings: string[];
   rationale: string[];
   /** Armies deployed on each territory of mine. */

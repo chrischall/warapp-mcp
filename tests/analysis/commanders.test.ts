@@ -2,13 +2,18 @@ import { describe, expect, it } from 'vitest';
 import type { BoardSpecialUnit, TerritoryState } from '../../src/board.js';
 import { armiesToTake, COMMANDER_STRENGTH, specialUnitStrength } from '../../src/analysis/combat.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { captureCost, planTurn, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
+import { captureCost, planTurn as planTurnWalking, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import { boardStateFromLive, OWNER_NEUTRAL, type LiveTerritory } from '../../src/live.js';
 import type { GameMap, Player } from '../../src/normalize.js';
 import { validateTurn } from '../../src/tools/turn.js';
 import { board, mine, neutral, sizedBeforeMargin } from './helpers.js';
 
 const ME = 10;
+/**
+ * Rules 1k and 1s for a commander that stands where it is: #274's walk toward safety is off here
+ * (its own tests are in commander-walk.test.ts); the worst-case hold of #274 still applies.
+ */
+const planTurn = (input: PlanInput): TurnPlan => planTurnWalking({ ...input, options: { commanderWalks: false, ...input.options } });
 const ENEMY = 20;
 const STD: PlannerSettings = { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true };
 
@@ -60,9 +65,10 @@ describe('planner: commanders (#61)', () => {
   const g = buildGraph(makeMap([1, 2, 3, 4], [[1, 2], [1, 3], [3, 4]]));
 
   it('never concedes my commander\'s border; holds it when the budget allows', () => {
-    // Threat on T1: 19 movable + ~5 deploy = 24. Counting the commander (3 + 7), 5 deploys make
-    // it hold (15 defenders need 25). Without the commander it would need 12, more than the
-    // income, and T1 protects +0, so it was conceded economically.
+    // Threat on T1: 19 movable + ~5 deploy = 24; #274 holds it against the worst case, my whole
+    // income (10, above the ~5 estimate) + 19 = 29. Counting the commander (3 + 7), 8 deploys make
+    // it hold (18 defenders need 30). Without the commander it was conceded economically
+    // (T1 protects +0).
     const plan = planTurn({
       graph: g,
       board: board([withCommander(mine(1, 3), ME), enemy(2, 20), mine(3, 5), neutral(4, 2)], true),
@@ -71,12 +77,13 @@ describe('planner: commanders (#61)', () => {
       settings: STD,
     });
     expect(plan.conceded).not.toContain(1);
-    expect(armiesToTake(3 + 5 + COMMANDER_STRENGTH)).toBeGreaterThan(24);
+    expect(armiesToTake(3 + 7 + COMMANDER_STRENGTH)).toBeLessThanOrEqual(29);
+    expect(armiesToTake(3 + 8 + COMMANDER_STRENGTH)).toBeGreaterThan(29);
     expect(plan.rationale).toContain(
-      'Deploy 5 to T1 (#1): my commander stands there, so it must hold (losing the commander eliminates me): 8 armies and my commander need 25 to take, above the ~24 threat.',
+      `Deploy 8 to T1 (#1): my commander stands there, so it must hold (losing the commander eliminates me): 11 armies and my commander need ${armiesToTake(3 + 8 + COMMANDER_STRENGTH)} to take, above the ~29 threat.`,
     );
     // (The leftover may top it up further: it is the held border with the most at stake.)
-    expect(deployedTo(plan, 1)).toBeGreaterThanOrEqual(5);
+    expect(deployedTo(plan, 1)).toBeGreaterThanOrEqual(8);
     expect(plan.moves.filter((m) => m.from === 1)).toEqual([]);
   });
 
@@ -690,7 +697,7 @@ describe('planner: commanders through the live board (#61)', () => {
     // #226: sized for the commander and the owner's deploy; idle armies on T1 then join it as a margin.
     expect(sizedBeforeMargin(plan, 1, 2)).toBe(captureCost(0 + COMMANDER_STRENGTH + 5, STD)!);
     expect(plan.conceded).not.toContain(1);
-    expect(plan.rationale).toContain('My commander stays on T1 (#1): planned moves carry armies only, never the commander.');
+    expect(plan.rationale).toContain('My commander stays on T1 (#1): this plan does not walk it (commanderWalks off).');
     const named = (id: number) => ({ id, name: `T${id}` });
     const checked = validateTurn({
       map,

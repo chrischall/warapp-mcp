@@ -262,9 +262,11 @@ describe('#201: behind, holds are sized for the expected attack', () => {
     expect(p.profile.standing).toBe('behind');
     const w = p.warnings.join('\n');
     expect(w).not.toMatch(/Gambled: [^\n]*T1 \(#1\)/);
-    // Nothing leaves the commander's territory, and it is held against all ~20.
+    // Nothing leaves the commander's territory, and it is held against all ~20 — #274: against the
+    // worst case, ~21: the whole ~15 deploy plus every stack of player 20's within two moves (T2's 5
+    // movable and T4's 1, beyond T2).
     expect(p.moves.some((m) => m.from === 1)).toBe(false);
-    expect(p.rationale.join('\n')).toMatch(/my commander stands there, so it must hold .*need 21 to take, above the ~20 threat/);
+    expect(p.rationale.join('\n')).toMatch(/my commander stands there, so it must hold .*need 23 to take, above the ~21 threat/);
   });
 
   it('an explicit goal sizes each border for the whole deploy, as before', () => {

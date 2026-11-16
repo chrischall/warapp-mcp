@@ -120,6 +120,49 @@ describe('borderGuess', () => {
     expect(r).toMatchObject({ kind: 'skipped', reason: 'fixed-split-holds' });
   });
 
+  describe("my commander's territory keeps the plan's deploy (#274 review)", () => {
+    /**
+     * The foe's 3 touches my 1, 2, 6 and 7; my commander stands on 7 (3 armies + 7 for it: the model
+     * needs nothing more there). The plan deploys 3 on 1 and 3 on 7 (the planner's commander hold,
+     * sized at my income and every stack within two moves: more than this model asks).
+     */
+    const MAP4 = makeMap(7, [...EDGES, [6, 3], [7, 3]]);
+    const cmdr = [{ kind: 'commander' as const, id: 'c', playerId: ME }];
+    const BOARD4 = [...START, mine(6, 3), { ...mine(7, 3), specialUnits: cmdr }];
+    const PLAN4: GuessPlan = {
+      deploys: [
+        { territoryId: 1, armies: 3 },
+        { territoryId: 7, armies: 3 },
+      ],
+      moves: [],
+      enemyDeploy: 5,
+    };
+
+    it('standing on a border: its worth makes mixing gain too little here, and the plan keeps its split', () => {
+      // 1, 2 and 6 share the 3 left once 7 keeps its 3: one of them holds, a mix gains 2/3 of 104 at stake.
+      expect(guess({ plan: PLAN4 }, MAP4, BOARD4)).toMatchObject({ kind: 'skipped', reason: 'small-gain' });
+    });
+
+    it('nor onto the border a commander move walks it to', () => {
+      // The commander on 4 (interior) walks to border 6, where the plan deploys 3.
+      const walking = [...START.map((t) => (t.territoryId === 4 ? { ...t, specialUnits: cmdr } : t)), mine(6, 3), mine(7, 3)];
+      const plan: GuessPlan = {
+        deploys: [
+          { territoryId: 1, armies: 3 },
+          { territoryId: 6, armies: 3 },
+        ],
+        moves: [{ from: 4, to: 6, armies: 0, commander: true }],
+        enemyDeploy: 5,
+      };
+      const g = must(guess({ plan }, MAP4, walking));
+      const at = g.borders.findIndex((b) => b.id === 6);
+      expect(at).toBeGreaterThanOrEqual(0);
+      for (const m of g.mix) expect(m.allocation[at]).toBeGreaterThanOrEqual(3);
+      expect(g.deploys.find((d) => d.territoryId === 6)?.armies ?? 0).toBeGreaterThanOrEqual(3);
+      expect(total(g.deploys)).toBe(6);
+    });
+  });
+
   it('skips several opponents, with the reason', () => {
     const r = guess({}, TWO, [...START.slice(0, 4), foe(5, 4, OTHER)]);
     expect(r).toMatchObject({ kind: 'skipped', reason: 'several-opponents' });

@@ -27,18 +27,26 @@ export interface SchedulableMove {
   from: number;
   to: number;
   kind: 'attack' | 'transfer';
+  /** #274: my commander's walk. */
+  commander?: true;
+  /** The armies the move lists (a commander's walk that carries none waits for nothing, #274). */
+  armies?: number;
 }
 
 /**
  * Whether move `j` must stay after move `i` (i listed before j in decision order):
  * - attacks on one target keep their order (softeners before the finisher);
  * - a move out of a territory another move went into earlier (a capture, a transfer) stays
- *   after it (its armies may be the ones moving on);
- * - a transfer into a territory captured this turn stays after the capture.
+ *   after it (its armies may be the ones moving on) — not my commander's walk when it carries no
+ *   armies (#274: nothing it lists can be waiting to arrive);
+ * - a transfer into a territory captured this turn stays after the capture;
+ * - (#274 review 2) every other move out of my commander's territory stays after its walk, wherever
+ *   it was listed (the armies there hold the commander until it leaves), unless `beforeWalk` lets it
+ *   go first (a strike that ends a player: {@link scheduleMoves}).
  */
 function dependsOn(i: SchedulableMove, j: SchedulableMove): boolean {
   if (i.kind === 'attack' && j.kind === 'attack' && i.to === j.to) return true;
-  if (j.from === i.to) return true;
+  if (j.from === i.to && !(j.commander === true && j.armies === 0)) return true;
   return i.kind === 'attack' && j.kind === 'transfer' && j.to === i.to;
 }
 
@@ -51,10 +59,15 @@ export function scheduleMoves<M extends SchedulableMove>(
   moves: readonly M[],
   slotOf: (m: M, index: number) => MoveSlot,
   rankOf: (m: M) => number = () => 0,
+  beforeWalk: (m: M) => boolean = () => false,
 ): M[] {
   const slot = moves.map((m, i) => slotOf(m, i));
   const rank = moves.map((m) => rankOf(m));
-  const deps = moves.map((m, j) => moves.slice(0, j).flatMap((p, i) => (dependsOn(p, m) ? [i] : [])));
+  const walks = moves.flatMap((m, i) => (m.commander === true ? [i] : []));
+  const deps = moves.map((m, j) => [
+    ...moves.slice(0, j).flatMap((p, i) => (dependsOn(p, m) ? [i] : [])),
+    ...(m.commander === true || beforeWalk(m) ? [] : walks.filter((w) => moves[w]!.from === m.from)),
+  ]);
   const done = new Set<number>();
   const out: M[] = [];
   while (out.length < moves.length) {

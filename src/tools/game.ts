@@ -6,6 +6,7 @@ import { leavers, type Game, type GameSettings } from '../normalize.js';
 import { recordFinalResult } from '../outlook-log.js';
 import { currentTurn, gameIdArg, mapSummary, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
+import { lossReport } from './how-lost.js';
 import { foldFinished, type FinishedFold } from './profile-hook.js';
 
 const VIEWS = ['compact', 'full', 'raw'] as const;
@@ -64,7 +65,8 @@ function compact(game: Game) {
  * `dir` is the data directory: a finished game this server planned gets its final result in the
  * outlook log (#178), and its opponent profile is folded into the cross-game stores (B2,
  * docs/PLAN-PROFILES.md; off with `WARAPP_PLAYER_PROFILE=off` in `env`): the per-game file kept while it
- * was played, else, once, its cached boards (#264's backfill), reported as `profileFold`.
+ * was played, else, once, its cached boards (#264's backfill), reported as `profileFold`. A finished game
+ * the cached account did not win says how (`howLost`, #274, src/tools/how-lost.ts).
  */
 export function registerGameTool(server: McpServer, client: WarappClient, dir?: () => string, env?: EnvSource): void {
   server.registerTool(
@@ -78,6 +80,10 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
           'is on and whether the board is available for warapp_analyze_board; the end-of-game, boot and AI settings ' +
           '(`endRules`) and the humans who have not committed with the time left to each boot (`leavers`, when the game boots; from ' +
           'lastTurnTime, whose meaning is unverified). Optional game history and chat. ' +
+          'A finished game I lost says how (`howLost`): a surrender or boot by my state; an elimination from the boards ' +
+          'this server cached while it played — the turn (certain only when the game ended on it), my commander\'s territory ' +
+          'that fell with what it held, the attackers that needed and who bordered it (at a commander walk\'s destination, ' +
+          'which may instead have fallen before the walk ran), or else my last territories (inferred, never seen). ' +
           'A finished game is folded once into the opponent profiles (`profileFold`; from the turns kept while it was played, ' +
           'else from the boards cached then — a backfill; no other request), as warapp_profile_opponents reads them. ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
@@ -106,13 +112,16 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
         ...(include_chat ? { chat: true } : {}),
       });
       let fold: FinishedFold | undefined;
+      let lost: Record<string, unknown> | undefined;
       if (dir) {
         await recordFinalResult(dir(), game);
+        // #274: a game I lost says how, from the boards cached while it was played.
+        lost = await lossReport(dir(), game);
         // The first read that shows the game finished folds its opponent profile, or backfills it from
         // the cached boards once (#264; best effort, no request).
         if (game.state === 'Finished') fold = await foldFinished(dir(), env ?? process.env, game);
       }
-      const folded = fold && fold.status !== 'off' ? { profileFold: fold } : {};
+      const folded = { ...(fold && fold.status !== 'off' ? { profileFold: fold } : {}), ...(lost ? { howLost: lost } : {}) };
       return respond(view, VIEWS, (rung) => {
         if (rung === 'compact') return { ...compact(game), ...folded };
         if (rung === 'full') return { game: { ...game, map: game.map ? mapSummary(game.map) : undefined }, ...folded };

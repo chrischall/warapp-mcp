@@ -95,3 +95,33 @@ describe('zigzag position arithmetic, two players (#127)', () => {
     }
   });
 });
+
+describe('scheduleMoves: my commander\'s walk (#274)', () => {
+  type M = SchedulableMove & { name: string };
+  const into: M = { name: 'into', from: 2, to: 1, kind: 'transfer', armies: 5 };
+  const slots = (m: M) => (m.name === 'walk' ? MoveSlot.Early : MoveSlot.Filler);
+
+  it('a walk carrying no armies runs before a move into its territory', () => {
+    const walk: M = { name: 'walk', from: 1, to: 3, kind: 'transfer', commander: true, armies: 0 };
+    expect(scheduleMoves([into, walk], slots).map((m) => m.name)).toEqual(['walk', 'into']);
+  });
+
+  it('a walk carrying armies stays after a move into its territory: they may be the ones it carries (review)', () => {
+    const walk: M = { name: 'walk', from: 1, to: 3, kind: 'transfer', commander: true, armies: 8 };
+    expect(scheduleMoves([into, walk], slots).map((m) => m.name)).toEqual(['into', 'walk']);
+  });
+
+  it('every other move out of its territory waits for the walk: the armies there hold it until it leaves (#274 review 2)', () => {
+    const walk: M = { name: 'walk', from: 1, to: 3, kind: 'transfer', commander: true, armies: 0 };
+    const out: M = { name: 'out', from: 1, to: 4, kind: 'transfer', armies: 20 };
+    const hit: M = { name: 'hit', from: 1, to: 5, kind: 'attack', armies: 9 };
+    // Even in an earlier slot, and listed before it.
+    const early = (m: M) => (m.name === 'walk' ? MoveSlot.Filler : MoveSlot.Protected);
+    expect(scheduleMoves([out, hit, walk], early).map((m) => m.name)).toEqual(['walk', 'out', 'hit']);
+    // A move into it still comes first when the walk carries armies.
+    const carrying: M = { ...walk, armies: 8 };
+    expect(scheduleMoves([out, into, carrying], early).map((m) => m.name)).toEqual(['into', 'walk', 'out']);
+    // A strike that ends a player may go first (`beforeWalk`).
+    expect(scheduleMoves([hit, walk], early, () => 0, (m) => m === hit).map((m) => m.name)).toEqual(['hit', 'walk']);
+  });
+});

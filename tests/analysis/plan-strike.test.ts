@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { neighborsOf } from '../../src/analysis/graph.js';
 import * as planner from '../../src/analysis/planner.js';
 import { capturesPhase } from '../../src/analysis/plan/captures.js';
+import { reserveCommanderMove } from '../../src/analysis/plan/commander.js';
 import { noteEstimates, planContext } from '../../src/analysis/plan/estimates.js';
 import { holdsPhase } from '../../src/analysis/plan/holds.js';
 import { deployBook } from '../../src/analysis/plan/orders.js';
@@ -39,6 +40,7 @@ function upToStrikes(i: number) {
   noteEstimates(ctx, state);
   if (!ctx.mine.length) return undefined;
   const book = deployBook(ctx, state);
+  reserveCommanderMove(ctx, state);
   const threats = threatsPhase(ctx, state, input);
   const pass = noPass();
   const hd = holdsPhase(ctx, state, book, threats, pass);

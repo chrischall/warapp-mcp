@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import * as planner from '../../src/analysis/planner.js';
 import { capturesPhase } from '../../src/analysis/plan/captures.js';
+import { reserveCommanderMove } from '../../src/analysis/plan/commander.js';
 import { noteEstimates, planContext } from '../../src/analysis/plan/estimates.js';
 import { holdsPhase } from '../../src/analysis/plan/holds.js';
 import { deployBook } from '../../src/analysis/plan/orders.js';
@@ -12,6 +13,7 @@ import { newPlanState } from '../../src/analysis/plan/state.js';
 import { targetsPhase } from '../../src/analysis/plan/targets.js';
 import { threatsPhase } from '../../src/analysis/plan/threats.js';
 import { syntheticInput } from './golden/corpus.js';
+import { phaseWarnings } from './helpers.js';
 
 // These tests loop over hundreds of synthetic boards: v8 coverage (CI runs `npm run test:coverage`)
 // slows them about 6x, past vitest's default 5 s.
@@ -37,6 +39,7 @@ function upToCaptures(i: number) {
   noteEstimates(ctx, state);
   if (!ctx.mine.length) return undefined;
   const book = deployBook(ctx, state);
+  reserveCommanderMove(ctx, state);
   const threats = threatsPhase(ctx, state, input);
   const pass = noPass();
   const hd = holdsPhase(ctx, state, book, threats, pass);
@@ -52,7 +55,7 @@ describe('plan/targets (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
       if (!run) continue;
       const plan = planner.planTurn(run.input);
       expect(plan.rationale.slice(0, run.state.rationale.length)).toEqual(run.state.rationale);
-      expect(plan.warnings.slice(0, run.state.warnings.length)).toEqual(run.state.warnings);
+      expect(phaseWarnings(plan.warnings).slice(0, run.state.warnings.length)).toEqual(run.state.warnings);
       checked += run.state.rationale.length + run.state.warnings.length;
     }
     expect(checked).toBeGreaterThan(0);

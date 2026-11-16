@@ -1241,8 +1241,12 @@ export function floorTier(
         continue;
       }
       deploy(t.id, room);
-      warnings.push(
-        `My commander's territory ${label(t.id)} cannot be made safe this turn: it needs ${t.holdCost} more armies against the ~${t.threat} threat, but only ${room} can be deployed there. ${room ? `All ${room} go there, and` : 'Still,'} nothing leaves it (losing the commander eliminates me; it is never conceded).`,
+      // #274: said first. A commander that cannot walk away holds here; one walking here says so first instead.
+      const stuck = pc.commanderAt !== undefined && pc.commanderAt.retreat === undefined && !pc.commanderAt.pinned && pc.commanderAt.territory === t.id;
+      warnings.unshift(
+        `My commander's territory ${label(t.id)} cannot be made safe this turn: it needs ${t.holdCost} more armies against the ~${t.threat} threat, but only ${room} can be deployed there. ${room ? `All ${room} go there, and` : 'Still,'} nothing leaves it (losing the commander eliminates me; it is never conceded)${
+          stuck ? ': no territory of mine farther from every enemy is reachable through my land, so it cannot walk away' : ''
+        }.`,
       );
     }
     let triageBudget = ps.budget;

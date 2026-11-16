@@ -135,3 +135,17 @@ export function sizedBeforeMargin(plan: TurnPlan, from: number, to: number): num
   if (line) return Number(/up from (\d+) to/.exec(line)![1]);
   return plan.moves.find((m) => m.kind === 'attack' && m.from === from && m.to === to)?.armies;
 }
+
+/**
+ * #274: a plan's warnings without the commander lines it puts first (a walk toward safety, or a
+ * commander territory that cannot be made safe), so the phases' own lines can be compared in order.
+ */
+export function phaseWarnings(warnings: readonly string[]): string[] {
+  let i = 0;
+  while (
+    i < warnings.length &&
+    (warnings[i]!.startsWith('My commander moves from ') || (warnings[i]!.startsWith("My commander's territory ") && warnings[i]!.includes('cannot be made safe this turn')))
+  )
+    i++;
+  return warnings.slice(i);
+}
