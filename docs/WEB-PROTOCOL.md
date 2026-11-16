@@ -201,8 +201,9 @@ AttackTransfer  byte 01, bool attackTeammates, byte mode (1 Attack, 2 Transfer,
                 Armies { bool fogged, int32 count, byte specialUnitCount, units… },
                 int32 to, base
 PlayCard*       byte <card tag> (5 Reinforcement, 10 Order Priority, 11 Order Delay,
-                18 Blockade; UNVERIFIED live: 6 Spy, 12 Airlift, 13 Gift, 14 Diplomacy,
-                15 Sanctions, 16 Reconnaissance, 17 Surveillance), card fields,
+                18 Blockade, 12 Airlift; UNVERIFIED live: 6 Spy, 13 Gift, 14 Diplomacy,
+                15 Sanctions, 16 Reconnaissance, 17 Surveillance, 20 Bomb,
+                8 Emergency Blockade), card fields,
                 GUID cardInstanceId, base
 Discard         byte 09, GUID cardInstanceId, base
 ```
@@ -244,14 +245,14 @@ advanced).
 | Card play | Order tag | Phase |
 |---|---|---|
 | Discard | 9 | 10 — from the bundle (`GameOrderDiscard`'s writer: tag 9, GUID, base; its phase is 10); **not yet live-verified** |
-| Order Priority | 10 | 12 |
+| Order Priority | 10 | 12 — played live again 2026-11-16 (card by name, no target, a strike as the first move): committed and resolved; whether my first move ran first cannot be told from the result, so that effect stays UNVERIFIED |
 | Reinforcement | 5 | 20 |
 | (deploys) | 2 | 25 |
 | (attacks/transfers) | 1 | 50 |
 | Order Delay | 11 | **50** — placed in phase 12 (with Order Priority) it was refused with error 10 |
-| Blockade | 18 | 60 |
+| Blockade | 18 | 60 — verified live 2026-11-16 (card by name, target territory by id): the territory turned neutral at the end of the turn at its armies × the game's multiplier |
 | Spy, Reconnaissance, Surveillance | 6, 16, 17 | 15 — bundle, **UNVERIFIED live** |
-| Airlift | 12 | 43 — bundle, **UNVERIFIED live** |
+| Airlift | 12 | 43 — bundle, verified live 2026-11-16 (card by name, `from`, `to`, `armies`): the source lost the armies, the target gained them, the card left the hand |
 | Gift | 13 | 47 — bundle, **UNVERIFIED live** |
 | Diplomacy | 14 | 75 — bundle, **UNVERIFIED live** |
 | Sanctions | 15 | 80 — bundle, **UNVERIFIED live** |
@@ -292,10 +293,14 @@ so a player can raise an Order Delay among the moves but never above the deploys
 to be accepted — consistent with the 2026-11-12 refusal, which put the card in phase 12 ahead of
 the deploys — but no such commit has been sent, so the position stays unverified on the wire.
 
-**Targeted card plays (PLAN-TEAMS part D) — from the client bundle, UNVERIFIED live (V9).** Each
+**Targeted card plays (PLAN-TEAMS part D) — from the client bundle; the Airlift play verified live 2026-11-16, the rest UNVERIFIED live (V9).** Each
 layout is read from its `warlight.shared.GameOrderPlayCard<X>` class: the writer puts the tag, the
 card's own fields, then the base play-card part (the card GUID, then the order base); the class's
-phase method gives the phase. No commit carrying one has been sent; golden tests pin the bytes.
+phase method gives the phase. Golden tests pin the bytes. An Airlift (card by name, `from`, `to`,
+`armies`) was committed live 2026-11-16 and resolved as the layout says: on the next board the source
+had lost the armies, the target had gained them, and the card had left the hand. No commit carrying any
+other card in this table (Spy, Reconnaissance, Surveillance, Gift, Diplomacy, Sanctions, Bomb,
+Emergency Blockade) has been sent: those stay UNVERIFIED live.
 
 | Card (class) | Tag | Fields after the tag, in write order | Phase |
 |---|---|---|---|
@@ -333,7 +338,9 @@ the deploys, so `warapp_submit_turn` takes what it sends off its source's later 
 the moves, so a move from the gifted territory does not run (a preview warning); a Gift to an opponent
 (not me, not a teammate) gets its own preview line naming the recipient by id as an opponent. The preview warns that
 the encoding is unverified, and the result carries `cardPlayCheck`: after the first live commit of each,
-read back that the card left the hand and did what it should, then mark it verified here.
+read back that the card left the hand and did what it should, then mark it verified here and drop it from
+the code's list of unverified plays, `UNVERIFIED_CARD_PLAYS` in `src/protocol/methods.ts` (the targeted plays
+are `TARGETED_CARD_PLAYS`). Airlift has left that list (#296): its preview carries no encoding warning.
 
 **The hold limit (#20).** A play or discard is required only when the hand holds **more** whole
 cards than `MaxCardsHold`: live, a commit with no card was accepted at 4/4 and refused with error

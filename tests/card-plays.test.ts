@@ -155,7 +155,9 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
     );
     const view = preview as unknown as Preview;
     const warnings = view.preview.warnings?.join('\n') ?? '';
-    expect(warnings).toMatch(/UNVERIFIED encoding: the Gift, Airlift, Spy, Reconnaissance, Surveillance card plays/);
+    expect(warnings).toMatch(/UNVERIFIED encoding: the Gift, Spy, Reconnaissance, Surveillance card plays/);
+    // #296: the Airlift play was verified live 2026-11-16, so it is no longer named.
+    expect(warnings).not.toMatch(/UNVERIFIED encoding:[^\n]*Airlift/);
     expect(warnings).toMatch(/Gift: territory 161 .* go to player 7176543229 before the attacks/);
     // The preview names targets by id, every name delimited.
     const gift = view.preview.willSend.orders.find((o) => (o.card as { name: string }).name === 'Gift')!;
@@ -208,6 +210,19 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
     });
     expect(textOf(flown)).toMatch(/send 3 armies from .*at most 2 this turn/);
     expect(s.sent).toEqual([]);
+  });
+
+  it('an Airlift alone carries no unverified-encoding warning and no cardPlayCheck: verified live (#296)', async () => {
+    const s = server(HAND);
+    h = await liveHarness({ feed: [game(), game(), game({ turns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    const { preview, result } = await confirmed({
+      game_id: GAME,
+      orders: [{ kind: 'card', card: 'Airlift', from: 159, to: 161, armies: 8 }, DEPLOY],
+    });
+    expect((preview as unknown as Preview).preview.warnings?.join('\n') ?? '').not.toMatch(/UNVERIFIED encoding/);
+    expect(result).toMatchObject({ status: 'resolved' });
+    expect(result).not.toHaveProperty('cardPlayCheck');
+    expect(s.sent).toHaveLength(1);
   });
 
   it('airlifts my commander to my own territory, written as a special unit', async () => {

@@ -69,6 +69,7 @@ import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
 import {
   AttackTransferMode,
   Method,
+  TARGETED_CARD_PLAYS,
   UNVERIFIED_CARD_PLAYS,
   writeSendOrdersParams,
   type CardPlayKind,
@@ -395,7 +396,7 @@ interface TurnState {
   incomeGiven?: boolean;
   /** How to read back an Order Delay placed among the moves (#186, unverified live), when one was. */
   orderDelayCheck?: string;
-  /** How to read back a targeted card play (PLAN-TEAMS part D, unverified live, V9), when one was sent. */
+  /** How to read back a targeted card play still unverified live (PLAN-TEAMS part D, V9; Airlift verified, #296), when one was sent. */
   cardPlayCheck?: string;
   /** B2: the agreements these orders break (`break_agreement: true`), recorded broken-by-me once committed. */
   breaks?: string[];
@@ -586,7 +587,17 @@ export function validateTurn(args: {
   guard: boolean;
   deploys: Array<{ territory: { id: number; name: string }; armies: number }>;
   /** `percent`: `armies` is a percentage of what can move when it runs (#165), never more than there is. */
-  moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number; percent?: boolean }>;
+  moves: Array<{
+    from: { id: number; name: string };
+    to: { id: number; name: string };
+    armies: number;
+    percent?: boolean;
+    /**
+     * #292: an attack-only move into my own territory, or a transfer-only move into one not mine,
+     * moves nothing, so its armies arrive nowhere (no guard, nothing to move on, no chain).
+     */
+    mode?: MoveMode;
+  }>;
   /** Local Deployment: each held bonus's armies must be deployed inside that bonus. */
   localDeployments?: boolean;
   /** No-Split: each territory issues at most one attack or transfer. */
@@ -625,6 +636,12 @@ export function validateTurn(args: {
     const t = standing.get(id);
     return t !== undefined && !t.fogged && t.owner === myInGameId;
   };
+  // #292: whether a move's armies arrive at its target, given the territories moves earlier in the
+  // list went into: Attack Only between my own territories and Transfer Only into one not mine move nothing.
+  const lands = (m: (typeof moves)[number], entered: ReadonlySet<number>) => {
+    const ours = mine(m.to.id) || entered.has(m.to.id);
+    return m.mode === 'attack-only' ? !ours : m.mode === 'transfer-only' ? ours : true;
+  };
   // Under Multi-Attack a territory not mine at the start may move on once a move earlier in the list went in.
   const chained = new Set<number>();
   if (args.multiAttack) {
@@ -633,7 +650,7 @@ export function validateTurn(args: {
     for (const m of moves) {
       if (!mine(m.from.id) && !movedOut.has(m.from.id) && reached.has(m.from.id)) chained.add(m.from.id);
       movedOut.add(m.from.id);
-      reached.add(m.to.id);
+      if (lands(m, reached)) reached.add(m.to.id);
     }
   }
   // Deploys land before any attack, so only a move's source may be a territory captured earlier in the list.
@@ -738,33 +755,51 @@ export function validateTurn(args: {
   }
   // Walk the moves in order: each source's total sent so far against its armies, its deploys and,
   // under Multi-Attack, every army moved in earlier in the list (an attack, a transfer in, then
-  // another attack is fine). Without Multi-Attack, armies moved in do not move on this turn.
+  // another attack is fine). Without Multi-Attack, armies moved in do not move on this turn, but
+  // one of them can stand guard (#292: the wiki's guard, turn-sim and the bundle's validator), so a
+  // source with an arrival earlier in the list may send all of its own — a warning, since whether
+  // war.app accepts it live is unverified.
   const sent = new Map<number, number>();
   const inflow = new Map<number, number>();
-  let over: { from: { id: number; name: string }; armies: number; max: number } | undefined;
+  const arrived = new Map<number, number>();
+  const guardedByArrival = new Map<number, number>();
+  let over: { from: { id: number; name: string }; armies: number; max: number; arrivalGuard: boolean } | undefined;
+  const entered = new Set<number>();
   for (const m of moves) {
     const start = chained.has(m.from.id) ? 0 : atMoves(m.from.id);
-    const max = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
+    const strict = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
+    const arrivalGuard = args.guard && !args.multiAttack && (arrived.get(m.from.id) ?? 0) > 0;
+    const max = arrivalGuard ? start : strict;
     // A percentage order takes a share of what is left when it runs: it never over-sends, and what
     // it moves on is at most what the source could move (#165).
-    const moved = m.percent ? Math.max(0, max - (sent.get(m.from.id) ?? 0)) : m.armies;
+    const moved = m.percent ? Math.max(0, strict - (sent.get(m.from.id) ?? 0)) : m.armies;
     if (!m.percent) {
       const armies = (sent.get(m.from.id) ?? 0) + m.armies;
       sent.set(m.from.id, armies);
-      if (armies > max && !over) over = { from: m.from, armies, max };
+      if (armies > max && !over) over = { from: m.from, armies, max, arrivalGuard };
+      else if (armies > strict) guardedByArrival.set(m.from.id, armies);
     }
+    if (!lands(m, entered)) continue;
+    entered.add(m.to.id);
     if (args.multiAttack) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + moved);
+    else if (moved > 0) arrived.set(m.to.id, (arrived.get(m.to.id) ?? 0) + moved);
   }
   if (over) {
-    const { from, armies, max } = over;
+    const { from, armies, max, arrivalGuard } = over;
     throw new McpToolError(
       `These orders send ${armies} armies from ${label(from)}, which can send at most ${max} this turn` +
-        `${args.guard ? ' (one army stands guard)' : ''}` +
+        `${arrivalGuard ? ' (an army moved in earlier in the list may stand guard)' : args.guard ? ' (one army stands guard)' : ''}` +
         `${airlifted.has(from.id) ? ', counting this turn\'s Airlift' : ''}` +
         `${inflow.has(from.id) ? '; that counts every army moved in earlier in the list, an upper bound: an attack\'s survivors are fewer' : ''}.`,
       { hint: 'A territory sends at most its armies plus what is deployed there this turn.' },
     );
   }
+  for (const [id, armies] of guardedByArrival)
+    warnings.push(
+      `Territory ${id} sends all ${armies} of its own armies: this relies on an army moved in earlier in the list ` +
+        'standing guard there, as the game rules allow (unverified live). If war.app keeps one of its own armies back, ' +
+        'it may refuse the orders or send one fewer.',
+    );
   // No-Split moves the whole stack (#124: the wiki, and a live turn that left every source at 0):
   // an order for fewer armies still sends them all, so say what will actually move. A source captured
   // earlier in the list (Multi-Attack) is left out: the armies standing there at the start were the
@@ -2767,7 +2802,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         '(`target`), Surveillance (`bonus`), Airlift (`from` yours, `to` yours or a teammate\'s, `armies`, optional ' +
         '`commander`), Gift (`target` yours, `player`), Diplomacy (`players`: two), Sanctions (`player`), Bomb (`target` ' +
         "next to yours, not yours or a teammate's) and Emergency Blockade (`target` yours, never your commander's), encoded " +
-        'as the client does but not yet verified live, each refused where war.app would refuse it (a commander is never ' +
+        'as the client does (the Airlift verified live; the others not yet), each refused where war.app would refuse it (a commander is never ' +
         'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
         'when your hand is over the hold limit and the orders do not play or discard enough cards; in a team game warns ' +
@@ -2935,7 +2970,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           seen: newCardPlaySeen(),
         };
         for (const p of plays) {
-          if (UNVERIFIED_CARD_PLAYS.has(p.kind)) p.targets = resolveCardTargets(p.kind, p.card.name, p.input, cardContext);
+          if (TARGETED_CARD_PLAYS.has(p.kind)) p.targets = resolveCardTargets(p.kind, p.card.name, p.input, cardContext);
         }
         // An Emergency Blockade (phase 37) turns its territory neutral before an Airlift (phase 43) runs.
         for (const p of plays) {

@@ -428,7 +428,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `player`, and refuses when that account cannot be determined), validates on the live board
   (own deploys and sources — under Multi-Attack a move, never a deploy, may also go from a territory an
   earlier move in the list enters; each move out counts the armies moved in earlier in the list, an upper
-  bound — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
+  bound; without Multi-Attack an army moved in earlier may stand guard, so its source sends all its own with a preview warning, #292,
+  unverified live; an attack-only move into my own territory or a transfer-only one into a territory not mine
+  arrives nowhere (no guard, no move on, no chain) — adjacent moves, armies ≤ armies + deployed − 1, deploys = planner income —
   the server's error 11 otherwise; only a preview warning when `incomeUncertainties` names a
   setting the income model does not compute or does not verify in full (the army cap: war.app pays
   min(income, round(cap × income) − my armies on the board), the cap on this turn's income, verified by six
@@ -493,9 +495,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   wait for the opponent's is unverified (docs/WEB-PROTOCOL.md). Order Delay may be combined with
   other card plays.
   Play-card encoders are golden-pinned; a GUID is written as its 16 bytes in .NET order.
-  **The targeted cards (PLAN-TEAMS part D, UNVERIFIED live, V9):** Spy, Reconnaissance, Surveillance
+  The Blockade play (tag 18, phase 60; card by name, target territory by id) was verified live 2026-11-16: the
+  territory turned neutral at the end of the turn at its armies × the game's multiplier. Order Priority (card by
+  name, no target) committed and resolved live 2026-11-16, but whether my first move ran first cannot be told from
+  the result: that effect stays unverified.
+  **The targeted cards (PLAN-TEAMS part D, V9):** Spy, Reconnaissance, Surveillance
   (phase 15), Airlift (43), Gift (47), Diplomacy (75), Sanctions (80), tags and fields from each
-  `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). `warapp_submit_turn` takes their targets
+  `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). The Airlift play (card by name, `from`, `to`, `armies`) was
+  verified live 2026-11-16 (the source lost the armies, the target gained them, the card left the hand); every
+  other targeted card is UNVERIFIED live. `TARGETED_CARD_PLAYS` (`src/protocol/methods.ts`) is the set whose targets
+  are resolved; `UNVERIFIED_CARD_PLAYS` (the preview's encoding warning and the result's `cardPlayCheck`) is it
+  without Airlift (#296). `warapp_submit_turn` takes their targets
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
   never gifted or airlifted to a teammate; no Spy on me or a teammate, nor on the neutral — target 0 — unless
   the game's `SpyCard.CanSpyOnNeutral`; no Diplomacy between teammates, nor naming a player out — the

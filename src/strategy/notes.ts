@@ -328,6 +328,17 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     basis: 'source',
   },
   {
+    id: '1v1-gate-budget',
+    topic: 'format',
+    when: on({ format: ['1v1'], phase: ['opening', 'expansion', 'contact'] }),
+    text:
+      'Before you open a contact, count the single-entry gates it makes. Each must hold more than (the stack ' +
+      "beside it + the opponent's whole deploy) × the game's offensive kill rate, and each new gate costs that again. " +
+      'Take the cheap bonuses nobody contests first, and open a gate only when your income pays for all of them.',
+    source: S.oneVsOne,
+    basis: 'derived',
+  },
+  {
     id: 'ffa-strike-last',
     topic: 'format',
     when: (p) => p.format === 'ffa',
@@ -533,6 +544,17 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     source: S.localDeployments,
     basis: 'source',
     encoded: 'deploys are limited to each pool (src/analysis/local-deploy.ts, warapp_plan_turn)',
+  },
+  {
+    id: 'settings-local-deploy-front',
+    topic: 'settings',
+    when: on({ localDeployments: true, phase: ['contact', 'late'] }),
+    text:
+      "Under Local Deployment a front can receive only the opponent's free income, the pool of a bonus it holds " +
+      'that the front stands in, and next turn the armies that walk up from a pooled bonus behind it. Size each ' +
+      'border on that, not on its total income, which is spread over pools it cannot move.',
+    source: S.localDeployments,
+    basis: 'derived',
   },
   {
     id: 'settings-no-split',
@@ -1293,6 +1315,18 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     basis: 'source',
   },
   {
+    id: 'timing-read-first-mover-strike',
+    topic: 'timing',
+    when: on({ format: ['1v1'], moveOrder: ['Cycle', 'NoLuckCycle'], phase: ['contact', 'late'] }),
+    text:
+      'Who moved first? At 0% luck, a first order whose target held more than any deploy the opponent could ' +
+      'have had, or whose stack had left, means the opponent ran first: an inference; test with warapp_check_plan. ' +
+      'Turns alternate: the opponent first on N, so on N+1 pass first_mover: me, only when sure. ' +
+      'Strike big on turns you move first.',
+    source: S.moveOrder,
+    basis: 'derived',
+  },
+  {
     id: 'timing-delay-pairs',
     topic: 'timing',
     when: on({ format: ['1v1'], phase: ['contact', 'late'] }),
@@ -1434,6 +1468,17 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     basis: 'source',
   },
   {
+    id: 'fighting-contested-bonus-mass',
+    topic: 'fighting',
+    when: on({ phase: ['contact', 'late'] }),
+    text:
+      'A bonus a member or two short that an enemy stack keeps retaking will not fall to a few armies a turn. ' +
+      "Mass for one turn (its stack plus its owner's deploy on every missing member) or leave it. While that " +
+      'stack roams inside the bonus, garrison the members it can reach before retaking the one it left.',
+    source: S.beginnerGuide,
+    basis: 'derived',
+  },
+  {
     id: 'fighting-hidden-stack',
     topic: 'fighting',
     when: on({ fog: ['LightFog', 'Foggy', 'ModerateFog', 'VeryFoggy', 'ExtremeFog'], phase: ['contact', 'late'], moveOrder: ['Cycle', 'NoLuckCycle'] }),
@@ -1491,6 +1536,17 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
       'cannot otherwise see.',
     source: S.fog,
     basis: 'source',
+  },
+  {
+    id: 'reading-split-growth',
+    topic: 'reading',
+    when: on({ fog: ['LightFog', 'Foggy', 'ModerateFog', 'VeryFoggy', 'ExtremeFog'], phase: ['contact', 'late'] }),
+    text:
+      "Before calling a game even, split each enemy stack's growth three ways: armies a neighbour in view could " +
+      'have moved in, armies that came out of the fog, and what can only be deploy. Only the last is income; ' +
+      'while most of its frontier is hidden, read a low estimate as a floor.',
+    source: S.oneVsOne,
+    basis: 'derived',
   },
   {
     id: 'reading-stack-arrival',
