@@ -92,7 +92,9 @@ describe('1. deploy-then-capture (#123)', () => {
   it('with no visible source that shrank, the stack still came from the fog (#86)', () => {
     const still = board([mine(1, 5), mine(2, 5), enemy(3, 11), enemy(4, 6), fogged(5)]);
     const o = observeDeploy(g, still, before, ENEMY, STD, { most: 10 });
-    expect(o).toMatchObject({ deploy: 2, fromFog: [3], fogArmies: 11, reinforced: [] });
+    // #271: taking the 3 needed 5 attackers, 3 more than its cost, that no stack in view sent: those
+    // read as deploy within what it could earn; the other 8 standing there came out of the fog.
+    expect(o).toMatchObject({ deploy: 5, fromFog: [3], fogArmies: 8, reinforced: [], unseenAttackers: [3], unseenAttackerArmies: 5 });
   });
 
   it('never more deploy-then-capture than it could earn: the rest came from the fog', () => {

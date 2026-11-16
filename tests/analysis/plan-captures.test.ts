@@ -31,7 +31,7 @@ const noPass = (): planner.TwoStepPass => ({
 
 /** The phases up to the capture passes, on synthetic board `i` (undefined when I hold nothing). */
 function upToCaptures(i: number) {
-  const input = syntheticInput(i);
+  const input = planner.planningInput(syntheticInput(i)); // #270: planTurn's first step
   const ctx = planContext(input);
   const state = newPlanState();
   noteEstimates(ctx, state);

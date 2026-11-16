@@ -172,7 +172,7 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
       const turn = currentTurn(game);
       const history = await boardHistory(ctx, game, me, turn);
       const boards = turn !== null ? [...history.boards, { turn, board }] : [{ turn: 0, board }];
-      const about = trackGame(game.players, game.settings, map);
+      const about = trackGame(game.players, game.settings, map, game.endRules);
       const tracks = trackOpponents(graph, boards, me.id, settings, about);
       const award = await loadAward(ctx.dataDir, game, me, board, turn);
       const proven = new Map<number, readonly number[]>();

@@ -9,8 +9,8 @@
 // transfer (plus what the plan leaves there) makes the border hold; the border is then held, not
 // conceded — the conceded border the plan attacks from first, as #121's revival from the leftover.
 // #260: when none revives and the enemy front is reached only through a conceded border the plan
-// attacks an enemy from, an idle stack still heads for it — into that border — when the nearest
-// territory not mine is no nearer; never into another conceded border or one a withdrawal leaves,
+// attacks an enemy from (#272: or more nearly so than any other way), an idle stack still heads for
+// it — into that border — when the nearest territory not mine is no nearer; never into another conceded border or one a withdrawal leaves,
 // and never from a stack beside a visible enemy at the start of the turn (interior only once a
 // strike lands).
 // When those steps together make the border hold, it is held after all, never left reported conceded.
@@ -238,12 +238,15 @@ export function transfers(
       // Only an interior stack: one beside a visible enemy at the start of the turn (interior only
       // once this turn's strike lands) keeps its armies for that strike and its own border, as
       // #257's revival keeps them.
+      // #272: or when the via route is strictly nearer than the plain one — live, the plain route
+      // reached the front through a neutral captured this turn, one step longer, and the stack went
+      // there instead of into the border the plan attacks from.
       const via =
-        !distEnemy.has(t) &&
         distEnemyVia.has(t) &&
+        distEnemyVia.get(t)! < (distEnemy.get(t) ?? Infinity) &&
         distEnemyVia.get(t)! <= (distAny.get(t) ?? Infinity) &&
         !neighborsOf(g, t).some((x) => isEnemy(x));
-      const dist = distEnemy.has(t) ? distEnemy : via ? distEnemyVia : distAny;
+      const dist = via ? distEnemyVia : distEnemy.has(t) ? distEnemy : distAny;
       const n = avail.get(t)!;
       if (n <= 0 || locked.has(t)) continue;
       // My commander's territory next to an enemy at the start of the turn keeps its armies,
@@ -300,7 +303,7 @@ export function transfers(
         const beside = neighborsOf(g, step).filter((x) => !held.has(x) && isEnemy(x)).sort((a, b) => a - b);
         // An attack target that lands for sure is held, so it is not the front beside the step.
         const landing = targets.filter((x) => !beside.includes(x));
-        front = ` (the enemy front${beside.length ? `, ${beside.map(label).join(', ')},` : ''} is reached only through a border the plan concedes, and no farther than the nearest territory not mine${
+        front = ` (the enemy front${beside.length ? `, ${beside.map(label).join(', ')},` : ''} is reached ${distEnemy.has(t) ? `soonest (${distEnemyVia.get(t)} steps against ${distEnemy.get(t)} any other way)` : 'only'} through a border the plan concedes, and no farther than the nearest territory not mine${
           conceded.has(step)
             ? `; ${label(step)} is the border the plan attacks ${targets.map(label).join(', ')} from${
                 landing.length ? ` (${landing.map(label).join(', ')}, a capture that lands this turn, not the front)` : ''

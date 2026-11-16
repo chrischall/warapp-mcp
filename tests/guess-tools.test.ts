@@ -39,11 +39,12 @@ async function live(territories: SyntheticTerritory[], feed: Record<string, unkn
   });
 }
 
-// Fixture map: 159 Hornwood and 161 Sheepshead Hills both border 158 Bolton Moors.
+// Fixture map: 159 Hornwood and 161 Sheepshead Hills both border 158 Bolton Moors. The neutral 157
+// holds 3: at 2 or fewer a conceded border would attack out into it before withdrawing (#272).
 const board = (bob: number): SyntheticTerritory[] => [
   { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 5 },
   { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 5 },
-  { id: 157, fogLevel: 2, owner: 0, armies: 2 },
+  { id: 157, fogLevel: 2, owner: 0, armies: 3 },
   { id: 158, fogLevel: 1, owner: BOB.inGame, armies: bob },
   { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
 ];

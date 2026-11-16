@@ -325,13 +325,23 @@ describe('warapp_check_plan', () => {
     expect(off.warnings.join('\n')).toMatch(/percentage.*war\.app would refuse/is);
   });
 
-  it('tests every stack on the board, whoever holds it: a booted player\'s armies still attack', async () => {
-    // GameFeed says Bob is no longer playing; his 60 are on the board all the same.
-    h = await live(at(2, 2, 60), 'Playing', { state: 'Booted' });
+  it('tests every stack on the board, whoever holds it: a booted player an AI now plays still attacks', async () => {
+    // GameFeed says Bob is no longer playing; an AI plays his seat, and his 60 are on the board.
+    h = await live(at(2, 2, 60), 'Playing', { state: 'Booted', humanTurnedIntoAI: 'True' });
     const p = await check({ orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
     expect(p.safe).toBe(false);
     expect(p.enemyDeploy.map((e) => e.player.id)).toEqual([Number(BOB.feed)]);
     expect(p.considered).toBeGreaterThan(0);
+  });
+
+  it('a player out with no AI on the seat makes no reply: its stacks are static (#270)', async () => {
+    // Bob surrendered and no AI plays his seat: his 60 stand still, as a neutral's would.
+    h = await live(at(2, 2, 60), 'Playing', { state: 'SurrenderAccepted' });
+    const p = await check({ orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
+    expect(p.enemyDeploy).toEqual([]);
+    expect(p.considered).toBe(0);
+    expect(p.safe).not.toBe(false);
+    expect(p.warnings.join(' ')).toMatch(new RegExp(`Player ${BOB.feed} is out \\(SurrenderAccepted\\).*tried as neutrals`));
   });
 
   it('says nothing was tested, never "safe", when no opposing stack is in view', async () => {

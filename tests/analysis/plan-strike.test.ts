@@ -33,7 +33,7 @@ const noPass = (): planner.TwoStepPass => ({
 
 /** The phases up to the strikes, on synthetic board `i` (undefined when I hold nothing). */
 function upToStrikes(i: number) {
-  const input = syntheticInput(i);
+  const input = planner.planningInput(syntheticInput(i)); // #270: planTurn's first step
   const ctx = planContext(input);
   const state = newPlanState();
   noteEstimates(ctx, state);

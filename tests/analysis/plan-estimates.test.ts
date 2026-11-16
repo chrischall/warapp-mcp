@@ -19,7 +19,7 @@ describe('plan/estimates (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
   it("its rationale and warnings are the first lines of planTurn's, in order", () => {
     let checked = 0;
     for (let i = 0; i < 2000; i += 37) {
-      const input = syntheticInput(i);
+      const input = planner.planningInput(syntheticInput(i)); // #270: planTurn's first step
       const state = newPlanState();
       const ctx = estimates.planContext(input);
       estimates.noteEstimates(ctx, state);
@@ -34,7 +34,7 @@ describe('plan/estimates (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
   });
 
   it('a player with no territory gets the empty plan', () => {
-    const input = syntheticInput(0);
+    const input = planner.planningInput(syntheticInput(0)); // #270: planTurn's first step
     const nobody = { ...input, me: 987654 };
     const state = newPlanState();
     const ctx = estimates.planContext(nobody);

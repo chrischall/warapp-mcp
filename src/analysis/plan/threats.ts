@@ -797,6 +797,19 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
             rationale.push(
               `Player ${p} took ${o.reinforced.map(label).join(', ')} with more than its visible stack next to ${o.reinforced.length === 1 ? 'it' : 'them'} sent: read as armies deployed on that stack before it attacked (deploy-then-capture), though a stack out of the fog may have joined (observed +${o.low}–${o.high} either way).`,
             );
+          // #271: what the turn's evidence added or took away.
+          if (o.repelledFloor > 0)
+            rationale.push(
+              `Player ${p} attacked ${o.repelled.map(label).join(', ')} and failed: what I lost there needed more attackers than its stacks beside ${o.repelled.length === 1 ? 'it' : 'them'} could send at the start of the turn (from the orders I sent last turn), so it deployed at least +${o.repelledFloor}, fog or not.`,
+            );
+          if (o.unseenAttackers.length)
+            rationale.push(
+              `Player ${p} took ${o.unseenAttackers.map(label).join(', ')} from a neutral in view with ${o.unseenAttackerArmies} attackers more than its stacks in view sent: read as deploy up to twice the ~${o.expected ?? 0} it was expected to deploy, the rest a stack out of the fog (observed +${o.low}–${o.high} either way); repeated, warapp_track_opponents reads it as income.`,
+            );
+          if (o.arrivals > 0)
+            rationale.push(
+              `Player ${p}: ${o.arrivals} of the armies on its capture${o.captured.length === 1 ? '' : 's'} could have come from its stacks in view last turn beside ${o.captured.length === 1 ? 'it' : 'them'}, hidden now: arrivals, not deploy.`,
+            );
           if (o.emptied.length)
             rationale.push(
               `Player ${p} took ${o.emptied.map(label).join(', ')} from you: priced at what the guard you may have left there kills, not your stack last turn (you may have attacked out of it); had it all stood there, it deployed +${o.high}.`,

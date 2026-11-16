@@ -321,3 +321,26 @@ describe('WarappRpc transport failures', () => {
     expect(fake.exchanges[0]!.request.email).toBe('other@example.com');
   });
 });
+
+describe('#272: a failure before the request leaves is marked as not sent', () => {
+  it('a missing email and a bridge that is not ready are marked; a failed fetch is not', async () => {
+    const { notSent } = await import('../../src/protocol/rpc.js');
+    const { rpc, mock } = setup(() => ({ body: (w) => w.bool(true) }), {});
+    const noEmail = await rejection(rpc.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks));
+    expect(noEmail).toBeInstanceOf(WarappConfigError);
+    expect(notSent(noEmail)).toBe(true);
+    expect(mock.requests).toHaveLength(0);
+
+    const down = new WarappRpc({ bridge: async () => Promise.reject(new Error('bridge not paired')), env: ENV });
+    const notReady = await rejection(down.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks));
+    expect(notSent(notReady)).toBe(true);
+
+    const failing = new WarappRpc({
+      bridge: async () => ({ fetch: async () => Promise.reject(new TypeError('fetch failed')) }),
+      env: ENV,
+    });
+    const midway = await rejection(failing.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks));
+    expect((midway as Error).message).toBe('fetch failed');
+    expect(notSent(midway)).toBe(false);
+  });
+});

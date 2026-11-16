@@ -31,6 +31,14 @@
 // (#124), and S2's efficient sizes with their #120 warnings.
 //
 // Rules, in decision order:
+//  0s. Static seats (#270, src/analysis/static-seats.ts): a player out of the game (SurrenderAccepted,
+//     Booted, Eliminated, EndedByVote) whose seat no AI plays (not `humanTurnedIntoAI`, nor a surrender
+//     or boot the game's end rules turn into an AI) deploys and attacks nothing. `planTurn` first reads
+//     its territories as neutrals on the board and the previous board (`planningInput`; armies and
+//     units kept) and drops its tracks, truces, Sanctions and opening: it is no opponent in any
+//     estimate, threat, standing or strike, its land is priced like a wasteland, and no border beside
+//     only it needs a hold. A rationale line names each such player holding land. Never me or a
+//     teammate; an AI that replaced a player stays an opponent.
 //  0p. Game profile (`gameProfile`, src/analysis/profile.ts), computed on every plan and
 //     returned as `profile`: format (1v1 / ffa / teams), phase (opening / expansion /
 //     contact / late; in an FFA, contact only when an enemy stack as it stands can take a
@@ -251,7 +259,26 @@
 //     (`previousOrders`, what warapp_submit_turn cached), the defenders my failed attack killed
 //     on a territory that stayed its count back into its growth there (after = before + deploy
 //     − kills, kills straight-rounded at the offensive kill rate; beside the fog an ambiguous
-//     growth like any other, within #123's bound), and a rationale line says so. A rationale line names
+//     growth like any other, within #123's bound), and a rationale line says so. #271: given those
+//     orders, a failed attack on a hold of mine (`repelledFloor`) bounds its deploy from below, fog or
+//     not: my loss there (what my orders do not explain) needed at least `fewestAttackersToKill`
+//     attackers (luck included), all from its stacks beside the hold at the start of the turn (less
+//     the guard) plus what it deployed there — counted when every neighbour showed its owner, its own
+//     showed their armies, it is the only other player beside the hold, and Multi-Attack is off;
+//     only when every transfer of mine into the hold surely arrived whole (`HoldLoss.inflowSure`: its
+//     source mine on both boards, showing exactly what my orders leave there, and left more than the
+//     guard or beside no other player), never a hold an order `moves` does not carry touched (a
+//     Transfer Only, Attack Only or percentage order in `sent`, a card play in `cards`; orders cached
+//     before those were kept read nothing), and on a turn an opponent may have played a Bomb
+//     (`bombPossibleOn`, `PlannerSettings.bombFrom`) after taking out half the hold, rounded up. A
+//     capture of a neutral in view beside the fog that needed more attackers (`fewestAttackersToTake`)
+//     than its stacks in view sent (`unseenAttackers`) reads what stands there beyond those as deploy
+//     within #123's bound, the rest a move out of the fog. Its stacks in view beside a capture, hidden
+//     the turn after, may have moved in (`arrivals`): never deploy (only the high reading counts them).
+//     A known under-read: such a stack is claimed whether or not it emptied, and it is often hidden
+//     only because the capture took my territory and my sight with it, so a real deploy-then-capture
+//     beside one reads its surplus as an arrival, in the high reading only.
+//     A rationale line says each. A rationale line names
 //     the turns compared and the territories counted vs skipped as reveals; the warning
 //     names which source won. Given `tracks` (`trackOpponents` over my board history, S3), an
 //     opponent observed over at least TRACKED_MIN_TURNS turns gets its tracked income (the
@@ -630,6 +657,16 @@
 //     army): withdrawing turns "might lose it" into "certainly loses it". A warning says which
 //     case applied ("… is conceded but might still hold" / "… cannot be held"); a kept border
 //     may also take the leftover deploy.
+//     #272, before rule 1c re-values the borders and it withdraws (plan/conceded-out.ts): a conceded border attacks out with its own
+//     armies (no deploy) into a neighbour holding at most CONCEDED_OUT_MAX (2) armies — a neutral,
+//     or a foe's with no special unit, never a truce's, a player's only off `expand` — whose capture
+//     completes a positive bonus or advances one I am building (another member mine or captured;
+//     under No-Split, which sends the whole stack, a completion only), when its armies cover the
+//     cost: completions first, then bonus value, cost, a teammate's focus (C3.4) and id, again
+//     while one capture makes another complete. R3 does not refuse it (the armies would otherwise
+//     leave a border the plan gives up), and a completed bonus keeps the border (rule 1c). Live, the
+//     last empty members of a bonus stood beside a conceded border: one was taken, the other refused
+//     ("a conceded border never attacks out for a capture that only costs nothing").
 //  1i. Income at risk (#109). `expected.nextIncome` is next turn's income if every territory
 //     the plan keeps and captures is held — the borders it concedes included, withdrawn from
 //     or not. A conceded border is not kept, so the plan also reports
@@ -685,7 +722,11 @@
 //     plus my kills above its armies before), still that player's, next to mine and its owner able
 //     to deploy there, is attacked only at that sure size: its defenders plus the owner's deploy
 //     (a worst case, so no warning and no bare retry), or not at all; a rationale line names the
-//     failed turns. Every pass: rule 2's targets and the bonus, break and counter passes, rule 4e's
+//     failed turns. #272: when the most its owner reinforced it on those turns (after + my kills −
+//     before) is less than that deploy, it is sized for that instead — no worst case then: a larger
+//     deploy can still repel it, so it keeps #120's "assumes" warning, may still be sized up to the
+//     whole deploy by #120 when the source has the armies, and rule 6 does not count it as held
+//     (`repulsed`'s `sure` is false). Never retried at its bare cost either way. Every pass: rule 2's targets and the bonus, break and counter passes, rule 4e's
 //     fallback, the 1v1 strike stack, finishing off and fog pressure (rule 1e: its only sizing, or
 //     not attacked — never a share of the deploy) and the guard-off one-army break (#165: skipped,
 //     with a line saying why). It ranks on its PLAIN cost (#240 review: ranked on the sure size, a
@@ -952,7 +993,11 @@
 //     rationale names the cap's arithmetic per capture ("Take … for the army cap (rule 4h, #253): …");
 //     what it did not take is listed with why, and the "Not attacking" line repeats it ("the army
 //     cap's spend of idle armies (rule 4h) tried it: …"); while the cap still eats income a warning
-//     names the largest idle stack.
+//     names the largest idle stack. #272, a fork: once one of a player's territories is captured this
+//     turn (by any pass), its other foe territories next to mine are candidates whatever they hold,
+//     ranked and taken the same way after the first list ("… a fork (#272): player P is attacked on N
+//     territories this turn (…), more than its one deploy can all save"). Live, three near-empty
+//     territories of one owner were taken and two more beside mine (4 and 14 armies) left untouched.
 //  4f. Commit to the closest bonus (#101; every goal). While no positive bonus is held in full, in
 //     the opening and expansion phases, and in an FFA while a neutral borders a territory of mine
 //     (#132: one front leaves the rest of the map to expand into; the rationale says "neutrals in
@@ -1076,9 +1121,11 @@
 //     idle armies walked to a territory beside empty neutrals while the conceded border the plan
 //     attacked from, just as near, would have held with them. The front is the territories a visible
 //     enemy holds. When no revival applies and the front is reached only through a conceded border
-//     the plan attacks an enemy from (#260), an idle stack still steps toward it, into that border,
-//     when the nearest territory not mine is no nearer ("… is reached only through a border the plan
-//     concedes …; they are lost with it if it falls"); never into another conceded border or one a
+//     the plan attacks an enemy from (#260; #272: or strictly sooner through it than any other way —
+//     live, the other way ran through a neutral captured this turn, one step longer, and the stack
+//     went there), an idle stack still steps toward it, into that border,
+//     when the nearest territory not mine is no nearer ("… is reached only (or soonest) through a border
+//     the plan concedes …; they are lost with it if it falls"); never into another conceded border or one a
 //     withdrawal leaves. Live, 10 idle armies walked to an empty neutral edge while the border the
 //     plan attacked from missed holding by one; the stress test preferred them there. Only an
 //     interior stack steps so: never one beside a visible enemy at the start of the turn, interior
@@ -1380,6 +1427,7 @@ import {
   captureCost,
 } from './plan/shared.js';
 import { emptyPlan, noteEstimates, planContext } from './plan/estimates.js';
+import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js';
 import { deployBook } from './plan/orders.js';
 import { holdsPhase, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
@@ -1392,6 +1440,7 @@ import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { spendUnderCap } from './plan/cap-spend.js';
+import { attackOutOfConceded } from './plan/conceded-out.js';
 import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
@@ -1449,6 +1498,42 @@ function settledPass(
  * (a fixed point, so no cut reach is still there); without one, the plan that cuts nothing.
  */
 export function planTurn(input: PlanInput): TurnPlan {
+  // #270: a player out of the game whose seat no AI plays deploys and attacks nothing: its
+  // territories are planned as neutrals (static armies), and it is no opponent anywhere below.
+  const seats = staticSeats(input.game?.players, input.game?.endRules, input.me);
+  const held = seatTerritories(input.board, seats);
+  const plan = planSettled(withoutStaticSeats(input, seats));
+  for (const [p, n] of [...held].sort((a, b) => a[0] - b[0]))
+    plan.rationale.push(
+      `Player ${p} is out (${seats.get(p)}) and no AI plays its seat: it deploys and attacks nothing, so its ${n} territor${n === 1 ? 'y is' : 'ies are'} planned as neutrals — static armies to take, no hold needed beside them (#270).`,
+    );
+  return plan;
+}
+
+/**
+ * #270: the input every pass plans on — {@link planTurn}'s first step: the static seats' territories
+ * neutral and the seats no opponent. The same object when the game has no static seat holding land.
+ */
+export function planningInput(input: PlanInput): PlanInput {
+  return withoutStaticSeats(input, staticSeats(input.game?.players, input.game?.endRules, input.me));
+}
+
+/** {@link PlanInput} with the static seats' territories neutral and the seats no opponent (#270). */
+function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>): PlanInput {
+  if (!seats.size) return input;
+  const opening = input.game?.opening;
+  return {
+    ...input,
+    board: neutralizeSeats(input.board, seats),
+    ...(input.previousBoard ? { previousBoard: neutralizeSeats(input.previousBoard, seats) } : {}),
+    ...(input.tracks ? { tracks: input.tracks.filter((t) => !seats.has(t.playerId)) } : {}),
+    ...(input.relations ? { relations: input.relations.filter((r) => !seats.has(r.player)) } : {}),
+    ...(input.sanctions ? { sanctions: input.sanctions.filter((x) => !seats.has(x.player)) } : {}),
+    ...(input.game && opening ? { game: { ...input.game, opening: new Map([...opening].filter(([p]) => !seats.has(p))) } } : {}),
+  };
+}
+
+function planSettled(input: PlanInput): TurnPlan {
   const plan = planRun(input, false);
   const bare = runOutcome.get(plan);
   if (!bare || !bare.bareSteps.length) return plan;
@@ -2227,6 +2312,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       for (const c of candidates)
         if (c.target !== undefined && !captured.has(c.target) && targets.get(c.target)?.sources.some((x) => unlocked.has(x))) c.run();
     settleContested();
+    // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
+    // before rule 1c re-values the borders, so one whose bonus this completes is kept).
+    attackOutOfConceded(pc, ps, book, hd, tgt, caps);
     reconsider();
     withdraw();
   } else {
@@ -2239,6 +2327,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       garrisonCompleted();
     }
     settleContested();
+    // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
+    // before rule 1c re-values the borders, so one whose bonus this completes is kept).
+    if (acting) attackOutOfConceded(pc, ps, book, hd, tgt, caps);
     reconsider();
     if (acting) withdraw();
   }
@@ -2682,6 +2773,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const at = moves.filter((m) => m.kind === 'attack' && m.to === t);
     const sent = at.reduce((n, m) => n + m.armies, 0);
     if (sent >= rep.cost) {
+      // #272 review: sized below its owner's deploy estimate, it stays an attack that assumes no more.
+      if (!rep.sure) continue;
       worstCase.set(t, Math.max(worstCase.get(t) ?? 0, rep.defenders + rep.extra));
       const w = warnings.indexOf(assumes(t));
       if (w >= 0) warnings.splice(w, 1);
@@ -2698,7 +2791,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (warnings[i]!.startsWith(`Attack on enemy ${label(t)} `) || warnings[i]!.startsWith(`${label(t)} can be retaken `))
         warnings.splice(i, 1);
     rationale.push(
-      `Drop the attack on ${label(t)}: it could send only ${sent} by the end of the turn, short of the ${rep.cost} that take it even if player ${rep.player} deploys its ~${rep.extra} there first, and my attacks on it failed before, its owner reinforcing it (#240); its armies stay where they are.`,
+      `Drop the attack on ${label(t)}: it could send only ${sent} by the end of the turn, short of the ${rep.cost} that take it ${rep.sure ? `even if player ${rep.player} deploys its ~${rep.extra} there first` : `against the ~${rep.extra} player ${rep.player} put there on those turns`}, and my attacks on it failed before, its owner reinforcing it (#240); its armies stay where they are.`,
     );
   }
 

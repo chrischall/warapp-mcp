@@ -573,6 +573,11 @@ types are verified on the lobby fixture.
   `AutoBoot` / `DirectBoot`, counted from the game's `lastTurnTime`. **UNVERIFIED:** what
   `lastTurnTime` marks (taken as the moment the turn began); banked boot time and vacations are not
   counted. A booted seat becomes an AI when `BootedPlayersTurnIntoAIs`, else its land turns neutral.
+- #270: a surrendered player whose seat no AI plays (`SurrenderAccepted`, `SurrenderedPlayersTurnIntoAIs`
+  false, `humanTurnedIntoAI` false) was seen live still listed as the owner of its territories on the
+  live board, armies and all. Every analysis reads such a static seat's land as neutral
+  (`src/analysis/static-seats.ts`); a seat an AI plays (`humanTurnedIntoAI`, or the end rule for its
+  ending) stays an opponent. **UNVERIFIED:** whether war.app keeps the out state on a seat an AI took over.
 
 ## A lobby's settings for the join screen — UNVERIFIED (#132)
 

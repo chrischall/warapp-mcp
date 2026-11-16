@@ -351,8 +351,125 @@ describe('#240 review: the guard-off one-army attack skips a repulsed territory'
     const p = planTurn(inp(rep));
     expect(attacksOn(p, 2).some((x) => x.reason.startsWith('One Army Must Stand Guard is off'))).toBe(false);
     const line = p.rationale.find((l) => l.startsWith('My attacks on T2 (#2) failed'))!;
-    const sure = Number(/defenders, (\d+) armies\), or not made/.exec(line)![1]);
+    const sure = Number(/defenders, (\d+) armies(?:\)|:)/.exec(line)![1]);
     for (const a of attacksOn(p, 2)) expect(a.armies).toBeGreaterThanOrEqual(sure);
     expect(p.rationale.join('\n')).toMatch(/One Army Must Stand Guard is off and T2 \(#2\) stands at 0, but my attacks on it failed before, its owner reinforcing it: no one-army attack there \(#240\)\./);
+  });
+});
+
+// #272 item 2: the repulsed rule refused a target it could take. Live, the plan said "sized for its
+// owner's ~29 deploy there (0 + 29 defenders, 95 armies), or not made", while its owner had reinforced it
+// by 4 and 3 on the failed turns, and a two-step attack of 14 then 24 took it the next turn against a
+// reinforcement of 5. A further attack is now sized for the most its owner reinforced it on those turns
+// (after + my kills − before), never above its deploy estimate.
+describe('#272: a repulsed territory is sized for the reinforcement its owner actually made', () => {
+  // Turn 16: 10 against C's 8 (kills 6), 6 after: 4 in. Turn 17: 10 against 6 (kills 6), 3 after: 3 in.
+  const SMALL: TurnBoard[] = [
+    { turn: 15, board: at(8) },
+    { turn: 16, board: at(8), orders: attackC(10) },
+    { turn: 17, board: at(6), orders: attackC(10) },
+    { turn: 18, board: at(3) },
+  ];
+  const rep = repulsedAttacks(g, SMALL, ME, RATES);
+  const big = (repulsed?: readonly RepulsedTarget[]): PlanInput => ({
+    ...input(repulsed, at(3)),
+    options: { goal: 'balanced', minWinChance: 1, enemyDeploy: 29 },
+  });
+
+  it('reads both failed turns as reinforced (4, then 3)', () => {
+    expect(rep.map((r) => r.attacks.map((a) => a.after + a.kills - a.before))).toEqual([[4, 3]]);
+  });
+
+  it('the live shape: the ~29 deploy does not fit, the 4 its owner put there does — attacked, and the rationale says so', () => {
+    // B's 29 movable and 10 to deploy cannot take 3 + 29.
+    expect(armiesToTake(3 + 29, RATES)!).toBeGreaterThan(29 + 10);
+    const p = planTurn(big(rep));
+    const a = attacksOn(p, 3);
+    expect(a).toHaveLength(1);
+    expect(a[0]!.armies).toBeGreaterThanOrEqual(armiesToTake(3 + 4, RATES)!);
+    expect(p.rationale.join('\n')).toMatch(
+      /My attacks on T3 \(#3\) failed on turns 16 and 17, player 30 reinforcing it each time \(10 against 8, 6 after; 10 against 6, 3 after\): a further attack is sized for the most it reinforced it by on those turns, ~4, below its owner's ~29 deploy estimate \(3 \+ 4 defenders, \d+ armies: a larger deploy there can still repel it, so it is no sure capture\), or not made \(#240, #272\)\./,
+    );
+    expect(valid(p, at(3))).toEqual([]);
+  });
+
+  it('an owner that reinforced more than its estimate is still sized for the estimate (the live #240 shape)', () => {
+    const p = planTurn(input(repulsedAttacks(g, LIVE, ME, RATES)));
+    expect(attacksOn(p, 3).map((m) => m.armies)).toEqual([36]);
+    expect(p.rationale.join('\n')).not.toMatch(/#272/);
+  });
+});
+
+// #272 review: evidence of a reinforcement below the deploy estimate sizes the attack for it, but is no
+// worst case: the owner can still deploy more there first. So the capture is not sure — it keeps #120's
+// "assumes" warning, and rule 6 does not count the target as held, so the garrison beside it stays.
+describe('#272 review: evidence below the estimate is no worst case', () => {
+  const SMALL: TurnBoard[] = [
+    { turn: 15, board: at(8) },
+    { turn: 16, board: at(8), orders: attackC(10) },
+    { turn: 17, board: at(6), orders: attackC(10) },
+    { turn: 18, board: at(3) },
+  ];
+  const rep = repulsedAttacks(g, SMALL, ME, RATES);
+  const small = (repulsed?: readonly RepulsedTarget[]): PlanInput => ({
+    ...input(repulsed, at(3)),
+    options: { goal: 'balanced', minWinChance: 1, enemyDeploy: 29 },
+  });
+  const outOfB = (p: ReturnType<typeof planTurn>) => p.moves.filter((m) => m.from === 2 && m.kind !== 'attack');
+
+  it('without the evidence: attacks C and warns that it assumes no reinforcement', () => {
+    const p = planTurn(small());
+    expect(attacksOn(p, 3)).toHaveLength(1);
+    expect(p.warnings.join('\n')).toMatch(/Attack on enemy T3 \(#3\) assumes its owner does not reinforce it first/);
+  });
+
+  it('with it: still attacked, still warned, and nothing more leaves B than without it', () => {
+    const plain = planTurn(small());
+    const p = planTurn(small(rep));
+    expect(attacksOn(p, 3)).toHaveLength(1);
+    expect(p.warnings.join('\n')).toMatch(/Attack on enemy T3 \(#3\) assumes its owner does not reinforce it first/);
+    const sent = (q: ReturnType<typeof planTurn>) => outOfB(q).reduce((s, m) => s + m.armies, 0);
+    expect(sent(p)).toBeLessThanOrEqual(sent(plain));
+    expect(valid(p, at(3))).toEqual([]);
+  });
+});
+
+describe('#272 review: a sweep — evidence below the estimate never sends less, never drops the warning, never frees a garrison', () => {
+  //   My B (2) and G (5) both border player 30's C (3) and each other; player 30's D (4) and E (7) lie
+  //   beyond C. My attacks from B on C failed on turns 16 and 17, its owner reinforcing it by 4, then 3.
+  const m2 = makeMap([1, 2, 3, 4, 5, 7], [[1, 2], [2, 3], [3, 4], [2, 5], [3, 5], [4, 7]], []);
+  const g2 = buildGraph(m2);
+  const b2 = (c: number, bb: number, gg: number): BoardState =>
+    board([mine(1, 2), mine(2, bb), player(3, c, P2), player(4, 3, P2), mine(5, gg), player(7, 3, P2)]);
+  const cases = [8, 12, 16, 20, 25, 30].flatMap((bb) => [10, 20, 30, 45].flatMap((gg) => [6, 8, 12, 20].map((ed) => ({ bb, gg, ed }))));
+  it.each(cases)('B $bb, G $gg, deploy estimate $ed', ({ bb, gg, ed }) => {
+    const hist: TurnBoard[] = [
+      { turn: 15, board: b2(8, bb, gg) },
+      { turn: 16, board: b2(8, bb, gg), orders: attackC(10) },
+      { turn: 17, board: b2(6, bb, gg), orders: attackC(10) },
+      { turn: 18, board: b2(3, bb, gg) },
+    ];
+    const rep = repulsedAttacks(g2, hist, ME, RATES);
+    const plan = (repulsed?: readonly RepulsedTarget[]) =>
+      planTurn({
+        graph: g2,
+        board: b2(3, bb, gg),
+        me: ME,
+        income: 10,
+        settings: STD,
+        game: FFA,
+        turn: 18,
+        ...(repulsed ? { repulsed } : {}),
+        options: { goal: 'balanced', minWinChance: 1, enemyDeploy: ed },
+      });
+    const plain = plan();
+    const p = plan(rep);
+    const onC = (q: ReturnType<typeof planTurn>) => attacksOn(q, 3).reduce((n, m) => n + m.armies, 0);
+    const moved = (q: ReturnType<typeof planTurn>) =>
+      q.moves.filter((m) => m.kind !== 'attack' && (m.from === 2 || m.from === 5)).reduce((n, m) => n + m.armies, 0);
+    if (onC(plain) > 0) expect(onC(p)).toBeGreaterThanOrEqual(onC(plain));
+    if (onC(p) > 0 && onC(p) < armiesToTake(3 + ed, RATES)!)
+      expect(p.warnings.join('\n')).toMatch(/Attack on enemy T3 \(#3\) assumes its owner does not reinforce it first/);
+    expect(moved(p)).toBeLessThanOrEqual(moved(plain));
   });
 });

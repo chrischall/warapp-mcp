@@ -76,6 +76,25 @@ export class WarappServerError extends McpToolError {
   }
 }
 
+/**
+ * #272: a failure before the request left this process (the email unread, the frame not built, the
+ * bridge not ready): the request was never sent, so nothing changed. {@link WarappRpc.call} marks such
+ * an error; a write reads it with {@link notSent} and says so, instead of calling the outcome unknown.
+ */
+const NOT_SENT = Symbol('warapp.requestNotSent');
+
+/** Mark `e` (made an Error when it is not one) as raised before the request was sent. */
+function markNotSent(e: unknown): Error {
+  const err = e instanceof Error ? e : new Error(String(e));
+  (err as unknown as Record<symbol, true>)[NOT_SENT] = true;
+  return err;
+}
+
+/** Whether `e` was raised before the request was sent ({@link markNotSent}). */
+export function notSent(e: unknown): boolean {
+  return e instanceof Error && (e as unknown as Record<symbol, unknown>)[NOT_SENT] === true;
+}
+
 /** The part of the bridge transport a call uses. */
 interface RpcBridge {
   fetch(init: FetchproxyFetchInit): Promise<FetchproxyFetchResult>;
@@ -122,18 +141,26 @@ export class WarappRpc {
    * method's result. A ServerException reply throws {@link WarappServerError}.
    */
   async call(methodName: string, methodId: number, writeParams?: (w: Writer) => void): Promise<ReplyEnvelope> {
-    // Resolve the email first, so a missing one fails before anything is sent.
-    const email = methodTakesAuth(methodId) ? this.email() : null;
-    const msgNum = this.nextMsgNum++;
-    const frame = encodeRequest({
-      method: methodId,
-      msgNum,
-      extras: this.extras,
-      email,
-      ...(writeParams ? { params: writeParams } : {}),
-    });
-
-    const bridge = await this.bridge();
+    // Resolve the email first, so a missing one fails before anything is sent. #272: every failure
+    // up to the bridge's fetch is marked as one before sending (`notSent`).
+    let frame: Uint8Array;
+    let bridge: RpcBridge;
+    let email: string | null;
+    let msgNum: number;
+    try {
+      email = methodTakesAuth(methodId) ? this.email() : null;
+      msgNum = this.nextMsgNum++;
+      frame = encodeRequest({
+        method: methodId,
+        msgNum,
+        extras: this.extras,
+        email,
+        ...(writeParams ? { params: writeParams } : {}),
+      });
+      bridge = await this.bridge();
+    } catch (e) {
+      throw markNotSent(e);
+    }
     const res = await bridge.fetch({
       method: 'POST',
       path: `${SERVICES_URL}?m=${encodeURIComponent(methodName)}&js=1`,

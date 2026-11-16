@@ -216,29 +216,45 @@ export function captureTargets(
    * #240: territories my attacks failed on repeatedly while their owner reinforced them
    * (`input.repulsed`, {@link repulsedAttacks}): still that opponent's, armies in view, next to mine,
    * its owner able to deploy there. Every capture of one is sized for its defenders plus that deploy
-   * (#120's sure sizing), and is not made when that size does not fit; a rationale line names the
+   * (#120's sure sizing) — #272: or plus the most its owner reinforced it on those failed turns, when less — and is not made when that size does not fit; a rationale line names the
    * failed turns. #240 review: its target keeps its plain cost, so every ranking (the bonus passes,
    * breaks and counter-attacks, rule 4e's fallback) treats it as the plan without the evidence does
    * — the sure size only decides whether it fits and what is sent ({@link sizeOf}). Ranked on the sure
    * size, a target that fitted dropped behind a worse one (under No-Split the whole stack went anyway).
    */
-  const repulsed = new Map<number, { player: number; defenders: number; extra: number; cost: number }>();
+  /**
+   * `sure` (#272 review): `extra` is the owner's whole deploy estimate, so the capture lands even if it
+   * deploys there first — a worst case (no "assumes" warning; rule 6 counts the target as held). False
+   * when the most it reinforced it by is below the estimate: the attack is sized for that, but a larger
+   * deploy can still repel it, so it is no worst case and is judged like any other attack on a player.
+   */
+  const repulsed = new Map<number, { player: number; defenders: number; extra: number; cost: number; sure: boolean }>();
   for (const r of input.repulsed ?? []) {
     const t = r.territoryId;
     const st = state.get(t);
     if (st?.owner.kind !== 'player' || st.owner.playerId !== r.playerId || !foe(r.playerId) || st.armies === null) continue;
     if (uncounted(t) || !neighborsOf(g, t).some((n) => mineSet.has(n))) continue;
     const defenders = defenceAt(t);
-    const extra = reinforcementAt(t);
+    const estimate = reinforcementAt(t);
+    // #272: sized for what its owner actually put there on those failed turns (after + my kills −
+    // before; a transfer in counts), the most of them, never above its deploy estimate. Live, an
+    // owner that had reinforced by 4 and 3 was sized for its ~29 deploy (95 armies) and not attacked;
+    // a two-step of 14 then 24 took it next turn against 5.
+    const seen = Math.max(...r.attacks.map((a) => a.after + a.kills - a.before));
+    const extra = Math.min(estimate, seen);
     const cost = costAt(t, defenders + extra);
     if (extra <= 0 || cost === null) continue;
-    repulsed.set(t, { player: r.playerId, defenders, extra, cost });
+    repulsed.set(t, { player: r.playerId, defenders, extra, cost, sure: extra >= estimate });
     const turns = r.attacks.map((a) => a.turn);
     const listed = turns.length > 1 ? `${turns.slice(0, -1).join(', ')} and ${turns[turns.length - 1]}` : `${turns[0]}`;
+    const size =
+      extra < estimate
+        ? `the most it reinforced it by on those turns, ~${extra}, below its owner's ~${estimate} deploy estimate (${defenders} + ${extra} defenders, ${cost} armies: a larger deploy there can still repel it, so it is no sure capture), or not made (#240, #272)`
+        : `its owner's ~${extra} deploy there (${defenders} + ${extra} defenders, ${cost} armies), or not made (#240)`;
     rationale.push(
       `My attacks on ${label(t)} failed on turns ${listed}, player ${r.playerId} reinforcing it each time (${r.attacks
         .map((a) => `${a.armies} against ${a.before}, ${a.after} after`)
-        .join('; ')}): a further attack is sized for its owner's ~${extra} deploy there (${defenders} + ${extra} defenders, ${cost} armies), or not made (#240).`,
+        .join('; ')}): a further attack is sized for ${size}.`,
     );
   }
   /** A capture's cost of `t` (its ordinary sizing), or #240's sure one for a repulsed territory. */

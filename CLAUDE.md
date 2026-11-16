@@ -43,7 +43,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   preview names it, and `execute` refuses if it changed (`requireApprovedAccount`, `src/tools/live-context.ts`),
   so an approval for one account never acts as another. The shared pieces are in `src/tools/write-kit.ts`:
   `requireMe` / `requireMySeat` (every write refuses an unreadable signed-in account, one wording),
-  `sendAndVerify` (a refusal throws; no answer is `unknown` and is never read back or resent), and
+  `sendAndVerify` (a refusal throws; no answer is `unknown` and is never read back or resent; #272: a
+  failure before the request left — no email, the bridge not ready, marked by `WarappRpc.call`, `notSent` —
+  throws "The request was not sent …, so nothing changed"; a failure inside the bridge's fetch, such as
+  "fetch failed", may have left and stays `unknown`), and
   `defineGatedWrite`. Every write result carries `outcome` (`confirmed`, `accepted`, `unconfirmed`,
   `unknown`, `not_applied`; the per-tool mapping is in that file's header) beside its own `status`,
   which callers still read. `warapp_submit_picks` validates against the live board and reports
@@ -512,6 +515,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   in `warapp_session_status` (`pushTransport`) and the push tools. One listener per process
   (`src/push/listener.ts`), started lazily: many processes sharing the bridge port collide.
   Tests drive a scripted fake bridge and a fake WebSocket, never a real socket.
+- **A player out with no AI on its seat is static (#270, `src/analysis/static-seats.ts`).** Out means
+  `SurrenderAccepted`, `Booted`, `Eliminated` or `EndedByVote`; an AI plays the seat when
+  `humanTurnedIntoAI`, or the game's `surrenderedTurnIntoAI` / `bootedTurnIntoAI` covers that ending,
+  and then it stays an opponent. A static seat's territories stay on the board (seen live), but it
+  deploys and attacks nothing, so the planner (`planTurn`'s first step, `planningInput`),
+  `planEnemyEstimates`, `warapp_check_plan`'s board and replies, the border guess, the tracker and the
+  outlook (`TrackGame.staticSeats`, `staticSeatsFor`) read them as neutrals — targets priced like a
+  wasteland, no hold beside them, never the standing or the strike stack's direction. Never me or a
+  teammate. The board cache keeps what war.app showed.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -597,7 +609,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
   `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;
-  `warapp_uncommit_turn` drops the turn's cached orders once the withdrawal is confirmed),
+  `warapp_uncommit_turn` drops the turn's cached orders once the withdrawal is confirmed; #271: a failed
+  attack on a hold of mine — my loss there needs at least loss ÷ the offensive kill rate attackers, luck
+  included, all from its stacks beside it at the start of the turn without Multi-Attack — bounds that
+  turn's deploy from below when it is the only other player beside the hold and every neighbour was in
+  view, `repelledFloor`, in the planner too given `previousOrders`; a hold counts only when every transfer
+  of mine into it surely arrived whole — its source mine on both boards, showing exactly what my orders
+  leave there, and either left more than the guard or beside no other player — never a hold an order
+  `moves` does not carry touched (a Transfer Only, Attack Only or percentage order in `sent`, a card
+  play in `cards`; orders cached before those were kept bound nothing), and on a turn an
+  opponent may have played a Bomb (`PlannerSettings.bombFrom`, the card clock's fastest turn) half the
+  hold before any move, rounded up, is taken out of the loss first),
   unexplained armies (earned since first seen − visible army change − visible losses − likely
   combat deaths) and inferred bonuses (combinations of up to three bonuses it could hold that
   best fit the income gap, within reach and affordable, none listed when too many fit — see the
@@ -740,7 +762,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     the neighbour nearest a border that holds — except from a bonus I hold in full (#118),
     whose garrison stays unless it makes that neighbour, a valued enemy-facing border, hold
     this turn — and is my first order, because a withdrawal only executes while the border is
-    still mine. Order Priority moves only that first order ahead of the opponent's first, so the
+    still mine. Before it withdraws (#272), a conceded border attacks out with its own armies into a
+    neighbour holding at most 2 whose capture completes or advances a bonus (R3 waived; a completed
+    bonus keeps the border; under No-Split a completion only). Order Priority moves only that first order ahead of the opponent's first, so the
     plan sets `cardAdvice: 'order-priority'` only when I hold one (`holdsOrderPriority`), I am
     not known to move first (`movesFirst`), and the order it protects carries at least
     `ORDER_PRIORITY_MIN_ARMIES` (#127; waived by `orderPriorityForced`, when the hand is over the
@@ -824,7 +848,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     history (`repulsedAttacks`, `PlanInput.repulsed`): a territory my attacks failed on, on two or more
     of the last three turns, its owner reinforcing it each time (its armies after plus my kills above
     its armies before; still that player's now), is attacked only at that sure size — its defenders plus
-    the owner's deploy (every pass: targets, rule 4e's fallback, the 1v1 strike stack, finishing off and
+    the owner's deploy, or (#272) plus the most it reinforced it on those turns when that is less: live, an
+    owner that had put 4 and 3 there was sized for its ~29 deploy and not attacked (every pass: targets, rule 4e's fallback, the 1v1 strike stack, finishing off and
     fog pressure, which never press it with a share of the deploy; the guard-off one-army break skips it
     and says so) — or not at all, never retried at its bare cost (#214); a rationale line names the failed
     turns. It still ranks on its plain cost (the sure size only decides what fits, `sizeOf`, and what is
@@ -832,10 +857,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     size, targets that fitted dropped behind worse ones. One the turn cannot fund at capture time, but its
     source and the whole budget could reach, is taken pending at its plain size and dropped after the
     #226 margin if still short ("Drop the attack on …"), since the plain plan pays the sure size from
-    the leftover. The evidence never shrinks the attack: rule 5 judges its source's
+    the leftover. A size below the deploy estimate (#272) is no worst case: the attack keeps #120's
+    "assumes" warning, #120 still sizes it up to the whole deploy when its source has the armies, and rule 6
+    does not count the target as held (`repulsed`'s `sure`, #272 review) — so where the source has the
+    armies the attack is as large as without the evidence, and it never sends less. Rule 5 judges its source's
     comfort (and whether to revive a conceded border) as the plan without it would, with the surplus over the
     plain size still on it, and the leftover there is not kept from the #226 margin (`repulsedSurplus`,
-    `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes".
+    `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes" (only when that size is
+    the whole deploy estimate).
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can
@@ -869,7 +898,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     armies after this turn plus next income exceed the cap, the income above it is lost, so captures of
     neutrals and of foe territories holding at most 1 army (no truce, teammate or commander) are taken
     from idle armies while each one's expected loss is below the income the cap would eat, every hold
-    kept. It runs whatever else the plan captures (rule 4e's army-cap fallback, #104, runs only when the
+    kept. Once one of a player's territories is captured this turn, its other territories beside mine are
+    candidates too whatever they hold (#272: a fork its one deploy must split to save them all; the line says
+    it cannot only when the deploys each attack needs to fail, summed, exceed its estimate), under the same loss
+    test. It runs whatever else the plan captures (rule 4e's army-cap fallback, #104, runs only when the
     plan captures nothing: live, a plan that completed a bonus parked 54 armies beside enemy territories
     of 0 and 1). The rationale names the cap's arithmetic, the "Not attacking" line says when rule 4h
     tried a territory and why it did not take it, and a warning names what idle armies still cost.
@@ -880,7 +912,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     can make hold is held after all before any margin, #121; #257: so is one an idle interior stack
     beside it makes hold by transferring in, rule 6's first step, the border the plan attacks from
     first; #260: when none does and the enemy front lies only past a conceded border the plan attacks
-    an enemy from, rule 6 still steps the stack into that border rather than to a neutral edge no
+    an enemy from (#272: or strictly nearer past it than by any other way, a capture this turn included), rule 6 still steps the stack into that border rather than to a neutral edge no
     nearer, never into another conceded border or one a withdrawal leaves, and only from a stack
     no visible enemy borders at the start of the turn — one interior only once a strike lands keeps
     its armies for that strike's #226 margin, which is sized after rule 6; when several such steps
@@ -923,7 +955,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     usable — so a steady hidden
     bonus is still seen; a carry only bound-cut readings reached ends at a later turn read in full
     that observed less) and at most what it could earn; beyond it, a stack out of the fog. A capture from me is
-    priced at the guard unless my cached orders say what stood there. Each observed turn has a low–high range for the ambiguity. The
+    priced at the guard unless my cached orders say what stood there. #271: a capture of a neutral in view
+    beside the fog needs `fewestAttackersToTake` attackers; what stands there beyond what its stacks in view
+    sent is ambiguous the same way (`unseenAttackers`), and captures like it on `FOG_CAPTURE_MIN` (3) of the
+    last `FOG_CAPTURE_TURNS` (6) turns are income in the tracker (`fogCaptures`: their attackers spread over
+    the turns, a carry no quiet turn disproves); its stacks in view beside a capture, hidden the turn after,
+    may have moved in (`arrivals`: never deploy, out of the stock and flow) — a known under-read: such a
+    stack is claimed whether or not it emptied, and it is often hidden only because the capture took my
+    territory and my sight with it, so a real deploy-then-capture beside it counts its surplus in `high` only. Each observed turn has a low–high range for the ambiguity. The
     tracker's `unexplained` armies leave out likely combat deaths (its stack and a neighbour of
     another player both shrank), and inferred bonuses must lie within `INFER_REACH` hops and be
     affordable — none listed when more than `MAX_LISTED_COMBINATIONS` fit.

@@ -18,7 +18,7 @@ describe('plan/orders and plan/threats (#133)', { timeout: SEEDED_LOOP_TIMEOUT }
   it("their rationale and warnings follow the estimates' in planTurn's, in order", () => {
     let checked = 0;
     for (let i = 0; i < 2000; i += 37) {
-      const input = syntheticInput(i);
+      const input = planner.planningInput(syntheticInput(i)); // #270: planTurn's first step
       const ctx = planContext(input);
       const state = newPlanState();
       noteEstimates(ctx, state);
@@ -41,7 +41,7 @@ describe('plan/orders and plan/threats (#133)', { timeout: SEEDED_LOOP_TIMEOUT }
   it('every border it finds is a territory of mine next to an opponent it names', () => {
     let borders = 0;
     for (let i = 0; i < 2000; i += 41) {
-      const input = syntheticInput(i);
+      const input = planner.planningInput(syntheticInput(i)); // #270: planTurn's first step
       const ctx = planContext(input);
       const state = newPlanState();
       noteEstimates(ctx, state);
@@ -64,7 +64,7 @@ describe('plan/holds (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
   it('defines the holds without deploying, moving or saying anything', () => {
     let defined = 0;
     for (let i = 0; i < 2000; i += 43) {
-      const input = syntheticInput(i);
+      const input = planner.planningInput(syntheticInput(i)); // #270: planTurn's first step
       const ctx = planContext(input);
       const state = newPlanState();
       noteEstimates(ctx, state);

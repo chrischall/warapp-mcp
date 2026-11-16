@@ -54,6 +54,7 @@ import { byNum } from './util.js';
 import { sanctionedIncome } from '../cards-in-effect.js';
 import { truceOf } from './relations.js';
 import { teamFocusOf } from './team.js';
+import { neutralizeSeats, staticSeats } from '../static-seats.js';
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
@@ -127,14 +128,19 @@ export function planEnemyEstimates(input: {
   sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
 }): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
   const ctx = input.game ?? {};
+  // #270: a static seat (out, no AI on it) deploys nothing: its territories read as neutrals.
+  const seats = staticSeats(ctx.players, ctx.endRules, input.me);
+  const board = neutralizeSeats(input.board, seats);
+  const previousBoard = input.previousBoard ? neutralizeSeats(input.previousBoard, seats) : undefined;
+  const tracks = input.tracks?.filter((t) => !seats.has(t.playerId));
   const capCut = input.incomeCap ? Math.max(0, Math.floor(input.incomeCap.uncapped - input.incomeCap.received)) : 0;
-  const { prior, skipped } = fogPrior(input.board, input.me, ctx, input.income + capCut);
+  const { prior, skipped } = fogPrior(board, input.me, ctx, input.income + capCut);
   const turn = input.turn ?? ctx.turn ?? null;
-  const estimates = enemyDeployEstimates(input.graph, input.board, input.me, input.settings ?? {}, input.previousBoard, input.tracks, prior, {
+  const estimates = enemyDeployEstimates(input.graph, board, input.me, input.settings ?? {}, previousBoard, tracks, prior, {
     turn,
     fog: ctx.fog,
     reinforcement: ctx.reinforcement,
-    ...(input.previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
+    ...(previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
   return { estimates: applySanctions(estimates, input.sanctions ?? []), prior, ...(skipped ? { priorSkipped: skipped } : {}) };
 }

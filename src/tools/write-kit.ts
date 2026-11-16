@@ -9,7 +9,9 @@
 //   unconfirmed  — war.app accepted the request, but the read-back failed or does not
 //                  show the effect yet. Check before acting again.
 //   unknown      — war.app did not answer, so the request may or may not have gone
-//                  through. Never resend blindly.
+//                  through. Never resend blindly. A failure before the request left this
+//                  process (#272: no email, the bridge not ready) is no result but an error
+//                  saying it was not sent.
 //   not_applied  — the read-back shows the request did not take effect.
 // A refusal from war.app (nothing changed) is an error, not a result.
 //
@@ -36,7 +38,7 @@ import {
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { z } from 'zod';
 import type { Game, Player } from '../normalize.js';
-import { WarappServerError } from '../protocol/rpc.js';
+import { notSent, WarappServerError } from '../protocol/rpc.js';
 import { respond, untrustedText } from './common.js';
 import { withToolConfig } from './hints.js';
 import { failureText, type LiveContext } from './live-context.js';
@@ -152,6 +154,16 @@ export async function sendAndVerify<A, U, N, C>(spec: SendAndVerify<A, U, N, C>)
   try {
     await spec.send();
   } catch (e) {
+    // #272: a failure before the request left (no email, the bridge not ready) changed nothing.
+    if (notSent(e)) {
+      throw new McpToolError(`The request was not sent (${failureText(e)}), so nothing changed.`, {
+        kind: 'unknown',
+        hint:
+          e instanceof McpToolError && e.hint
+            ? e.hint
+            : 'Fix what stopped it (a signed-in war.app tab open and paired, or the configured email), then confirm the action again.',
+      });
+    }
     if (!(e instanceof WarappServerError)) return spec.unanswered(failureText(e));
     const decided = spec.refused?.(e);
     if (decided !== 'ignore') throw decided ?? e;
