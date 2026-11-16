@@ -108,7 +108,7 @@ export interface ModeTerritories {
 /**
  * Lay the territories read (`byMode`) on `map`'s modes, a copy: each mode's ids that are territories of the
  * map, in order, once each (an id the map lacks is dropped, with a warning); a mode the reply leaves out, or
- * lists none for, is `null` — unknown, never empty. A mode the reply has but the map does not is ignored.
+ * lists none for (or whose every id is dropped), is `null` — unknown, never empty. A mode the reply has but the map does not is ignored.
  */
 export function applyModeTerritories(map: GameMap, byMode: ReadonlyMap<number, number[] | null>): ModeTerritories {
   const land = new Set(map.territories.map((t) => t.id));
@@ -126,6 +126,8 @@ export function applyModeTerritories(map: GameMap, byMode: ReadonlyMap<number, n
           `${one ? 'a territory' : 'territories'} of map ${map.id} and ${one ? 'was' : 'were'} dropped (${dropped.join(', ')}).`,
       );
     }
+    // Every id dropped (or none listed) says nothing about the mode: unknown, never known-empty.
+    if (!kept.length) return { ...d, territories: null };
     found.set(d.id, kept);
     return { ...d, territories: kept };
   });

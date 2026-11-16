@@ -82,8 +82,8 @@ function modeOf(d: unknown): DistributionMode | undefined {
   if (!isRec(d) || !isInt(d.id) || typeof d.name !== 'string') return undefined;
   const out: DistributionMode = { id: d.id, name: d.name };
   if (typeof d.type === 'string') out.type = d.type;
-  // #328: only a list of ids is kept knowledge; anything else (absent, null, junk) reads as not read yet.
-  if (isIntArray(d.territories)) out.territories = d.territories;
+  // #328: only a non-empty list of ids is kept knowledge; anything else (absent, null, [], junk) reads as not read yet.
+  if (isIntArray(d.territories) && d.territories.length) out.territories = d.territories;
   return out;
 }
 
@@ -196,7 +196,7 @@ export async function writeStoredModeTerritories(dir: string, mapId: number, byM
         return false;
       }
       raw.map.distributionModes = raw.map.distributionModes.map((d: unknown) =>
-        isRec(d) && isInt(d.id) && byMode.has(d.id) ? { ...d, territories: [...byMode.get(d.id)!] } : d,
+        isRec(d) && isInt(d.id) && byMode.get(d.id)?.length ? { ...d, territories: [...byMode.get(d.id)!] } : d,
       );
       await writeJsonAtomic(path, mapsDir(dir), raw);
       return true;

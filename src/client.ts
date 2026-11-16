@@ -157,7 +157,7 @@ export class MapCache {
     const land = new Set(map.territories.map((t) => t.id));
     const byMode = new Map(
       stored.map.distributionModes
-        .filter((d) => Array.isArray(d.territories) && d.territories.every((id) => land.has(id)))
+        .filter((d) => Array.isArray(d.territories) && d.territories.length > 0 && d.territories.every((id) => land.has(id)))
         .map((d) => [d.id, d.territories!]),
     );
     let any = false;
@@ -173,9 +173,12 @@ export class MapCache {
    * Lay the territories read for `mapId`'s modes (#328, by mode id) on the cached base map (a new object:
    * the graph cache is keyed by map object) and keep them under `dir`. Nothing when the map is not cached.
    */
-  async setModeTerritories(mapId: number, byMode: ReadonlyMap<number, readonly number[]>, dir: string | undefined): Promise<void> {
+  async setModeTerritories(mapId: number, given: ReadonlyMap<number, readonly number[]>, dir: string | undefined): Promise<void> {
     const base = this.#maps.get(mapId);
     if (!base) return;
+    // An empty list is no knowledge (unknown is never `[]`): it is neither laid on the map nor kept.
+    const byMode = new Map([...given].filter(([, ids]) => ids.length > 0));
+    if (!byMode.size) return;
     this.set({
       ...base,
       distributionModes: base.distributionModes.map((d) => (byMode.has(d.id) ? { ...d, territories: [...byMode.get(d.id)!] } : d)),

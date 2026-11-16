@@ -1630,8 +1630,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `NormalDistribution` (its id list) / `ScenarioDistribution` (its territory → slot dict's keys) by type name
   with the bundle's readers, and drops (with a warning) any id that is not a territory of the map.
   `withModeTerritories` (`src/tools/map-details.ts`) asks only when a caller needs them and a mode lacks them,
-  at most once per map per process (`MapCache.mapDetailsTried`); a failure or a mode listed without ids is
-  `null` (unknown), never `[]`. Read ids are kept on the cached base map and in the store
+  at most once per map per process (`MapCache.mapDetailsTried`); a failure, a mode listed without ids or one
+  whose every id is dropped is `null` (unknown), never `[]` — an empty list is never kept, and a stored `[]`
+  reads as not read yet. Read ids are kept on the cached base map and in the store
   (`distributionModes[].territories`, `writeStoredModeTerritories`: the map's `storedAt` unchanged, so they
   age out with it; a stored mode without them reads as not read yet; a new game on a stored map keeps them, the
   fresh download written with the stored copy's `storedAt` so they still age out on their own clock, and a mode

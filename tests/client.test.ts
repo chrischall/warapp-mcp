@@ -539,6 +539,23 @@ describe("WarappClient: distribution-mode territories (#328)", () => {
     expect(modes[1]!.territories).toEqual(good);
   });
 
+  it('an empty list is never kept as known-empty: in memory, in the store or carried onto a fresh download', async () => {
+    const dir = tmp();
+    const c = client(stubFetch({ body: FIXTURE }, { body: WITHOUT_MAP }).fetchImpl, new MapCache(), CREDS, dir);
+    const map = (await c.getGame(12345678)).map!;
+    const mode = map.distributionModes[0]!.id;
+    await c.keepModeTerritories(map.id, new Map([[mode, []]]));
+    expect((await c.getGame(12345678)).map!.distributionModes[0]).not.toHaveProperty('territories');
+    expect(JSON.parse(readFileSync(mapStorePath(dir, map.id), 'utf8')).map.distributionModes[0]).not.toHaveProperty('territories');
+    // A store that does hold [] (an older write) is not carried either.
+    const path = mapStorePath(dir, map.id);
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    raw.map.distributionModes[0].territories = [];
+    writeFileSync(path, JSON.stringify(raw));
+    const other = await client(stubFetch({ body: { ...FIXTURE, id: '999' } }).fetchImpl, new MapCache(), CREDS, dir).getGame(999);
+    expect(other.map!.distributionModes[0]).not.toHaveProperty('territories');
+  });
+
   it('remembers a map whose details were tried, per process', () => {
     const cache = new MapCache();
     const c = client(stubFetch({ body: FIXTURE }).fetchImpl, cache);

@@ -179,12 +179,16 @@ describe("the stored map's distribution-mode territories (#328)", () => {
     ]);
   });
 
-  it('an empty list is kept as known-empty; a value that is not a list of ids reads as lacking', async () => {
+  it('an empty list is never kept or read as known-empty; a value that is not a list of ids reads as lacking', async () => {
     const dir = tmp();
     await writeStoredMap(dir, withModes(7));
     await writeStoredModeTerritories(dir, 7, new Map([[1, []]]));
-    expect((await readStoredMap(dir, 7))!.distributionModes[0]).toEqual({ id: 1, name: 'One', territories: [] });
+    expect(JSON.parse(readFileSync(mapStorePath(dir, 7), 'utf8')).map.distributionModes[0]).not.toHaveProperty('territories');
+    expect((await readStoredMap(dir, 7))!.distributionModes[0]).toEqual({ id: 1, name: 'One' });
     const raw = JSON.parse(readFileSync(mapStorePath(dir, 7), 'utf8'));
+    raw.map.distributionModes[0].territories = [];
+    writeFileSync(mapStorePath(dir, 7), JSON.stringify(raw));
+    expect((await readStoredMap(dir, 7))!.distributionModes[0]).toEqual({ id: 1, name: 'One' });
     raw.map.distributionModes[0].territories = null;
     raw.map.distributionModes[1].territories = ['x'];
     writeFileSync(mapStorePath(dir, 7), JSON.stringify(raw));

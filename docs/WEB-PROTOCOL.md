@@ -528,8 +528,9 @@ key), and checks every id against the map's territories (one it lacks is dropped
 at most once per map per process; the territories are kept with the map in the store
 (`distributionModes[].territories`, `src/map-store.ts`) and age out with it (carried onto a fresh download
 of the same map, they keep the stored copy's `storedAt`; a mode whose stored ids the fresh map does not all
-have is not carried, and is read again). A failed read, or a mode the
-reply lists none for, is unknown (`null`), never empty. **Verified live:** only what #328 shows (a normal
+have is not carried, and is read again). A failed read, a mode the
+reply lists none for, or one whose every id is dropped, is unknown (`null`), never empty (an empty list is
+never kept, and a stored one reads as not read yet). **Verified live:** only what #328 shows (a normal
 mode's bytes on one map, its 79 ids all territories of the stored GameFeed map and holding the starts of a
 game on it); the decode through the bundle's readers and the scenario mode are UNVERIFIED live.
 

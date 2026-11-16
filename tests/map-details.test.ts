@@ -99,6 +99,21 @@ describe('applyModeTerritories (#328)', () => {
     expect(MAP.distributionModes[0]).toEqual({ id: 1, name: 'Mode one' });
   });
 
+  it('leaves a mode unknown, never empty, when every id it lists is dropped or it lists none', () => {
+    const { map, found, warnings } = applyModeTerritories(
+      MAP,
+      new Map<number, number[] | null>([
+        [1, [77]],
+        [3, []],
+      ]),
+    );
+    expect(map.distributionModes.map((d) => d.territories)).toEqual([null, null, null]);
+    expect(found.size).toBe(0);
+    expect(warnings).toEqual([
+      'Distribution mode 1: 1 territory id war.app listed is not a territory of map 900001 and was dropped (77).',
+    ]);
+  });
+
   it('dedupes ids and keeps their order', () => {
     const { map } = applyModeTerritories(MAP, new Map([[1, [3, 1, 3]]]));
     expect(map.distributionModes[0]!.territories).toEqual([3, 1]);
