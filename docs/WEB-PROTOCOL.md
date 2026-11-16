@@ -606,6 +606,14 @@ with the auth block first; field orders are the client writers' and readers' rea
   the auth block: one string, the id as decimal text. **No result payload.** The client treats
   server error **699** `InAppNotificationKeyNotFound` as already deleted and throws on any other.
   Deleting is not marking read: a read-only "mark read" feature needs only 319.
+- **How this server uses them (#311, UNVERIFIED live):** `warapp_get_notifications` sends 317 (start index, 30)
+  and decodes the reply by type name (`src/notifications.ts`: the record must have its 7 fields; the interpreter
+  hands the id back as the decimal text it parsed). It reports ids, the sent time and the unread flag, a `gameId`
+  taken from a war.app link (`Url`, else the first of `Urls`, with `GameID=`) in the data JSON, and a kind:
+  `game-ended` when field 4 is a plain word naming a game end or the title reads as one (war.app's wording is
+  not known: a guess), else `other`; field 4 is shown as `type` only when it is one plain word. The title and the
+  body are never passed on. `warapp_dismiss_notification` sends 319 with the unread ids the list holds and reads
+  the effect back by listing again. 318 is not sent.
 - **The unread badge** comes with every reply: `warlight.shared.MessageExtrasDown`'s last optional
   field is **`warlight.shared.UnreadMailCheckResults`** — `bool`, `datetime`, `bool` (`src/protocol/codec.ts`
   already decodes it as `unreadMail`). The datetime is what the next request echoes as

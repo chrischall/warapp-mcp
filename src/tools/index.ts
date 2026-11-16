@@ -16,6 +16,7 @@ import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
 import { registerMapStatsTool } from './map-stats.js';
 import { registerMyGamesTool } from './my-games.js';
+import { registerNotificationTools } from './notifications.js';
 import { registerOpenGamesTool } from './open-games.js';
 import { registerOpponentsTool } from './opponents.js';
 import { registerPickTools } from './picks.js';
@@ -127,6 +128,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerUncommitTool(server, live);
   registerChatTools(server, live, deps.env ? { env: deps.env } : {});
   registerChatInboxTool(server, live);
+  // Local and hosted: the account's own notifications, through its war.app tab.
+  registerNotificationTools(server, live, deps.env ? { env: deps.env } : {});
   registerTeamTool(server, live);
   // C4: the team brief, read-only — the facts for a team-chat message, never sent.
   registerTeamBriefTool(server, live);

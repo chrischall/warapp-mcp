@@ -597,6 +597,7 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
   // How the store-facing prose names each write.
   const plain: Record<string, RegExp> = {
     warapp_begin_turn: /\bbegin/i,
+    warapp_dismiss_notification: /\bnotifications?\b/i,
     warapp_join_game: /\bjoin/i,
     warapp_leave_game: /\bleav/i,
     warapp_link_session: /\blink/i,
@@ -656,6 +657,13 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
     const summary = mint.slice(mint.indexOf('\nsummary:'), mint.indexOf('\nexamples:')).replace(/\s+/g, ' ');
     const sentence = sentenceWith(summary, /after you confirm/);
     for (const tool of gated.filter((t) => t !== 'warapp_link_session')) expect(sentence, tool).toMatch(plain[tool]!);
+  });
+
+  it("mint.yaml's summary fits mcp-host's 300-character limit (#311)", () => {
+    const mint = doc('../mint.yaml');
+    const summary = mint.slice(mint.indexOf('\nsummary: >-') + '\nsummary: >-'.length, mint.indexOf('\nexamples:')).replace(/\s+/g, ' ').trim();
+    expect(summary.length).toBeGreaterThan(0);
+    expect(summary.length).toBeLessThanOrEqual(300);
   });
 
   it('no doc still says the tracked income is a median (#100: the maximum)', () => {

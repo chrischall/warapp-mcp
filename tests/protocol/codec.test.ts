@@ -498,6 +498,9 @@ describe('methods', () => {
       GetTurns: 81,
       Subscribe: 238,
       GameUpdated: 241,
+      GetInAppNotifications: 317,
+      DeleteInAppNotification: 318,
+      AcknowledgeInAppNotifications: 319,
     });
     expect(methodName(40)).toBe('GetLatestGameInfo');
     expect(methodName(41)).toBeUndefined();

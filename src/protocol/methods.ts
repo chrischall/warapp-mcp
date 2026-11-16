@@ -30,6 +30,9 @@ export const Method = {
   GetTurns: 81,
   Subscribe: 238,
   GameUpdated: 241,
+  GetInAppNotifications: 317,
+  DeleteInAppNotification: 318,
+  AcknowledgeInAppNotifications: 319,
 } as const;
 
 type MethodName = keyof typeof Method;
@@ -195,6 +198,32 @@ export function writeBeginFirstTurnParams(w: Writer, gameId: number): void {
  */
 export function writeUnCommitParams(w: Writer, gameId: number): void {
   w.int32(gameId);
+}
+
+/** The page size the client always asks GetInAppNotifications for. */
+export const NOTIFICATIONS_PAGE_SIZE = 30;
+
+/**
+ * GetInAppNotifications(auth, start, count) — the client's notifications screen (#311). READ FROM THE
+ * CLIENT BUNDLE's writer, NOT VERIFIED LIVE: after the auth block the int32 start index (the paging
+ * offset), then the int32 page size (the client always sends 30). Reply: GetInAppNotificationsReturn.
+ */
+export function writeGetInAppNotificationsParams(w: Writer, start: number, count: number = NOTIFICATIONS_PAGE_SIZE): void {
+  w.int32(start).int32(count);
+}
+
+/** A notification id as war.app sends it back: decimal text. */
+export const NOTIFICATION_ID = /^\d{1,20}$/;
+
+/**
+ * AcknowledgeInAppNotifications(auth, ids) — marks notifications read (#311). READ FROM THE CLIENT
+ * BUNDLE's writer, NOT VERIFIED LIVE: after the auth block a present list (int32 count) of the ids, each
+ * a string of decimal text. No result payload: the effect is read back from a later list.
+ */
+export function writeAcknowledgeInAppNotificationsParams(w: Writer, ids: readonly string[]): void {
+  if (ids.length === 0) throw new RangeError('no notification ids');
+  for (const id of ids) if (!NOTIFICATION_ID.test(id)) throw new RangeError(`not a notification id: ${JSON.stringify(id)}`);
+  w.bool(true).list(ids, (ww, id) => ww.string(id));
 }
 
 /**

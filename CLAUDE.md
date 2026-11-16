@@ -35,8 +35,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameFeed answers as the player whose token is presented (fog of war included). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Nine tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn` and `warapp_link_session` (local only:
+- **Ten tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player) and `warapp_link_session` (local only:
   it stores a session cookie on this machine and is not registered hosted), registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
@@ -249,6 +249,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
   is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
+- **In-app notifications (#311) are `GetInAppNotifications` (317) via `warapp_get_notifications`** (read-only,
+  hosted too; `src/notifications.ts`, the reply decoded by the bundle's readers by type name —
+  `GetInAppNotificationsReturn` / `InAppNotification`, 7 fields by read order — like GetMyGames). Name-free
+  beyond ids: `id` (decimal text), `kind` (`game-ended` from a type word or the title, else `other`; `type` only
+  when the record's unread string field is one plain word), `gameId` (from a war.app `GameID=` link in the data
+  JSON), `time`, `unread`; the title and body are read only to classify, never shown. A game-ended notification
+  folds the game's opponent profile through `foldFinishedGame` only when a per-game file is kept unfolded
+  (`hasUnfoldedProfile`): then one GameFeed read (no map), at most `FOLD_LOOKUPS` (5) per call, else no request.
+  `warapp_dismiss_notification` (confirm-gated) sends `AcknowledgeInAppNotifications` (319: marks read; delete,
+  318, is not used) for the listed unread ids; the preview names ids and game ids only; `dismissed` /
+  `unconfirmed` read back by listing again (up to `MAX_FIND_PAGES` pages; gone from the list counts as
+  dismissed), `unknown` never resent. Encoders golden-pinned; everything UNVERIFIED live. Not a chat send (D2).
 - **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
   `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
   (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only

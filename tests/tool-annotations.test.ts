@@ -8,7 +8,9 @@ import { harnessFor, type Harness } from './helpers.js';
  * joining a game, surrendering one, withdrawing committed orders) and
  * two LOCAL writes that reach no one but this machine — linking the
  * direct-transport session (confirm-gated: it stores a cookie locally) and
- * recording an agreement in the local ledger (not confirm-gated).
+ * recording an agreement in the local ledger (not confirm-gated) — and one
+ * confirm-gated write to war.app that changes only the account's own state:
+ * marking notifications read (#311).
  */
 const WRITES = [
   'warapp_begin_turn',
@@ -21,6 +23,8 @@ const WRITES = [
   'warapp_uncommit_turn',
 ];
 const LOCAL_WRITES = ['warapp_link_session', 'warapp_record_agreement'];
+/** A write to war.app that changes only the account's own state (marking notifications read, #311). */
+const ACCOUNT_WRITES = ['warapp_dismiss_notification'];
 
 interface Ann {
   readOnlyHint?: unknown;
@@ -50,11 +54,13 @@ describe('tool annotations', () => {
       'warapp_begin_turn',
       'warapp_chat_inbox',
       'warapp_check_plan',
+      'warapp_dismiss_notification',
       'warapp_get_chat',
       'warapp_get_game',
       'warapp_get_live_board',
       'warapp_get_map',
       'warapp_get_my_picks',
+      'warapp_get_notifications',
       'warapp_get_relations',
       'warapp_get_team',
       'warapp_healthcheck',
@@ -86,7 +92,7 @@ describe('tool annotations', () => {
   });
 
   it('marks every tool but the writes read-only, never destructive', () => {
-    const reads = Object.entries(ann).filter(([n]) => !WRITES.includes(n) && !LOCAL_WRITES.includes(n));
+    const reads = Object.entries(ann).filter(([n]) => !WRITES.includes(n) && !LOCAL_WRITES.includes(n) && !ACCOUNT_WRITES.includes(n));
     expect(reads.filter(([, a]) => a?.readOnlyHint !== true).map(([n]) => n)).toEqual([]);
     expect(reads.filter(([, a]) => a?.destructiveHint === true).map(([n]) => n)).toEqual([]);
   });
@@ -107,6 +113,12 @@ describe('tool annotations', () => {
 
   it('marks linking the session a write, but a local one that reaches no other people', () => {
     expect(ann.warapp_link_session).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+  });
+
+  it('marks marking notifications read a write that reaches war.app but no other people, and destroys nothing', () => {
+    for (const n of ACCOUNT_WRITES) {
+      expect(ann[n], n).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    }
   });
 
   it('marks recording an agreement a write to the local ledger only', () => {
