@@ -107,7 +107,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   });
   registerBoardTool(server, client, live);
   registerRouteTool(server, client);
-  registerStrategyTool(server, client);
+  registerStrategyTool(server, client, live);
   registerLiveTools(server, live);
   registerPickTools(server, live);
   registerMyGamesTool(server, live);

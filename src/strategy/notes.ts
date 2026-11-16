@@ -2428,20 +2428,26 @@ interface FeedProfileInput {
   settings?: ProfileSettings;
   turn?: number | null;
   picking?: boolean;
-  /** GameFeed's standing when it sends one (`game.standing`): contact and late phases read it. */
+  /**
+   * The board the phase reads: GameFeed's standing when it sends one (`game.standing`), or the live
+   * board warapp_strategy read for my seat (#309). Contact and the territory-share late game read it.
+   */
   board?: BoardState;
+  /** The signed-in account's GameFeed id, when known (#309): the seat the profile is judged for. */
+  me?: number;
 }
 
 /**
- * A game's profile from GameFeed alone: format, settings and phase. It is seen from the
- * first seated player — the format does not depend on the seat — and the phase reads
- * GameFeed's standing when there is one (without it no contact or territory-share late
- * game can be seen). The standing is `unknown`: it needs income estimates, which
- * warapp_plan_turn makes.
+ * A game's profile from GameFeed's players and settings: format, settings and phase. It is seen
+ * from the signed-in account's seat when `me` names a seated player, else from the first seated
+ * player (#309: in a free-for-all contact is judged from a seat). The phase reads the board when
+ * there is one (without it no contact or territory-share late game can be seen). The standing is
+ * `unknown`: it needs income estimates, which warapp_plan_turn makes.
  */
 export function feedProfile(input: FeedProfileInput): GameProfile {
   const playing = input.players.filter((p) => (p.state ?? 'Playing') === 'Playing');
-  const me = (playing[0] ?? input.players[0])?.id ?? 0;
+  const seated = input.me !== undefined && input.players.some((p) => p.id === input.me) ? input.me : undefined;
+  const me = seated ?? (playing[0] ?? input.players[0])?.id ?? 0;
   return gameProfile({
     graph: input.graph,
     board: input.board ?? { source: 'gamefeed', territories: [], verified: false },

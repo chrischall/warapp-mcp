@@ -127,6 +127,7 @@ import { writeGameRecord } from '../replay.js';
 import { gameOutlook } from '../analysis/outlook.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import { cardArmyCeiling, cardClock } from '../strategy/card-clock.js';
+import { hasCostlyBonus, noteContext, notesFor } from '../strategy/notes.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { readPickRecord } from '../pick-list.js';
@@ -2455,6 +2456,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 ...(plan.profile.standingSource === 'tracked' ? { standingSource: 'tracked' as const } : {}),
                 ...(plan.profile.endsWith !== null ? { endsWith: plan.profile.endsWith } : {}),
               },
+        // #309: full only — the ids of the strategy notes this plan's own profile matches (warapp_strategy
+        // serves their text). Reported only: the plan never reads them.
+        ...(rung === 'full'
+          ? { notes: notesFor(plan.profile, undefined, { ...noteContext(game.settings), negativeBonus: hasCostlyBonus(graph) }).map((n) => n.id) }
+          : {}),
         // #178: the outlook and its basis; full adds each turn judged.
         outlook: rung === 'full' ? outlook : { state: outlook.state, basis: outlook.basis },
         // Part D: the opponent reads (reported only, never planned on); absent when none is at the bar.

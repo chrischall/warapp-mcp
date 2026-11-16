@@ -1,7 +1,12 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OVERRIDES_UNPARSED } from '../src/analysis/overrides.js';
 import { STRATEGY_NOTES } from '../src/strategy/notes.js';
-import { harnessFor, payload, textOf, type Harness } from './helpers.js';
+import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
+import { Method } from '../src/protocol/methods.js';
+import { harnessFor, liveHarness, payload, textOf, type Harness } from './helpers.js';
+import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -76,7 +81,7 @@ interface NoteView {
 interface StrategyPayload {
   scope: 'general' | 'map' | 'game';
   game?: { id: number; name: string | null; state: string; turn: number | null };
-  profile?: { format: string; phase: string; standing: string; settings?: Record<string, unknown> };
+  profile?: { format: string; phase: string; standing: string; source?: string; settings?: Record<string, unknown> };
   notes: NoteView[];
   map?: {
     id: number;
@@ -285,6 +290,98 @@ describe('warapp_strategy', () => {
     const r = await h.call('warapp_strategy', { game_id: GAME, map_id: 123 });
     expect(r.isError).toBe(true);
     expect(textOf(r)).toMatch(/9001/);
+  });
+});
+
+// #309: with the signed-in account readable, the profile reads the live board for my seat, since
+// GameFeed's board for a game in progress carries no standing. Made-up ids: the in-game id is the
+// GameFeed id less two check digits each end.
+describe('warapp_strategy reads the live board for my seat (#309)', () => {
+  const ANN = { feed: '3312345644', inGame: 123456 };
+  const BOB = { feed: '7176543229', inGame: 765432 };
+  const CAT = { feed: '5523456788', inGame: 234567 };
+  const SIGNED_IN = (feed: string) => ({ 'https://war.app/InviteToken': `<p>Your invite token is ${feed}</p>` });
+  /** A fogged three-player free-for-all, Bob in the first seat and Ann (me) second. */
+  const ffa = () => {
+    const g = game({ players: 3 });
+    const seats = [BOB, ANN, CAT];
+    return { ...g, players: g.players.map((p, i) => ({ ...p, id: seats[i]!.feed })) };
+  };
+  // Ann holds 1 and 2; Bob's 9 armies on 3 can take 2: contact. The rest is fogged.
+  const contactBoard: SyntheticTerritory[] = [
+    { id: 1, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+    { id: 2, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+    { id: 3, fogLevel: 1, owner: BOB.inGame, armies: 9 },
+    ...[4, 5, 6, 7, 8].map((id) => ({ id, fogLevel: 4, owner: -1, armies: 0, fogged: true })),
+  ];
+  const live = (territories: SyntheticTerritory[]) => (req: DecodedRequest): Partial<ReplyFrame> => {
+    if (req.method !== Method.GetLatestGameInfo) throw new Error(`unexpected method ${req.method}`);
+    return { body: (w) => writeLatestGameInfo(w, territories, [ANN.inGame]) };
+  };
+  const CONTACT_NOTES = ['fighting-contested-bonus-mass', 'reading-split-growth'];
+
+  it('a fogged FFA at contact: the phase reads contact and the contact notes are served', async () => {
+    h = await liveHarness({ feed: [ffa()], warapp: live(contactBoard), pages: SIGNED_IN(ANN.feed) });
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(p.profile).toMatchObject({ format: 'ffa', phase: 'contact', standing: 'unknown', source: 'live' });
+    expect(p.notes.map((n) => n.id)).toEqual(expect.arrayContaining(CONTACT_NOTES));
+    // One GameFeed read and one board read: nothing else.
+    expect(h.calls).toHaveLength(1);
+    expect(h.exchanges.map((x) => x.request.method)).toEqual([Method.GetLatestGameInfo]);
+    // Read-only: no board cache, no game record.
+    expect(existsSync(join(h.dataDir, 'boards'))).toBe(false);
+    expect(existsSync(join(h.dataDir, 'games'))).toBe(false);
+  });
+
+  it('falls back to GameFeed when the board cannot be read, judged for my seat, with the source said', async () => {
+    h = await liveHarness({
+      feed: [ffa()],
+      warapp: () => {
+        throw new Error('war.app is down');
+      },
+      pages: SIGNED_IN(ANN.feed),
+    });
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(p.profile).toMatchObject({ format: 'ffa', phase: 'expansion', source: 'gamefeed' });
+    expect(p.notes.map((n) => n.id)).not.toContain('fighting-contested-bonus-mass');
+  });
+
+  it('without a readable account: no board read, the GameFeed profile exactly as before', async () => {
+    h = await liveHarness({ feed: [ffa()], warapp: live(contactBoard) });
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME, view: 'full' }));
+    expect(p.profile).toMatchObject({ phase: 'expansion', source: 'gamefeed' });
+    expect(h.exchanges).toHaveLength(0);
+  });
+
+  it('an account not seated in the game: no board read', async () => {
+    h = await liveHarness({ feed: [ffa()], warapp: live(contactBoard), pages: SIGNED_IN('9912345699') });
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(p.profile).toMatchObject({ phase: 'expansion', source: 'gamefeed' });
+    expect(h.exchanges).toHaveLength(0);
+  });
+
+  it("warapp_plan_turn's full view lists the ids of the notes its own profile matches; compact does not", async () => {
+    h = await liveHarness({ feed: [ffa()], warapp: live(contactBoard), pages: SIGNED_IN(ANN.feed) });
+    const full = payload<{ profile: { phase: string }; notes?: string[] }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, view: 'full' }),
+    );
+    expect(full.profile.phase).toBe('contact');
+    expect(full.notes).toEqual(expect.arrayContaining(CONTACT_NOTES));
+    expect(full.notes!.every((id) => STRATEGY_NOTES.some((n) => n.id === id))).toBe(true);
+    // The same ids warapp_strategy serves on this board, in the table's order.
+    const strategy = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(full.notes).toEqual(STRATEGY_NOTES.map((n) => n.id).filter((id) => full.notes!.includes(id)));
+    expect(strategy.notes.map((n) => n.id)).toEqual(expect.arrayContaining(CONTACT_NOTES));
+    const compact = payload<{ notes?: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(compact.notes).toBeUndefined();
+  });
+
+  it('in the picking stage: no board read (the phase is the opening either way)', async () => {
+    const g = { ...ffa(), state: 'DistributingTerritories', numberOfTurns: '-1' };
+    h = await liveHarness({ feed: [g], warapp: live(contactBoard), pages: SIGNED_IN(ANN.feed) });
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
+    expect(p.profile).toMatchObject({ phase: 'opening', source: 'gamefeed' });
+    expect(h.exchanges).toHaveLength(0);
   });
 });
 
