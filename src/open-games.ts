@@ -98,6 +98,8 @@ const DEFAULT_ROUNDING = 1;
 const MOVE_ORDER_NO_LUCK_CYCLE = 2;
 /** The rule naming a non-default base income (`Minimum armies per turn is <n>`). */
 const RULE_MIN_ARMIES = 'Minimum armies per turn is';
+/** #276: the rule naming a game without One Army Must Stand Guard (the guard-on rule is `One army must stand guard`). */
+export const GUARD_OFF_RULE = 'One army must stand guard is off';
 /** The rule naming overridden bonus values. */
 const RULE_OVERRIDDEN_BONUSES = 'Overridden bonuses';
 /** TimeSpans at or beyond this many ms are war.app's "never". */
@@ -261,6 +263,11 @@ function readSettings(v: unknown): SettingsRead | undefined {
   const waste = f[GS.wastelands];
   if (isInt(waste) && waste > 0 && !scenario) rules.push('Wastelands');
   if (bool('oneArmyStandsGuard')) rules.push('One army must stand guard');
+  else if (f[GS.oneArmyStandsGuard] === false) {
+    // #276: a rule, no longer a planner gap — the planner keeps a second line inside a held bonus,
+    // raids one step deeper and retakes for free with the guard off (plan/guard-off.ts).
+    rules.push(GUARD_OFF_RULE);
+  }
   const luck = f[GS.luck];
   const lucky = isNum(luck) && luck !== 0;
   if (lucky) rules.push(`Luck modifier ${pct(luck)}%`);

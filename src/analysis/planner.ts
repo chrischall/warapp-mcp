@@ -12,6 +12,7 @@
 //   2. targets, 4. bonus scoring, 4d. frontier cost, 4f / #101 .. plan/targets.ts
 //   R3 / 4b, No-Split, 3a. combined, 3b / #121, passes 1 and 2 .. plan/captures.ts
 //   1e, 1s, #165, 0p.3c strike stack, #102 spend, #167 lead ..... plan/strike.ts
+//   #276 guard off: second line, raids, free retakes ........... plan/guard-off.ts
 //   4e. never stand still ...................................... plan/stand-still.ts
 //   4h. the army cap prices idle armies (#253) .................. plan/cap-spend.ts
 //   5. the leftover deploy, 3b's short borders (#121) ........... plan/leftover.ts
@@ -35,7 +36,10 @@
 //     contact / late; in an FFA, contact only when an enemy stack as it stands can take a
 //     territory of mine or most of my borders face enemies, #132), standing (my income against the strongest opponent's estimate:
 //     ahead ≥ AHEAD_RATIO×, behind ≤ BEHIND_RATIO×, unknown when fog hides most of the
-//     board) and the settings that shape strategy. Only with `options.adapt` and no `goal`
+//     board) and the settings that shape strategy. #276: with One Army Must Stand Guard off it
+//     names that case first (`guard`, `guardCase`: what it means for interior defence) and its note
+//     leads `notes`; with the guard on it is absent, so a guard-on plan is unchanged
+//     (`warapp_plan_turn` names both cases). Only with `options.adapt` and no `goal`
 //     does it change the plan (each rule a rationale line when it fires):
 //       1. 1v1 in contact: a break is weighted like a completion of equal value (weight 1),
 //          and an advance (expansion that completes no bonus) ranks below every hold, unit,
@@ -1323,7 +1327,19 @@
 // armies (no special unit) whose owner holds a positive bonus it is in is attacked with one army —
 // it breaks the bonus — from the neighbour with the most to spare beyond what holds it once the
 // target falls, else one deployed on a neighbour not conceded; never one lowering income. Sized for
-// the board as it stands: if the owner deploys there first, the one army is lost.
+// the board as it stands: if the owner deploys there first, the one army is lost. #276: an enemy
+// stack advancing two steps loses nothing per step either — the two-step look-ahead (#172,
+// `twoStepReaches`) moves every army each step, so its holds count the stack whole. #276
+// (plan/guard-off.ts; none with the guard on or under No-Split): (1) a second line — an interior
+// member of a held bonus within two moves of an enemy stack of at least SECOND_LINE_STACK_INCOMES ×
+// my income keeps `garrisonSize` (what one army cannot take) through `guardAt`, its shortfall deployed
+// before the leftover (`fillSecondLine`); (2) a raid one step deeper — an empty territory beside me
+// taken when the empty enemy territory behind it breaks its owner's bonus (no Multi-Attack chain:
+// the far one is the one-army break next turn); (3) a free retake — an enemy territory beside me at
+// 0 that `previousBoard` showed mine, taken back. (2) and (3) run right after the one-army breaks,
+// from spare armies, else topped up with a deploy; on a player's territory each is sized for its
+// owner's deploy there (#120; the raid one army more, to go on), and goes at its bare size
+// (RAID_ARMIES, or 1) with #120's "assumes" warning only when nothing covers that.
 // Special units: a commander fights as COMMANDER_STRENGTH (7) armies, attacking and
 // defending, and takes no partial damage (armies die first; it falls to 7 damage left
 // over), so a stack of d armies plus a commander defends exactly as d + 7: every capture
@@ -1373,6 +1389,7 @@ import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { leftoverDeploy } from './plan/leftover.js';
+import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { transfers } from './plan/transfers.js';
@@ -1548,6 +1565,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- 1e. finish off an opponent, 1s. strike an enemy commander, #165 guard-off breaks (plan/strike.ts) ----
   const { struck } = strikesPhase(pc, ps, book, threats, hd, tgt, caps);
+  // ---- #276: guard off — free retakes and raids one step deeper (plan/guard-off.ts) ----
+  guardOffRaids(pc, ps, book, hd, tgt, threats, worstCase, input.previousBoard);
 
   if (balanced) {
     // ---- balanced: greedy by income per army ----
@@ -2372,6 +2391,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- concentrate (#72, rule 0p.3c): the 1v1 strike stack's border (plan/strike.ts) ----
   const { stack, smallExpansion } = chooseStrikeStack(pc, ps, book, threats, open, stays);
   // ---- 5. the leftover deploy (plan/leftover.ts) ----
+  // ---- #276: guard off — the second line's shortfall, before the leftover (plan/guard-off.ts) ----
+  fillSecondLine(pc, ps, book);
   /** The deploys before the leftover: rule 5b's sources are the territories it reached. */
   const beforeLeftover = new Map(ps.deployed);
   const leftover = leftoverDeploy(pc, ps, book, threats, hd, tgt, saveStep, stack, open, stays);

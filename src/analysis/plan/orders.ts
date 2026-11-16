@@ -10,6 +10,7 @@ import { territoryIncome } from '../player.js';
 import { WASTELAND_FACTOR, type PlannedMove } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
+import { secondLineOf } from './guard-off.js';
 
 
 /** #235: what losing a territory of mine cuts off from the rest of my holdings ({@link deployBook}'s `cutOff`). */
@@ -49,8 +50,16 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
             }),
         ),
   );
-  /** Armies that stay on my `id` whatever its orders: the guard, or (#165) the army kept next to an enemy. */
-  const guardAt = (id: number) => (guard || sentinel.has(id) ? 1 : 0);
+  // #276: with the guard off, an interior member of a held bonus within two moves of a big enemy
+  // stack keeps a garrison one army cannot take (plan/guard-off.ts): what stands there now, up to it;
+  // `fillSecondLine` deploys the rest before the leftover.
+  const secondLine = secondLineOf(ctx);
+  const secondLineKept = new Map([...secondLine].map(([id, e]) => [id, Math.min(e.size, Math.max(0, armiesOf(id)))]));
+  /**
+   * Armies that stay on my `id` whatever its orders: the guard, or (#165) the army kept next to an
+   * enemy, or (#276) a second-line garrison.
+   */
+  const guardAt = (id: number) => (guard || sentinel.has(id) ? 1 : (secondLineKept.get(id) ?? 0));
   // May start at −1 (a 0-army territory still owes its guard): deploys there pay for it first.
   for (const id of mine) avail.set(id, armiesOf(id) - guardAt(id));
   /** #179: what my `x` keeps to cover a finished-off player's exit, in `avail` terms (0 when none). */
@@ -256,6 +265,8 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
   };
   return {
     sentinel,
+    secondLine,
+    secondLineKept,
     guardAt,
     coverOf,
     heldNow,

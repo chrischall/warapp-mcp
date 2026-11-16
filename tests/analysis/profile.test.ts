@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type ProfileInput } from '../../src/analysis/profile.js';
+import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, guardCase, type ProfileInput } from '../../src/analysis/profile.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
 
@@ -617,5 +617,37 @@ describe('gameProfile: team standing (PLAN-TEAMS C3)', () => {
     );
     expect(p.standing).toBe('behind');
     expect(p.notes.join('\n')).toMatch(/my team's 13 visible armies are less than half of team 1's 31/);
+  });
+});
+
+describe('gameProfile: One Army Must Stand Guard (#276)', () => {
+  it('guardCase names each case and what it means for interior defence', () => {
+    const off = guardCase({ oneArmyStandsGuard: false });
+    expect(off).toMatchObject({ case: 'off', stated: true });
+    expect(off.interiorDefence).toMatch(/every army may move/);
+    expect(off.interiorDefence).toMatch(/hollow/);
+    expect(off.interiorDefence).toMatch(/loses nothing per step/);
+    const on = guardCase({ oneArmyStandsGuard: true });
+    expect(on).toMatchObject({ case: 'on', stated: true });
+    expect(on.interiorDefence).toMatch(/one army deep/);
+    expect(on.interiorDefence).not.toMatch(/every army may move/);
+    // Not stated: war.app's default, on.
+    expect(guardCase({})).toMatchObject({ case: 'on', stated: false });
+    expect(guardCase(undefined)).toMatchObject({ case: 'on', stated: false });
+  });
+
+  it('a guard-off game names the case at the top of the profile: the field and the first note', () => {
+    const p = gameProfile(base({ board: touching, settings: { oneArmyStandsGuard: false } }));
+    expect(p.guard).toEqual(guardCase({ oneArmyStandsGuard: false }));
+    expect(Object.keys(p)[0]).toBe('guard');
+    expect(p.notes[0]).toBe(`One Army Must Stand Guard is off: ${guardCase({ oneArmyStandsGuard: false }).interiorDefence}`);
+  });
+
+  it('a guard-on game leaves the analysis profile as it was (warapp_plan_turn names the case beside it)', () => {
+    for (const settings of [{ oneArmyStandsGuard: true }, {}]) {
+      const p = gameProfile(base({ board: touching, settings }));
+      expect(p).not.toHaveProperty('guard');
+      expect(p.notes.join('\n')).not.toMatch(/Stand Guard/);
+    }
   });
 });

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Reader, Writer } from '../src/protocol/codec.js';
 import type { ReadBudget } from '../src/protocol/interp.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, lotteryOf, LOTTERY_MAX_TERRITORIES, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, OpenGamesFormatError, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
+import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, GUARD_OFF_RULE, lotteryOf, LOTTERY_MAX_TERRITORIES, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, OpenGamesFormatError, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { MY_GAMES_BUNDLE, writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
 
@@ -118,7 +118,7 @@ describe('parseOpenGamesPage', () => {
       mapId: 39905,
       entryFeeCoins: 0,
       prizeCoins: 0,
-      rules: ['Automatic distribution'],
+      rules: ['Automatic distribution', 'One army must stand guard'],
       plannerGaps: [],
     });
   });
@@ -254,6 +254,21 @@ describe('parseOpenGamesPage', () => {
     const cycle = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { moveOrder: 1 } }])), bundle).games[0]!;
     expect(cycle.rules.join(' ')).not.toMatch(/speed/i);
     expect(cycle.plannerGaps).toEqual([]);
+  });
+
+  it('names One Army Must Stand Guard on and off as rules, and neither as a planner gap (#276)', () => {
+    const on = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { oneArmyStandsGuard: true } }])), bundle).games[0]!;
+    expect(on.rules).toContain('One army must stand guard');
+    expect(on.rules).not.toContain(GUARD_OFF_RULE);
+    expect(on.plannerGaps.join(' ')).not.toMatch(/guard/i);
+    const off = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: { oneArmyStandsGuard: false } }])), bundle).games[0]!;
+    expect(off.rules).toContain(GUARD_OFF_RULE);
+    expect(off.rules).not.toContain('One army must stand guard');
+    // The planner keeps a second line, raids and retakes with the guard off: no longer a gap.
+    expect(off.plannerGaps.join(' ')).not.toMatch(/guard/i);
+    // Unreadable settings name neither case.
+    const none = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: null }])), bundle).games[0]!;
+    expect(none.rules.join(' ')).not.toMatch(/guard/i);
   });
 
   it('flags a non-zero luck modifier or non-straight rounding as a planner gap', () => {

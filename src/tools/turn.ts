@@ -61,6 +61,7 @@ import {
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH, type CombatSettings, luckFraction, straightKills } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
+import { guardCase } from '../analysis/profile.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
 import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
@@ -2001,10 +2002,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(chat ? { chat } : {}),
         goal: plan.goal,
         goalSource: goal !== undefined ? 'explicit' : 'profile',
+        // #276: the guard case first, on or off, with what it means for interior defence.
         profile:
           rung === 'full'
-            ? plan.profile
+            ? { guard: guardCase(game.settings), ...plan.profile }
             : {
+                guard: guardCase(game.settings),
                 format: plan.profile.format,
                 phase: plan.profile.phase,
                 standing: plan.profile.standing,

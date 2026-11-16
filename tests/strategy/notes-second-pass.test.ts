@@ -89,6 +89,11 @@ describe('second-pass notes: each is offered only where it applies', () => {
     expect(ids(profile({ phase: 'late' }, { commanders: true }))).not.toContain('settings-commander-free-captures');
     expect(ids(profile())).not.toContain('settings-guard-off-taps');
     expect(ids(profile(), { oneArmyStandsGuard: false })).toContain('settings-guard-off-taps');
+    // #276: the guard-off notes beyond the taps, and none of them with the guard on.
+    const guardOff = ['settings-guard-off-hollow-interior', 'settings-guard-off-raids', 'settings-guard-off-whole-stacks'];
+    expect(ids(profile(), { oneArmyStandsGuard: false })).toEqual(expect.arrayContaining(guardOff));
+    for (const guard of [undefined, true])
+      for (const id of guardOff) expect(ids(profile(), guard === undefined ? {} : { oneArmyStandsGuard: guard })).not.toContain(id);
     expect(ids(profile(), { bonusArmyPer: 6 })).toContain('settings-territory-income-threshold');
     expect(ids(profile(), { bonusArmyPer: 0 })).not.toContain('settings-territory-income-threshold');
     expect(ids(profile(), { negativeBonus: true })).toContain('settings-negative-bonus');
