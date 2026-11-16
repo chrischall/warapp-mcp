@@ -41,7 +41,8 @@
 //     estimate, threat, standing or strike, its land is priced like a wasteland, and no border beside
 //     only it needs a hold. A rationale line names each such player holding land. Never me or a
 //     teammate; an AI that replaced a player stays an opponent. #281: the territories it left are
-//     kept (`PlanInput.vacated`, `BoardCtx.vacated`) for rule 4d and pass 3 (src/analysis/plan/vacated.ts).
+//     kept (`PlanInput.vacated`, `BoardCtx.vacated`) for rule 4d and pass 3 (src/analysis/plan/vacated.ts;
+//     rule 4d below, with the owner's extension to empty enemy territory with the guard off).
 //  0p. Game profile (`gameProfile`, src/analysis/profile.ts), computed on every plan and
 //     returned as `profile`: format (1v1 / ffa / teams), phase (opening / expansion /
 //     contact / late; in an FFA, contact only when an enemy stack as it stands can take a
@@ -930,7 +931,23 @@
 //     it is let through, a line ("Take … though it faces player …") says so, and pass 3 ranks it by
 //     capture cost plus the frontier without its own hold need, less the denial (1 + PAYBACK_TURNS ×
 //     the bonus progress it gives that opponent: a bonus it completes, else value ÷ size per bonus
-//     it holds a member of). It spends only what stands above its source's hold (#121).
+//     it holds a member of). That credit can put a denial ahead of every plain capture (its score
+//     may fall to 0 or below; a plain capture's never goes below one army), and a member of an
+//     uneconomic bonus of mine is still eligible for it. Each denial is judged once per plan
+//     (`denialsOf`, `Targets.denials`). It spends only what stands above its source's hold (#121).
+//     #281, the owner's extension (2026-11-16; guard off, not under No-Split, `balanced`/`defend`):
+//     a live opponent's own territory beside mine in view at 0 (no special unit) whose owner holds
+//     no positive bonus it is in (#165 breaks those) and that was not mine on `previousBoard` (#276
+//     retakes those) — `emptyEnemiesOf`, `Targets.emptyEnemies` — is a pass 3 target (`balanced`
+//     included; out of the targets again after pass 3 when not taken). It is tried sized for its
+//     owner's deploy there (#120, a worst case: no "assumes" warning) and, only when no source can
+//     pay that (a refusal stands), at its bare cost with #120's warning (`tryEmptyEnemy`); ranked as
+//     a capture of the size it is first tried at plus its frontier. Rule 4d does not undo it when the
+//     border it adds faces only enemy (or hidden) territories that a territory of mine beside it
+//     already faces (`sameFront`: the front moves one step; a "Take … though it adds a border facing
+//     an enemy … (#281)" line says so); a border to a new stack is judged as any. Never a truce's
+//     covered territory, a #240 repulsed one, a counter-attack target, or one lowering income; what
+//     the #276 second line still lacks is kept out of the deploy it may use.
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
 //     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative
@@ -1482,7 +1499,7 @@ import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
-import { plainOrderCost } from './plan/vacated.js';
+import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
 import { transfers } from './plan/transfers.js';
@@ -2397,15 +2414,22 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- pass 3: other expansion ----
   if (goal !== 'complete-bonus') {
-    const plainScore = (t: number) => plainOrderCost(pc, tgt, t);
-    const rest = [...targets.values()]
+    // #281 (the owner's extension): empty enemy territories, with the guard off, are cheap expansion.
+    const empties = addEmptyEnemyTargets(pc, ps, tgt);
+    const eligible = [...targets.values()]
       // #125: a member of an uneconomic bonus is still a territory worth its per-territory income.
-      .filter((t) => !captured.has(t.id) && plainEligible(pc, tgt, t.id, t.enemy))
-      .sort((a, b) => plainScore(a.id) - plainScore(b.id) || a.cost - b.cost || a.id - b.id);
+      .filter((t) => !captured.has(t.id) && plainEligible(pc, tgt, t.id, t.enemy));
+    const plainScore = plainOrderCosts(pc, tgt, eligible.map((t) => t.id));
+    const rest = eligible.sort((a, b) => plainScore.get(a.id)! - plainScore.get(b.id)! || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
     for (const t of rest) {
       const gain = gainWith([t.id]);
       if (gain < 0 && !inFocus(t.id)) continue;
+      if (tgt.emptyEnemies.has(t.id)) {
+        // #281: never one lowering income, focused or not; sized for its owner's deploy (#120).
+        if (gain >= 0) tryEmptyEnemy(ps, book, tgt, caps, t.id);
+        continue;
+      }
       // #125: its own economy test. A member of an economic bonus is judged by that bonus; any
       // other capture pays for the armies it loses with the income it adds within PAYBACK_TURNS,
       // and one that adds none may lose at most PLAIN_EXPANSION_LOSS.
@@ -2425,6 +2449,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       }
       tryExpand(t.id, 'expands territory');
     }
+    dropEmptyEnemyTargets(ps, tgt, empties);
   }
 
   // ---- 4e. never stand still (#104, #107), the contact fallback (plan/stand-still.ts) ----

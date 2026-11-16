@@ -13,7 +13,7 @@ import type { DeployBook } from './orders.js';
 import { PLAIN_EXPANSION_LOSS } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
-import { plainOrderCost } from './vacated.js';
+import { plainOrderCosts } from './vacated.js';
 import type { Threats } from './threats.js';
 
 /**
@@ -29,11 +29,18 @@ export function plainEconomy(pc: PlanCtx, tgt: Targets, id: number, gain: number
   return (worth > 0 ? lost > pc.paybackTurns * worth : lost > PLAIN_EXPANSION_LOSS) ? { lost, worth } : null;
 }
 
-/** Pass 3's eligibility (#125): not a player's under `balanced`, and not only a member of an uneconomic bonus. */
+/**
+ * Pass 3's eligibility (#125): not a player's under `balanced` (but #281's empty enemy territory), and
+ * not only a member of an uneconomic bonus (but #281's denial: what it denies the opponent beside it is
+ * its worth, not my bonus).
+ */
 export function plainEligible(pc: PlanCtx, tgt: Targets, id: number, enemy: boolean): boolean {
   return (
-    !(pc.balanced && enemy) &&
-    (tgt.economicMember.has(id) || !tgt.uneconomicMember.has(id) || (pc.territoryShare(1) > 0 && !tgt.negativeMember.has(id)))
+    !(pc.balanced && enemy && !tgt.emptyEnemies.has(id)) &&
+    (tgt.economicMember.has(id) ||
+      !tgt.uneconomicMember.has(id) ||
+      tgt.denials.has(id) ||
+      (pc.territoryShare(1) > 0 && !tgt.negativeMember.has(id)))
   );
 }
 
@@ -108,9 +115,11 @@ export function afterLeftoverCaptures(
     return { spare: Math.max(0, avail.get(x)! - keep), keep, need, threat: b?.threat, together: need > alone ? together : undefined };
   };
   const taken: number[] = [];
-  const candidates = [...targets.values()]
-    .filter((tg) => state.get(tg.id)?.owner.kind === 'neutral' && !captured.has(tg.id) && tg.sources.some((x) => sources.includes(x)))
-    .sort((a, b) => plainOrderCost(pc, tgt, a.id) - plainOrderCost(pc, tgt, b.id) || a.cost - b.cost || a.id - b.id);
+  const eligible = [...targets.values()].filter(
+    (tg) => state.get(tg.id)?.owner.kind === 'neutral' && !captured.has(tg.id) && tg.sources.some((x) => sources.includes(x)),
+  );
+  const order = plainOrderCosts(pc, tgt, eligible.map((tg) => tg.id));
+  const candidates = eligible.sort((a, b) => order.get(a.id)! - order.get(b.id)! || a.cost - b.cost || a.id - b.id);
   for (const tg of candidates) {
     const t = tg.id;
     const gain = gainWith([t]);

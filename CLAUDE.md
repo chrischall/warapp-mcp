@@ -581,8 +581,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `VACATED_MAX_COST` (2) beside a live stack that can take it with what stands there
   (`denialOf`, `src/analysis/plan/vacated.ts`) comes either way, so rule 4d never refuses it on its hold
   cost alone, pass 3 ranks it without that hold need and credits the denial (1 + payback × the bonus
-  progress it gives that opponent), and a "Take … (#281)" line says so. It still spends only the armies
-  above its source's hold (#121) and is sized at its capture cost.
+  progress it gives that opponent: it can outrank every plain capture, and a member of my uneconomic
+  bonus stays eligible), and a "Take … (#281)" line says so (the live stack takes it "free" at 0, else
+  "for N"). It still spends only the armies above its source's hold (#121) and is sized at its capture
+  cost. The denials are judged once per plan (`denialsOf` → `Targets.denials`). **The owner's extension
+  (2026-11-16):** with One Army Must Stand Guard off (not under No-Split; `balanced`/`defend`), a live
+  opponent's own territory beside mine at 0 (no special unit), breaking none of its bonuses (#165) and
+  not mine last turn (#276's retake) — `emptyEnemiesOf` → `Targets.emptyEnemies` — is cheap expansion:
+  pass 3 tries it sized for its owner's deploy there (#120), else at its bare cost with #120's warning
+  (`tryEmptyEnemy`), ranked at that size plus its frontier; rule 4d does not undo it when its new border
+  faces only enemy (or hidden) territories my borders beside it already face (`sameFront`, a "Take … no
+  new exposure (#281)" line), while a border to a new stack is judged as before. Never a truce's covered
+  territory, a #240 repulsed one or one lowering income; the #276 second line's shortfall is kept out of
+  its deploy; with the guard on nothing changes.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -1060,7 +1071,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       conceded borders are not in the hold cost); under `balanced`/`defend` an expansion that
       adds an enemy border without completing a bonus is undone when the hold cost would then
       exceed the next income and the start-of-turn hold cost ("Frontier grows faster than income"),
-      except cheap land a static seat left beside a live stack that would take it free (#281).
+      except cheap land a static seat left beside a live stack that would take it (#281), and, with
+      the guard off, an empty enemy territory whose border faces only what mine beside it already face.
       Except in the contact/late no-capture fallback (rule 4e, #114), where it is a cost instead:
       the survivors a capture leaves on a border it cannot hold next turn count as armies at risk.
       In that fallback a capture that completes a bonus this turn is never ranked last for opening a

@@ -55,6 +55,7 @@ function input(b: ReturnType<typeof board>, graph = G): PlanInput {
   return { graph, board: b, me: ME, income: 5, settings: STD, turn: 14, game: { players, turn: 14 }, options: { adapt: true } };
 }
 const attacks = (p: TurnPlan) => p.moves.filter((m) => m.kind === 'attack');
+const attacksOn = (p: TurnPlan, t: number) => attacks(p).filter((m) => m.to === t);
 
 describe('vacated land (#281)', () => {
   it('the live shape: an empty vacated territory beside a live stack is taken, with the fewest armies', () => {
@@ -107,4 +108,38 @@ describe('vacated land (#281)', () => {
     const p = planTurn(input(board([mine(1, 8), held(2, 4, S), held(3, 12, A), neutral(6, 40)])));
     expect(p.rationale.join('\n')).not.toMatch(/#281/);
   });
+
+  it('says what the live stack would pay when the territory is not empty (#281 review)', () => {
+    // 1 vacated army on T2 costs 2: player 20 would take it for 2, not free.
+    const p = planTurn(input(board([mine(1, 8), held(2, 1, S), held(3, 12, A), neutral(6, 40)])));
+    expect(attacksOn(p, 2)).toEqual([expect.objectContaining({ from: 1, armies: 2 })]);
+    expect(p.rationale.join('\n')).toMatch(/it costs 2, and player 20 would take it for 2 next turn — the border comes either way \(#281\)\./);
+    expect(p.rationale.join('\n')).not.toMatch(/take it free/);
+  });
+
+  it('names the bonus it would complete for the live opponent (#281 review)', () => {
+    const g = buildGraph(makeMap([1, 2, 3, 6], line, [[700, 3, [2, 3]]]));
+    const p = planTurn(input(board([mine(1, 8), held(2, 0, S), held(3, 12, A), neutral(6, 40)]), g));
+    expect(attacksOn(p, 2)).toEqual([expect.objectContaining({ from: 1, armies: 1 })]);
+    expect(p.rationale.join('\n')).toMatch(
+      /player 20 would take it free next turn, completing bonus B700 \(#700\) \(\+3\) for it — the border comes either way \(#281\)\./,
+    );
+  });
+
+  it('names the bonus progress it would give the live opponent (#281 review)', () => {
+    // B700 (+3) is T2, T3 and the neutral T6: T2 would be player 20's second member of three.
+    const g = buildGraph(makeMap([1, 2, 3, 6], line, [[700, 3, [2, 3, 6]]]));
+    const p = planTurn(input(board([mine(1, 8), held(2, 0, S), held(3, 12, A), neutral(6, 40)]), g));
+    expect(attacksOn(p, 2)).toEqual([expect.objectContaining({ from: 1, armies: 1 })]);
+    expect(p.rationale.join('\n')).toMatch(/player 20 would take it free next turn, toward its bonuses \(~\+1 a turn\)/);
+  });
+
+  it('with the guard off, an empty vacated territory is taken with one army (#281 review)', () => {
+    const p = planTurn({ ...input(board([mine(1, 8), held(2, 0, S), held(3, 12, A), neutral(6, 40)])), settings: { ...STD, oneArmyStandsGuard: false } });
+    expect(attacksOn(p, 2)).toEqual([expect.objectContaining({ from: 1, armies: 1 })]);
+    expect(p.rationale.join('\n')).toMatch(/Take T2 \(#2\) though it faces player 20: player 30 left it \(out, no AI\), it costs 1, and player 20 would take it free next turn/);
+    // A vacated territory is a neutral now: the empty-enemy rule (#281's extension) never names it.
+    expect(p.rationale.join('\n')).not.toMatch(/cheap expansion/);
+  });
 });
+

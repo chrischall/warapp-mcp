@@ -11,7 +11,7 @@ import type { PlanCtx, PlanState } from './state.js';
 import type { LeadBlock, LeadTry, Targets } from './targets.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
-import { denialLine, denialOf } from './vacated.js';
+import { denialLine, emptyEnemyLine } from './vacated.js';
 
 
 /** Why the last tryCapture refused (R3, No-Split on a source that could take it); else size. */
@@ -927,7 +927,7 @@ export function bonusPasses(
   const { heldBorders, keptIncome, stayAt } = hd;
   const {
     targets, leadSteps, leadTry, leadNote, bonusTarget, frontierDelta, targetScoreCost, frontierOf, startHold,
-    toFinish, byCloseness, committing,
+    toFinish, byCloseness, committing, denials, emptyEnemies,
   } = tgt;
   const { worstCase, tryCapture, siblings, fundedOnConceded, bareOn } = prev;
   // ---- pass 1: complete a bonus this turn (all or nothing) ----
@@ -1088,8 +1088,9 @@ export function bonusPasses(
    */
   const stopped: { t: number; holdCost: number; income: number }[] = [];
   /**
-   * #281: vacated territories rule 4d let through though they add a border facing an enemy, with the
-   * rationale line the report states for each one the plan still takes.
+   * #281: vacated territories (and, the owner's extension, empty enemy territories on the same front)
+   * rule 4d let through though they add a border facing an enemy, with the rationale line the report
+   * states for each one the plan still takes.
    */
   const denied = new Map<number, string>();
   /** The start of rule 4d's rationale line for a stopped `t` (one per attempt that differed). */
@@ -1114,9 +1115,16 @@ export function bonusPasses(
     // #281: land a static seat left, which a live stack beside it takes free next turn: the border
     // comes either way, so the hold cost alone never refuses it (the capture still spends only what
     // stands above its source's hold).
-    const d = denialOf(pc, t);
+    const d = denials.get(t);
     if (d) {
       denied.set(t, denialLine(pc, t, d));
+      return null;
+    }
+    // #281 (the owner's extension): an empty enemy territory whose border faces only what my borders
+    // beside it already face moves the front one step; a border to a new stack is judged as any.
+    const e = emptyEnemies.get(t);
+    if (e?.sameFront) {
+      denied.set(t, emptyEnemyLine(pc, t, e));
       return null;
     }
     const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.`;
