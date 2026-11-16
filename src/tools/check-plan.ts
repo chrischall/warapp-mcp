@@ -364,7 +364,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(binding.length ? { truces: binding.map((r) => ({ player: r.player, covered: r.coveredMine })) } : {}),
       });
       // #274: my commander, by the check warapp_submit_turn refuses on (commander-check.ts): the same
-      // opponents, each reply at the larger of its estimate and my income (enemy_deploy only raises it),
+      // opponents, each reply at the larger of its estimate and my income (enemy_deploy only raises it,
+      // and so does an untrusted opponent's figure, #275),
       // both move orders whatever first_mover says, my Airlifts simulated.
       const checked = commanderCheckOn({
         graph,
@@ -376,6 +377,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         moves,
         orderPriority,
         ...(enemy_deploy !== undefined ? { floor: enemy_deploy } : {}),
+        // #275: an untrusted opponent at the figure its tripwire gave it, as the stress test tries it
+        // (enemy_deploy aside, the floor stays: never below what warapp_submit_turn tries).
+        ...(untrustedOf.size ? { untrusted: untrustedOf } : {}),
         airlifts,
         cardTargets,
       });

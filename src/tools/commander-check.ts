@@ -1,7 +1,8 @@
 // #274: the one commander check. warapp_submit_turn refuses on it, warapp_plan_turn's commander
 // block and warning read it, and warapp_check_plan's `commander` reports it, so the three never
 // disagree: the same opponents (`stressOpponents`, static seats out, #270), each reply sized at the
-// larger of its estimate and my income (and enemy_deploy, a what-if floor), both move orders, the
+// larger of its estimate and my income (and enemy_deploy, a what-if floor; an untrusted opponent's at
+// least at the figure its #275 tripwire gave it, as the stress test sizes it), both move orders, the
 // free-for-all lead (#180), Order Priority and my Airlifts. No I/O: the callers load the boards.
 import { commanderSafety, type CommanderAirlift, type CommanderSafety } from '../analysis/commander-safety.js';
 import type { MapGraph } from '../analysis/graph.js';
@@ -38,6 +39,12 @@ export interface CommanderCheckInput {
   orderPriority: boolean;
   /** An enemy_deploy what-if: a floor on every reply, never below what the submit tries. */
   floor?: number;
+  /**
+   * #275: per untrusted opponent, the deploy its tripwire sizes it at (`untrustedDeploy`): a floor on its
+   * replies, as warapp_check_plan's stress test tries it, so the one check never calls the commander
+   * safe at a figure below the one the stress test lists.
+   */
+  untrusted?: ReadonlyMap<number, number>;
   /** Search for the smallest deploy that kills it (warapp_plan_turn's block); the others skip it. */
   killedBy?: boolean;
   /** My Airlifts, which run after the deploys and before the moves. */
@@ -55,7 +62,8 @@ export interface CommanderCheck {
 }
 
 /** How every reply is sized, in words (the check_plan block and the plan's warning say it). */
-export const COMMANDER_SIZING = "each reply sized at the larger of the opponent's estimate and your income, both move orders tried";
+export const COMMANDER_SIZING =
+  "each reply sized at the larger of the opponent's estimate and your income (an untrusted opponent's at least at the figure its tripwire gave it, #275), both move orders tried";
 
 /**
  * Whether these orders leave my commander takeable by a single-deploy reply. Undefined when my
@@ -66,7 +74,7 @@ export const COMMANDER_SIZING = "each reply sized at the larger of the opponent'
 export function commanderCheckOn(a: CommanderCheckInput): CommanderCheck | undefined {
   const { so } = a;
   // The opponent's own estimate, never an enemy_deploy override (that is `floor`).
-  const sizeOf = (id: number) => Math.max(so.estimateOf(id), a.income, a.floor ?? 0);
+  const sizeOf = (id: number) => Math.max(so.estimateOf(id), a.income, a.floor ?? 0, a.untrusted?.get(id) ?? 0);
   const sized = so.opponents.map((o) => ({ ...o, deploy: sizeOf(o.id) }));
   const safety = commanderSafety({
     graph: a.graph,
@@ -86,7 +94,7 @@ export function commanderCheckOn(a: CommanderCheckInput): CommanderCheck | undef
   if (!safety) return undefined;
   const w = safety.worst;
   const opponent = w ? so.opponents.find((o) => o.id === w.opponent) : undefined;
-  const replyDeploy = opponent ? sizeOf(opponent.id) : Math.max(a.income, a.floor ?? 0, ...so.opponents.map((o) => so.estimateOf(o.id)));
+  const replyDeploy = opponent ? sizeOf(opponent.id) : Math.max(a.income, a.floor ?? 0, ...so.opponents.map((o) => sizeOf(o.id)));
   const its = new Set([safety.from, safety.territory]);
   const cards = [
     ...new Set(
@@ -111,6 +119,7 @@ export function commanderCheckOn(a: CommanderCheckInput): CommanderCheck | undef
     };
   }
   const where = `your commander on territory ${safety.territory}`;
+  const untrustedOf = opponent ? a.untrusted?.get(opponent.id) : undefined;
   const partner = w?.partner !== undefined ? so.opponents.find((o) => o.id === w.partner) : undefined;
   const reply =
     w && opponent
@@ -124,7 +133,7 @@ export function commanderCheckOn(a: CommanderCheckInput): CommanderCheck | undef
     ? `These orders lose ${where} with nobody answering (an attack it goes along on fails).`
     : `These orders leave ${where} takeable: ${reply} (${safety.killers} of the replies tried, each sized at the larger of the opponent's estimate${
         opponent ? ` ${so.estimateOf(opponent.id)}` : ''
-      } and your income ${a.income}${a.floor !== undefined ? ` and enemy_deploy ${a.floor}` : ''}). ${
+      }${untrustedOf !== undefined ? `, its untrusted figure ${untrustedOf} (#275)` : ''} and your income ${a.income}${a.floor !== undefined ? ` and enemy_deploy ${a.floor}` : ''}). ${
         safety.needs !== null
           ? `It needs ${safety.needs} armies there (${safety.armies} after your orders) to survive every one.`
           : 'No number of armies there holds it against every one.'

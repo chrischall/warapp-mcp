@@ -142,6 +142,7 @@ import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
 import { commanderCheckOn, guessKeepsCommander, type CommanderCheck, type CommanderCheckInput, type CommanderRisk } from './commander-check.js';
 import { HEADROOM_COMPACT, headroomView, headroomWarnings, keepTripwires, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
+import type { Tripwire } from '../analysis/tripwire.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
@@ -1708,7 +1709,14 @@ async function commanderCheck(
     info: unknown;
     hand: readonly Card[];
     income: number;
-  } & Omit<CommanderCheckInput, 'graph' | 'me' | 'settings' | 'so' | 'income'>,
+    /**
+     * #275: the tripwires running this turn (warapp_plan_turn's own read); read here from the board cache
+     * when absent (warapp_submit_turn), as warapp_check_plan reads them.
+     */
+    tripwires?: readonly Tripwire[];
+    /** Whether the teams are known (`resolveTeams`); false: no tripwire runs. Default true. */
+    teamsKnown?: boolean;
+  } & Omit<CommanderCheckInput, 'graph' | 'me' | 'settings' | 'so' | 'income' | 'untrusted'>,
 ): Promise<CommanderCheck | undefined> {
   if (myCommanderTerritory(a.seen, a.me.id) === undefined) return undefined;
   const graph = graphOf(a.map);
@@ -1734,12 +1742,36 @@ async function commanderCheck(
     info: a.info,
     ...(opening ? { opening } : {}),
   });
+  // #275: an untrusted opponent's reply is sized at least at the figure its tripwire gave it, as
+  // warapp_check_plan's stress test tries it (read only: warapp_plan_turn keeps the marks).
+  const tripwires =
+    a.tripwires ??
+    (
+      await readTripwires({
+        dataDir: ctx.dataDir,
+        gameId: a.game.id,
+        me: a.me.id,
+        turn: a.turn,
+        graph,
+        boards: a.turn !== null ? [...history.boards, { turn: a.turn, board: a.seen }] : [],
+        settings,
+        ...(teamsOf(a.game.players) ? { teams: teamsOf(a.game.players)! } : {}),
+        estimates: so.estimates,
+        ...(so.effect.diplomacy.length ? { peace: so.effect.diplomacy.map((d) => d.player) } : {}),
+        ...(a.teamsKnown === false ? { teamsKnown: false } : {}),
+        gameSettings: a.game.settings,
+        map: a.map,
+        staticSeats: staticSeats(a.game.players, a.game.endRules, a.me.id),
+      })
+    ).tripwires;
+  const untrusted = new Map(tripwires.map((w) => [w.player, untrustedDeploy(w, a.income)]));
   return commanderCheckOn({
     graph,
     me: a.me.id,
     settings,
     so,
     income: a.income,
+    ...(untrusted.size ? { untrusted } : {}),
     deploys: a.deploys,
     moves: a.moves,
     orderPriority: a.orderPriority,
@@ -2272,6 +2304,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         info,
         hand,
         income: setup.boardIncome,
+        tripwires: setup.trip.tripwires,
         deploys: plan.deploys,
         moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
         orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
@@ -2311,6 +2344,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             info,
             hand,
             income: setup.boardIncome,
+            tripwires: setup.trip.tripwires,
             deploys: plan.deploys,
             moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
             orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
@@ -2337,6 +2371,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           info,
           hand,
           income: setup.boardIncome,
+          tripwires: setup.trip.tripwires,
           deploys: guess.deploys,
           moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
           orderPriority: plays.some((c) => c.type === CARD_ORDER_PRIORITY),
@@ -3083,6 +3118,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 info,
                 hand,
                 income: givenIncome ?? modelled,
+                ...(teamsKnown ? {} : { teamsKnown: false }),
                 deploys: deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })),
                 moves: moves.map((m) => ({
                   from: m.from.id,

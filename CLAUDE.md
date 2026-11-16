@@ -101,7 +101,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   three tools (`commanderCheckOn`, `src/tools/commander-check.ts`; `stressOpponents` reads a static seat (#270) as
   neutral land, never a killer): the same opponents, teams, free-for-all lead — two opponents striking together
   when I lead — Order Priority and Airlifts, each reply at max(estimate, my income), `enemy_deploy` only raising
-  it, both move orders always (`first_mover` is not passed). `warapp_check_plan` reports `commander` (with
+  it and so does an untrusted opponent's #275 figure (`untrusted`: max(implied, my income), the figure
+  `warapp_check_plan`'s stress test tries; the submit reads the marks from the board cache, the plan passes its
+  own), both move orders always (`first_mover` is not passed). `warapp_check_plan` reports `commander` (with
   `replyDeploy` and `sizing`) by that check, so its count and `needs` may differ from the stress test's
   `atRisk.commander`, which tries the estimates, and leads its summary with it when a reply kills it;
   `warapp_plan_turn` carries a `commander` block every turn (and a first warning when the plan's orders would be
@@ -691,10 +693,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
   more), marks that opponent untrusted (a stack no board ever showed is credited its whole start, from the
   settings, and is not read when they do not give it or the start was not even — `symmetricStart`: a custom scenario sets each start by hand —; a stack out of the fog is credited its armies in view that
-  left or shrank within reach since — a walk-in is not income, #123 lesson 5 — and, with the start known, never
-  below its whole stock (every start plus each turn's estimate) less its armies in view elsewhere now, so armies
-  banked under the fog since early on do not trip it — with the start unknown nothing bounds those, so a stack with
-  a territory within reach hidden on every board since its sighting is not read; an opponent commander counts as 7 on
+  left or shrank within reach since — a walk-in is not income, #123 lesson 5; every drop between two sightings
+  of a territory counts, and the drop from the latest to now, each within reach from the earlier sighting — and,
+  with the start known, never below its whole stock (every start plus each turn's estimate) less its armies in
+  view elsewhere now, so armies banked under the fog since early on do not trip it — with the start unknown nothing
+  bounds those, so a stack with a territory within reach hidden on every board since its sighting is not read; the
+  stock counts as known only when every turn's estimate was kept (`estimateKept`): a turn not kept stands in at the
+  most the opponent was kept at or is now (`estimateAt`), which may still under-count one whose estimate a bonus
+  break lowered, so then the stack is read as with the start unknown (a stack no board showed is not read); an opponent commander counts as 7 on
   the target of a held attack and on its stacks beside a capture or a held attack; a board from GameFeed history (`source: 'history'`) is no
   sighting and no previous board — the opponent-profile observer skips them too; a held attack is not read from a
   source another stack beside it could have hit first, or that ended below what my orders left it, counts only
@@ -708,14 +714,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   read once an opponent may hold an Airlift card (the card clock, `opponentCanHold`): armies it lands look like
   income; a Reinforcement card is already in the estimate (#164). No capture or held attack is read once one
   may hold a Bomb (it runs before the attacks and halves my source or the territory taken; a stack out of the fog
-  still is). Another player's armies are never its: no held attack is read with any player but it beside the
+  still is). A territory my own Gift card gave it (`MyOrders.cards`) is no capture, and with my card plays not
+  recorded (an older cache) no capture of mine is read when Gift is in play (`gift`: the settings list it, or
+  are unread). Another player's armies are never its: no held attack is read with any player but it beside the
   target (a teammate may have sent armies in), and no fog stack of a player with a teammate. A static seat
   (#270) is never read, nor a player with no estimate now (never compared against 0). Nothing is read either while `resolveTeams`
   says the teams are unknown (`known: false`): an opponent may be a teammate, and the stored marks are applied
   to nothing but kept unchanged (`TripwireRead.keep`: one such call never erases a running mark); `headroom` rows then carry
   `mayBeTeammate: true` and `warapp_submit_turn`'s headroom warning says so. The marks and each turn's per-opponent
   estimates live in the board cache file (`estimates`, `tripwires`, ids only; `readSurvival`/`writeSurvival`
-  in `src/trend.ts`, kept by every cache writer), written by `warapp_plan_turn` only. While untrusted, the
+  in `src/trend.ts`, kept by every cache writer; the newest `SURVIVAL_TURNS` (200) turns of estimates, not
+  the boards' ten, since the stock reads every turn's), written by `warapp_plan_turn` only. While untrusted, the
   planner sizes borders of bonuses held in full at the start for max(estimate, the figure) where the figure
   is max(implied, my income) (`PlanInput.untrusted`, forceAt; not under `enemyDeploy`; under Local Deployment that
   figure is not bounded by where the opponent's bonus pools can land, as `deployReaching` bounds the estimate:
