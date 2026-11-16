@@ -690,7 +690,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn, so the two may differ for one border, and the #268 line says so. `src/analysis/tripwire.ts` (pure) reads my two latest boards: a stack out of the fog, a capture,
   or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
   more), marks that opponent untrusted (a stack no board ever showed is credited its whole start, from the
-  settings, and is not read when they do not give it; a stack out of the fog is credited its armies in view that
+  settings, and is not read when they do not give it or the start was not even — `symmetricStart`: a custom scenario sets each start by hand —; a stack out of the fog is credited its armies in view that
   left or shrank within reach since — a walk-in is not income, #123 lesson 5 — and, with the start known, never
   below its whole stock (every start plus each turn's estimate) less its armies in view elsewhere now, so armies
   banked under the fog since early on do not trip it — with the start unknown nothing bounds those, so a stack with

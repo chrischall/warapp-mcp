@@ -4,7 +4,7 @@
 // warapp_check_plan and warapp_submit_turn only read.
 import { headroomTable, type HeadroomInput, type HeadroomRow } from '../analysis/headroom.js';
 import type { EnemyDeployEstimate } from '../analysis/plan/shared.js';
-import { trackGame, type TurnBoard } from '../analysis/opponents.js';
+import { symmetricStart, trackGame, type TurnBoard } from '../analysis/opponents.js';
 import { activeTripwires, brokenEstimates, type Tripwire } from '../analysis/tripwire.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { SimSettings } from '../analysis/turn-sim.js';
@@ -54,7 +54,10 @@ export async function readTripwires(a: {
   peace?: Iterable<number>;
   /** Whether the teams are known (`resolveTeams`); false: nothing is read. Default true. */
   teamsKnown?: boolean;
-  /** The game's settings and map: every player's start, credited to a stack no board ever showed; the Airlift card. */
+  /**
+   * The game's settings and map: every player's start, credited to a stack no board ever showed (only
+   * when the start was even, `symmetricStart`: never in a custom scenario); the Airlift card.
+   */
   gameSettings?: GameSettings;
   map?: GameMap;
   /** #270: players out of the game whose seat no AI plays (`staticSeats`): never read. */
@@ -66,7 +69,10 @@ export async function readTripwires(a: {
   if (a.turn === null) return { tripwires: [], estimatesNow, survival, keep: [] };
   let fresh: ReturnType<typeof brokenEstimates> = [];
   try {
-    const start = trackGame([], a.gameSettings, a.map).start;
+    // A start only when every player began alike (#275 review): a custom scenario sets each start by
+    // hand, and unread distribution may be one, so the settings' territory limit × armies says nothing
+    // of what a stack never seen began with — no start, and such a stack is not read.
+    const start = symmetricStart(a.gameSettings) ? trackGame([], a.gameSettings, a.map).start : undefined;
     fresh = brokenEstimates({
       ...(start ? { start } : {}),
       graph: a.graph,

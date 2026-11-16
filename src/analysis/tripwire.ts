@@ -123,7 +123,7 @@ export interface TripInput {
   me: number;
   settings?: SimSettings;
   teams?: ReadonlyMap<number, number>;
-  /** Every player's start (the settings' TerritoryLimit × InitialPlayerArmiesPerTerritory), when known. */
+  /** Every player's start (the settings' TerritoryLimit × InitialPlayerArmiesPerTerritory), when known and even: never in a custom scenario. */
   start?: { territories: number; armiesPerTerritory: number };
   /** An opponent may hold an Airlift card by now: nothing is read (armies it lands look like income). */
   airlift?: boolean;
