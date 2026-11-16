@@ -586,7 +586,17 @@ export function validateTurn(args: {
   guard: boolean;
   deploys: Array<{ territory: { id: number; name: string }; armies: number }>;
   /** `percent`: `armies` is a percentage of what can move when it runs (#165), never more than there is. */
-  moves: Array<{ from: { id: number; name: string }; to: { id: number; name: string }; armies: number; percent?: boolean }>;
+  moves: Array<{
+    from: { id: number; name: string };
+    to: { id: number; name: string };
+    armies: number;
+    percent?: boolean;
+    /**
+     * #292: an attack-only move into my own territory, or a transfer-only move into one not mine,
+     * moves nothing, so its armies arrive nowhere (no guard, nothing to move on, no chain).
+     */
+    mode?: MoveMode;
+  }>;
   /** Local Deployment: each held bonus's armies must be deployed inside that bonus. */
   localDeployments?: boolean;
   /** No-Split: each territory issues at most one attack or transfer. */
@@ -625,6 +635,12 @@ export function validateTurn(args: {
     const t = standing.get(id);
     return t !== undefined && !t.fogged && t.owner === myInGameId;
   };
+  // #292: whether a move's armies arrive at its target, given the territories moves earlier in the
+  // list went into: Attack Only between my own territories and Transfer Only into one not mine move nothing.
+  const lands = (m: (typeof moves)[number], entered: ReadonlySet<number>) => {
+    const ours = mine(m.to.id) || entered.has(m.to.id);
+    return m.mode === 'attack-only' ? !ours : m.mode === 'transfer-only' ? ours : true;
+  };
   // Under Multi-Attack a territory not mine at the start may move on once a move earlier in the list went in.
   const chained = new Set<number>();
   if (args.multiAttack) {
@@ -633,7 +649,7 @@ export function validateTurn(args: {
     for (const m of moves) {
       if (!mine(m.from.id) && !movedOut.has(m.from.id) && reached.has(m.from.id)) chained.add(m.from.id);
       movedOut.add(m.from.id);
-      reached.add(m.to.id);
+      if (lands(m, reached)) reached.add(m.to.id);
     }
   }
   // Deploys land before any attack, so only a move's source may be a territory captured earlier in the list.
@@ -747,6 +763,7 @@ export function validateTurn(args: {
   const arrived = new Map<number, number>();
   const guardedByArrival = new Map<number, number>();
   let over: { from: { id: number; name: string }; armies: number; max: number; arrivalGuard: boolean } | undefined;
+  const entered = new Set<number>();
   for (const m of moves) {
     const start = chained.has(m.from.id) ? 0 : atMoves(m.from.id);
     const strict = start + (inflow.get(m.from.id) ?? 0) - (args.guard ? 1 : 0);
@@ -761,6 +778,8 @@ export function validateTurn(args: {
       if (armies > max && !over) over = { from: m.from, armies, max, arrivalGuard };
       else if (armies > strict) guardedByArrival.set(m.from.id, armies);
     }
+    if (!lands(m, entered)) continue;
+    entered.add(m.to.id);
     if (args.multiAttack) inflow.set(m.to.id, (inflow.get(m.to.id) ?? 0) + moved);
     else if (moved > 0) arrived.set(m.to.id, (arrived.get(m.to.id) ?? 0) + moved);
   }

@@ -7,6 +7,7 @@ import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/co
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { attackSizes, commerceWarning, hopelessAttackWarning, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { untrustedText } from '../src/tools/common.js';
+import type { MoveMode } from '../src/tools/order-options.js';
 import { normalizeMap } from '../src/normalize.js';
 import { AHEAD_PRESSURE_FACTOR, PRESSURE_FACTOR } from '../src/analysis/planner.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
@@ -3281,7 +3282,7 @@ describe('Multi-Attack in the turn tools (#130)', () => {
   const map = normalizeMap(lobbyFixture().map);
   const live = BOARD.map((t) => ({ territoryId: t.id, fogLevel: t.fogLevel, fogged: t.fogged ?? false, owner: t.owner, armies: t.armies }));
   const T = (id: number) => ({ id, name: mapName(id) });
-  const run = (moves: Array<[number, number, number]>, multiAttack?: boolean) =>
+  const run = (moves: Array<[number, number, number, MoveMode?]>, multiAttack?: boolean) =>
     validateTurn({
       map,
       board: live,
@@ -3289,7 +3290,7 @@ describe('Multi-Attack in the turn tools (#130)', () => {
       income: 5,
       guard: true,
       deploys: [{ territory: T(161), armies: 5 }],
-      moves: moves.map(([from, to, armies]) => ({ from: T(from), to: T(to), armies })),
+      moves: moves.map(([from, to, armies, mode]) => ({ from: T(from), to: T(to), armies, ...(mode ? { mode } : {}) })),
       ...(multiAttack !== undefined ? { multiAttack } : {}),
     });
 
@@ -3354,6 +3355,28 @@ describe('Multi-Attack in the turn tools (#130)', () => {
     );
   });
 
+  it('an attack-only move into my own territory arrives nowhere: it neither stands guard nor moves on (#292)', () => {
+    // Attack Only between my own territories moves nothing, so 161 keeps its own guard.
+    expect(() => run([[159, 161, 2, 'attack-only'], [161, 157, 8]])).toThrow(
+      /send 8 armies from .*\(161\).* at most 7 this turn \(one army stands guard\)/,
+    );
+    expect(run([[159, 161, 2, 'attack-only'], [161, 157, 7]]).warnings).toEqual([]);
+    // Under Multi-Attack it adds nothing to what 161 can send on either.
+    expect(() => run([[161, 157, 7], [159, 161, 5, 'attack-only'], [161, 158, 5]], true)).toThrow(
+      /send 12 armies from .*\(161\).* at most 7/,
+    );
+    // A transfer, or a plain move, between my own territories still arrives.
+    expect(run([[159, 161, 2, 'transfer-only'], [161, 157, 8]]).warnings.join('\n')).toMatch(/Territory 161 sends all 8/);
+    expect(run([[161, 157, 7], [159, 161, 5, 'transfer-only'], [161, 158, 5]], true).warnings).toEqual([]);
+  });
+
+  it('a transfer-only move into a territory not mine arrives nowhere: nothing may move on from it (#292)', () => {
+    // Transfer Only into an enemy territory does not attack, so 157 is never entered.
+    expect(() => run([[161, 157, 7, 'transfer-only'], [157, 158, 4]], true)).toThrow(/not yours.*\(157\)/);
+    // An attack-only move into it may capture it, and the armies move on as before.
+    expect(run([[161, 157, 7, 'attack-only'], [157, 158, 4]], true).warnings).toEqual([]);
+  });
+
   it('without an earlier transfer in, the guard still stays (#292)', () => {
     // The transfer listed after the attack arrives too late to stand guard.
     expect(() => run([[161, 157, 8], [159, 161, 2]])).toThrow(/send 8 armies from .*\(161\).* at most 7 this turn \(one army stands guard\)/);
@@ -3412,6 +3435,21 @@ describe('Multi-Attack in the turn tools (#130)', () => {
     );
     expect(preview.confirmToken).toEqual(expect.any(String));
     expect((preview.preview as { warnings?: string[] }).warnings?.join('\n')).toMatch(/Territory 161 sends all 8 of its own armies.*unverified live/);
+  });
+
+  it('warapp_submit_turn passes each move\'s mode through: an attack-only move in stands no guard (#292)', async () => {
+    const settings = { ...modelledSettings(), AllowAttackOnly: 'True' };
+    h = await liveHarness({ feed: [game('Playing', { settings })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const out = await h.call('warapp_submit_turn', {
+      game_id: GAME,
+      orders: [
+        { kind: 'deploy', territory: 161, armies: 5 },
+        { kind: 'move', from: 159, to: 161, armies: 2, mode: 'attack-only' },
+        { kind: 'move', from: 161, to: 157, armies: 8 },
+      ],
+    });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/send 8 armies from .*\(161\).* at most 7 this turn \(one army stands guard\)/);
   });
 
   it('warapp_submit_turn passes the game\'s Multi-Attack setting through', async () => {
