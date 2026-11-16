@@ -61,6 +61,29 @@ describe('historyBoards: the shapes GameFeed may send (#302)', () => {
     expect(held(boardFromHistory(h, 1, PLAYERS))).toBe(2);
   });
 
+  it('a land-free distributionStanding beside turn-numbered keys is the board before picks, never entry 0', () => {
+    const pre = [{ terrID: '1', ownedBy: 'AvailableForDistribution', armies: '2' }, { terrID: '9', ownedBy: 'Neutral', armies: '2' }];
+    const h = { distributionStanding: pre, turn1: { standing: standing(1) }, turn2: { standing: standing(2) } };
+    expect(historyBoards(h, PLAYERS).map((b) => b.turn)).toEqual([1, 2]);
+    // Turn 1's previous board (entry 0) is not the pre-pick board.
+    expect(boardFromHistory(h, 0, PLAYERS)).toBeUndefined();
+    // With player land it is the start, entry 0, as before.
+    expect(historyBoards({ ...h, distributionStanding: standing(0) }, PLAYERS).map((b) => b.turn)).toEqual([0, 1, 2]);
+  });
+
+  it('never reads a turnN entry that carries orders as a board, with or without standingN keys', () => {
+    // Orders as an `orders` list, and as a bare list of order records: neither is a board, even when
+    // an order record carries fields a territory entry would (an id, an owner, armies).
+    const orders = [{ type: 'GameOrderDeploy', id: '3', playerID: String(A), armies: '5' }];
+    const h = { turn0: orders, turn1: { orders }, turn2: { standing: standing(2) } };
+    expect(historyBoards(h, PLAYERS).map((b) => b.turn)).toEqual([2]);
+    expect(boardFromHistory(h, 0, PLAYERS)).toBeUndefined();
+    expect(historyReport({ players: PLAYERS, history: { turn0: orders } })).toMatchObject({
+      // Orders alone are no entry the reader knows; the key names say what came.
+      unreadable: { reason: 'no-turns', historyKeys: ['turn0'] },
+    });
+  });
+
   it('reads `history` / `standings` wrappers, a JSON string, and entries keyed Standing or territories', () => {
     expect(historyBoards({ history: [standing(0), standing(1)] }, PLAYERS)).toHaveLength(2);
     expect(historyBoards({ standings: [{ turnNumber: 0, Standing: standing(0) }] }, PLAYERS)).toHaveLength(1);

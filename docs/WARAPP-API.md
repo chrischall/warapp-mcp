@@ -509,14 +509,18 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   top-level `history` key, so the reply carried none: the history came under another key, or not
   at all. Which one is UNVERIFIED (no raw reply was kept). The reader now takes, in order:
   `history` / `History` (a JSON string parsed), else the reply's top-level `standing<N>`,
-  `turn<N>` (orders, never read as boards) and `distributionStanding` gathered into one object
+  `turn<N>` (orders there: never read as a board when it carries orders, below) and `distributionStanding` gathered into one object
   (the layout older Warlight-era API clients read; not seen live here), else a per-turn
   `standings` list (one that does not read as the current board) or `turns` list. Under
   top-level `standing<N>` keys a `distributionStanding` beside them decides: one on which no
   player holds land is the board before picks, so `standing0` is the start; one with player land
   is the start itself, so `standing0` is the board after the first turn. Without one, `standing0`
   is the start when the last N reaches `numberOfTurns` and the board after the first turn when it
-  is one short — **UNVERIFIED**. `historyReport` (`src/trend.ts`)
+  is one short — **UNVERIFIED**. Without `standing<N>` keys, turn-numbered keys (`turn<N>` / `<N>`)
+  are read as boards, but an entry that carries orders (an `orders` list with no standing key, or a
+  list of records naming an order `type`) never is, and a `distributionStanding` is entry 0 only
+  when a player holds land on it (a land-free one is the board before picks, never turn 1's
+  previous board). `historyReport` (`src/trend.ts`)
   says whether it read (`historyRead`: boards, first and last entry, `layout`) or why not
   (`historyUnreadable`: `reason` — `absent`, `not-json`, `no-turns`, `no-standing`,
   `no-player-land`, `no-starts`, `retired-layout` — with the reply's top-level key names, and the history's or its
@@ -546,7 +550,7 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   an array of turns (number from `turnNumber` / `turn` / `number`, else the position), a
   `{ turns: [...] }` wrapper, or an object keyed `turn<N>` / `standing<N>` / `<N>`; each
   entry is a standing itself or carries one under `standing` / `standings` /
-  `latestStanding`. **Assumed:** an entry's number is the count of completed turns its
+  `latestStanding` (a `turn<N>` / `<N>` entry that carries orders is skipped, above). **Assumed:** an entry's number is the count of completed turns its
   standing reflects (so the previous board of turn T is entry T − 2), and owners may be
   GameFeed or in-game player ids (both are mapped). When the feed sends nothing usable
   (or errors), the planner falls back to the board it planned on in the previous turn,

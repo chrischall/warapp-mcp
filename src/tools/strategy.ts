@@ -28,7 +28,7 @@ import { lookupMeta } from './hints.js';
 import { DEFAULT_TERRITORY_LIMIT, PICK_PHASE_STATE, pickSettings } from './picks.js';
 import { mapOf } from './map.js';
 import { currentTurn } from './turn.js';
-import { loadLiveGame, type LiveContext } from './live-context.js';
+import { FROZEN_TAB_HINT, loadLiveGame, type LiveContext } from './live-context.js';
 
 const VIEWS = ['compact', 'full'] as const;
 
@@ -105,12 +105,13 @@ function gameMapNotes(game: Game, map: GameMap): MapNotes {
  * no standing, so with GameFeed alone the phase never reads contact or late. When the signed-in
  * account is seated and playing in a game being played, the live board is read (as warapp_plan_turn
  * reads it; read-only, nothing kept) for that seat: `live`. Otherwise, or on any failure, GameFeed's
- * standing as before — for the signed-in seat when it is known and still playing: `gamefeed`. Never throws.
+ * standing as before — for the signed-in seat when it is known and still playing: `gamefeed`; when the
+ * live board read was tried and failed, `liveError` says why ({@link liveErrorText}). Never throws.
  */
 async function profileBoard(
   live: LiveContext | undefined,
   game: Game,
-): Promise<{ source: 'live' | 'gamefeed'; me?: number; board?: BoardState }> {
+): Promise<{ source: 'live' | 'gamefeed'; me?: number; board?: BoardState; liveError?: string }> {
   const feed = { source: 'gamefeed' as const, ...(game.standing ? { board: game.standing } : {}) };
   if (!live) return feed;
   try {
@@ -123,12 +124,25 @@ async function profileBoard(
     try {
       const { territories } = await loadLiveGame(live, game);
       return { source: 'live', me: seat.id, board: boardStateFromLive(territories, seat, game.players) };
-    } catch {
-      return { ...feed, me: seat.id };
+    } catch (e) {
+      return { ...feed, me: seat.id, liveError: liveErrorText(e) };
     }
   } catch {
     return feed;
   }
+}
+
+/** The longest reason `profile.liveError` gives before the frozen-tab hint. */
+const LIVE_ERROR_MAX = 160;
+
+/**
+ * Why the live board read failed, short: the error's message capped at {@link LIVE_ERROR_MAX}, with
+ * {@link FROZEN_TAB_HINT} after it when it was a bridged `/Services` timeout.
+ */
+function liveErrorText(e: unknown): string {
+  const message = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').trim();
+  const short = message.length > LIVE_ERROR_MAX ? `${message.slice(0, LIVE_ERROR_MAX - 1)}…` : message;
+  return e instanceof McpToolError && e.hint === FROZEN_TAB_HINT ? `${short} ${FROZEN_TAB_HINT}` : short;
 }
 
 const MAP_ONLY_NOTE = "Bonus values are the map's own; a game can override them (pass its game_id to see its values).";
@@ -146,7 +160,8 @@ export function registerStrategyTool(server: McpServer, client: WarappClient, li
           'of orders within a turn), fighting (stacks in contact, ahead and behind) and the map. With `game_id`: ' +
           'the notes that fit the game (its format, phase, fog, move order, distribution, kill rates and the cards ' +
           'in play, read from GameFeed; the phase from your own seat on the live board when the signed-in account plays ' +
-          'in the game, else from GameFeed, `profile.source` live or gamefeed — standing is left to warapp_plan_turn), ' +
+          'in the game, else from GameFeed, `profile.source` live or gamefeed, `profile.liveError` why the live board ' +
+          'did not read — standing is left to warapp_plan_turn), ' +
           'its `cardClock` (per card: pieces, ' +
           'and the first turn it can be played, fastest and guaranteed) and map notes: bonuses ranked by value per ' +
           'army to take at its settings with their entry points, chokepoints, and in the picking stage income ' +
@@ -235,11 +250,14 @@ export function registerStrategyTool(server: McpServer, client: WarappClient, li
       return respond(view, VIEWS, (rung) => ({
         scope: 'game',
         game: { id: game.id, name: game.name ?? null, state: game.state, turn: currentTurn(game) },
-        // #309: `source` says which board the phase was read on: `live` (my seat's) or `gamefeed`.
-        profile:
-          rung === 'full'
+        // #309: `source` says which board the phase was read on: `live` (my seat's) or `gamefeed`;
+        // `liveError` why the live board, when tried, did not read (the GameFeed fallback stands).
+        profile: {
+          ...(rung === 'full'
             ? { ...profile, source: seen.source }
-            : { format: profile.format, opponents: profile.opponents, phase: profile.phase, standing: profile.standing, source: seen.source },
+            : { format: profile.format, opponents: profile.opponents, phase: profile.phase, standing: profile.standing, source: seen.source }),
+          ...(seen.liveError !== undefined ? { liveError: seen.liveError } : {}),
+        },
         notes: notes.map(noteView(rung === 'full')),
         // When each card can first be in a hand, from the game's card settings (absent with no cards).
         ...(clock ? { cardClock: clock } : {}),

@@ -192,7 +192,7 @@ export function bundleFetcher(bridge: ReadyFetchBridge, fetchImpl: typeof fetch 
 }
 
 /** What to do about a frozen tab, said on every bridged `/Services` timeout (#130). */
-const FROZEN_TAB_HINT =
+export const FROZEN_TAB_HINT =
   'Chrome freezes background tabs, and war.app calls are relayed through a page tab: a frozen tab stalls them ' +
   'while page reads still work. Reload or focus a war.app tab, then check the game before retrying.';
 

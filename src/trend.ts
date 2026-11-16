@@ -72,6 +72,19 @@ interface Parsed {
 const playerLand = (raw: unknown): boolean =>
   boardFromStanding(standingOf(raw))?.territories.some((t) => t.owner.kind === 'player') ?? false;
 
+const ORDER_LIST_KEYS = ['orders', 'Orders'] as const;
+const ORDER_TYPE_KEYS = ['type', 'Type', 'orderType', 'OrderType'] as const;
+
+/**
+ * Whether a history entry carries a turn's orders rather than a standing: a record with an `orders`
+ * list and no standing key, or a list whose records name an order type (`type` / `orderType`).
+ */
+function carriesOrders(entry: unknown): boolean {
+  if (Array.isArray(entry)) return entry.some((e) => isRec(e) && ORDER_TYPE_KEYS.some((k) => typeof e[k] === 'string'));
+  if (!isRec(entry)) return false;
+  return ORDER_LIST_KEYS.some((k) => entry[k] !== undefined) && !STANDING_KEYS.some((k) => entry[k] !== undefined);
+}
+
 /** History entries in any of the plausible layouts (#302). Throws only on a hostile getter (callers catch). */
 function parseHistory(history: unknown, opts: HistoryOptions = {}): Parsed {
   if (typeof history === 'string') {
@@ -131,12 +144,15 @@ function parseHistory(history: unknown, opts: HistoryOptions = {}): Parsed {
       shape: 'object',
     };
   }
+  // Turn-numbered keys (`turn<N>` / `<N>`): an entry that carries orders is never a board (the
+  // Warlight-era `turn<N>` is the turn's orders). A distribution standing is entry 0 only when a
+  // player holds land on it: a land-free one is the board before picks, never turn 1's previous board.
   const entries: Array<[number, unknown]> = [];
   for (const [k, v] of Object.entries(history)) {
     const m = /^(?:turn)?_?(\d+)$/i.exec(k);
-    if (m) entries.push([Number(m[1]), standingOf(v)]);
+    if (m && !carriesOrders(v)) entries.push([Number(m[1]), standingOf(v)]);
   }
-  if (dist !== undefined && !entries.some(([n]) => n === 0)) entries.push([0, standingOf(dist)]);
+  if (dist !== undefined && playerLand(dist) && !entries.some(([n]) => n === 0)) entries.push([0, standingOf(dist)]);
   return { entries, layout: 'numbered-keys', shape: 'object' };
 }
 

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OVERRIDES_UNPARSED } from '../src/analysis/overrides.js';
 import { STRATEGY_NOTES } from '../src/strategy/notes.js';
@@ -344,12 +345,33 @@ describe('warapp_strategy reads the live board for my seat (#309)', () => {
     const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME }));
     expect(p.profile).toMatchObject({ format: 'ffa', phase: 'expansion', source: 'gamefeed' });
     expect(p.notes.map((n) => n.id)).not.toContain('fighting-contested-bonus-mass');
+    // The failure is said, not dropped: a short reason beside the GameFeed fallback.
+    const reason = (p.profile as { liveError?: string }).liveError;
+    expect(reason).toMatch(/war\.app is down/);
+    expect(reason!.length).toBeLessThanOrEqual(200);
+    expect(reason).not.toMatch(/frozen/);
+  });
+
+  it('a live board read that times out through a frozen tab says so in profile.liveError', async () => {
+    h = await liveHarness({
+      feed: [ffa()],
+      warapp: () => {
+        throw new FetchproxyTimeoutError({ url: 'https://war.app/Services?m=GetLatestGameInfo&js=1', timeoutMs: 30000, retrySafe: true });
+      },
+      pages: SIGNED_IN(ANN.feed),
+    });
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME, view: 'full' }));
+    expect(p.profile).toMatchObject({ phase: 'expansion', source: 'gamefeed' });
+    const reason = (p.profile as { liveError?: string }).liveError;
+    expect(reason).toMatch(/30000ms/);
+    expect(reason).toMatch(/Reload or focus a war\.app tab/);
   });
 
   it('without a readable account: no board read, the GameFeed profile exactly as before', async () => {
     h = await liveHarness({ feed: [ffa()], warapp: live(contactBoard) });
     const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME, view: 'full' }));
     expect(p.profile).toMatchObject({ phase: 'expansion', source: 'gamefeed' });
+    expect(p.profile).not.toHaveProperty('liveError');
     expect(h.exchanges).toHaveLength(0);
   });
 

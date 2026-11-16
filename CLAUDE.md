@@ -156,7 +156,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   players and settings, judged for the signed-in account's seat when it is seated and still playing (a seat that is out is ignored: judged for it, every player left would count as an opponent) (#309: GameFeed's board for a game in
   progress has no standing, so the phase never read contact or late): while the game is played and that seat plays,
   the phase reads the live board (`loadLiveGame`, as warapp_plan_turn; read-only, nothing kept), else — or on any
-  failure — GameFeed's standing as before; `profile.source` says `live` or `gamefeed`. `warapp_plan_turn`'s full view
+  failure — GameFeed's standing as before; `profile.source` says `live` or `gamefeed`, and a failed live board read is
+  said as `profile.liveError` (a short reason, `FROZEN_TAB_HINT` after a bridged timeout), never dropped. `warapp_plan_turn`'s full view
   adds `notes`, the ids of `notesFor` its own profile (never compact; the plan never reads them). The answer carries the game's `cardClock` (`src/strategy/card-clock.ts`: per card, the
   capturing turns to the first one, fastest and guaranteed, from the pieces, starting pieces, minimums and pieces
   per turn in the settings; whether a commerce game is on is read from a non-empty `Commerce` object, unverified).
