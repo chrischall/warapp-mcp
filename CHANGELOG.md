@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/chrischall/warapp-mcp/compare/v0.3.0...v0.3.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **hosted:** send the war.app sign-in and the direct leg through mcp-host's egress proxy ([#338](https://github.com/chrischall/warapp-mcp/issues/338)) ([fc28e89](https://github.com/chrischall/warapp-mcp/commit/fc28e890a9fcff0467c886a48c457ebcb1fd2143))
+
 ## [0.3.0](https://github.com/chrischall/warapp-mcp/compare/v0.2.0...v0.3.0) (2026-11-16)
 
 
