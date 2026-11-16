@@ -11,6 +11,7 @@ import type { PlanCtx, PlanState } from './state.js';
 import type { LeadBlock, LeadTry, Targets } from './targets.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
+import { denialLine, denialOf } from './vacated.js';
 
 
 /** Why the last tryCapture refused (R3, No-Split on a source that could take it); else size. */
@@ -1086,6 +1087,11 @@ export function bonusPasses(
    * dropped, with their rationale lines, if a later pass takes them after all).
    */
   const stopped: { t: number; holdCost: number; income: number }[] = [];
+  /**
+   * #281: vacated territories rule 4d let through though they add a border facing an enemy, with the
+   * rationale line the report states for each one the plan still takes.
+   */
+  const denied = new Map<number, string>();
   /** The start of rule 4d's rationale line for a stopped `t` (one per attempt that differed). */
   const stoppedLine = (t: number) => `Do not take ${label(t)}: it adds a border facing an enemy without completing a bonus,`;
   /**
@@ -1105,6 +1111,14 @@ export function bonusPasses(
     const next = keptIncome(held);
     const start = startHold();
     if (f.holdCost <= next || f.holdCost <= start) return null;
+    // #281: land a static seat left, which a live stack beside it takes free next turn: the border
+    // comes either way, so the hold cost alone never refuses it (the capture still spends only what
+    // stands above its source's hold).
+    const d = denialOf(pc, t);
+    if (d) {
+      denied.set(t, denialLine(pc, t, d));
+      return null;
+    }
     const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.`;
     if (!stopped.some((x) => x.t === t)) stopped.push({ t, holdCost: f.holdCost, income: next });
     return why;
@@ -1220,5 +1234,5 @@ export function bonusPasses(
     // cost, once every step has had its sure try (a bare step never takes a sure one's deploy).
     if (closest) run(todo.filter((t) => leadSteps.has(t) && !captured.has(t)), true);
   };
-  return { snapshot, complete, unstaged, stage, stopped, stoppedLine, outgrows, tryExpand, advance };
+  return { snapshot, complete, unstaged, stage, stopped, stoppedLine, denied, outgrows, tryExpand, advance };
 }

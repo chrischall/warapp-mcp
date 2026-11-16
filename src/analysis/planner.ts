@@ -40,7 +40,8 @@
 //     units kept) and drops its tracks, truces, Sanctions and opening: it is no opponent in any
 //     estimate, threat, standing or strike, its land is priced like a wasteland, and no border beside
 //     only it needs a hold. A rationale line names each such player holding land. Never me or a
-//     teammate; an AI that replaced a player stays an opponent.
+//     teammate; an AI that replaced a player stays an opponent. #281: the territories it left are
+//     kept (`PlanInput.vacated`, `BoardCtx.vacated`) for rule 4d and pass 3 (src/analysis/plan/vacated.ts).
 //  0p. Game profile (`gameProfile`, src/analysis/profile.ts), computed on every plan and
 //     returned as `profile`: format (1v1 / ffa / teams), phase (opening / expansion /
 //     contact / late; in an FFA, contact only when an enemy stack as it stands can take a
@@ -923,7 +924,13 @@
 //     facing border without completing a bonus (not focused) is undone when the hold cost
 //     would then exceed the next income and the start-of-turn hold cost (in rule 4e's
 //     contact/late fallback it is a cost instead, #114); a warning ("Frontier grows faster than
-//     income") names it, and also fires when the plan's frontier ends so.
+//     income") names it, and also fires when the plan's frontier ends so. #281: never a territory a
+//     static seat left (rule 0s) that costs at most VACATED_MAX_COST and borders a live opponent's
+//     stack able to take it with what stands there (`denialOf`): that border comes either way, so
+//     it is let through, a line ("Take … though it faces player …") says so, and pass 3 ranks it by
+//     capture cost plus the frontier without its own hold need, less the denial (1 + PAYBACK_TURNS ×
+//     the bonus progress it gives that opponent: a bonus it completes, else value ÷ size per bonus
+//     it holds a member of). It spends only what stands above its source's hold (#121).
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
 //     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative
@@ -1475,6 +1482,7 @@ import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
+import { plainOrderCost } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
 import { transfers } from './plan/transfers.js';
@@ -1559,8 +1567,13 @@ export function planningInput(input: PlanInput): PlanInput {
 function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>): PlanInput {
   if (!seats.size) return input;
   const opening = input.game?.opening;
+  // #281: which neutrals the seats left, so the planner can still tell them from any other.
+  const vacated = new Map(input.vacated);
+  for (const t of input.board.territories)
+    if (t.owner.kind === 'player' && seats.has(t.owner.playerId)) vacated.set(t.territoryId, t.owner.playerId);
   return {
     ...input,
+    ...(vacated.size ? { vacated } : {}),
     board: neutralizeSeats(input.board, seats),
     ...(input.previousBoard ? { previousBoard: neutralizeSeats(input.previousBoard, seats) } : {}),
     ...(input.tracks ? { tracks: input.tracks.filter((t) => !seats.has(t.playerId)) } : {}),
@@ -1676,7 +1689,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- 2. targets, 4d. frontier cost, bonus scoring, #101 (plan/targets.ts) ----
   const tgt = targetsPhase(pc, ps, input, threats, hd);
   const {
-    breakable, counterAt, targets, leadSteps, targetScoreCost, landScoreCost, offence, skipOffence, plans,
+    breakable, counterAt, targets, leadSteps, landScoreCost, offence, skipOffence, plans,
     ratio, committing, byCloseness, retakeChecks, retakeWarning,
   } = tgt;
   // #215 review: rule 1a's triage (run with the strikes, below) leaves pending a border in a bonus
@@ -2384,10 +2397,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- pass 3: other expansion ----
   if (goal !== 'complete-bonus') {
+    const plainScore = (t: number) => plainOrderCost(pc, tgt, t);
     const rest = [...targets.values()]
       // #125: a member of an uneconomic bonus is still a territory worth its per-territory income.
       .filter((t) => !captured.has(t.id) && plainEligible(pc, tgt, t.id, t.enemy))
-      .sort((a, b) => targetScoreCost(a.id) - targetScoreCost(b.id) || a.cost - b.cost || a.id - b.id);
+      .sort((a, b) => plainScore(a.id) - plainScore(b.id) || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
     for (const t of rest) {
       const gain = gainWith([t.id]);

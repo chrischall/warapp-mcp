@@ -576,7 +576,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `planEnemyEstimates`, `warapp_check_plan`'s board and replies, the border guess, the tracker and the
   outlook (`TrackGame.staticSeats`, `staticSeatsFor`) read them as neutrals — targets priced like a
   wasteland, no hold beside them, never the standing or the strike stack's direction. Never me or a
-  teammate. The board cache keeps what war.app showed.
+  teammate. The board cache keeps what war.app showed. #281: the planner keeps which neutrals a seat
+  left (`PlanInput.vacated` → `BoardCtx.vacated`, set by `planTurn`); one costing at most
+  `VACATED_MAX_COST` (2) beside a live stack that can take it with what stands there
+  (`denialOf`, `src/analysis/plan/vacated.ts`) comes either way, so rule 4d never refuses it on its hold
+  cost alone, pass 3 ranks it without that hold need and credits the denial (1 + payback × the bonus
+  progress it gives that opponent), and a "Take … (#281)" line says so. It still spends only the armies
+  above its source's hold (#121) and is sized at its capture cost.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -1053,7 +1059,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       twice). The plan reports `frontier` (borders, enemy-facing, hold cost, next income —
       conceded borders are not in the hold cost); under `balanced`/`defend` an expansion that
       adds an enemy border without completing a bonus is undone when the hold cost would then
-      exceed the next income and the start-of-turn hold cost ("Frontier grows faster than income").
+      exceed the next income and the start-of-turn hold cost ("Frontier grows faster than income"),
+      except cheap land a static seat left beside a live stack that would take it free (#281).
       Except in the contact/late no-capture fallback (rule 4e, #114), where it is a cost instead:
       the survivors a capture leaves on a border it cannot hold next turn count as armies at risk.
       In that fallback a capture that completes a bonus this turn is never ranked last for opening a

@@ -13,6 +13,7 @@ import type { DeployBook } from './orders.js';
 import { PLAIN_EXPANSION_LOSS } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
+import { plainOrderCost } from './vacated.js';
 import type { Threats } from './threats.js';
 
 /**
@@ -59,7 +60,7 @@ export function afterLeftoverCaptures(
   const { coverOf, gainWith } = book;
   const { borderAt, forceAt, holdArmies } = threats;
   const { conceded, stayAt, twoStepKeep } = hd;
-  const { targets, targetScoreCost } = tgt;
+  const { targets } = tgt;
   const { tryExpand, stopped, notCompleted } = caps;
   // No-Split (#124) sends the whole stack: nothing would stay to hold the source. `complete-bonus`
   // never expands (as pass 3).
@@ -109,7 +110,7 @@ export function afterLeftoverCaptures(
   const taken: number[] = [];
   const candidates = [...targets.values()]
     .filter((tg) => state.get(tg.id)?.owner.kind === 'neutral' && !captured.has(tg.id) && tg.sources.some((x) => sources.includes(x)))
-    .sort((a, b) => targetScoreCost(a.id) - targetScoreCost(b.id) || a.cost - b.cost || a.id - b.id);
+    .sort((a, b) => plainOrderCost(pc, tgt, a.id) - plainOrderCost(pc, tgt, b.id) || a.cost - b.cost || a.id - b.id);
   for (const tg of candidates) {
     const t = tg.id;
     const gain = gainWith([t]);
