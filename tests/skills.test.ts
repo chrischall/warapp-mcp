@@ -103,6 +103,15 @@ describe('skill files', () => {
     expect(line).toMatch(/warapp_check_plan/);
   });
 
+  it('the targeted-card bullet marks the Airlift play verified live and every other targeted card unverified (#296)', () => {
+    const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
+    const start = md.indexOf('**Playing a targeted card yourself**');
+    const bullet = md.slice(start, md.indexOf('\n- **', start + 1));
+    expect(bullet).toMatch(/Airlift\s+play was verified live 2026-11-16 \(#296\)/);
+    expect(bullet).toMatch(/every other\s+targeted card's encoding is read from the client but not yet verified live/);
+    expect(bullet).toMatch(/`cardPlayCheck`/);
+  });
+
   it('a contested game gets a six-line check before every submit (#300 comment)', () => {
     const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
     const start = md.indexOf('**Before every submit in a contested game');

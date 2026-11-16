@@ -439,8 +439,8 @@ const CardPlayTag = {
 } as const;
 export type CardPlayKind = keyof typeof CardPlayTag;
 
-/** The card plays whose encoding is read from the bundle but not yet sent live (V9). */
-export const UNVERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set([
+/** The card plays that take targets (PLAN-TEAMS part D): `warapp_submit_turn` resolves their fields. */
+export const TARGETED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set([
   'Spy',
   'Airlift',
   'Gift',
@@ -451,6 +451,14 @@ export const UNVERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set([
   'Bomb',
   'EmergencyBlockade',
 ]);
+
+/**
+ * The card plays whose encoding is read from the bundle but not yet sent live (V9): the preview warns
+ * and the result carries `cardPlayCheck`. Airlift left it once verified live 2026-11-16 (#296).
+ */
+export const UNVERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set(
+  [...TARGETED_CARD_PLAYS].filter((kind) => kind !== 'Airlift'),
+);
 
 /** A card play's own fields (what each card needs is checked by {@link writeCardPlayOrder}). */
 export interface CardPlayFields {

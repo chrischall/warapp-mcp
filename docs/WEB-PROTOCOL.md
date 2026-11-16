@@ -338,9 +338,9 @@ the deploys, so `warapp_submit_turn` takes what it sends off its source's later 
 the moves, so a move from the gifted territory does not run (a preview warning); a Gift to an opponent
 (not me, not a teammate) gets its own preview line naming the recipient by id as an opponent. The preview warns that
 the encoding is unverified, and the result carries `cardPlayCheck`: after the first live commit of each,
-read back that the card left the hand and did what it should, then mark it verified here. (The code's
-list of unverified plays, `UNVERIFIED_CARD_PLAYS` in `src/protocol/methods.ts`, still names Airlift, so its
-preview keeps the warning until that list is updated.)
+read back that the card left the hand and did what it should, then mark it verified here and drop it from
+the code's list of unverified plays, `UNVERIFIED_CARD_PLAYS` in `src/protocol/methods.ts` (the targeted plays
+are `TARGETED_CARD_PLAYS`). Airlift has left that list (#296): its preview carries no encoding warning.
 
 **The hold limit (#20).** A play or discard is required only when the hand holds **more** whole
 cards than `MaxCardsHold`: live, a commit with no card was accepted at 4/4 and refused with error

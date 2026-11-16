@@ -14,6 +14,8 @@ import {
   TurnPhase,
   writeSendOrdersParams,
   writeSendTerritoryPicksParams,
+  TARGETED_CARD_PLAYS,
+  UNVERIFIED_CARD_PLAYS,
 } from '../../src/protocol/methods.js';
 
 const hex = (write: (w: Writer) => void) => {
@@ -859,5 +861,17 @@ describe('targeted card play orders (bundle writers, UNVERIFIED live)', () => {
         [spy, reinforcement, deploy, airlift, gift, move, blockade, diplomacy, sanctions].map((o) => '01' + o).join('') +
         '02000000' + '0000',
     );
+  });
+});
+
+describe('targeted and unverified card plays (#296)', () => {
+  it('Airlift is a targeted card whose encoding is verified live; every other targeted card stays unverified', () => {
+    expect([...TARGETED_CARD_PLAYS].sort()).toEqual(
+      ['Airlift', 'Bomb', 'Diplomacy', 'EmergencyBlockade', 'Gift', 'Reconnaissance', 'Sanctions', 'Spy', 'Surveillance'].sort(),
+    );
+    expect([...UNVERIFIED_CARD_PLAYS].sort()).toEqual(
+      ['Bomb', 'Diplomacy', 'EmergencyBlockade', 'Gift', 'Reconnaissance', 'Sanctions', 'Spy', 'Surveillance'].sort(),
+    );
+    for (const kind of UNVERIFIED_CARD_PLAYS) expect(TARGETED_CARD_PLAYS.has(kind), kind).toBe(true);
   });
 });

@@ -503,8 +503,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (phase 15), Airlift (43), Gift (47), Diplomacy (75), Sanctions (80), tags and fields from each
   `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). The Airlift play (card by name, `from`, `to`, `armies`) was
   verified live 2026-11-16 (the source lost the armies, the target gained them, the card left the hand); every
-  other targeted card is UNVERIFIED live (the preview still warns for Airlift until `UNVERIFIED_CARD_PLAYS` drops
-  it). `warapp_submit_turn` takes their targets
+  other targeted card is UNVERIFIED live. `TARGETED_CARD_PLAYS` (`src/protocol/methods.ts`) is the set whose targets
+  are resolved; `UNVERIFIED_CARD_PLAYS` (the preview's encoding warning and the result's `cardPlayCheck`) is it
+  without Airlift (#296). `warapp_submit_turn` takes their targets
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
   never gifted or airlifted to a teammate; no Spy on me or a teammate, nor on the neutral — target 0 — unless
   the game's `SpyCard.CanSpyOnNeutral`; no Diplomacy between teammates, nor naming a player out — the

@@ -69,6 +69,7 @@ import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
 import {
   AttackTransferMode,
   Method,
+  TARGETED_CARD_PLAYS,
   UNVERIFIED_CARD_PLAYS,
   writeSendOrdersParams,
   type CardPlayKind,
@@ -395,7 +396,7 @@ interface TurnState {
   incomeGiven?: boolean;
   /** How to read back an Order Delay placed among the moves (#186, unverified live), when one was. */
   orderDelayCheck?: string;
-  /** How to read back a targeted card play (PLAN-TEAMS part D, unverified live, V9), when one was sent. */
+  /** How to read back a targeted card play still unverified live (PLAN-TEAMS part D, V9; Airlift verified, #296), when one was sent. */
   cardPlayCheck?: string;
   /** B2: the agreements these orders break (`break_agreement: true`), recorded broken-by-me once committed. */
   breaks?: string[];
@@ -2801,7 +2802,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         '(`target`), Surveillance (`bonus`), Airlift (`from` yours, `to` yours or a teammate\'s, `armies`, optional ' +
         '`commander`), Gift (`target` yours, `player`), Diplomacy (`players`: two), Sanctions (`player`), Bomb (`target` ' +
         "next to yours, not yours or a teammate's) and Emergency Blockade (`target` yours, never your commander's), encoded " +
-        'as the client does but not yet verified live, each refused where war.app would refuse it (a commander is never ' +
+        'as the client does (the Airlift verified live; the others not yet), each refused where war.app would refuse it (a commander is never ' +
         'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
         'when your hand is over the hold limit and the orders do not play or discard enough cards; in a team game warns ' +
@@ -2969,7 +2970,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           seen: newCardPlaySeen(),
         };
         for (const p of plays) {
-          if (UNVERIFIED_CARD_PLAYS.has(p.kind)) p.targets = resolveCardTargets(p.kind, p.card.name, p.input, cardContext);
+          if (TARGETED_CARD_PLAYS.has(p.kind)) p.targets = resolveCardTargets(p.kind, p.card.name, p.input, cardContext);
         }
         // An Emergency Blockade (phase 37) turns its territory neutral before an Airlift (phase 43) runs.
         for (const p of plays) {
