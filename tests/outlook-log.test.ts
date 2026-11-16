@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { GameOutlook } from '../src/analysis/outlook.js';
-import { outlookLogPath, readOutlookLog, recordFinalResult, recordOutlook, recordResult } from '../src/outlook-log.js';
+import { finalOutlookOf, outlookLogPath, readOutlookLog, recordFinalResult, recordOutlook, recordResult } from '../src/outlook-log.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -82,6 +82,22 @@ describe('outlook log (#178)', () => {
       thin: true,
     });
     expect(log?.latest?.evidence).toEqual(log?.turns['7']?.evidence);
+  });
+
+  it('#312: logs a turn read on the likely high as estimated, and the final outlook is kept name-free', async () => {
+    const o = outlook(9, 'losing');
+    o.turns[0] = { ...o.turns[0]!, state: 'losing', estimated: true };
+    o.evidence = { incomes: null, opponents: [{ playerId: 2001, income: 7, source: 'tracked', coverage: 0.4, thin: true, coverageWords: 'x' } as never], thin: true };
+    await recordOutlook(dir, 7001, 1001, outlook(8, 'even'));
+    await recordOutlook(dir, 7001, 1001, o);
+    const log = (await readOutlookLog(dir, 7001, 1001))!;
+    expect(log.turns['9']?.estimated).toBe(true);
+    expect(log.turns['8']).not.toHaveProperty('estimated');
+    const final = finalOutlookOf(log);
+    expect(final).toEqual({ turn: 9, state: 'losing', heldTurns: 1, ratio: { low: 0, high: 2 }, estimated: true, thin: true });
+    // No id, no words.
+    expect(JSON.stringify(final)).not.toMatch(/2001|1001|7001|basis/);
+    expect(finalOutlookOf({ gameId: 7001, playerId: 1001, turns: {} })).toBeUndefined();
   });
 
   it('records the final result only for a game it already logs', async () => {

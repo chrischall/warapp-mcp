@@ -13,6 +13,7 @@ import { playerKey, playerRecordSalt } from '../src/player-record-store.js';
 import { Method } from '../src/protocol/methods.js';
 import type { Writer } from '../src/protocol/codec.js';
 import { writePickList } from '../src/pick-list.js';
+import { recordOutlook } from '../src/outlook-log.js';
 import { CREDS, liveHarness, payload, stubFetch, type Harness } from './helpers.js';
 import { fakeSocketIo, type FakeSocketIo } from './push/fake-socket.js';
 import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
@@ -158,6 +159,31 @@ describe('the end-of-game pass', () => {
       const text = readFileSync(path, 'utf8');
       for (const x of [String(ANN), String(BOB), String(GAME), 'Ann', 'Bob', 'Secret']) expect(text).not.toContain(x);
     }
+  });
+
+  it('#312: the final outlook line this server logged is kept in the record, name-free (any status)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    await recordOutlook(dir, GAME, ANN, {
+      state: 'losing',
+      heldTurns: 2,
+      k: 3,
+      threshold: 2.4,
+      basis: 'Bob is ahead (secret words).',
+      turns: [{ turn: 2, mine: 10, strongest: { playerId: BOB, low: 30, high: 60 }, ratio: { low: 0.17, high: 0.33 }, changed: 1, state: 'losing', estimated: true }],
+    });
+    h = await liveHarness({ feed: [finished(), withHistory()], dataDir: dir, pages: SIGNED_IN });
+    payload(await h.call('warapp_get_game', { game_id: GAME }));
+    const rec = await record(dir);
+    expect(rec.outlook).toEqual({ turn: 2, state: 'losing', heldTurns: 2, ratio: { low: 0.17, high: 0.33 }, estimated: true });
+    const text = readFileSync(finishedPath(dir, (await playerRecordSalt(dir))!, ANN, GAME), 'utf8');
+    for (const s of [String(ANN), String(BOB), 'secret words', 'Bob']) expect(text).not.toContain(s);
+  });
+
+  it('#312: a game this server never planned keeps no outlook', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    h = await liveHarness({ feed: [finished(), withHistory()], dataDir: dir, pages: SIGNED_IN });
+    payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(await record(dir)).not.toHaveProperty('outlook');
   });
 
   it('a failed read is recorded and not retried; an explicit include_history re-runs it from that read', async () => {

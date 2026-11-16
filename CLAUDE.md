@@ -1049,7 +1049,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   owner, armies]` rows, the owner an index into `boardOwners` (player keys; any other owner unknown, its raw value
   never kept), a board listing the same territories as the one before kept as its changed rows: the calibration
   harness's truth, #318); the settings shape (`nameFreeSettings`, src/replay.ts) and the
-  map id. A failed request is `read-failed` (the error kind only), an unreadable history `history-unreadable` with
+  map id. Every status also keeps the final outlook line this server logged for the game (`outlook`: `finalOutlookOf`,
+  src/outlook-log.ts, from `<dataDir>/outlook/<gameId>.json` as me — the newest planned turn, its state, held turns,
+  ratio, and `estimated` (the outlook log now marks a turn read on the likely high) / `thin`; no id, none of the basis's
+  words; absent when it never planned the game). A failed request is `read-failed` (the error kind only), an unreadable history `history-unreadable` with
   #315's reason, each with the outcome the read that showed it finished gives; neither is retried by a trigger — only
   `warapp_get_game` with `include_history` re-runs a failed pass, from that call's own read (no further request).
   Triggers: `warapp_get_game` (the account: the board cache's, else the signed-in one), `warapp_wait_for_turn`'s read,
@@ -1062,7 +1065,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   trigger reads that game's history again in this process (`attempted` status). Only a seat of mine (P3);
   `WARAPP_PLAYER_PROFILE=off` or no data dir: nothing — not even the signed-in account is read (`finishedAccount` checks
   first); `warapp_get_game` asks for the account (an InviteToken page read) at most once per finished game per process
-  when it cannot be read (the sweep picks the game up later). Registered hosted like the profile store. Inform only (P1): no planner decision reads it (golden
+  when it cannot be read (the sweep picks the game up later). **Not yet a trigger: war.app's game-ended in-app
+  notification (#311)** — the notification tools (#320) merged to main after this branch was cut, so wiring them is a
+  follow-up; until then a finished game is caught by the three triggers above. Registered hosted like the profile store. Inform only (P1): no planner decision reads it (golden
   unchanged).
   **Processing a captured history (#312 E2, `processHistory` in `src/tools/end-of-game.ts`; pure parts in
   `src/analysis/game-lessons.ts`, stores in `src/lessons-store.ts`)** runs right after a `captured` record is written,

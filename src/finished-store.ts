@@ -28,6 +28,7 @@ import { finishedGameKey, playerKey } from './player-record-store.js';
 import { holdsSeat } from './player-states.js';
 import type { BoardState, TerritoryOwner, TerritoryState } from './board.js';
 import type { HistoryUnreadable } from './trend.js';
+import type { FinalOutlook } from './outlook-log.js';
 
 export const MAX_FINISHED_RECORDS = 500;
 const VERSION = 1;
@@ -66,6 +67,12 @@ export interface FinishedRecord {
   me: string;
   players?: { key: string; ai: boolean; turnedAI?: true; team?: number; state?: string }[];
   outcome?: { result: FinishedOutcome; turn: number | null; outTurn: number | null; winners: string[] };
+  /**
+   * #312: the final outlook line this server logged for the game (`<dataDir>/outlook/<gameId>.json`,
+   * `finalOutlookOf`): state, turn, held turns, ratio, estimated / thin flags; no id, no words. Absent
+   * when it never planned the game.
+   */
+  outlook?: FinalOutlook;
   /** My pick list as war.app read it back, and the award read from it (`src/pick-list.ts`); `null` when none was kept. */
   picks?: { list: number[]; award?: AwardReading | null } | null;
   starts?: Record<string, number[]>;
@@ -175,6 +182,7 @@ export interface RecordParts {
   failure?: FinishedFailure | undefined;
   capture?: FinishedCapture | undefined;
   picks?: FinishedRecord['picks'];
+  outlook?: FinalOutlook | undefined;
   /** The history's boards (owners by GameFeed id), kept only with `captured`. */
   boards?: readonly { turn: number; board: BoardState }[] | undefined;
 }
@@ -213,6 +221,7 @@ export function finishedRecordOf(p: RecordParts): FinishedRecord {
         }
       : {}),
     ...(c ? { outcome: { ...c.outcome, winners: c.outcome.winners.map(key) } } : {}),
+    ...(p.outlook ? { outlook: p.outlook } : {}),
     ...(p.picks !== undefined ? { picks: p.picks } : {}),
     ...(h ? { starts: keyed(h.starts) } : {}),
     ...(h ? { turns: h.turns.map((t) => ({ afterTurn: t.afterTurn, players: keyed(t.players) })) } : {}),

@@ -120,7 +120,7 @@ state:
     profiles/players.json and population.json, keyed by the same salt; WARAPP_PLAYER_PROFILE=off switches it off), and the
     end-of-game records ($MCP_DATA_DIR/finished: once per finished game the
     account played, its history read once and kept name-free under the same
-    salt, its boards included, at most 500, the sweep reading only the newest 250 so their marks
+    salt, its boards and final outlook line included, at most 500, the sweep reading only the newest 250 so their marks
     always fit, so a game is never read twice; a read whose record cannot be
     written is remembered in-process and not repeated; each captured history is
     then folded into the profiles, the per-map record at

@@ -410,10 +410,15 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   every player's income (`boardIncome`), territories, armies and full bonuses on each history board,
   the boards themselves (owners by key; the calibration harness's truth, #318),
   what stood on each target my cached orders failed to take, the settings shape and the map id
-  (`src/analysis/finished-game.ts`, pure). A failed request is `read-failed`, an unreadable history
+  (`src/analysis/finished-game.ts`, pure), and on any status the final outlook line this server logged
+  (`outlook`: the newest planned turn's state, held turns, ratio, `estimated` / `thin`; no id, no words;
+  absent when it never planned the game). A failed request is `read-failed`, an unreadable history
   `history-unreadable` with #315's reason; neither is retried by a trigger, only by an explicit
   `warapp_get_game` with `include_history`, from that call's own read. The sweep also folds each game's
-  live profile (`foldFinished`), so #273 needs no `warapp_get_game` per game.
+  live profile (`foldFinished`), so #273 needs no `warapp_get_game` per game. **Deferred:** #312's
+  fourth trigger, war.app's game-ended in-app notification (#311), is not wired yet — the notification
+  tools (#320) landed on main after this work branched; a follow-up runs `endOfGame` when a notification
+  lists a game as ended (still one history read per game, P2).
 - **Processing the history (#312 E2, built):** right after a `captured` record, the same pass (no
   further request) folds the opponent profiles from the history boards — `observeTurn` over each pair
   of full boards with my cached orders where present (`observeHistory`, `src/analysis/game-lessons.ts`),

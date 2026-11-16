@@ -11,7 +11,9 @@
 // `END_OF_GAME_PER_CALL` per call (the records themselves are its cursor: each attempt leaves one, so
 // the next call moves on). A pass that spent its request but left no record (the write failed, or
 // the reply showed the game not finished or not mine) is remembered for the life of the process
-// (`attempted`), so no trigger reads that game's history twice (P2: never retried in a loop). Off with `WARAPP_PLAYER_PROFILE=off`; nothing without a data directory.
+// (`attempted`), so no trigger reads that game's history twice (P2: never retried in a loop).
+// Not yet a trigger: war.app's game-ended in-app notification (#311; its tools, #320, landed after this
+// branch was cut) — a follow-up wires it, still one history read per game. Off with `WARAPP_PLAYER_PROFILE=off`; nothing without a data directory.
 // Profiles inform only (P1): no planner decision reads any of this. Never throws.
 import type { EnvSource } from '@chrischall/mcp-utils';
 import type { BoardState } from '../board.js';
@@ -34,6 +36,7 @@ import type { WarappClient } from '../client.js';
 import { MAX_FINISHED_RECORDS, finishedPath, finishedRecordOf, readFinishedState, touchFinished, writeFinishedRecord, type FinishedFailure, type FinishedRecord, type FinishedStatus } from '../finished-store.js';
 import type { Game } from '../normalize.js';
 import { withPathLock } from '../path-lock.js';
+import { finalOutlookOf, readOutlookLog } from '../outlook-log.js';
 import { readPickRecord } from '../pick-list.js';
 import { finishedGameKey, playerRecordSalt, playerSaltForWrite } from '../player-record-store.js';
 import { holdsSeat } from '../player-states.js';
@@ -241,7 +244,11 @@ async function buildRecord(
 ): Promise<{ record: FinishedRecord; history?: CapturedHistory }> {
   const pick = await readPickRecord(dataDir, gameId, me);
   const picks = pick?.list ? { list: pick.list, ...(pick.award !== undefined ? { award: pick.award } : {}) } : null;
+  // #312: the final outlook line, when this server planned the game as me.
+  const log = await readOutlookLog(dataDir, gameId, me);
+  const outlook = log ? finalOutlookOf(log) : undefined;
   const common = {
+    outlook,
     salt,
     me,
     game: shown,
