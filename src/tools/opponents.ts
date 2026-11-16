@@ -14,6 +14,8 @@ import { lookupMeta } from './hints.js';
 import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
+import { pastGamesFor } from './past-games.js';
+import { profileFormatOf } from '../analysis/opponent-profile.js';
 import { recordProfile } from './profile-hook.js';
 import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
@@ -46,7 +48,10 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
           'earnedAtLeast (its starting armies plus the base income every turn so far: a lower bound on armies received, ' +
           'not held) and a warning when that beats your largest stack or your total visible armies. Notes say how ' +
           'confident each figure is (turns used, missing turns, caps, fog reveals). Only consecutive turns are ' +
-          `compared. Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read.`,
+          'compared. "full" adds `pastGames` when you have finished games: per format the games, results, how the lost ones were lost, the mean turn ' +
+          'your income went flat, and the calibration — this tracker\'s income estimate ÷ the true income from each finished history, by format and ' +
+          'by coverage band (how much of the frontier was read), with the shares read under half and over 1.5× (reported only; nothing reads it). ' +
+          `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read.`,
       ),
       _meta: lookupMeta(['track opponents', 'enemy income', 'what is my opponent earning', 'hidden bonuses']),
       annotations: readAnnotations('Track war.app opponents'),
@@ -55,7 +60,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
         player: playerArg,
         view: viewArg(
           VIEWS,
-          'compact (default) gives each opponent\'s per-turn deploys (with a low–high range when ambiguous), income, unexplained armies, inferred bonuses and notes; "full" adds the territories each turn counted, captured (and which captures came out of the fog, were reinforced, or were mine emptied), grew next to the fog, and skipped as fog reveals, and its army change, losses and likely combat deaths.',
+          'compact (default) gives each opponent\'s per-turn deploys (with a low–high range when ambiguous), income, unexplained armies, inferred bonuses and notes; "full" adds the territories each turn counted, captured (and which captures came out of the fog, were reinforced, or were mine emptied), grew next to the fog, and skipped as fog reveals, and its army change, losses and likely combat deaths, and `pastGames` (the lessons of your finished games).',
         ),
       }),
     },
@@ -79,6 +84,8 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
         await writeGameRecord(ctx.dataDir, game);
         await recordProfile(ctx.dataDir, deps.env, game, me, boards, teamsKnown);
       }
+      // #312 E3: what my finished games teach (full only; reported only, no track or plan reads it).
+      const pastGames = view === 'full' ? await pastGamesFor(ctx.dataDir, deps.env, profileFormatOf(game.players)) : undefined;
       const name = namer(map);
       const players = new Map(game.players.map((p) => [p.id, p.name]));
       const bonusOf = (id: number) => {
@@ -125,6 +132,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
           game: { id: game.id, name: game.name ?? null, turn },
           player: { id: me.id, name: me.name },
           turns: boards.map((b) => b.turn).sort((a, b) => a - b),
+          ...(rung === 'full' && pastGames ? { pastGames } : {}),
           // #94: every opponent out of sight whose received armies beat my largest stack or my total.
           warnings: tracks.flatMap((t) => t.warnings),
           opponents: tracks.map((t) => ({

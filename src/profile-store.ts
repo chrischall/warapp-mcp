@@ -637,8 +637,12 @@ const isEmpty = (h: Habits) => JSON.stringify(h) === JSON.stringify(emptyHabits(
 
 /** What the cross-game stores say for the players asked about. */
 export interface ProfileHistory {
-  /** Per player on record: games met (this game left out) and its faded totals over every format (this game's contribution left out). */
-  players: Map<number, { games: number; past: Habits }>;
+  /**
+   * Per player on record: games met (this game left out), its faded totals over every format (this
+   * game's contribution left out), and the part of those read from finished games' histories
+   * (`fromHistory`: its kept `history` entries at their weight, #312 E3).
+   */
+  players: Map<number, { games: number; past: Habits; fromHistory: Habits }>;
   pools: {
     byFormat: Partial<Record<ProfileFormat, Habits>>;
     /** Every format together. */
@@ -680,7 +684,9 @@ export async function readProfileHistory(
       let past = sumTotals(p.totals);
       if (own) past = addHabits(past, own.habits, -own.weight);
       const games = p.games - (own ? 1 : 0);
-      if (games > 0 || !isEmpty(past)) out.players.set(id, { games, past });
+      let fromHistory = emptyHabits();
+      for (const e of p.entries) if (e.source === 'history' && e !== own) fromHistory = addHabits(fromHistory, e.habits, e.weight);
+      if (games > 0 || !isEmpty(past)) out.players.set(id, { games, past, fromHistory });
     }
     return out;
   } catch {

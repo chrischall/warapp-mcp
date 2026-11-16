@@ -125,7 +125,8 @@ state:
     written is remembered in-process and not repeated; each captured history is
     then folded into the profiles, the per-map record at
     $MCP_DATA_DIR/maps-record/<mapId>.json and the lessons at
-    $MCP_DATA_DIR/lessons.json, both name-free and bounded). GameFeed maps are kept at
+    $MCP_DATA_DIR/lessons.json, both name-free and bounded, read back only to be
+    reported beside the picks, plans and tracks, never planned on). GameFeed maps are kept at
     $MCP_DATA_DIR/maps/<mapId>.json (public map data, base bonus values, at most
     40, re-downloaded after 30 days) with maps/games.json naming each game's map,
     so a known game is not downloaded with its map again after a cold start; and

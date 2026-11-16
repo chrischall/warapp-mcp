@@ -113,6 +113,23 @@ describe('foldGame', () => {
     expect((await history(dir, BOB)).pools.games).toBe(before.pools.games);
   });
 
+  it('#312 E3: the record says how much of a player\'s past was read from histories (this game left out)', async () => {
+    const dir = tmp();
+    const live = habits([1, 2]);
+    const hist = habits([4, 6], [2, 3], 9);
+    await foldGame(dir, fold({ seats: [human(BOB, live)] }), {});
+    await foldGame(dir, fold({ gameId: GAME2, source: 'history', seats: [human(BOB, hist)] }), {});
+    const all = (await history(dir, BOB)).players.get(BOB)!;
+    expect(all.fromHistory).toEqual(hist);
+    expect(all.past).toEqual(addHabits(scaleHabits(live, PROFILE_DECAY), hist));
+    // Reading GAME2 itself: its own history share is left out.
+    expect((await history(dir, BOB, GAME2)).players.get(BOB)!.fromHistory).toEqual(emptyHabits());
+    // A live-only past: none.
+    const other = tmp();
+    await foldGame(other, fold({ seats: [human(BOB, live)] }), {});
+    expect((await history(other, BOB)).players.get(BOB)!.fromHistory).toEqual(emptyHabits());
+  });
+
   it('#312 E2: a history fold counts a player new to the game when its list never dropped an entry', async () => {
     const dir = tmp();
     const live = habits([1, 2]);

@@ -107,13 +107,14 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
       ...(deps.sleep ? { sleep: deps.sleep } : {}),
     }),
     mapCache: deps.mapCache ?? defaultMapCache,
+    dataDir: () => dataDir(deps.env),
     ...(deps.env ? { env: deps.env } : {}),
   });
   registerBoardTool(server, client, live);
   registerRouteTool(server, client);
   registerStrategyTool(server, client, live);
   registerLiveTools(server, live);
-  registerPickTools(server, live);
+  registerPickTools(server, live, deps.env ? { env: deps.env } : {});
   registerMyGamesTool(server, live, deps.env ? { env: deps.env } : {});
   registerOpenGamesTool(server, live);
   registerJoinGameTool(server, live);

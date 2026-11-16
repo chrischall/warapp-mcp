@@ -1085,8 +1085,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `n`, `sum`, `sq`, `logSum`, `under` < 0.5, `over` > 1.5) — aggregates only, no turn or player. Each game's entry
   (at most `MAX_LESSON_ENTRIES`, 500) holds its own counts, so processing it again replaces its share; a dropped
   entry's counts stay. Both stores: keyed by `finishedGameKey`, no id, name or clock; 0600, atomic, under the path
-  lock; a file that does not parse (or a malformed total) is never overwritten (`failed`). Nothing reads them yet
-  (P1; the use is #305 and #318).
+  lock; a file that does not parse (or a malformed total) is never overwritten (`failed`).
+  **Where they are read (#312 E3, `src/tools/past-games.ts`, read-only, never throws; off with profiling off or no data
+  dir; every view carries `PAST_GAMES_NOTE` and none is a planner input — P1, the golden corpus is unchanged):**
+  `warapp_plan_picks`' `mapRecord` (when the map has a game: games, outcomes, `myStarts` — my results per bonus my start
+  touched (`mapRecordStarts`), `inPrimary` when this primary touches it — `winnerStarts`, and `pace.afterTurn4/8`: the
+  medians of the winners' and my income; compact lists the first `MAP_RECORD_COMPACT` (8) bonuses; `unreadable` when the
+  record does not parse); `warapp_plan_turn`'s `pace` (only when `turnsCompleted` is 4 or 8 and the record has a figure
+  there: my income now — card armies out — beside the median winner's and my past median, `behindWinners`; read after
+  the plan is made); `warapp_map_stats`' `myGames` (the same view in full, no request; the tool stays opt-in); and
+  `warapp_track_opponents` full's `pastGames` (`lessonsSummary`: per format the games, outcomes, how lost, the mean flat
+  turn, and the calibration per coverage band — `n`, `mean` and `geoMean` of estimate ÷ truth, `low` < 0.5 and `high` >
+  1.5 shares — and every format together; `thisFormat` names the game's). The profile reads name a habit's basis
+  `history` (`HabitBasis`) when the past weighs most and at least half of its `n` comes from entries folded from a
+  finished history (`ProfileHistory.players[].fromHistory`, the player's `history` entries at their weight, this game's
+  left out); the value never changes for it.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in

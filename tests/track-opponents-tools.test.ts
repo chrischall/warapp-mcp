@@ -10,6 +10,8 @@ import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bu
 import * as T from './team-fallback.js';
 import { readGameRecord } from '../src/replay.js';
 import { writeOrdersCache } from '../src/trend.js';
+import { lessonsPath, recordLessons } from '../src/lessons-store.js';
+import { writeFileSync } from 'node:fs';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -203,6 +205,49 @@ describe('warapp_track_opponents', () => {
     expect(full.opponents[0]!.observed[0]).toHaveProperty('reveals');
     expect(full.opponents[0]!.observed[0]).toHaveProperty('fromFog');
     expect(compact.opponents[0]!.observed[0]).not.toHaveProperty('reveals');
+  });
+
+  it('#312 E3: full reports the lessons of my finished games — the estimate ÷ truth by format and coverage band; compact leaves them out', async () => {
+    await playTurns('warapp_track_opponents', [7, 12]);
+    const before = payload<Record<string, unknown>>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann', view: 'full' }));
+    // Nothing kept: no field.
+    expect(before).not.toHaveProperty('pastGames');
+    expect(
+      await recordLessons(h!.dataDir, {
+        key: '1'.padStart(32, '0'),
+        format: 'ffa',
+        seats: 4,
+        result: 'eliminated',
+        flatAfterTurn: 6,
+        howLost: { cause: 'last-territories', turn: 14 },
+        calibration: { 'under-25': { n: 2, sum: 0.6, sq: 0.2, logSum: 2 * Math.log(0.3), under: 2, over: 0 } },
+      }),
+    ).toBe('kept');
+    const full = payload<{ pastGames: Record<string, any>; opponents: unknown[] }>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(full.pastGames).toMatchObject({
+      thisFormat: 'ffa',
+      games: 1,
+      byFormat: {
+        ffa: {
+          games: 1,
+          outcomes: { eliminated: 1 },
+          howLost: { 'last-territories': 1 },
+          flatAfterTurn: { games: 1, mean: 6 },
+          calibration: { 'under-25': { n: 2, mean: 0.3, geoMean: 0.3, low: 1, high: 0 } },
+        },
+      },
+      calibration: { 'under-25': { n: 2, mean: 0.3, geoMean: 0.3, low: 1, high: 0 } },
+      note: expect.stringMatching(/reported only/),
+    });
+    // The tracks are the same with it as without.
+    expect(full.opponents).toEqual(before.opponents);
+    const compact = payload<Record<string, unknown>>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' }));
+    expect(compact).not.toHaveProperty('pastGames');
+    // A store that does not parse reads `unreadable` and is left alone.
+    writeFileSync(lessonsPath(h!.dataDir), '{nope');
+    const bad = payload<Record<string, unknown>>(await h!.call('warapp_track_opponents', { game_id: GAME, player: 'Ann', view: 'full' }));
+    expect(bad.pastGames).toBe('unreadable');
+    expect(readFileSync(lessonsPath(h!.dataDir), 'utf8')).toBe('{nope');
   });
 
   it('lists an opponent still playing with nothing in view, by name, with what it has received (#94)', async () => {

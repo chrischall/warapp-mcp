@@ -227,6 +227,15 @@ describe('warapp_profile_opponents', () => {
     expect(readFileSync(profilePlayersPath(dataDir), 'utf8')).toBe('{nope');
   });
 
+  it('#312 E3: names the basis `history` where the past that weighs most was folded from a finished game\'s history', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'warapp-mcp-profile-history-'));
+    const earlier = { ...emptyHabits(), reinforce: { e: 10, n: 10 }, turns: 8 };
+    expect(await foldGame(dataDir, { me: ME, gameId: GAME + 1, format: 'ffa', players: 3, source: 'history', seats: [{ id: BOB_ID, ai: false, habits: earlier, ending: 'Won' }] }, {})).toBe('folded');
+    h = await setUp({}, undefined, { dataDir });
+    const bob = who(await profile(h), BOB_ID);
+    expect(bob.habits.reinforce!).toEqual({ value: 1, n: 14, confidence: 0.78, basis: 'history' });
+  });
+
   it('reports the last turn each opponent attacked me beside its labels, in the tool and the plan (#264)', async () => {
     h = await setUp();
     // A turn the board cache no longer holds, kept in the per-game file: Bob took a territory of mine on turn 0.

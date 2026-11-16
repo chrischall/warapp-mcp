@@ -11,6 +11,7 @@ import type { GameMap } from '../normalize.js';
 import { DEFAULT_NEW_GAMES, MAX_NEW_GAMES, STATS_ENV, statsGate, type CollectResult, type StatsCollector, type StatsGate } from '../stats.js';
 import { readAnnotations, respond, untrustedDescription } from './common.js';
 import { lookupMeta } from './hints.js';
+import { mapRecordFor, mapRecordView } from './past-games.js';
 
 function refusal(gate: Exclude<StatsGate, { enabled: true }>): McpToolError {
   if (gate.reason === 'hosted') {
@@ -49,7 +50,7 @@ function named(stats: MapStats, map: GameMap | undefined) {
 
 export function registerMapStatsTool(
   server: McpServer,
-  deps: { collector: StatsCollector; mapCache: MapCache; env?: EnvSource },
+  deps: { collector: StatsCollector; mapCache: MapCache; env?: EnvSource; dataDir?: () => string | undefined },
 ): void {
   server.registerTool(
     'warapp_map_stats',
@@ -63,7 +64,9 @@ export function registerMapStatsTool(
           'could not be read are counted apart, never cached. Each call reads the ladder’s game-ID feed and fetches up to ' +
           `max_new_games new games (default ${DEFAULT_NEW_GAMES}, max ${MAX_NEW_GAMES}, one request a second); ` +
           'finished games are cached forever, so stats grow across calls. OPT-IN: off unless the server runs ' +
-          `locally with ${STATS_ENV}=1, and always off when hosted. Read-only.`,
+          `locally with ${STATS_ENV}=1, and always off when hosted. ` +
+          '`myGames` adds your own finished games on the map, from their histories (no request): results, your results by start bonus, the ' +
+          "bonuses winners started in, and the pace — the median income after turns 4 and 8 of the winners and of you. Read-only.",
       ),
       _meta: lookupMeta(['map stats', 'best starting picks', 'ladder statistics', 'which bonus wins']),
       annotations: readAnnotations('war.app map statistics'),
@@ -109,10 +112,21 @@ export function registerMapStatsTool(
       }
       const [stats] = mapStats(records);
       const map = deps.mapCache.get(map_id);
+      // #312 E3: my own finished games on the map (the end-of-game record; no request).
+      const mine = await mapRecordFor(deps.dataDir?.(), deps.env, map_id);
+      const names = new Map(map?.bonuses.map((b) => [b.id, b.name]));
       return respond(undefined, ['compact'], () => ({
         map: map ? { id: map.id, name: map.name } : { id: map_id },
         ...(collected ? { collected } : {}),
         ...(warning ? { warning } : {}),
+        ...(mine
+          ? {
+              myGames:
+                mine === 'unreadable'
+                  ? mine
+                  : mapRecordView(mine, { bonusName: (id) => ({ id, name: names.get(id) ?? String(id) }), full: true }),
+            }
+          : {}),
         ...(stats
           ? { stats: named(stats, map) }
           : {

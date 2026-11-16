@@ -10,6 +10,9 @@ import {
   MAX_MAP_ENTRIES,
   mapRecordDir,
   mapRecordPath,
+  calibrationSummary,
+  lessonsSummary,
+  mapRecordStarts,
   mapRecordSummary,
   readLessons,
   readMapRecord,
@@ -146,5 +149,80 @@ describe('the lessons store', () => {
     writeFileSync(lessonsPath(dir), JSON.stringify({ version: 1, byFormat: { ffa: { games: 'x' } }, entries: [] }));
     expect(await recordLessons(dir, lesson(1))).toBe('failed');
     expect(existsSync(lessonsPath(dir))).toBe(true);
+  });
+});
+
+describe('the read-only views (#312 E3)', () => {
+  it('a map record by start bonus: my results per bonus my start touched, and the winners\' start bonuses', () => {
+    const rec = {
+      version: 1 as const,
+      mapId: 3,
+      games: 3,
+      outcomes: { won: 1, eliminated: 2 },
+      entries: [
+        mapEntry(1, { result: 'won', me: { territories: [1], bonuses: [100, 101], income: [], income4: 9, income8: 20 }, winners: [{ territories: [1], bonuses: [100, 101], income4: 9, income8: 20 }] }),
+        mapEntry(2),
+        mapEntry(3, { winners: [{ territories: [7], bonuses: [200], income4: 14, income8: null }] }),
+      ],
+    };
+    expect(mapRecordStarts(rec)).toEqual({
+      mine: [
+        { bonusId: 100, games: 3, outcomes: { won: 1, eliminated: 2 } },
+        { bonusId: 101, games: 1, outcomes: { won: 1 } },
+      ],
+      winners: [
+        { bonusId: 200, games: 2 },
+        { bonusId: 100, games: 1 },
+        { bonusId: 101, games: 1 },
+      ],
+    });
+  });
+
+  it('a calibration summary: count, mean, geometric mean and the shares read low and high, by band', () => {
+    const s = calibrationSummary({
+      'under-25': { n: 4, sum: 2, sq: 1.25, logSum: 4 * Math.log(0.4), under: 3, over: 0 },
+      '75-up': { n: 2, sum: 2.2, sq: 2.42, logSum: 2 * Math.log(1.1), under: 0, over: 0 },
+    });
+    expect(s).toEqual({
+      'under-25': { n: 4, mean: 0.5, geoMean: 0.4, low: 0.75, high: 0 },
+      '75-up': { n: 2, mean: 1.1, geoMean: 1.1, low: 0, high: 0 },
+    });
+  });
+
+  it('the lessons summary: per format the games, outcomes, how lost, the mean flat turn and the calibration, and every format together', () => {
+    const file = {
+      version: 1 as const,
+      byFormat: {
+        ffa: {
+          games: 3,
+          outcomes: { eliminated: 2, won: 1 },
+          howLost: { 'last-territories': 2 },
+          flat: { n: 2, sum: 13 },
+          calibration: { 'under-25': { n: 2, sum: 0.6, sq: 0.2, logSum: 2 * Math.log(0.3), under: 2, over: 0 } },
+        },
+        '1v1': {
+          games: 1,
+          outcomes: { won: 1 },
+          howLost: {},
+          flat: { n: 0, sum: 0 },
+          calibration: { 'under-25': { n: 2, sum: 1.4, sq: 1, logSum: 2 * Math.log(0.7), under: 0, over: 0 } },
+        },
+      },
+      entries: [],
+    };
+    expect(lessonsSummary(file)).toEqual({
+      games: 4,
+      byFormat: {
+        '1v1': { games: 1, outcomes: { won: 1 }, howLost: {}, flatAfterTurn: null, calibration: { 'under-25': { n: 2, mean: 0.7, geoMean: 0.7, low: 0, high: 0 } } },
+        ffa: {
+          games: 3,
+          outcomes: { eliminated: 2, won: 1 },
+          howLost: { 'last-territories': 2 },
+          flatAfterTurn: { games: 2, mean: 6.5 },
+          calibration: { 'under-25': { n: 2, mean: 0.3, geoMean: 0.3, low: 1, high: 0 } },
+        },
+      },
+      calibration: { 'under-25': { n: 4, mean: 0.5, geoMean: 0.46, low: 0.5, high: 0 } },
+    });
   });
 });

@@ -82,6 +82,7 @@ import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
 import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
+  turnsCompleted,
   gameIdArg,
   graphOf,
   namer,
@@ -103,6 +104,8 @@ import { guessSalt, peekGuessSalt } from '../guess-salt.js';
 import { recordProfile } from './profile-hook.js';
 import { confidentHabits, counterOf, neighboursOf, readOpponents, type OpponentRead } from './profile-reads.js';
 import { mapOf } from './map.js';
+import { PACE_TURNS } from '../analysis/game-lessons.js';
+import { mapRecordFor, paceView } from './past-games.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
 import {
@@ -2074,6 +2077,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`surrenderPending` lists the surrenders other players asked for that are still pending (from the game details, ' +
           'unverified live; null when they could not be read, never "none"), each with `owedByMe`; when one waits on your ' +
           'acceptance the first warning says so. ' +
+          '`pace` (after turns 4 and 8, when you have finished games on this map; reported only): your income beside the median ' +
+          "winner's and your own past median there. " +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -2449,6 +2454,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #317: a surrender waiting on my acceptance is the first thing said, before the commander's line.
       const owedLine = surrenderOwedLine(surrenders);
       if (owedLine) warnings.unshift(owedLine);
+      // #312 E3: after turns 4 and 8, my income beside the pace my finished games on this map set
+      // (reported only: read after the plan is made, never an input to it).
+      const paceRecord = PACE_TURNS.includes(turnsCompleted(game) as (typeof PACE_TURNS)[number])
+        ? await mapRecordFor(ctx.dataDir, opts.env, game.settings?.mapId)
+        : undefined;
+      const pace = paceRecord && paceRecord !== 'unreadable' ? paceView(paceRecord, turnsCompleted(game), myIncome) : undefined;
 
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, turn: currentTurn(game) },
@@ -2497,6 +2508,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             }
           : {}),
         income,
+        // #312 E3: the pace beside my income after turns 4 and 8 (my finished games on this map).
+        ...(pace ? { pace } : {}),
         // #253: the army cap's arithmetic (min(income, round(cap × income) − my armies on the board)), when the game has one.
         ...(setup.incomeCap ? { incomeCapped: setup.incomeCap } : {}),
         enemyDeploy: plan.enemyDeploy,

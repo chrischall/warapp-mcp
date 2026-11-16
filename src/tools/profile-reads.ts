@@ -115,8 +115,8 @@ function priorsOf(known: ProfileHistory | undefined, format: ProfileFormat, id: 
   if (!known) return {};
   if (ai) return { pools: [known.pools.ai] };
   const pools = [known.pools.byFormat[format], known.pools.all].filter((x): x is Habits => x !== undefined);
-  const past = known.players.get(id)?.past;
-  return { pools, ...(past ? { past } : {}) };
+  const rec = known.players.get(id);
+  return { pools, ...(rec ? { past: rec.past, pastHistory: rec.fromHistory } : {}) };
 }
 
 /** The habits at the confidence bar, each with its value, `n` and `basis`. */
@@ -158,6 +158,6 @@ export async function metRead(
   if (typeof record !== 'object') return undefined;
   const p = record.players.get(id);
   if (!p) return undefined;
-  const habits = estimateHabits(emptyHabits(), { past: p.past, pools: [record.pools.all] });
+  const habits = estimateHabits(emptyHabits(), { past: p.past, pastHistory: p.fromHistory, pools: [record.pools.all] });
   return { games: p.games, habits, labels: labelsOf(habits) };
 }

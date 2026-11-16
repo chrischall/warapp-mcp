@@ -217,6 +217,30 @@ export function mapRecordSummary(rec: MapRecord): {
   };
 }
 
+/** My results per bonus my start touched, and how often each bonus held a winner's start (#312 E3), most games first then by id. Pure. */
+export function mapRecordStarts(rec: MapRecord): {
+  mine: { bonusId: number; games: number; outcomes: Record<string, number> }[];
+  winners: { bonusId: number; games: number }[];
+} {
+  const mine = new Map<number, { games: number; outcomes: Record<string, number> }>();
+  const winners = new Map<number, number>();
+  for (const e of rec.entries) {
+    for (const b of e.me.bonuses) {
+      const x = mine.get(b) ?? { games: 0, outcomes: {} };
+      x.games++;
+      bumpCount(x.outcomes, e.result, 1);
+      mine.set(b, x);
+    }
+    // A bonus counts once per game, however many winners started in it.
+    for (const b of new Set(e.winners.flatMap((w) => w.bonuses))) winners.set(b, (winners.get(b) ?? 0) + 1);
+  }
+  const order = (a: { bonusId: number; games: number }, b: { bonusId: number; games: number }) => b.games - a.games || a.bonusId - b.bonusId;
+  return {
+    mine: [...mine].map(([bonusId, x]) => ({ bonusId, ...x })).sort(order),
+    winners: [...winners].map(([bonusId, games]) => ({ bonusId, games })).sort(order),
+  };
+}
+
 // ---- the lessons ----
 
 /** One finished game's lessons, name-free. */
@@ -350,4 +374,63 @@ export async function recordLessons(dir: string, entry: LessonEntry): Promise<'k
   } catch {
     return 'failed';
   }
+}
+
+// ---- the read-only views (#312 E3) ----
+
+/** One coverage band's estimates against the truth, as read: the count, the mean and geometric mean of estimate ÷ truth, and the shares under half and over 1.5×. */
+export interface RatioSummary {
+  n: number;
+  mean: number;
+  geoMean: number;
+  low: number;
+  high: number;
+}
+
+const r2 = (x: number) => Math.round(x * 100) / 100;
+
+/** A calibration's bands summarized ({@link RatioSummary}); a band with no sample is left out. Pure. */
+export function calibrationSummary(c: Calibration): Partial<Record<(typeof COVERAGE_BUCKETS)[number], RatioSummary>> {
+  const out: Partial<Record<(typeof COVERAGE_BUCKETS)[number], RatioSummary>> = {};
+  for (const k of COVERAGE_BUCKETS) {
+    const x = c[k];
+    if (!x || x.n <= 0) continue;
+    out[k] = { n: x.n, mean: r2(x.sum / x.n), geoMean: r2(Math.exp(x.logSum / x.n)), low: r2(x.under / x.n), high: r2(x.over / x.n) };
+  }
+  return out;
+}
+
+/** The lessons of one format, as read. */
+export interface LessonsFormatSummary {
+  games: number;
+  outcomes: Record<string, number>;
+  howLost: Record<string, number>;
+  /** The games whose income went flat and the mean completed turns when it did; `null` when none did. */
+  flatAfterTurn: { games: number; mean: number } | null;
+  calibration: ReturnType<typeof calibrationSummary>;
+}
+
+/** The lessons store summarized (#312 E3): per format, and the calibration of every format together. Aggregates only. Pure. */
+export function lessonsSummary(file: LessonsFile): {
+  games: number;
+  byFormat: Partial<Record<ProfileFormat, LessonsFormatSummary>>;
+  calibration: ReturnType<typeof calibrationSummary>;
+} {
+  const byFormat: Partial<Record<ProfileFormat, LessonsFormatSummary>> = {};
+  let games = 0;
+  let all: Calibration = {};
+  for (const f of PROFILE_FORMATS) {
+    const t = file.byFormat[f];
+    if (!t || t.games <= 0) continue;
+    games += t.games;
+    all = addCalibration(all, t.calibration);
+    byFormat[f] = {
+      games: t.games,
+      outcomes: t.outcomes,
+      howLost: t.howLost,
+      flatAfterTurn: t.flat.n > 0 ? { games: t.flat.n, mean: r2(t.flat.sum / t.flat.n) } : null,
+      calibration: calibrationSummary(t.calibration),
+    };
+  }
+  return { games, byFormat, calibration: calibrationSummary(all) };
 }

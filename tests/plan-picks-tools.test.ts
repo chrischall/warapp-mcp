@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame, Writer } from '../src/protocol/codec.js';
+import { recordMapGame, type MapEntry } from '../src/lessons-store.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
@@ -158,6 +159,46 @@ describe('warapp_plan_picks', () => {
 
     // One board read through the bridge; nothing sent.
     expect(h.exchanges.map((e) => e.request.method)).toEqual([Method.GetLatestGameInfo]);
+  });
+
+  it('#312 E3: reports the map\'s record of my finished games beside the ranking, which it never changes', async () => {
+    h = await liveHarness({ feed: [game('DistributingTerritories')], warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
+    const plain = payload<PlanPicksPayload & { mapRecord?: unknown }>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    // No game kept for the map: no field.
+    expect(plain).not.toHaveProperty('mapRecord');
+    const entry = (n: number, o: Partial<MapEntry>): MapEntry => ({
+      key: n.toString(16).padStart(32, '0'),
+      format: 'ffa',
+      seats: 4,
+      result: 'eliminated',
+      turns: 10,
+      me: { territories: [133], bonuses: [116], income: [], income4: 6, income8: 9 },
+      winners: [{ territories: [159], bonuses: [118], income4: 10, income8: 20 }],
+      ...o,
+    });
+    expect(await recordMapGame(h.dataDir, 39905, entry(1, {}))).toBe('kept');
+    expect(await recordMapGame(h.dataDir, 39905, entry(2, { result: 'won', me: { territories: [159], bonuses: [118], income: [], income4: 12, income8: 30 }, winners: [{ territories: [159], bonuses: [118], income4: 12, income8: 30 }] }))).toBe('kept');
+    const p = payload<PlanPicksPayload & { mapRecord: Record<string, any> }>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    const primaryBonuses = new Set(p.groups.primary.bonuses.map((b) => b.id));
+    expect(p.mapRecord).toMatchObject({
+      games: 2,
+      outcomes: { eliminated: 1, won: 1 },
+      myStarts: [
+        { bonus: { id: 116, name: expect.any(String) }, games: 1, outcomes: { eliminated: 1 }, inPrimary: expect.any(Boolean) },
+        { bonus: { id: 118, name: expect.any(String) }, games: 1, outcomes: { won: 1 }, inPrimary: expect.any(Boolean) },
+      ],
+      winnerStarts: [{ bonus: { id: 118 }, games: 2 }],
+      pace: { afterTurn4: { winners: 11, mine: 9 }, afterTurn8: { winners: 25, mine: 19.5 } },
+      note: expect.stringMatching(/reported only/),
+    });
+    if (primaryBonuses.has(118)) expect(p.mapRecord.myStarts[1].inPrimary).toBe(true);
+    // Inform only: the ranking is the same with the record as without it.
+    expect(p.picks).toEqual(plain.picks);
+    expect(p.submitPicks).toEqual(plain.submitPicks);
+    // Off: no field.
+    await h.harness.close();
+    h = await liveHarness({ dataDir: h.dataDir, env: { WARAPP_PLAYER_PROFILE: 'off' }, feed: [game('DistributingTerritories')], warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }) });
+    expect(payload<Record<string, unknown>>(await h.call('warapp_plan_picks', { game_id: GAME }))).not.toHaveProperty('mapRecord');
   });
 
   it('is deterministic, and the full view adds the settings the plan assumed', async () => {

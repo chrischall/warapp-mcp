@@ -383,7 +383,12 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
   turn my income first went flat, and the tracker's estimates over my cached boards against the
   history's true incomes by frontier coverage — part 0's measurement, aggregates only). Both are
   name-free (keyed by `finishedGameKey`), bounded, 0600, and never overwritten when they do not parse.
-  Nothing reads them yet (P1).
+  **Read back (#312 E3), reported only (P1: no plan, ranking or estimate reads them):** `warapp_plan_picks`'
+  `mapRecord` (games, my results by start bonus, the bonuses winners started in, the winners' and my median income
+  after turns 4 and 8), `warapp_plan_turn`'s `pace` after turns 4 and 8, `warapp_map_stats`' `myGames`, and
+  `warapp_track_opponents` full's `pastGames` (the lessons; the calibration as estimate ÷ truth by format and coverage
+  band: count, mean, geometric mean, shares under half and over 1.5×). A habit whose past weighs most, at least half of
+  it folded from finished histories, reads `basis: history` in `warapp_profile_opponents` and the plan's `reads`.
 - One request per finished game, through `WarappClient`, never retried in a loop, never for a game
   the account did not play. A request spent with no record left (the write failed; the reply showed the
   game not finished or not mine) is remembered for the life of the process, so no trigger repeats it.

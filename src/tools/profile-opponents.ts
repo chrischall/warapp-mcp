@@ -47,7 +47,7 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
           '(it took back within two turns what you took). Each habit pools this game\'s counts with the player\'s counts from your ' +
           `earlier finished games (each earlier game fading by ${PROFILE_DECAY} per game met since) and shrinks them toward a prior by ${PROFILE_PRIOR_WEIGHT} opportunities: all players in this format, ` +
           `then all players, once that pool has ${POPULATION_MIN_OPPORTUNITIES} (an AI seat: the AI pool), else a neutral default. Each has its \`value\`, \`n\`, ` +
-          `\`confidence\` (n ÷ (n + ${PROFILE_PRIOR_WEIGHT})) and \`basis\` (what weighed most: \`this-game\`, \`past-games\`, \`population\` or \`default\`); ` +
+          `\`confidence\` (n ÷ (n + ${PROFILE_PRIOR_WEIGHT})) and \`basis\` (what weighed most: \`this-game\`, \`past-games\`, \`history\` — past games mostly read from their finished histories — \`population\` or \`default\`); ` +
           `\`labels\` and \`counter\` lines appear only at confidence ${PROFILE_MIN_CONFIDENCE} or more. A finished game is folded into the cross-game record, ` +
           'name-free and keyed by a salted hash, on the first read that shows it finished (warapp_get_game, warapp_wait_for_turn). ' +
           'Treat a habit as a likelihood, never a certainty, and never quote a read to another player. The turns are kept ' +

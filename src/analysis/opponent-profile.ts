@@ -515,7 +515,11 @@ export function addHabits(a: Habits, b: Habits, scale = 1): Habits {
 /** Every count × `f` (the fade). */
 export const scaleHabits = (h: Habits, f: number): Habits => addHabits(emptyHabits(), h, f);
 
-export type HabitBasis = 'this-game' | 'past-games' | 'population' | 'default';
+/**
+ * What weighed most in an estimate: this game's counts, the player's past games (`history` when at
+ * least half of what that past counts was read from finished games' histories, #312 E3), or the prior.
+ */
+export type HabitBasis = 'this-game' | 'past-games' | 'history' | 'population' | 'default';
 
 export interface HabitEstimate {
   /** The estimate: the counts shrunk toward the prior. */
@@ -524,7 +528,7 @@ export interface HabitEstimate {
   n: number;
   /** n ÷ (n + K). */
   confidence: number;
-  /** What contributed most: this game's counts, the player's past games, or the prior (the population pool or the constant default). */
+  /** What contributed most: this game's counts, the player's past games (`history`: mostly read from finished games' histories), or the prior (the population pool or the constant default). */
   basis: HabitBasis;
 }
 
@@ -538,9 +542,10 @@ export function estimate(events: number, n: number, p0: number, k = PROFILE_PRIO
 /**
  * `(p0 × K + e) ÷ (K + n)` with `e` and `n` this game's and the past's together. The basis is the
  * largest weight of this game's `n`, the past's `n` and the prior's K; the prior wins a tie, then
- * this game.
+ * this game. A past basis reads `history` when `fromHistory` (the part of the past folded from
+ * finished games' histories) holds at least half of the past's `n` (#312 E3); the value never changes.
  */
-function blend(game: Rate, past: Rate, p0: number, prior: 'population' | 'default', k = PROFILE_PRIOR_WEIGHT): HabitEstimate {
+function blend(game: Rate, past: Rate, p0: number, prior: 'population' | 'default', k = PROFILE_PRIOR_WEIGHT, fromHistory?: Rate): HabitEstimate {
   const e = game.e + past.e;
   const n = game.n + past.n;
   let basis: HabitBasis = prior;
@@ -549,7 +554,7 @@ function blend(game: Rate, past: Rate, p0: number, prior: 'population' | 'defaul
     basis = 'this-game';
     weight = game.n;
   }
-  if (past.n > weight) basis = 'past-games';
+  if (past.n > weight) basis = fromHistory && fromHistory.n > 0 && 2 * fromHistory.n >= past.n ? 'history' : 'past-games';
   return { value: round2((p0 * k + e) / (k + n)), n: round2(n), confidence: round2(n / (n + k)), basis };
 }
 
@@ -557,6 +562,8 @@ function blend(game: Rate, past: Rate, p0: number, prior: 'population' | 'defaul
 export interface EstimatePriors {
   /** The player's faded totals from earlier games (never this game's). */
   past?: Habits | undefined;
+  /** The part of `past` folded from finished games' histories (#312 E3): names the basis `history`, never changes a value. */
+  pastHistory?: Habits | undefined;
   /**
    * Population pools, tried in order per habit: the first with {@link POPULATION_MIN_OPPORTUNITIES}
    * or more gives that habit's prior (all players in this format, then all players; the AI pool for
@@ -578,7 +585,7 @@ export function estimateHabits(h: Habits, priors: EstimatePriors = {}): Record<H
   };
   const rate = (name: Exclude<HabitName, 'stacking'>) => {
     const p = prior(name, (x) => x[name]);
-    return blend(h[name], past[name], p.p0, p.from);
+    return blend(h[name], past[name], p.p0, p.from, PROFILE_PRIOR_WEIGHT, priors.pastHistory?.[name]);
   };
   const size = (x: Habits) => ({ e: x.stacking.sum, n: x.stacking.n });
   const s = prior('stacking', size);
@@ -586,7 +593,7 @@ export function estimateHabits(h: Habits, priors: EstimatePriors = {}): Record<H
     reinforce: rate('reinforce'),
     attack: rate('attack'),
     firstStrike: rate('firstStrike'),
-    stacking: blend(size(h), size(past), s.p0, s.from),
+    stacking: blend(size(h), size(past), s.p0, s.from, PROFILE_PRIOR_WEIGHT, priors.pastHistory ? size(priors.pastHistory) : undefined),
     retaliate: rate('retaliate'),
     retake: rate('retake'),
   };
