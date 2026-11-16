@@ -220,6 +220,13 @@ describe('feedProfile: a profile from GameFeed alone', () => {
     expect(p.format).toBe('1v1');
     expect(p.phase).toBe('late');
   });
+
+  it('a signed-in account that is out is ignored: the two still playing are a 1v1, as without it', () => {
+    const players = [{ id: 7 }, { id: 9 }, { id: 11, state: 'Eliminated' }];
+    const p = feedProfile({ graph, players, turn: 9, me: 11 });
+    expect(p.format).toBe('1v1');
+    expect(p).toEqual(feedProfile({ graph, players, turn: 9 }));
+  });
 });
 
 describe('hasCostlyBonus: a bonus whose completion cuts income', () => {

@@ -2433,7 +2433,7 @@ interface FeedProfileInput {
    * board warapp_strategy read for my seat (#309). Contact and the territory-share late game read it.
    */
   board?: BoardState;
-  /** The signed-in account's GameFeed id, when known (#309): the seat the profile is judged for. */
+  /** The signed-in account's GameFeed id, when known (#309): the seat the profile is judged for while it plays (one that is out is ignored). */
   me?: number;
 }
 
@@ -2446,7 +2446,9 @@ interface FeedProfileInput {
  */
 export function feedProfile(input: FeedProfileInput): GameProfile {
   const playing = input.players.filter((p) => (p.state ?? 'Playing') === 'Playing');
-  const seated = input.me !== undefined && input.players.some((p) => p.id === input.me) ? input.me : undefined;
+  // Only a seat still playing: an account that is out has no opponents, and judging for it would count
+  // every player left as one (two left would read as a free-for-all).
+  const seated = input.me !== undefined && playing.some((p) => p.id === input.me) ? input.me : undefined;
   const me = seated ?? (playing[0] ?? input.players[0])?.id ?? 0;
   return gameProfile({
     graph: input.graph,

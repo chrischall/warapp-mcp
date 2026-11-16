@@ -360,6 +360,23 @@ describe('warapp_strategy reads the live board for my seat (#309)', () => {
     expect(h.exchanges).toHaveLength(0);
   });
 
+  it('a signed-in seat that is out: no board read, judged as without an account (the two left are a 1v1)', async () => {
+    const g = ffa();
+    const out = { ...g, players: g.players.map((p) => (p.id === ANN.feed ? { ...p, state: 'Eliminated' } : p)) };
+    h = await liveHarness({ feed: [out], warapp: live(contactBoard), pages: SIGNED_IN(ANN.feed) });
+    const p = payload<StrategyPayload>(await h.call('warapp_strategy', { game_id: GAME, view: 'full' }));
+    expect(p.profile).toMatchObject({ format: '1v1', source: 'gamefeed' });
+    expect(h.exchanges).toHaveLength(0);
+    // Exactly the profile served with no readable account.
+    const anon = await liveHarness({ feed: [out], warapp: live(contactBoard) });
+    try {
+      const q = payload<StrategyPayload>(await anon.call('warapp_strategy', { game_id: GAME, view: 'full' }));
+      expect(p.profile).toEqual(q.profile);
+    } finally {
+      await anon.harness.close();
+    }
+  });
+
   it("warapp_plan_turn's full view lists the ids of the notes its own profile matches; compact does not", async () => {
     h = await liveHarness({ feed: [ffa()], warapp: live(contactBoard), pages: SIGNED_IN(ANN.feed) });
     const full = payload<{ profile: { phase: string }; notes?: string[] }>(

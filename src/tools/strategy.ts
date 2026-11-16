@@ -105,7 +105,7 @@ function gameMapNotes(game: Game, map: GameMap): MapNotes {
  * no standing, so with GameFeed alone the phase never reads contact or late. When the signed-in
  * account is seated and playing in a game being played, the live board is read (as warapp_plan_turn
  * reads it; read-only, nothing kept) for that seat: `live`. Otherwise, or on any failure, GameFeed's
- * standing as before — for the signed-in seat when it is known: `gamefeed`. Never throws.
+ * standing as before — for the signed-in seat when it is known and still playing: `gamefeed`. Never throws.
  */
 async function profileBoard(
   live: LiveContext | undefined,
@@ -117,7 +117,9 @@ async function profileBoard(
     const token = await live.myInviteToken();
     const seat = token === undefined ? undefined : game.players.find((p) => p.id === token);
     if (!seat) return feed;
-    if (game.state !== 'Playing' || (seat.state ?? 'Playing') !== 'Playing') return { ...feed, me: seat.id };
+    // A seat that is out is judged as without an account: it has no opponents of its own.
+    if ((seat.state ?? 'Playing') !== 'Playing') return feed;
+    if (game.state !== 'Playing') return { ...feed, me: seat.id };
     try {
       const { territories } = await loadLiveGame(live, game);
       return { source: 'live', me: seat.id, board: boardStateFromLive(territories, seat, game.players) };
