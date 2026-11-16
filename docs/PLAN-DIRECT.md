@@ -182,7 +182,7 @@ capture (or re-capture) the token.
   registration should hide it from the connector's menu: leave it out of `enabledTools` (`--tools`).
   mcp-host never checks a flow's step or capture tool against that allowlist (`packages/core/src/wire.ts`
   `toolCallRequestSchema`: "a login tool is often hidden from the menu"), so the flow still calls it
-  while no chat client sees it. The paste fallback's `auth_token` argument is not built yet. The flow
+  while no chat client sees it. It takes no cookie argument (see "Not built" below). The flow
   document is part of the contract: `tests/auth-flow-doc.test.ts` checks it against mcp-host's rules
   offline (every `{from}` provided earlier, the capture never over an `authField`, a host-set or
   loader variable, `perUserChild`, the step tools and the capture tool registered hosted with exactly
@@ -199,14 +199,17 @@ connection deletes it and **Sign in** replaces it in place; egress stays `war.ap
 `warappcdn.com`. Still unknown and owner-verified live: the token's lifetime, and whether war.app
 binds it to the IP or user agent (a hosted child's egress IP differs from the browser's).
 
-### Fallback: paste the cookie (captcha, or an account with no war.app password)
+### Not built: a paste-the-cookie fallback (captcha, or an account with no war.app password)
 If war.app ever puts a captcha or bot check in front of a server-side sign-in (none on the page as
-traced), or for an account that signs in through Facebook and has no password, the same capture
-works by hand: `docs/examples/warapp-auth-flow-paste.json` swaps the password prompt for a masked
-`cookie` prompt (the `AuthToken` value from the browser's developer tools) and calls
-`warapp_sign_in` with `{ auth_token: {from: cookie} }`, which checks it against war.app once and
-returns it as `authToken`. No password is asked or stored. A registration holds one `authFlow`, so
-this is the operator's switch, not the person's choice on the page.
+traced), or for an account that signs in through Facebook and has no password, a flow could ask for
+the `AuthToken` cookie from the browser's developer tools instead of the password. **It is not built,
+and no flow document for it ships:** `warapp_sign_in` takes only `email` and `password`, both
+required, so a capture sending `{ auth_token }` would be a schema `isError`, which mcp-host reads as a
+refused credential (the login ends and the collected credentials are deleted). Building it means an
+`auth_token` mode on `warapp_sign_in` (one cookie-only GET to war.app to check the session, then
+`{ authToken }`), its flow document, and the capture-args check in `tests/auth-flow-doc.test.ts`
+extended to it. Until then a bot check on the sign-in (`edge_blocked`) leaves the connection on the
+browser bridge, which the registration keeps as its fallback.
 
 ### Registration change for the owner to apply (after part B ships in a release)
 On the hosted registration (`warapp`, today `authFields` `WARAPP_EMAIL` + `WARAPP_API_TOKEN`,

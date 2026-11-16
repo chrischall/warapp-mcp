@@ -1556,10 +1556,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `docs/examples/warapp-auth-flow.json` (one masked password prompt on a step that calls the
   read-only `warapp_session_status`; the capture is the sign-in itself, `warapp_sign_in` with
   `email` from `WARAPP_EMAIL` and that password, `authToken` into `WARAPP_AUTH_TOKEN`: one war.app
-  attempt, the token never in the gateway-readable bag); the captcha / no-password fallback pastes
-  the cookie (`warapp-auth-flow-paste.json`, an alternative the operator registers by hand: a
-  registration holds one flow). `mint.yaml` declares the password flow as `auth.flow` (a path inside
-  the package). `tests/auth-flow-doc.test.ts` checks both against mcp-host's rules offline. **`warapp_sign_in` (part B, `src/direct/sign-in.ts`, `src/tools/sign-in.ts`)
+  attempt, the token never in the gateway-readable bag). No paste-the-cookie fallback ships:
+  `warapp_sign_in` takes no cookie argument, so such a flow would be an `isError` that ends the
+  login (a test keeps the document, the hint and the manifest from offering one until it is built).
+  `mint.yaml` declares the password flow as `auth.flow` (a path inside the package).
+  `tests/auth-flow-doc.test.ts` checks it against mcp-host's rules offline. **`warapp_sign_in` (part B, `src/direct/sign-in.ts`, `src/tools/sign-in.ts`)
   is registered ONLY hosted** (locally `warapp_link_session` stays the way). It takes `email` and
   `password` and makes ONE attempt, never retried (war.app may count failed sign-ins): GET
   `https://war.app/LogIn` for its cookies (`jses_WS60`, `FirstReferrer`, `AWSELB`; a page without its
@@ -1579,9 +1580,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   Not confirm-gated (the flow sends only the arguments its document declares); annotated not
   read-only, not destructive, not idempotent, open-world. The registration should hide it from the
   menu (`enabledTools` left without it): mcp-host never checks a flow's step or capture tool against
-  that allowlist (`wire.ts` `toolCallRequestSchema`). The paste fallback's `auth_token` argument is
-  not built yet, and `mint.yaml` still declares no flow; the design, trade-off and registration
-  change are in `docs/PLAN-DIRECT.md`.
+  that allowlist (`wire.ts` `toolCallRequestSchema`). The design, trade-off, registration change
+  and the unbuilt paste fallback are in `docs/PLAN-DIRECT.md`.
 - **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
   needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback;
   #228: the surrender preview reads the game with `settings: true`, which carries it — without them it

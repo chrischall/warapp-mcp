@@ -186,7 +186,7 @@ function challenge(what: string): McpToolError {
   return refusal(
     'edge_blocked',
     `war.app answered the sign-in with ${what}, which this connector cannot answer. ${NOT_RETRIED}`,
-    "Wait a while and use Sign in on the connection again; if it keeps happening, the operator can switch to the paste flow (docs/examples/warapp-auth-flow-paste.json), which takes the AuthToken cookie from a signed-in browser.",
+    'Wait a while and use Sign in on the connection again. Until then the connection still works through the war.app tab (the browser bridge); if it keeps happening, report it.',
   );
 }
 

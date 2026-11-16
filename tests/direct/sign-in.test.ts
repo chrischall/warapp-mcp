@@ -143,7 +143,9 @@ describe('signIn', () => {
     const err = await refusalOf(signIn({ email: EMAIL, password: PASSWORD }, { fetch }));
     expect(err.kind).toBe('edge_blocked');
     expect(err.message).toMatch(/captcha/);
-    expect(err.hint).toMatch(/paste/);
+    // No paste flow is built: the hint must not send the operator to one (#333 review).
+    expect(err.hint).not.toMatch(/paste|auth-flow-paste/);
+    expect(err.hint).toMatch(/Sign in/);
     expectClean(err);
   });
 

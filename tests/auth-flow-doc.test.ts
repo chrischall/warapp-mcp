@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestHarness, type TestHarness } from '@chrischall/mcp-utils/test';
 import { registerAllTools } from '../src/tools/index.js';
@@ -27,7 +27,6 @@ type Flow = { steps: Step[]; capture?: { tool: string; args?: Record<string, Arg
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const FLOW = JSON.parse(read('../docs/examples/warapp-auth-flow.json')) as Flow;
-const PASTE = JSON.parse(read('../docs/examples/warapp-auth-flow-paste.json')) as Flow;
 const mint = read('../mint.yaml');
 
 /** The `auth.fields` names mint.yaml collects up front: in the value bag before step 1. */
@@ -168,15 +167,13 @@ describe('docs/examples/warapp-auth-flow.json (hosted direct mode, #333)', () =>
   });
 
   it('every step tool exists on a hosted child and takes the args the flow sends', () => {
-    for (const flow of [FLOW, PASTE]) {
-      for (const step of flow.steps) {
-        const tool = hostedTools.find((t) => t.name === step.tool);
-        expect(tool, step.tool).toBeDefined();
-        // An argument the tool does not take, or one it requires and is not sent, is an
-        // isError — which mcp-host reads as a refused credential, ending the login.
-        expect(tool!.inputSchema.required ?? []).toEqual([]);
-        expect(Object.keys(step.args ?? {})).toEqual([]);
-      }
+    for (const step of FLOW.steps) {
+      const tool = hostedTools.find((t) => t.name === step.tool);
+      expect(tool, step.tool).toBeDefined();
+      // An argument the tool does not take, or one it requires and is not sent, is an
+      // isError — which mcp-host reads as a refused credential, ending the login.
+      expect(tool!.inputSchema.required ?? []).toEqual([]);
+      expect(Object.keys(step.args ?? {})).toEqual([]);
     }
   });
 
@@ -202,7 +199,6 @@ describe('docs/examples/warapp-auth-flow.json (hosted direct mode, #333)', () =>
     const pkg = JSON.parse(read('../package.json')) as { files: string[] };
     expect(pkg.files).toContain('docs/examples/warapp-auth-flow.json');
     expect(mint).toMatch(/WARAPP_AUTH_TOKEN/);
-    expect(mint).toMatch(/docs\/examples\/warapp-auth-flow-paste\.json/);
   });
 
   it('the password help says, in so many words, it is used once to sign in and never stored', () => {
@@ -211,12 +207,20 @@ describe('docs/examples/warapp-auth-flow.json (hosted direct mode, #333)', () =>
   });
 });
 
-describe('docs/examples/warapp-auth-flow-paste.json (the captcha fallback)', () => {
-  it('is a flow mcp-host accepts, asks for no password and captures the same variable', () => {
-    expect(problems(PASTE, authFields, envNames)).toEqual([]);
-    const prompts = PASTE.steps.flatMap((s) => s.prompt ?? []);
-    expect(prompts.map((p) => [p.name, p.type])).toEqual([['cookie', 'password']]);
-    expect(JSON.stringify(PASTE)).not.toMatch(/"password"\s*:\s*\{/);
-    expect(PASTE.capture).toMatchObject({ tool: 'warapp_sign_in', path: 'authToken', into: HOST_TOKEN_ENV });
+describe('no paste-the-cookie flow until warapp_sign_in takes a cookie', () => {
+  // warapp_sign_in takes only `email` and `password` (both required): a flow that captured
+  // with `{ auth_token }` would get a schema isError, which mcp-host reads as a refused
+  // credential — the login ends and the collected credentials are deleted. So no document,
+  // hint or manifest offers one until that mode is built and its capture args are tested here.
+  it('ships no paste flow document and mint.yaml offers none', () => {
+    expect(existsSync(new URL('../docs/examples/warapp-auth-flow-paste.json', import.meta.url))).toBe(false);
+    expect(mint).not.toMatch(/auth-flow-paste|paste-the-cookie/);
+  });
+
+  it('the capture tool takes no cookie argument', () => {
+    const tool = hostedTools.find((t) => t.name === 'warapp_sign_in') as
+      | { inputSchema: { properties?: Record<string, unknown> } }
+      | undefined;
+    expect(Object.keys(tool!.inputSchema.properties ?? {}).sort()).toEqual(['email', 'password']);
   });
 });
