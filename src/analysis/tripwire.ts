@@ -51,7 +51,15 @@
 // the stock bound reads the stack (none without the start).
 // Cards: nothing is read when an opponent may hold an Airlift (`airlift`, the caller's card clock): one
 // lands armies on any territory it holds, into a target, a fogged stack or one beside a capture, and
-// reads as income. A Reinforcement card is income: the estimate compared carries it from the turn the
+// reads as income. No capture and no held attack is read when an opponent may hold a Bomb (`bomb`): one
+// runs before the attacks (phase 30) and halves my attack's source (beside the target by definition: the
+// source still ends at the guard plus survivors, so the check on it misses it) or a territory of mine it
+// then takes (half the defenders counted). A Bomb only kills, so a stack out of the fog is still read.
+// Players: a player out of the game whose seat no AI plays (`staticSeats`, #270) is never read, nor one
+// the caller has no estimate for (`estimateAt` undefined: never compared against 0). Another player's
+// armies are never credited to it: a held attack is not read with any player but it beside the target
+// (its teammate may have sent armies in; a third may have moved), and a fog stack is not read for a player
+// with a teammate (`teams`), whose armies may have walked in. A Reinforcement card is income: the estimate compared carries it from the turn the
 // card clock says one can be in hand (#164).
 // `implied` is the deploy per turn the observation needs: what the estimate should have been.
 // The estimate compared is the one the plan used that turn (`estimateAt`), the caller's to supply.
@@ -119,10 +127,14 @@ export interface TripInput {
   start?: { territories: number; armiesPerTerritory: number };
   /** An opponent may hold an Airlift card by now: nothing is read (armies it lands look like income). */
   airlift?: boolean;
+  /** An opponent may hold a Bomb card by now: no capture or held attack is read (a Bomb halves the source or the defenders first). */
+  bomb?: boolean;
+  /** #270: players out of the game whose seat no AI plays: never read. */
+  staticSeats?: ReadonlySet<number> | ReadonlyMap<number, unknown>;
   /** Players a Diplomacy card in force may have kept from my attacks: no held attack is read on them. */
   peace?: ReadonlySet<number>;
-  /** The deploy estimate the plan used for `player` on turn `turn`. */
-  estimateAt: (player: number, turn: number) => number;
+  /** The deploy estimate the plan used for `player` on turn `turn`; undefined when it has none (the player is not read). */
+  estimateAt: (player: number, turn: number) => number | undefined;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -147,7 +159,12 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
   const cur = index(now.board);
   const before = index(prev.board);
   const playerOf = (t: TerritoryState | undefined): number | undefined => (t?.owner.kind === 'player' ? t.owner.playerId : undefined);
-  const est = (p: number, turn: number) => Math.max(0, input.estimateAt(p, turn));
+  const est = (p: number, turn: number) => Math.max(0, input.estimateAt(p, turn) ?? 0);
+  /** `p` has a teammate in the game: another player's armies may stand for its own. */
+  const hasMate = (p: number) => {
+    const team = teams?.get(p);
+    return team !== undefined && team >= 0 && [...teams!].some(([q, t]) => q !== p && t === team);
+  };
   const out: TripObservation[] = [];
   const trip = (o: Omit<TripObservation, 'turn'>) => {
     if (o.observed >= TRIP_RATIO * o.allowed && o.observed - o.allowed >= TRIP_MIN_EXCESS) out.push({ ...o, turn: T });
@@ -207,11 +224,15 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     const t = visibleState(cur.get(id));
     const p = playerOf(t);
     if (p === undefined || friend(p) || !graph.territoryById.has(id)) continue;
+    // #270: a static seat deploys nothing; a player with no estimate is never compared against 0.
+    if (input.staticSeats?.has(p) || input.estimateAt(p, T - 1) === undefined) continue;
     const was = visibleState(before.get(id));
     const armies = t!.armies!;
 
     // fog-stack: out of the fog this turn.
     if (!was) {
+      // Its teammate's armies may have walked in under the fog: they are not its income.
+      if (hasMate(p)) continue;
       let last: TripBoard | undefined;
       for (const b of boards.slice(0, -1)) if (b.source !== 'history' && visibleState(index(b.board).get(id))) last = b;
       // Never seen: its start may have walked in; unknown, nothing is read.
@@ -254,7 +275,7 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     // capture: it holds what was mine or a visible neutral's.
     const wasOwner = playerOf(was);
     if (wasOwner !== p && (wasOwner === me || was.owner.kind === 'neutral')) {
-      if (chains || !clearAround(id)) continue;
+      if (chains || input.bomb || !clearAround(id)) continue;
       const third = neighborsOf(graph, id).some((n) => {
         const o = playerOf(visibleState(before.get(n)));
         return o !== undefined && o !== p && o !== me;
@@ -279,7 +300,13 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     }
 
     // held-attack: my attack on its territory failed, and it still holds it.
-    if (wasOwner === p && exact && !chains && myOrders && clearAround(id) && !input.peace?.has(p)) {
+    // Not when another player stood beside the target (its teammate may have sent armies in), nor when a
+    // Bomb may have halved my source first.
+    const otherBeside = neighborsOf(graph, id).some((n) => {
+      const o = playerOf(visibleState(before.get(n)));
+      return o !== undefined && o !== p && !friend(o);
+    });
+    if (wasOwner === p && exact && !chains && !input.bomb && !otherBeside && myOrders && clearAround(id) && !input.peace?.has(p)) {
       const transferOnly = new Set((myOrders.sent ?? []).filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
       const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id && !transferOnly.has(`${m.from}:${id}`)).map((m) => m.from))].sort(byNum);
       let attackers = 0;

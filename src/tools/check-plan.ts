@@ -319,6 +319,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(teamsKnown ? {} : { teamsKnown: false }),
         gameSettings: game.settings,
         map,
+        staticSeats: staticSeats(game.players, game.endRules, me.id),
       });
       const untrustedOf = new Map(trip.tripwires.map((w) => [w.player, untrustedDeploy(w, income)]));
       const opponents = so.opponents.map((o) => {

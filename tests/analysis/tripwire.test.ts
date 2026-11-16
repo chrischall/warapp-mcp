@@ -301,6 +301,68 @@ describe('brokenEstimates (#275 b)', () => {
     }
   });
 
+  it('reads no capture or held attack when an opponent may hold a Bomb card: one halves my source or my territory first', () => {
+    // My 60 on 2 attack its 13 on 3 with 59; it deploys 5 on 3 and bombs 2 (phase 30, before attacks), so
+    // only 29 attack and fail. 2 ends at the guard plus survivors either way: the source check misses it.
+    const held = [
+      at(4, [mine(1, 1), mine(2, 60), foe(3, 13), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 59 }] }),
+      at(5, [mine(1, 1), mine(2, 17), foe(3, 1), foe(4, 1)]),
+    ];
+    expect(run(held)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 36, allowed: 18 }]);
+    // A bombed territory of mine needs about half the attackers counted.
+    const capture = [
+      at(4, [mine(1, 1), mine(2, 10), foe(3, 3), fogged(4)], { deploys: [], moves: [] }),
+      at(5, [mine(1, 1), foe(2, 8), foe(3, 1), fogged(4)]),
+    ];
+    expect(run(capture)).toMatchObject([{ kind: 'capture' }]);
+    const bomb = (boards: TripBoard[]) => brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, bomb: true, estimateAt: () => 5 });
+    expect(bomb(held)).toEqual([]);
+    expect(bomb(capture)).toEqual([]);
+    // A Bomb only kills: a stack out of the fog is still read.
+    const fog = [
+      at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)]),
+    ];
+    expect(bomb(fog)).toMatchObject([{ kind: 'fog-stack', territory: 3 }]);
+  });
+
+  it("credits no opponent's armies to another: a held attack beside another player, a fog stack of a player with a teammate", () => {
+    const Q = 30;
+    const q = (id: number, armies: number): TerritoryState => mine(id, armies, Q);
+    const teams = new Map([[ME, 1], [FOE, 2], [Q, 2]]);
+    const withTeams = (boards: TripBoard[], t: ReadonlyMap<number, number> | undefined = teams) =>
+      brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, ...(t ? { teams: t } : {}), estimateAt: () => 5 });
+    // Its teammate's 41 on 4 send 40 into 3: my 34 from 2 fail on what reads as 21 defenders.
+    const held = [
+      at(4, [mine(1, 1), mine(2, 40), foe(3, 5), q(4, 41)], { deploys: [], moves: [{ from: 2, to: 3, armies: 34 }] }),
+      at(5, [mine(1, 1), mine(2, 6), foe(3, 30), q(4, 1)]),
+    ];
+    expect(withTeams(held)).toEqual([]);
+    // A third player beside the target, teams or none, may have moved armies in or out: not read.
+    expect(withTeams(held, undefined)).toEqual([]);
+    // With its own stack there, the same failure trips.
+    const own = [
+      at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 34 }] }),
+      at(5, [mine(1, 1), mine(2, 6), foe(3, 30), foe(4, 1)]),
+    ];
+    expect(withTeams(own)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 21, allowed: 10 }]);
+    // Its teammate's 60 seen on 4, then 60 of its on the fogged 3 beside it: the teammate's walked in.
+    const fog = [at(3, [mine(1, 5), mine(2, 5), fogged(3), q(4, 60)]), at(4, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)])];
+    expect(withTeams(fog)).toEqual([]);
+    // With no teammate, the same stack trips (its start and three turns of 5 allow 25).
+    expect(withTeams(fog, new Map([[ME, 1], [FOE, 2], [Q, 3]]))).toMatchObject([{ kind: 'fog-stack', observed: 60, allowed: 25 }]);
+  });
+
+  it('reads no player who is out with no AI on its seat, nor one with no estimate (#270)', () => {
+    // Starts 2 × 5: 40 of player 20 on 3, hidden last turn.
+    const boards = [at(2, [mine(1, 5), mine(2, 5), fogged(3), fogged(4)]), at(3, [mine(1, 5), mine(2, 5), foe(3, 40), fogged(4)])];
+    expect(run(boards)).toMatchObject([{ kind: 'fog-stack', observed: 40, allowed: 20 }]);
+    expect(brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, staticSeats: new Set([FOE]), estimateAt: () => 5 })).toEqual([]);
+    // No estimate for it (the planner neutralizes a static seat): never compared against 0.
+    expect(brokenEstimates({ graph: G, boards, me: ME, settings: STD, start: START, estimateAt: () => undefined })).toEqual([]);
+  });
+
   it('needs the previous board: no reading across a gap', () => {
     const boards = [at(3, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4)]), at(5, [mine(1, 5), mine(2, 5), foe(3, 60), fogged(4)])];
     expect(run(boards)).toEqual([]);

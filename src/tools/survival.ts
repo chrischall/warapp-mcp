@@ -36,7 +36,8 @@ export interface TripwireRead {
  * boards that this turn's estimates (or the ones kept for the turns it reads) cannot explain. None while
  * the teams are unknown (`teamsKnown: false`: a game of 3+ seats whose teams could not be read, where an
  * opponent may be a teammate), and no observation once an opponent may hold an Airlift card (the card
- * clock). While the teams are unknown the stored marks are kept unchanged (`keep`), never applied. Never throws.
+ * clock); no capture or held attack once one may hold a Bomb. A static seat (#270) and a player with no
+ * estimate this turn or kept are never read. While the teams are unknown the stored marks are kept unchanged (`keep`), never applied. Never throws.
  */
 export async function readTripwires(a: {
   dataDir: string | undefined;
@@ -56,6 +57,8 @@ export async function readTripwires(a: {
   /** The game's settings and map: every player's start, credited to a stack no board ever showed; the Airlift card. */
   gameSettings?: GameSettings;
   map?: GameMap;
+  /** #270: players out of the game whose seat no AI plays (`staticSeats`): never read. */
+  staticSeats?: ReadonlySet<number> | ReadonlyMap<number, unknown>;
 }): Promise<TripwireRead> {
   const estimatesNow = new Map(a.estimates.map((e) => [e.playerId, e.estimate]));
   const survival = a.dataDir ? await readSurvival(a.dataDir, a.gameId, a.me) : { estimates: new Map(), tripwires: [] };
@@ -73,8 +76,11 @@ export async function readTripwires(a: {
       ...(a.teams ? { teams: a.teams } : {}),
       ...(a.peace ? { peace: new Set(a.peace) } : {}),
       ...(opponentCanHold(a.gameSettings, 'Airlift', a.turn) ? { airlift: true } : {}),
-      // The estimate the plan of that turn used when kept, else this turn's.
-      estimateAt: (p, t) => survival.estimates.get(t)?.get(p) ?? estimatesNow.get(p) ?? 0,
+      ...(opponentCanHold(a.gameSettings, 'Bomb', a.turn) ? { bomb: true } : {}),
+      ...(a.staticSeats?.size ? { staticSeats: a.staticSeats } : {}),
+      // The estimate the plan of that turn used when kept, else this turn's; none for a player with no
+      // estimate now (a static seat is neutralized, #270): it is not read.
+      estimateAt: (p, t) => (estimatesNow.has(p) ? (survival.estimates.get(t)?.get(p) ?? estimatesNow.get(p)) : undefined),
     });
   } catch {
     // A board this reader cannot follow: no observation.

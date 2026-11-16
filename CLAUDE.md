@@ -703,7 +703,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   Under Multi-Attack, or when the settings do not say, a chain moves armies many hops in one turn: no capture
   or held attack is read, and a stack out of the fog credits armies that left view at any distance. Nothing is
   read once an opponent may hold an Airlift card (the card clock, `opponentCanHold`): armies it lands look like
-  income; a Reinforcement card is already in the estimate (#164). Nothing is read either while `resolveTeams`
+  income; a Reinforcement card is already in the estimate (#164). No capture or held attack is read once one
+  may hold a Bomb (it runs before the attacks and halves my source or the territory taken; a stack out of the fog
+  still is). Another player's armies are never its: no held attack is read with any player but it beside the
+  target (a teammate may have sent armies in), and no fog stack of a player with a teammate. A static seat
+  (#270) is never read, nor a player with no estimate now (never compared against 0). Nothing is read either while `resolveTeams`
   says the teams are unknown (`known: false`): an opponent may be a teammate, and the stored marks are applied
   to nothing but kept unchanged (`TripwireRead.keep`: one such call never erases a running mark); `headroom` rows then carry
   `mayBeTeammate: true` and `warapp_submit_turn`'s headroom warning says so. The marks and each turn's per-opponent

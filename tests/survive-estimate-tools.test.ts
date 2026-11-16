@@ -24,14 +24,14 @@ const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.
 
 // A 1v1 (the fixture's other seats dropped: with nine seats and no team read, the teams are unknown) with
 // no Airlift in play (one lands armies anywhere: the tripwire reads nothing then).
-function game(turnsDone = '2', o: { allSeats?: boolean; airlift?: boolean; bobOut?: boolean } = {}): Record<string, unknown> {
+function game(turnsDone = '2', o: { allSeats?: boolean; airlift?: boolean; bomb?: boolean; bobOut?: boolean } = {}): Record<string, unknown> {
   const f = lobbyFixture();
   const players = (f.players as Array<Record<string, string>>)
     .map((p, i) =>
       i === 0 ? { ...p, id: ANN.feed, name: 'Ann' } : i === 1 ? { ...p, id: BOB.feed, name: 'Bob', ...(o.bobOut ? { state: 'SurrenderAccepted' } : {}) } : p,
     )
     .slice(0, o.allSeats ? undefined : 2);
-  const settings = { ...(f.settings as object), SanctionsCard: 'none', ...(o.airlift ? {} : { AirliftCard: 'none' }) };
+  const settings = { ...(f.settings as object), SanctionsCard: 'none', ...(o.airlift ? {} : { AirliftCard: 'none' }), ...(o.bomb ? { BombCard: { NumPieces: 6, InitialPieces: 6, MinimumPiecesPerTurn: 0, Weight: 1.0 } } : {}) };
   return { ...f, state: 'Playing', numberOfTurns: turnsDone, players, settings };
 }
 
@@ -209,6 +209,24 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     expect(kept.tripwires).toEqual([mark]);
     // This turn's estimates are still kept.
     expect(kept.estimates.has(3)).toBe(true);
+  });
+
+  it('reads nothing when an opponent may hold a Bomb card: one halves my territory before it is taken', async () => {
+    const dir = await seeded();
+    h = await live(now, dir, [game('2', { bomb: true })]);
+    const p = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.some((x) => /untrusted/.test(x))).toBe(false);
+    expect((await readSurvival(dir, GAME, Number(ANN.feed))).tripwires).toEqual([]);
+  });
+
+  it('reads nothing of a static seat (#270), even with an estimate kept for it from before it went out', async () => {
+    const dir = await seeded();
+    h = await live(now, dir, [game('2', { bobOut: true })]);
+    const p = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.some((x) => /untrusted/.test(x))).toBe(false);
+    expect((await readSurvival(dir, GAME, Number(ANN.feed))).tripwires).toEqual([]);
+    const c = payload<Checked>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [] }));
+    expect(c.warnings.some((x) => /untrusted/.test(x))).toBe(false);
   });
 
   it('reads nothing without the previous board', async () => {

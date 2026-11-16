@@ -1635,6 +1635,7 @@ export async function livePlanSetup(
     ...(a.teamsKnown === false ? { teamsKnown: false } : {}),
     gameSettings: game.settings,
     map,
+    staticSeats: staticSeats(game.players, game.endRules, me.id),
   });
   const untrusted = trip.tripwires.map((w) => ({ player: w.player, deploy: untrustedDeploy(w, boardIncome) }));
   const input: PlanInput = {
