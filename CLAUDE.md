@@ -720,8 +720,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   attack: every territory of mine that stayed mine with only mine and neutrals in view beside it, no card play or
   order outside `moves` on it and only transfers out into territories that stayed mine ends at what it had plus my
   deploys less what went out plus what came in — up to what an order sends from a source that may have been hit
-  first — and at least one such territory exists, so orders changed in the web client after the cache, a deploy
-  that never landed, read nothing; a capture is read with no luck and straight rounding only, as a held attack is)
+  first — and at least one such territory exists, and every territory of mine on both boards, borders included,
+  ends at most at what it had plus my deploys there plus what my orders in could send, so orders changed in the
+  web client after the cache, a deploy that never landed, read nothing; a capture of mine never counts a cached
+  deploy on the territory lost (the board cannot confirm it), and a held attack is not read when its source
+  lost fewer than the defenders it needed kill — every attacker, or round(defensive kill rate × defenders) —
+  since the attack that ran was smaller; a capture is read with no luck and straight rounding only, as a held attack is)
   for `UNTRUSTED_TURNS` (3).
   Under Multi-Attack, or when the settings do not say, a chain moves armies many hops in one turn: no capture
   or held attack is read, and a stack out of the fog credits armies that left view at any distance. Nothing is

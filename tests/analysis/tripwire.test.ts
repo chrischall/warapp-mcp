@@ -32,6 +32,21 @@ function line(n: number): GameMap {
     distributionModes: [],
   };
 }
+/** A map from its edges. */
+function graphOf(edges: [number, number][]): GameMap {
+  const ids = [...new Set(edges.flat())].sort((a, b) => a - b);
+  return {
+    id: 2,
+    name: 'Edges',
+    territories: ids.map((id) => ({
+      id,
+      name: `T${id}`,
+      connectedTo: edges.flatMap(([a, b]) => (a === id ? [b] : b === id ? [a] : [])),
+    })),
+    bonuses: [],
+    distributionModes: [],
+  };
+}
 const foe = (id: number, armies: number): TerritoryState => mine(id, armies, FOE);
 const G = buildGraph(line(4));
 // Orders given without `sent` carry it as `myOrdersOf` writes it: every move in `moves`, nothing more.
@@ -503,8 +518,11 @@ describe('brokenEstimates (#275 b)', () => {
     const order = { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] };
     const still = [at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], order), at(5, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)])];
     expect(run(still)).toEqual([]);
-    // A loss of one army is a fight: it trips.
+    // A loss of one army is a fight, but not with the 22 defenders the cached 35 needed (they kill 15).
     still[1] = at(5, [mine(1, 1), mine(2, 39), foe(3, 4), foe(4, 1)]);
+    expect(run(still)).toEqual([]);
+    // A loss of 15 fits them: it trips.
+    still[1] = at(5, [mine(1, 1), mine(2, 25), foe(3, 4), foe(4, 1)]);
     expect(run(still)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
   });
 
@@ -622,18 +640,17 @@ describe('brokenEstimates (#275 b)', () => {
 
   it('reads no capture of mine when a cached deploy never landed: the board disagrees with my orders (#275 review)', () => {
     // Line 1-5, me on 1 and 2, its 11 on 3. The cached orders deploy 20 on 2, but the orders were changed
-    // in the web client: the 20 went to 1. Its 10 take my 5 on 2. Read from the cache, 25 defenders needed
-    // 41 against 10 + 5: a false trip implying 31.
+    // in the web client: the 20 went to 1. Its 10 take my 5 on 2. Read from the cache, 25 defenders would
+    // need 41 against 10 + 5: a false trip implying 31.
     const G5 = buildGraph(line(5));
     const before = [mine(1, 1), mine(2, 5), foe(3, 11), fogged(4), fogged(5)];
     const orders = { deploys: [{ territoryId: 2, armies: 20 }], moves: [] };
     const run5 = (after: TerritoryState[]) =>
       brokenEstimates({ graph: G5, boards: [at(4, before, orders), at(5, after)], me: ME, settings: STD, estimateAt: () => 5 });
     expect(run5([mine(1, 21), foe(2, 4), foe(3, 1), fogged(4), fogged(5)])).toEqual([]);
-    // When the board agrees (1 stayed at 1, so the 20 went where the cache says) 25 defenders fell to 10: it trips.
-    expect(run5([mine(1, 1), foe(2, 4), foe(3, 1), fogged(4), fogged(5)])).toEqual([
-      { player: FOE, turn: 5, kind: 'capture', territory: 2, observed: 41, allowed: 15, implied: 31 },
-    ]);
+    // Even when 1 stayed at 1, a deploy on a territory I lost is never counted (the board cannot confirm it
+    // went there rather than to another border): 5 defenders need 8, no trip.
+    expect(run5([mine(1, 1), foe(2, 4), foe(3, 1), fogged(4), fogged(5)])).toEqual([]);
     // With no territory of mine the board can check the orders on, nothing agrees: not read.
     const lone = [neutral(1, 1), mine(2, 5), foe(3, 11), fogged(4), fogged(5)];
     expect(
@@ -656,6 +673,76 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run([at(4, before, orders), at(5, [mine(1, 11), mine(2, 20), foe(3, 4), foe(4, 1)])])).toMatchObject([
       { kind: 'held-attack', territory: 3, observed: 22 },
     ]);
+  });
+
+  it('reads no false capture when a web-client edit moved a deploy between borders: a lost territory confirms no deploy (#275 review)', () => {
+    // Star: 1 is interior, beside 2 and 4; 2 faces its 3, 4 faces its 5. The cache deploys 20 on 2; the
+    // web-client edit sent them to 4. Its 10 take my 5 on 2. Quiet 1 is unchanged, but no deploy on a
+    // territory I lost can be confirmed: 5 defenders need 8 against 10 + 5, no trip.
+    const star = buildGraph(graphOf([
+      [1, 2],
+      [1, 4],
+      [2, 3],
+      [4, 5],
+    ]));
+    const before = [mine(1, 1), mine(2, 5), foe(3, 11), mine(4, 5), foe(5, 2)];
+    const orders = { deploys: [{ territoryId: 2, armies: 20 }], moves: [] };
+    const read = (after: TerritoryState[]) =>
+      brokenEstimates({ graph: star, boards: [at(4, before, orders), at(5, after)], me: ME, settings: STD, estimateAt: () => 5 });
+    expect(read([mine(1, 1), foe(2, 4), foe(3, 1), mine(4, 25), foe(5, 2)])).toEqual([]);
+    // Even had the deploy landed on 2 (4 unchanged), the board cannot confirm it once 2 is lost: no trip.
+    expect(read([mine(1, 1), foe(2, 4), foe(3, 1), mine(4, 5), foe(5, 2)])).toEqual([]);
+    // A capture of what stood there at the start still trips: my 15 on 2 need 25 attackers; its 3 beside it
+    // move 2, with a 5 deploy 7.
+    const plain = [mine(1, 1), mine(2, 15), foe(3, 3), mine(4, 5), foe(5, 2)];
+    expect(
+      brokenEstimates({
+        graph: star,
+        boards: [at(4, plain, { deploys: [], moves: [] }), at(5, [mine(1, 1), foe(2, 4), foe(3, 1), mine(4, 5), foe(5, 2)])],
+        me: ME,
+        settings: STD,
+        estimateAt: () => 5,
+      }),
+    ).toMatchObject([{ kind: 'capture', territory: 2, observed: 25, allowed: 7 }]);
+  });
+
+  it('reads no held attack whose source lost fewer armies than the defenders it needed would kill (#275 review)', () => {
+    // Line 1-2-3-4: the cache attacks 3 from 2 with 45, but the web-client edit attacked with 8. 2 ends at
+    // 42, 3 at 7. Read from the cache, 28 defenders held; but 28 kill 20 attackers, and 2 lost only 8 (at
+    // most 12 defenders): the cached attack never ran as cached. Not read.
+    const order = { deploys: [], moves: [{ from: 2, to: 3, armies: 45 }] };
+    const before = [mine(1, 3), mine(2, 50), foe(3, 12), foe(4, 1)];
+    expect(run([at(4, before, order), at(5, [mine(1, 3), mine(2, 42), foe(3, 7), foe(4, 1)])])).toEqual([]);
+    // With the 20 losses 28 defenders inflict, it trips.
+    expect(run([at(4, before, order), at(5, [mine(1, 3), mine(2, 30), foe(3, 1), foe(4, 1)])])).toMatchObject([
+      { kind: 'held-attack', territory: 3, observed: 28, allowed: 17 },
+    ]);
+  });
+
+  it('reads no cached order a territory of mine on a border contradicts: it ended above what the cache could put there (#275 review)', () => {
+    // 1 borders its 5, so it is not quiet; 6 is. The cache attacks 3 from 2 with 35; the edit attacked
+    // with 3 and moved 32 to 1. 2 ends at 5 as the cache says, and its losses fit, but 1 ends at 37 where
+    // the cache put nothing: the orders that ran are not the cached ones.
+    const g = buildGraph(graphOf([
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [1, 5],
+      [1, 6],
+    ]));
+    const order = { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] };
+    const before = [mine(1, 5), mine(2, 40), foe(3, 5), foe(4, 1), foe(5, 1), mine(6, 2)];
+    const read = (one: number) =>
+      brokenEstimates({
+        graph: g,
+        boards: [at(4, before, order), at(5, [mine(1, one), mine(2, 5), foe(3, 3), foe(4, 1), foe(5, 1), mine(6, 2)])],
+        me: ME,
+        settings: STD,
+        estimateAt: () => 5,
+      });
+    expect(read(37)).toEqual([]);
+    // 1 where the cache leaves it: it trips.
+    expect(read(5)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
   });
 
   it('reads no capture with luck: a lucky roll takes a territory with fewer than the luck-free attackers (#275 review)', () => {
