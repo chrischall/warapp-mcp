@@ -5,7 +5,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WarappClient } from '../src/client.js';
+import { MapCache, WarappClient } from '../src/client.js';
+import { rememberGameMap, writeStoredMap } from '../src/map-store.js';
+import { normalizeMap } from '../src/normalize.js';
 import { finishedDir, finishedPath, historyOfRecord, type FinishedRecord } from '../src/finished-store.js';
 import { lessonsPath, mapRecordDir, mapRecordPath } from '../src/lessons-store.js';
 import { profilePlayersPath } from '../src/profile-store.js';
@@ -305,7 +307,7 @@ describe('the end-of-game pass', () => {
     const third = payload(await h.call('warapp_my_games'));
     expect(third).not.toHaveProperty('endOfGame');
     expect(historyCalls(h)).toBe(3);
-    expect(readdirSync(finishedDir(dir))).toHaveLength(3);
+    expect(readdirSync(finishedDir(dir)).filter((n) => n !== 'processed.json')).toHaveLength(3);
   });
 
   it('a pass that spent its history read is never read again in this process, even when nothing could be kept', async () => {
@@ -406,49 +408,88 @@ describe('the sweep and the store bound (P2: a processed game is never read agai
     const read = reads();
     expect(read.length).toBeGreaterThan(0);
     expect(new Set(read).size).toBe(read.length);
-    expect(readdirSync(finishedDir(dir)).length).toBeLessThanOrEqual(keep);
+    expect(readdirSync(finishedDir(dir)).filter((n) => n !== 'processed.json').length).toBeLessThanOrEqual(keep);
   });
 });
 
-describe('the harness fetch (#318 --fetch): only the end-of-game pass, never a history read of its own', () => {
+describe('P2: the one history read asks no map and never refreshes one (#312)', () => {
   async function freshProcess() {
     vi.resetModules();
     return import('../src/tools/end-of-game.js');
   }
-  const reads = (calls: { url: string }[]) => calls.filter((c) => c.url.includes('GetHistory=true')).length;
+  /** A GameFeed that honours GetMap=false (the stubs do not): no `map` in the reply then. */
+  function feedServer(body: Record<string, unknown>) {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      calls.push(String(url));
+      const reply = String(url).includes('GetMap=false') ? Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'map')) : body;
+      return new Response(JSON.stringify(reply), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    return { calls, fetchImpl };
+  }
+  const history = (calls: string[]) => calls.filter((u) => u.includes('GetHistory=true'));
 
-  it('runs the pass on a finished game not yet processed, and on a later run reads nothing for it', async () => {
+  it('with no map cached: the history read (GetMap=false), then one map-only read, never a second history read', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
-    const { calls, fetchImpl } = stubFetch(finished(), withHistory());
-    const deps = { client: new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }), dataDir: dir, env: {} };
-    const first = await (await freshProcess()).fetchFinished(deps, [{ gameId: GAME, me: ANN }]);
-    expect(first).toEqual({ captured: 1 });
-    expect(reads(calls)).toBe(1);
-    const before = calls.length;
-    const second = await (await freshProcess()).fetchFinished(deps, [{ gameId: GAME, me: ANN }]);
-    expect(second).toEqual({ 'already-processed': 1 });
-    expect(calls.length).toBe(before); // not even the state read
-    // The record the pass keeps is the one the harness reads.
-    const salt = (await playerRecordSalt(dir))!;
-    expect(historyOfRecord((await record(dir)) as unknown as FinishedRecord, salt, [ANN, BOB])).toMatchObject({ me: ANN });
+    const { calls, fetchImpl } = feedServer(withHistory());
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined, mapCache: new MapCache(), dataDir: () => dir });
+    const r = await (await freshProcess()).endOfGame({ client, dataDir: dir, env: {} }, GAME, ANN, undefined);
+    expect(r).toMatchObject({ status: 'captured', processed: { map: 'kept', lessons: 'kept' } });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatch(/GetHistory=true.*GetMap=false/);
+    expect(calls[1]).not.toMatch(/GetHistory|GetMap=false/);
+    expect(await record(dir)).not.toHaveProperty('noMap');
   });
 
-  it('a game in progress costs one state read and no history read', async () => {
+  it('with the map cached: one request in all, even when the standing names land the cached map lacks', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
-    const { calls, fetchImpl } = stubFetch(finished({ state: 'Playing' }));
-    const deps = { client: new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }), dataDir: dir, env: {} };
-    expect(await (await freshProcess()).fetchFinished(deps, [{ gameId: GAME, me: ANN }])).toEqual({ 'not-finished': 1 });
+    await writeStoredMap(dir, normalizeMap(MAP));
+    await rememberGameMap(dir, GAME, 77);
+    const { calls, fetchImpl } = feedServer({ ...withHistory(), standing: [terr(9, BOB, 3)] });
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined, mapCache: new MapCache(), dataDir: () => dir });
+    const r = await (await freshProcess()).endOfGame({ client, dataDir: dir, env: {} }, GAME, ANN, undefined);
+    expect(r.status).toBe('captured');
     expect(calls).toHaveLength(1);
-    expect(reads(calls)).toBe(0);
-    expect(existsSync(finishedDir(dir))).toBe(false);
+    expect(calls[0]).toMatch(/GetMap=false/);
   });
 
-  it('with profiling off it makes no request and writes nothing', async () => {
+  it('a failed map-only read keeps the record without the map, and the history is not read again', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
-    const { calls, fetchImpl } = stubFetch(finished(), withHistory());
-    const deps = { client: new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }), dataDir: dir, env: { WARAPP_PLAYER_PROFILE: 'off' } };
-    expect(await (await freshProcess()).fetchFinished(deps, [{ gameId: GAME, me: ANN }, { gameId: GAME + 1, me: ANN }])).toEqual({ off: 2 });
-    expect(calls).toHaveLength(0);
-    expect(readdirSync(dir)).toEqual([]);
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      calls.push(String(url));
+      if (!String(url).includes('GetMap=false')) return new Response('down', { status: 503 });
+      const { map: _map, ...body } = withHistory();
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined, mapCache: new MapCache(), dataDir: () => dir });
+    const r = await (await freshProcess()).endOfGame({ client, dataDir: dir, env: {} }, GAME, ANN, undefined);
+    expect(r).toMatchObject({ status: 'captured', processed: { map: 'no-map' } });
+    expect(history(calls)).toHaveLength(1);
+    expect(await record(dir)).toMatchObject({ noMap: true });
+  });
+
+  it('the processed mark outlives the record bound: a pruned game is never read again, in any process', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const { calls, fetchImpl } = stubFetch(withHistory());
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined });
+    const deps = { client, dataDir: dir, env: {} };
+    for (const id of [2001, 2002, 2003]) await (await freshProcess()).endOfGame(deps, id, ANN, undefined, { keep: 1 });
+    expect(readdirSync(finishedDir(dir)).filter((n) => n !== 'processed.json')).toHaveLength(1);
+    const eog = await freshProcess();
+    for (const id of [2001, 2002]) {
+      expect(await eog.needsEndOfGame(dir, {}, id, ANN)).toBe(false);
+      expect((await eog.endOfGame(deps, id, ANN, undefined, { keep: 1 })).status).toBe('already-processed');
+    }
+    expect(history(calls.map((c) => c.url))).toHaveLength(3);
+  });
+
+  it('a reply showing the game still in play leaves no lasting mark: a later process reads it once it ends', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    const { calls, fetchImpl } = stubFetch(finished({ state: 'Playing' }), withHistory());
+    const deps = { client: new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }), dataDir: dir, env: {} };
+    expect((await (await freshProcess()).endOfGame(deps, GAME, ANN, undefined)).status).toBe('not-finished');
+    expect((await (await freshProcess()).endOfGame(deps, GAME, ANN, undefined)).status).toBe('captured');
+    expect(history(calls.map((c) => c.url))).toHaveLength(2);
   });
 });

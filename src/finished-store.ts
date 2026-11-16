@@ -11,6 +11,18 @@
 // (with #315's reason) and `read-failed` (the request failed) record a pass whose history did not come,
 // and are never retried automatically (an explicit warapp_get_game with `include_history` may).
 //
+// The record bound would drop a processed mark, so every pass that spent its history read also leaves
+// a mark in `<dataDir>/finished/processed.json` (`markProcessed`): the record keys only (hashed, no id),
+// at most `MAX_PROCESSED_KEYS` (ten times the record bound), the least recently marked dropped first. A
+// game with a mark is never read again by a trigger even once its record is pruned (P2). The one
+// remaining exception: a game whose record AND mark have both aged out (over 5000 later passes) reads
+// again if a trigger names it. A marks file that does not parse is never overwritten (marks then rely
+// on the records alone).
+//
+// A captured record keeps at most `MAX_RECORD_BOARDS_HEAD` opening boards and `MAX_RECORD_BOARDS_TAIL`
+// closing ones (the opening benchmark reads the first, the calibration the turns the board cache kept,
+// the last ten); `boardsOmitted` counts the boards between them that were left out.
+//
 // Same guarantees as the profile stores: 0600 files in a 0700 folder, atomic writes, best effort; at
 // most `MAX_FINISHED_RECORDS` files, the least recently written (or refreshed by the sweep) dropped first, never
 // one the writer protects (the sweep's window: its newest finished games, half the bound, so a processed
@@ -29,14 +41,24 @@ import { holdsSeat } from './player-states.js';
 import type { BoardState, TerritoryOwner, TerritoryState } from './board.js';
 import type { HistoryUnreadable } from './trend.js';
 import type { FinalOutlook } from './outlook-log.js';
+import { withPathLock } from './path-lock.js';
 
 export const MAX_FINISHED_RECORDS = 500;
+/** The processed marks kept: ten times the record bound. */
+export const MAX_PROCESSED_KEYS = 5000;
+/** The opening boards a captured record keeps. */
+export const MAX_RECORD_BOARDS_HEAD = 30;
+/** The closing boards a captured record keeps. */
+export const MAX_RECORD_BOARDS_TAIL = 30;
 const VERSION = 1;
 const FILE = /^[0-9a-f]{32}\.json$/;
 
 export const finishedDir = (dir: string) => join(dir, 'finished');
 export const finishedPath = (dir: string, salt: string, me: number, gameId: number) =>
   join(finishedDir(dir), `${finishedGameKey(salt, me, gameId)}.json`);
+/** The processed marks: not a record (its name is no key), so the prune and the record list skip it. */
+export const processedPath = (dir: string) => join(finishedDir(dir), 'processed.json');
+const KEY = /^[0-9a-f]{32}$/;
 
 /** What a pass left: the capture, or why the history did not come. */
 export type FinishedStatus = 'captured' | 'history-unreadable' | 'read-failed';
@@ -90,6 +112,8 @@ export interface FinishedRecord {
    * replacing that territory's row whole.
    */
   boards?: { turn: number; d?: true; t: StoredTerritory[] }[];
+  /** The history boards left out between the opening and the closing ones kept (absent: none). */
+  boardsOmitted?: number;
 }
 
 /** A history board's territory as stored: `[territory id, owner, armies]`, then a fog level other than `Visible`. */
@@ -145,6 +169,60 @@ export async function touchFinished(path: string): Promise<void> {
   await utimes(path, now, now).catch(() => undefined);
 }
 
+/**
+ * The processed marks: the record keys of every game whose pass spent its history read, oldest first.
+ * Missing: none. `unreadable`: the file exists but does not parse (never overwritten). Never throws.
+ */
+export async function readProcessed(dir: string): Promise<ReadonlySet<string> | 'unreadable'> {
+  const keys = await readProcessedKeys(dir);
+  return keys === 'unreadable' ? keys : new Set(keys);
+}
+
+async function readProcessedKeys(dir: string): Promise<string[] | 'unreadable'> {
+  let text: string;
+  try {
+    text = await readFile(processedPath(dir), 'utf8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : 'unreadable';
+  }
+  try {
+    const v: unknown = JSON.parse(text);
+    if (!isRec(v) || v.version !== VERSION || !Array.isArray(v.keys) || !v.keys.every((k) => typeof k === 'string' && KEY.test(k))) return 'unreadable';
+    return v.keys as string[];
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/**
+ * Mark `key` (a `finishedGameKey`) processed, newest, keeping at most `limit` marks (0600, atomic,
+ * under the path lock). `false` when the marks file does not parse (left as it is) or the write failed. Never throws.
+ */
+export async function markProcessed(dir: string, key: string, limit = MAX_PROCESSED_KEYS): Promise<boolean> {
+  if (!KEY.test(key)) return false;
+  const path = processedPath(dir);
+  try {
+    return await withPathLock(path, async () => {
+      const keys = await readProcessedKeys(dir);
+      if (keys === 'unreadable') return false;
+      const next = [...keys.filter((k) => k !== key), key];
+      await writeJsonAtomic(path, finishedDir(dir), { version: VERSION, keys: next.slice(Math.max(0, next.length - limit)) });
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** Every record file under `dir` (the marks file aside), by path, sorted. Never throws. */
+export async function listFinishedRecords(dir: string): Promise<string[]> {
+  const names = await readdir(finishedDir(dir)).catch(() => [] as string[]);
+  return names
+    .filter((n) => FILE.test(n))
+    .sort()
+    .map((n) => join(finishedDir(dir), n));
+}
+
 async function pruneFinished(dir: string, keep: number, protect: ReadonlySet<string>): Promise<void> {
   const folder = finishedDir(dir);
   const files: { path: string; at: number }[] = [];
@@ -196,7 +274,8 @@ export function finishedRecordOf(p: RecordParts): FinishedRecord {
   const c = p.capture;
   // The history's own parts only when it read.
   const h = p.status === 'captured' ? c : undefined;
-  const stored = p.status === 'captured' && p.boards ? storeBoards(p.boards, p.game?.players.map((x) => x.id) ?? [p.me], key) : undefined;
+  const kept = p.status === 'captured' && p.boards ? boundedBoards(p.boards) : undefined;
+  const stored = kept ? storeBoards(kept.boards, p.game?.players.map((x) => x.id) ?? [p.me], key) : undefined;
   return {
     version: VERSION,
     status: p.status,
@@ -235,7 +314,15 @@ export function finishedRecordOf(p: RecordParts): FinishedRecord {
         }
       : {}),
     ...(stored ?? {}),
+    ...(kept?.omitted ? { boardsOmitted: kept.omitted } : {}),
   };
+}
+
+/** The opening and closing boards a record keeps, and how many between them it leaves out. Pure. */
+function boundedBoards<T>(boards: readonly T[]): { boards: readonly T[]; omitted: number } {
+  const max = MAX_RECORD_BOARDS_HEAD + MAX_RECORD_BOARDS_TAIL;
+  if (boards.length <= max) return { boards, omitted: 0 };
+  return { boards: [...boards.slice(0, MAX_RECORD_BOARDS_HEAD), ...boards.slice(boards.length - MAX_RECORD_BOARDS_TAIL)], omitted: boards.length - max };
 }
 
 /** The boards in their stored shape: owners by key (only the game's players; any other owner is unknown). Pure. */
@@ -303,11 +390,32 @@ export interface RecordHistory {
  * an unknown owner. Pure.
  */
 export function historyOfRecord(rec: FinishedRecord, salt: string, ids: readonly number[]): RecordHistory | 'no-boards' | 'unmatched' {
-  if (rec.status !== 'captured' || !Array.isArray(rec.boards) || !Array.isArray(rec.boardOwners)) return 'no-boards';
+  if (!hasBoards(rec)) return 'no-boards';
   const byKey = new Map(ids.map((id) => [playerKey(salt, id), id]));
-  const me = byKey.get(rec.me);
-  if (me === undefined) return 'unmatched';
-  const owners = rec.boardOwners.map((k) => byKey.get(k));
+  if (!byKey.has(rec.me)) return 'unmatched';
+  return decodeHistory(rec, byKey);
+}
+
+/**
+ * The history a captured record keeps when the ids of its game are not known (#318: the game's settings
+ * record aged out): each player labelled by position, me 1, then the seats in the record's order, then
+ * any other board owner. A key is never reversed: the labels say who is who within the record only. Pure.
+ */
+export function anonymousHistoryOfRecord(rec: FinishedRecord): RecordHistory | 'no-boards' {
+  if (!hasBoards(rec)) return 'no-boards';
+  const byKey = new Map<string, number>();
+  for (const k of [rec.me, ...(rec.players ?? []).map((p) => p.key), ...rec.boardOwners!]) if (!byKey.has(k)) byKey.set(k, byKey.size + 1);
+  const h = decodeHistory(rec, byKey);
+  // Me first among the players.
+  h.players.sort((a, b) => a.id - b.id);
+  return h;
+}
+
+const hasBoards = (rec: FinishedRecord): boolean => rec.status === 'captured' && Array.isArray(rec.boards) && Array.isArray(rec.boardOwners);
+
+function decodeHistory(rec: FinishedRecord, byKey: ReadonlyMap<string, number>): RecordHistory {
+  const me = byKey.get(rec.me)!;
+  const owners = rec.boardOwners!.map((k) => byKey.get(k));
   const ownerOf = (o: number): TerritoryOwner => {
     if (o === OWNER_NEUTRAL) return { kind: 'neutral' };
     if (o === OWNER_AVAILABLE) return { kind: 'available' };
@@ -328,7 +436,7 @@ export function historyOfRecord(rec: FinishedRecord, salt: string, ids: readonly
   });
   const boards: RecordHistory['boards'] = [];
   let prev: TerritoryState[] | undefined;
-  for (const { turn, d, t } of rec.boards) {
+  for (const { turn, d, t } of rec.boards!) {
     let territories: TerritoryState[];
     if (d && prev) {
       const changed = new Map(t.map((row) => [row[0], territoryOf(row)]));

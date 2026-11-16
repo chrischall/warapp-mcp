@@ -1,11 +1,28 @@
 // The end-of-game records (#312 E1): bounded, and a record's state read loosely. Synthetic only.
-import { mkdirSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TerritoryOwner } from '../src/board.js';
-import { finishedDir, finishedPath, finishedRecordOf, historyOfRecord, readFinishedRecord, readFinishedState, touchFinished, writeFinishedRecord, type FinishedRecord } from '../src/finished-store.js';
-import { playerKey } from '../src/player-record-store.js';
+import {
+  anonymousHistoryOfRecord,
+  finishedDir,
+  finishedPath,
+  finishedRecordOf,
+  historyOfRecord,
+  listFinishedRecords,
+  markProcessed,
+  MAX_RECORD_BOARDS_HEAD,
+  MAX_RECORD_BOARDS_TAIL,
+  processedPath,
+  readFinishedRecord,
+  readFinishedState,
+  readProcessed,
+  touchFinished,
+  writeFinishedRecord,
+  type FinishedRecord,
+} from '../src/finished-store.js';
+import { finishedGameKey, playerKey } from '../src/player-record-store.js';
 
 const SALT = '0123456789abcdef0123456789abcdef';
 
@@ -155,5 +172,127 @@ describe('the history boards in a captured record (#318: the one read feeds the 
     mkdirSync(finishedDir(dir), { recursive: true });
     writeFileSync(path, '{');
     expect(await readFinishedRecord(path)).toBe('unreadable');
+  });
+});
+
+describe('the processed marks (P2: a mark outlives the record bound)', () => {
+  const key = (g: number) => finishedGameKey(SALT, 1001, g);
+
+  it('keeps hashed keys only, bounded, the oldest dropped first, and lists no marks file as a record', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-fin-'));
+    expect(await readProcessed(dir)).toEqual(new Set());
+    for (const g of [1, 2, 3, 2]) expect(await markProcessed(dir, key(g), 2)).toBe(true);
+    // 2 was marked again (newest), so 1 went.
+    expect(await readProcessed(dir)).toEqual(new Set([key(3), key(2)]));
+    const text = readFileSync(processedPath(dir), 'utf8');
+    for (const g of ['1001', '"1"', '"2"', '"3"']) expect(text).not.toContain(g);
+    expect(statSync(processedPath(dir)).mode & 0o777).toBe(0o600);
+    await writeFinishedRecord(dir, finishedPath(dir, SALT, 1001, 7), finishedRecordOf({ salt: SALT, me: 1001, status: 'read-failed' }));
+    expect(await listFinishedRecords(dir)).toEqual([finishedPath(dir, SALT, 1001, 7)]);
+  });
+
+  it('survives the record prune: a pruned record keeps its mark', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-fin-'));
+    for (const g of [1, 2, 3]) {
+      const path = finishedPath(dir, SALT, 1001, g);
+      await writeFinishedRecord(dir, path, finishedRecordOf({ salt: SALT, me: 1001, status: 'read-failed' }), 2);
+      await markProcessed(dir, key(g));
+      utimesSync(path, g, g);
+    }
+    expect(await readFinishedState(finishedPath(dir, SALT, 1001, 1))).toBe('missing');
+    expect((await readProcessed(dir)) as Set<string>).toContain(key(1));
+  });
+
+  it('never overwrites a marks file that does not parse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-fin-'));
+    mkdirSync(finishedDir(dir), { recursive: true });
+    writeFileSync(processedPath(dir), '{');
+    expect(await readProcessed(dir)).toBe('unreadable');
+    expect(await markProcessed(dir, key(1))).toBe(false);
+    expect(readFileSync(processedPath(dir), 'utf8')).toBe('{');
+    writeFileSync(processedPath(dir), JSON.stringify({ version: 1, keys: ['not a key'] }));
+    expect(await readProcessed(dir)).toBe('unreadable');
+  });
+});
+
+describe('the boards a record keeps are bounded (#318)', () => {
+  const ANN = 4412345677;
+  const players = [{ id: ANN, name: 'Ann', isAI: false, humanTurnedIntoAI: false, hasCommittedOrders: false, state: 'Won' }];
+  const board = (turn: number) => ({
+    turn,
+    board: { source: 'gamefeed' as const, verified: false, territories: [{ territoryId: 1, owner: { kind: 'player' as const, playerId: ANN }, armies: turn + 1 }] },
+  });
+
+  it('keeps the opening and the last boards, and says how many it left out', () => {
+    const total = MAX_RECORD_BOARDS_HEAD + MAX_RECORD_BOARDS_TAIL + 15;
+    const boards = Array.from({ length: total }, (_, i) => board(i));
+    const r = finishedRecordOf({ salt: SALT, me: ANN, status: 'captured', game: { players, settings: undefined, name: 'x', numberOfTurns: total - 1 } as never, boards });
+    const turns = r.boards!.map((b) => b.turn);
+    expect(turns).toHaveLength(MAX_RECORD_BOARDS_HEAD + MAX_RECORD_BOARDS_TAIL);
+    expect(turns.slice(0, MAX_RECORD_BOARDS_HEAD)).toEqual(Array.from({ length: MAX_RECORD_BOARDS_HEAD }, (_, i) => i));
+    expect(turns.at(-1)).toBe(total - 1);
+    expect(r.boardsOmitted).toBe(15);
+    // Read back whole across the gap.
+    const back = historyOfRecord(r, SALT, [ANN]);
+    expect(typeof back === 'object' && back.boards.map((b) => [b.turn, b.board.territories[0]!.armies])).toEqual(turns.map((t) => [t, t + 1]));
+  });
+
+  it('keeps every board of a game short enough', () => {
+    const r = finishedRecordOf({ salt: SALT, me: ANN, status: 'captured', game: { players, settings: undefined, name: 'x', numberOfTurns: 3 } as never, boards: [0, 1, 2, 3].map(board) });
+    expect(r.boards).toHaveLength(4);
+    expect(r).not.toHaveProperty('boardsOmitted');
+  });
+});
+
+describe('a record read without its game (#318: the settings record aged out)', () => {
+  const ANN = 4412345677;
+  const BOB = 7176543229;
+  it('labels the players by position, me first, never reversing a key', () => {
+    const players = [
+      { id: BOB, name: 'Bob', isAI: true, humanTurnedIntoAI: false, hasCommittedOrders: false, state: 'Won', team: 1 },
+      { id: ANN, name: 'Ann', isAI: false, humanTurnedIntoAI: false, hasCommittedOrders: false, state: 'Eliminated' },
+    ];
+    const r = finishedRecordOf({
+      salt: SALT,
+      me: ANN,
+      status: 'captured',
+      game: { players, settings: undefined, name: 'x', numberOfTurns: 1 } as never,
+      boards: [
+        {
+          turn: 0,
+          board: {
+            source: 'gamefeed',
+            verified: false,
+            territories: [
+              { territoryId: 1, owner: { kind: 'player', playerId: ANN }, armies: 5 },
+              { territoryId: 2, owner: { kind: 'player', playerId: BOB }, armies: 4 },
+            ],
+          },
+        },
+      ],
+    });
+    const h = anonymousHistoryOfRecord(r);
+    expect(h).toEqual({
+      me: 1,
+      numberOfTurns: null,
+      players: [
+        { id: 1, isAI: false, state: 'Eliminated' },
+        { id: 2, isAI: true, team: 1, state: 'Won' },
+      ],
+      boards: [
+        {
+          turn: 0,
+          board: {
+            source: 'gamefeed',
+            verified: false,
+            territories: [
+              { territoryId: 1, owner: { kind: 'player', playerId: 1 }, armies: 5 },
+              { territoryId: 2, owner: { kind: 'player', playerId: 2 }, armies: 4 },
+            ],
+          },
+        },
+      ],
+    });
+    expect(anonymousHistoryOfRecord(finishedRecordOf({ salt: SALT, me: ANN, status: 'read-failed' }))).toBe('no-boards');
   });
 });

@@ -6,8 +6,10 @@
 //
 // The list is name-free beyond ids: a notification's title and data are war.app's text with other
 // players' names in it, read only to classify the notification and find the game its link names.
-// A game-ended notification folds the game's kept opponent profile (B2, `foldFinishedGame`) when one
-// is kept unfolded — the one GameFeed read warapp_get_game's fold makes, and none otherwise.
+// A game-ended notification runs the end-of-game pass on that game (#312, src/tools/end-of-game.ts:
+// idempotent, one history read per game, at most END_OF_GAME_PER_CALL per call), which folds its live
+// profile too; then any kept opponent profile still unfolded is folded (B2, `foldFinishedGame`) — one
+// GameFeed read (no map) only when one is kept unfolded, none otherwise.
 //
 // Dismissing marks read and never deletes; deleting is its own tool, one 318 per id, error 699 read as
 // already gone. Neither sends anything to any player. Automated chat stays off (D2): neither is a send.
@@ -16,6 +18,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { classifyNotification, readInAppNotifications, type Notification, type RawNotification } from '../notifications.js';
 import { foldFinishedGame, hasUnfoldedProfile, profileEnabled } from '../profile-store.js';
+import { END_OF_GAME_PER_CALL, endOfGame, finishedAccount, needsEndOfGame, type EndOfGameStatus } from './end-of-game.js';
+import type { FinishedFold } from './profile-hook.js';
 import {
   Method,
   NOTIFICATION_ID,
@@ -101,18 +105,56 @@ export function seenGone(after: Pick<Found, 'readTo' | 'total' | 'complete'>, po
   return after.readTo > position + Math.max(0, after.total - totalBefore);
 }
 
+/** One end-of-game pass a game-ended notification ran (#312). */
+export interface NotifiedPass {
+  gameId: number;
+  status: EndOfGameStatus;
+  turns?: number;
+  /** The live profile fold the pass ran with it (its status). */
+  profileFold?: FinishedFold['status'];
+}
+
+/**
+ * The end-of-game pass on each game a game-ended notification names (#312: the fourth trigger, beside
+ * warapp_get_game, warapp_wait_for_turn's read and the warapp_my_games sweep), through the same idempotent
+ * `endOfGame`: a game with a record or a processed mark costs nothing; at most `END_OF_GAME_PER_CALL` games
+ * that still need it per call, in the list's order (the rest are `pending`, for a later list call), each
+ * ONE history read (P2), folding its live profile too. The account is the board cache's, else the
+ * signed-in one (read at most once per call). Never throws.
+ */
+async function passEndedGames(
+  ctx: LiveContext,
+  env: EnvSource,
+  games: readonly number[],
+): Promise<{ processed: NotifiedPass[]; pending: number }> {
+  const dir = ctx.dataDir;
+  const processed: NotifiedPass[] = [];
+  let pending = 0;
+  if (!dir || !profileEnabled(env)) return { processed, pending };
+  let token: Promise<number | undefined> | undefined;
+  const identity = () => (token ??= ctx.myInviteToken().catch(() => undefined));
+  for (const gameId of games) {
+    const me = await finishedAccount(dir, env, gameId, identity);
+    if (me === undefined || !(await needsEndOfGame(dir, env, gameId, me))) continue;
+    if (processed.length >= END_OF_GAME_PER_CALL) {
+      pending++;
+      continue;
+    }
+    const r = await endOfGame({ client: ctx.client, dataDir: dir, env }, gameId, me, undefined, { fold: true });
+    processed.push({ gameId, status: r.status, ...(r.turns !== undefined ? { turns: r.turns } : {}), ...(r.profileFold ? { profileFold: r.profileFold.status } : {}) });
+  }
+  return { processed, pending };
+}
+
 /**
  * Fold the kept opponent profile of each game a game-ended notification names (B2): only where a
  * per-game file is kept unfolded, one GameFeed read (no map) per such game, at most FOLD_LOOKUPS.
+ * Runs after the end-of-game pass, which folds a game it reads itself (so that game costs no read here).
  * Best effort: a failed read folds nothing and is never an error.
  */
-async function foldEndedGames(ctx: LiveContext, env: EnvSource, notes: readonly Notification[]): Promise<Array<{ gameId: number; files: number }>> {
-  // TODO(#312): a game-ended notification is one of the end-of-game pass's triggers. That pass does not
-  // exist yet (batch 24 builds it); when it lands, call it here for each game-ended `gameId` (it is
-  // idempotent through its per-game "processed" record), in place of or beside this profile fold.
+async function foldEndedGames(ctx: LiveContext, env: EnvSource, games: readonly number[]): Promise<Array<{ gameId: number; files: number }>> {
   const dir = ctx.dataDir;
   if (!dir || !profileEnabled(env)) return [];
-  const games = [...new Set(notes.filter((n) => n.kind === 'game-ended' && n.gameId !== null).map((n) => n.gameId!))];
   const out: Array<{ gameId: number; files: number }> = [];
   let lookups = 0;
   for (const gameId of games) {
@@ -129,6 +171,11 @@ async function foldEndedGames(ctx: LiveContext, env: EnvSource, notes: readonly 
   }
   return out;
 }
+
+/** The games the game-ended notifications name, once each, in the list's order. */
+const endedGames = (notes: readonly Notification[]): number[] => [
+  ...new Set(notes.filter((n) => n.kind === 'game-ended' && n.gameId !== null).map((n) => n.gameId!)),
+];
 
 const idArg = z.union([z.string(), z.number().int().nonnegative()]);
 
@@ -184,8 +231,10 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
           'game its link names, or null), `time` and `unread`. The title and body are never shown (they carry other ' +
           "players' names). " +
           '`total` is how many notifications war.app holds; pass `next` back as `start` for the next page; ' +
-          '`unread_only` keeps the unread ones of the page. A game-ended notification folds the opponent profile kept ' +
-          'for that game (`profilesFolded`). Chat is not here: warapp_chat_inbox reads it. ' +
+          '`unread_only` keeps the unread ones of the page. A game-ended notification runs the end-of-game pass on ' +
+          'that game once (`endOfGame`: its history read once from GameFeed and kept name-free for later games, at most ' +
+          'two games per call, `pending` counting the rest; a game already processed costs nothing) and folds the ' +
+          'opponent profile kept for it (`profilesFolded`, or the pass entry\'s `profileFold`). Chat is not here: warapp_chat_inbox reads it. ' +
           `${BRIDGE_NOTE} Read-only. ${NOTIFICATIONS_UNVERIFIED}`,
       ),
       _meta: mintMeta('whats-new', ['notifications', 'war.app notifications', 'my alerts', 'did a game end']),
@@ -200,7 +249,10 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
       const { items, total } = await listPage(ctx, from);
       const all = items.map(classifyNotification);
       const notifications = unread_only ? all.filter((n) => n.unread) : all;
-      const profilesFolded = await foldEndedGames(ctx, env, all);
+      // #312: the end-of-game pass first (it folds the games it reads), then the fold of any kept profile left.
+      const ended = endedGames(all);
+      const passes = await passEndedGames(ctx, env, ended);
+      const profilesFolded = await foldEndedGames(ctx, env, ended);
       const next = from + items.length < total && items.length > 0 ? from + items.length : undefined;
       return respond(undefined, ['compact'], () => ({
         notifications,
@@ -209,6 +261,7 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
         total,
         ...(next !== undefined ? { next } : {}),
         ...(profilesFolded.length ? { profilesFolded } : {}),
+        ...(passes.processed.length || passes.pending ? { endOfGame: passes } : {}),
         unverified: NOTIFICATIONS_UNVERIFIED,
       }));
     },

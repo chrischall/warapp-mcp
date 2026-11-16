@@ -1,19 +1,21 @@
 // The end-of-game pass (#312 E1; owner decisions P2–P4 of 2026-11-16): once per finished game the
-// account played, read the game's history ONCE (GameFeed GetHistory with its settings; the map from
-// the cache when the game's map is known, else in the same reply), capture what it teaches
-// (src/analysis/finished-game.ts) and keep it name-free (src/finished-store.ts). The record is the
-// "processed" mark: a game with one is never read again by a trigger, whatever its status — a failed
-// read is recorded and NOT retried automatically; an explicit warapp_get_game with `include_history`
-// re-runs a failed pass from the history that call already read (no further request).
+// account played, read the game's history ONCE (GameFeed GetHistory with its settings and GetMap=false:
+// a cached map is attached by its id, and the client's refresh of a map that lacks land never runs, so
+// the history is never read twice; with no map cached, one map-only read without the history follows),
+// capture what it teaches (src/analysis/finished-game.ts) and keep it name-free (src/finished-store.ts).
+// The record is the "processed" mark, and a separate bounded list of hashed keys (`markProcessed`, ten
+// times the record bound) outlives its prune: a game with either is never read again by a trigger,
+// whatever its status — a failed read is recorded and NOT retried automatically; an explicit
+// warapp_get_game with `include_history` re-runs a failed pass from the history that call already read
+// (no further request). A reply showing the game still in play leaves no lasting mark (it may end later).
 //
-// Triggers: any read that shows the game finished (warapp_get_game, warapp_wait_for_turn's read), and
+// Triggers: any read that shows the game finished (warapp_get_game, warapp_wait_for_turn's read), a
+// game-ended in-app notification (warapp_get_notifications, at most `END_OF_GAME_PER_CALL` per call), and
 // the sweep in warapp_my_games over the account's finished games not yet processed, at most
-// `END_OF_GAME_PER_CALL` per call (the records themselves are its cursor: each attempt leaves one, so
-// the next call moves on). A pass that spent its request but left no record (the write failed, or
-// the reply showed the game not finished or not mine) is remembered for the life of the process
-// (`attempted`), so no trigger reads that game's history twice (P2: never retried in a loop).
-// Not yet a trigger: war.app's game-ended in-app notification (#311; its tools, #320, landed after this
-// branch was cut) — a follow-up wires it, still one history read per game. Off with `WARAPP_PLAYER_PROFILE=off`; nothing without a data directory.
+// `END_OF_GAME_PER_CALL` per call (the marks are its cursor: each attempt leaves one, so the next call
+// moves on). A pass that spent its request but left no record is remembered for the life of the process
+// too (`attempted`), so no trigger reads that game's history twice (P2: never retried in a loop).
+// Off with `WARAPP_PLAYER_PROFILE=off`; nothing without a data directory.
 // Profiles inform only (P1): no planner decision reads any of this. Never throws.
 import type { EnvSource } from '@chrischall/mcp-utils';
 import type { BoardState } from '../board.js';
@@ -33,7 +35,19 @@ import { trackGame, type MyOrders, type TurnBoard } from '../analysis/opponents.
 import { recordLessons, recordMapGame } from '../lessons-store.js';
 import { endingOf, foldGame, markHistoryFolded, profileFileState, type FoldSeat } from '../profile-store.js';
 import type { WarappClient } from '../client.js';
-import { MAX_FINISHED_RECORDS, finishedPath, finishedRecordOf, readFinishedState, touchFinished, writeFinishedRecord, type FinishedFailure, type FinishedRecord, type FinishedStatus } from '../finished-store.js';
+import {
+  MAX_FINISHED_RECORDS,
+  finishedPath,
+  finishedRecordOf,
+  markProcessed,
+  readFinishedState,
+  readProcessed,
+  touchFinished,
+  writeFinishedRecord,
+  type FinishedFailure,
+  type FinishedRecord,
+  type FinishedStatus,
+} from '../finished-store.js';
 import type { Game } from '../normalize.js';
 import { withPathLock } from '../path-lock.js';
 import { finalOutlookOf, readOutlookLog } from '../outlook-log.js';
@@ -138,9 +152,15 @@ const attemptKey = (dataDir: string, me: number, gameId: number): string => `${d
 /** Finished games (per data dir) whose signed-in account could not be read for the pass: asked once per process. */
 const accountUnread = new Set<string>();
 
+/** Whether a pass on `gameId` as `me` spent its history read before (the lasting mark; an unreadable marks file: no). */
+async function isMarked(dataDir: string, salt: string, me: number, gameId: number): Promise<boolean> {
+  const marks = await readProcessed(dataDir);
+  return marks !== 'unreadable' && marks.has(finishedGameKey(salt, me, gameId));
+}
+
 /**
- * Whether `gameId` still needs its pass as `me`: `true` unless a record is there (or the pass cannot
- * run: off, no data dir, malformed salt). Read-only: never makes the salt. Never throws.
+ * Whether `gameId` still needs its pass as `me`: `true` unless a record or a processed mark is there
+ * (or the pass cannot run: off, no data dir, malformed salt; or this process already spent its read). Read-only: never makes the salt. Never throws.
  */
 export async function needsEndOfGame(dataDir: string | undefined, env: EnvSource, gameId: number, me: number): Promise<boolean> {
   if (!dataDir || !profileEnabled(env)) return false;
@@ -148,7 +168,8 @@ export async function needsEndOfGame(dataDir: string | undefined, env: EnvSource
   try {
     const salt = await playerRecordSalt(dataDir);
     if (!salt) return true;
-    return (await readFinishedState(finishedPath(dataDir, salt, me, gameId))) === 'missing';
+    if ((await readFinishedState(finishedPath(dataDir, salt, me, gameId))) !== 'missing') return false;
+    return !(await isMarked(dataDir, salt, me, gameId));
   } catch {
     return false;
   }
@@ -184,15 +205,27 @@ export async function endOfGame(
       let game: Game | undefined = opts.history;
       let failure: FinishedFailure | undefined;
       if (!game) {
+        if (state === 'missing' && (await isMarked(dataDir, salt, me, gameId))) return { status: 'already-processed' };
         // The request is spent from here on, whatever follows: never again in this process.
         const key = attemptKey(dataDir, me, gameId);
         if (attempted.has(key)) return { status: 'attempted' };
         remember(attempted, key);
         try {
-          game = await deps.client.getGame(gameId, { history: true, settings: true });
+          // P2: GetMap=false, so the client never re-reads the game for a map it lacks (no `lacksTerritory`
+          // refresh, which would repeat the history read); a cached map is attached by its id.
+          game = await deps.client.getGame(gameId, { history: true, settings: true, map: false });
         } catch (e) {
           const kind = (e as { kind?: unknown }).kind;
           failure = { reason: 'request-failed', ...(typeof kind === 'string' && SAFE.test(kind) ? { kind } : {}) };
+        }
+        // Still in play: no lasting mark (it may end later); this process remembers the attempt.
+        if (game && game.state !== 'Finished') return { status: 'not-finished' };
+        // The lasting mark, before anything else can fail: it outlives the record bound (P2).
+        await markProcessed(dataDir, finishedGameKey(salt, me, gameId));
+        // No map cached: one map-only read (no history), never a second history read.
+        if (game && !game.map && game.players.some((p) => p.id === me && holdsSeat(p.state))) {
+          const withMap = await deps.client.getGame(gameId).catch(() => undefined);
+          if (withMap?.map) game.map = withMap.map;
         }
       }
       if (game && game.state !== 'Finished') return { status: 'not-finished' };
@@ -445,11 +478,11 @@ export const sweepWindow = (keep: number = MAX_FINISHED_RECORDS): number => Math
  * `limit` not yet processed, one at a time, each folding its profiles too. `pending` counts those
  * left for a later call. Never throws.
  *
- * The record is the "processed" mark and the store is bounded, so the sweep looks only at the newest
- * {@link sweepWindow} games (half the bound): older ones are never its candidates, whatever the store
- * dropped. Its writes never prune a record of a game in that window (`protectIds`), and each call
- * refreshes the window's records, so another trigger's write (warapp_get_game on an old game) drops
- * a record outside it first. A game the sweep processed is so never read again (P2).
+ * The processed marks outlive the record bound, but they are bounded too, so the sweep looks only at
+ * the newest {@link sweepWindow} games (half the record bound): older ones are never its candidates.
+ * Its writes never prune a record of a game in that window (`protectIds`), and each call refreshes the
+ * window's records, so the records the harness and the reports read stay the newest games'. A game the
+ * sweep processed is so never read again (P2).
  */
 export async function sweepFinished(
   deps: EndOfGameDeps,
@@ -476,43 +509,4 @@ async function refreshProcessed(deps: EndOfGameDeps, me: number, window: readonl
   const salt = await playerRecordSalt(dataDir);
   if (!salt) return;
   for (const id of window) await touchFinished(finishedPath(dataDir, salt, me, id));
-}
-
-/**
- * The calibration harness's `--fetch` (#318, scripts/calibrate.mjs; owner only): the end-of-game pass on
- * each of `games` not yet processed, and nothing else. It never reads a history of its own: a game with
- * a record (any status) costs no request, and any other one GameFeed read without the history (is it
- * finished?) before the pass's own single read. So the harness and every trigger share one history read
- * per game (P2) and one name-free store (P4). With profiling off nothing is read or written. Returns a
- * tally of statuses (no id). Never throws.
- */
-export async function fetchFinished(deps: EndOfGameDeps, games: readonly { gameId: number; me: number }[]): Promise<Record<string, number>> {
-  const tally: Record<string, number> = {};
-  const count = (k: string) => {
-    tally[k] = (tally[k] ?? 0) + 1;
-  };
-  for (const { gameId, me } of games) {
-    if (!profileEnabled(deps.env)) {
-      count('off');
-      continue;
-    }
-    // A record of any status (or one that does not parse, which is never overwritten): nothing to do.
-    if (!(await needsEndOfGame(deps.dataDir, deps.env, gameId, me))) {
-      count('already-processed');
-      continue;
-    }
-    let shown: Game;
-    try {
-      shown = await deps.client.getGame(gameId, { map: false });
-    } catch {
-      count('state-read-failed');
-      continue;
-    }
-    if (shown.state !== 'Finished') {
-      count('not-finished');
-      continue;
-    }
-    count((await endOfGame(deps, gameId, me, shown, { fold: true })).status);
-  }
-  return tally;
 }
