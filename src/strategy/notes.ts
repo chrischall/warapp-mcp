@@ -1319,9 +1319,9 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     topic: 'timing',
     when: on({ format: ['1v1'], moveOrder: ['Cycle', 'NoLuckCycle'], phase: ['contact', 'late'] }),
     text:
-      'Unsure who moved first? Read your own first order: if its target held more than its armies plus its ' +
-      "owner's whole deploy, or its stack had already left, the opponent's order ran first. It alternates from " +
-      'there: give the planner that turn as first_mover, and save a big strike on a stack for a turn you move first.',
+      'Unsure who moved first? At 0% luck, a first order whose target held more than any deploy it could have had, ' +
+      'or whose stack had left, means his ran first: an inference, so test it with warapp_check_plan. It alternates: ' +
+      'he ran first on turn N, so on N+1 pass first_mover: me. Save a big strike for a turn you move first.',
     source: S.moveOrder,
     basis: 'derived',
   },

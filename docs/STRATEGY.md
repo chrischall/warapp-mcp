@@ -851,9 +851,10 @@ delays the orders listed after it; under No-Split the whole stack moves).
   send, delays nothing: pad a late attack with real transfers of spare armies or cheap captures.
   **Advice only.** Source: <https://war.app/wiki/Move_order>
 - `timing-read-first-mover-strike` — unsure who moved first in a cyclic 1v1, read your own first
-  order: a target that held more than its armies plus its owner's whole deploy, or whose stack had
-  left, means the opponent's order ran first. It alternates from there: give the planner that turn
-  as `first_mover`, and save a big strike for a turn you move first. **Advice only** (the planner
+  order: at 0% luck, a target that held more than any deploy its owner could have had, or whose
+  stack had left, means the opponent's order ran first. That is an inference (test it with
+  `warapp_check_plan`). `first_mover` is who moves first this turn, so alternate: he ran first on
+  turn N, so on turn N+1 pass `first_mover: me`. Save a big strike for a turn you move first. **Advice only** (the planner
   does not infer it yet, #299), derived; from the lost 1v1s of #300. Source: <https://war.app/wiki/Move_order>
 - `timing-delay-pairs` — Orders run in pairs: moving first, your 2nd and 3rd run back to back
   (then 4th and 5th); moving second, your 1st and 2nd. So one more dummy order helps only every

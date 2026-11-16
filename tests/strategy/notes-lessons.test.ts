@@ -70,6 +70,12 @@ describe('lesson notes (#300): the data', () => {
     expect(t).toMatch(/first order/);
     expect(t).toMatch(/first_mover/);
     expect(t).toMatch(/move first/);
+    // first_mover is who moves first THIS turn: alternate from the turn read, never pass that turn's value.
+    expect(t).not.toMatch(/that turn as first_mover/);
+    expect(t).toMatch(/first_mover: me/);
+    expect(t).toMatch(/inference/);
+    expect(t).toMatch(/0% luck/);
+    expect(t).toMatch(/check_plan/);
   });
 
   it('growth is split three ways before calling a game even', () => {

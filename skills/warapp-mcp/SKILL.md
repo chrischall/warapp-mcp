@@ -951,9 +951,13 @@ do not send a backlog of turns unread. Override it when one of these shows up:
      missing member) or leave it. While his stack roams inside it, garrison the members it can reach
      before retaking the one it left (#298).
    - *Move order.* When `firstMover` is null in a cyclic 1v1, read it from your own first order: a
-     target that held more than its armies plus his whole deploy, or whose stack had already left,
-     means his order ran first. Pass that turn as `first_mover` (it alternates from there) and put
-     big strikes on turns you move first (#299).
+     target that held more than any deploy he could have had, or whose stack had already left, means
+     his order ran first. That is an inference, not a reading: his deploy is an estimate, and with luck
+     on a failed attack proves nothing. `first_mover` is who moves first *this* turn, so alternate: he
+     ran first on turn N, so on turn N+1 pass `first_mover: me` — but only when sure (0% luck, the
+     target held more than any deploy it could have had), since a given first mover sizes holds;
+     otherwise leave it out and try both orders in `warapp_check_plan`. Put big strikes on turns you
+     move first (#299).
    - *Reconcile estimates on the board.* Before telling the user a game is even, split each of his
      stacks' growth into "could be a move from a neighbour in view", "came out of the fog" and
      "can only be deploy", and say how much of his frontier was in view; a tracked income read off one or

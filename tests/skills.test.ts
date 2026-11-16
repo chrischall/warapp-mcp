@@ -91,6 +91,18 @@ describe('skill files', () => {
     }
     for (const n of [285, 286, 288, 289, 290, 291, 293, 294, 297, 298, 299]) expect(section, `#${n}`).toContain(`#${n}`);
   });
+
+  it('the move-order lesson passes this turn as first_mover, alternated, and only when sure', () => {
+    const md = read(join(SKILLS, 'warapp-mcp', 'SKILL.md'));
+    const start = md.indexOf('*Move order.*');
+    const line = md.slice(start, md.indexOf('(#299)', start));
+    expect(line).not.toMatch(/Pass that turn as `first_mover`/);
+    expect(line).toMatch(/turn N\+1/);
+    expect(line).toMatch(/`first_mover: me`/);
+    expect(line).toMatch(/inference/);
+    expect(line).toMatch(/0% luck/);
+    expect(line).toMatch(/warapp_check_plan/);
+  });
 });
 
 // ---------------------------------------------------------------------------
