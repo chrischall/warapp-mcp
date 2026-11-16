@@ -116,8 +116,10 @@ war.app password is asked once at sign-in and never stored), and the server hold
 falling back to the browser bridge if it stops working. `warapp_session_status` then reports
 `linked: "host-captured"` (no capture time or age), and a signed-out session says to use
 **Sign in** on the connection. Without that token the hosted server uses the browser bridge, as
-before. (The war.app sign-in step mcp-host runs — `docs/examples/warapp-auth-flow.json`, one password
-page — is not built yet: until it is, a hosted connection uses the browser bridge.) Locally `WARAPP_AUTH_TOKEN` is ignored.
+before. (The war.app sign-in mcp-host runs is `docs/examples/warapp-auth-flow.json`, one password page;
+its capture calls `warapp_sign_in`, a hosted-only tool that signs in to war.app once and returns
+the session cookie to the host. The manifest does not declare the flow yet: until a registration
+adds it, a hosted connection uses the browser bridge.) Locally `WARAPP_AUTH_TOKEN` is ignored.
 
 ## Tools
 
@@ -164,9 +166,10 @@ page — is not built yet: until it is, a hosted connection uses the browser bri
 | `warapp_wait_for_turn` | Wait until one of the given games (`game_ids`, 1–20; omitted, every game of yours being played or picked) is waiting on you, woken by war.app's push notifications through your war.app tab; returns at once if one already is, else at `timeout_seconds` (default 300, max 1800). A game whose push said chat arrived carries `chatActivity: true` (no text; unverified live). Also returns `surrender_pending` when another player's surrender waits on your acceptance (each game's `surrenderPending`, from the game details, unverified live; `surrenders` lists those games), unless `ignore_surrenders`; after one failed details read it stops asking for the rest of the wait (`surrenderUnread` says why). Reports progress; honours cancellation. |
 | `warapp_recent_events` | The game-update pushes this server process has received (newest first), and whether the push socket is connected. |
 | `warapp_session_status` | Whether a war.app session is linked for the [direct transport](#direct-transport-no-browser), when it was captured and how old it is, and which transport is active. Never shows the session cookie. |
+| `warapp_sign_in` | **Hosted only, for mcp-host's sign-in flow.** Signs in to war.app once with your email and password and returns the session cookie to the host, which keeps it as this connection's secret. The password is never stored; a refusal is never retried. Not offered on a local install. |
 | `warapp_link_session` | **Writes (locally).** Capture your signed-in war.app session cookie once and store it on this machine for the direct transport. Confirm-gated; stores a full-account credential locally (file mode `0600`) and never shows or sends it anywhere but war.app. |
 
-Everything except `warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification`, `warapp_delete_notification`, `warapp_mark_chat_read`, `warapp_link_session` and `warapp_record_agreement` (this machine's agreement ledger only, not confirm-gated) only reads. Player, game, map
+Everything except `warapp_submit_picks`, `warapp_submit_turn`, `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification`, `warapp_delete_notification`, `warapp_mark_chat_read`, `warapp_link_session`, `warapp_sign_in` (hosted only: starts a war.app session for the host's sign-in flow, not confirm-gated) and `warapp_record_agreement` (this machine's agreement ledger only, not confirm-gated) only reads. Player, game, map
 and chat text comes back marked as untrusted third-party content.
 
 ## Confirming writes

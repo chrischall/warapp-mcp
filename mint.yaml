@@ -22,9 +22,9 @@ slug: warapp
 # (one masked password prompt, then warapp_sign_in with WARAPP_EMAIL and that
 # password as the capture: path authToken into WARAPP_AUTH_TOKEN; the captcha
 # fallback is docs/examples/warapp-auth-flow-paste.json). WARAPP_AUTH_TOKEN is
-# host-captured: this schema's only place for it is `auth.flow` / `auth.flowPath`,
-# and warapp_sign_in is not built yet (part B), so the manifest declares no flow
-# and nothing here enables direct mode yet. It is deliberately not in `env`: a
+# host-captured: this schema's only place for it is `auth.flow` / `auth.flowPath`.
+# warapp_sign_in is built (part B, registered only hosted), but the manifest does
+# not declare the flow yet, so nothing here enables direct mode yet. It is deliberately not in `env`: a
 # capture into a host-set variable is refused.
 summary: >-
   war.app (Warzone) advisor: games waiting on you, maps, scouting, chat and

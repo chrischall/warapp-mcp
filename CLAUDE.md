@@ -52,7 +52,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   which callers still read. `warapp_submit_picks` validates against the live board and reports
   `verified` only when `GetTerritoryPicks` reads back exactly what was sent. `warapp_record_agreement`
   also writes, but only the server's own agreement ledger and player record (nothing reaches war.app or a
-  player), so it is not confirm-gated and not counted above. `mark_seen: true` on `warapp_get_chat` and
+  player), so it is not confirm-gated and not counted above. Nor is `warapp_sign_in` (hosted only, the
+  sign-in mcp-host's authFlow calls; see the direct transport below): it starts a war.app session and
+  reaches no player. `mark_seen: true` on `warapp_get_chat` and
   `warapp_chat_inbox` writes only this machine's chat cursor: both stay read-only, and war.app's own read mark is
   `warapp_mark_chat_read` (#311). Chat (owner decisions of 2026-11-14,
   `docs/PLAN-TEAMS.md` §5): D1 every send confirm-gated; D2 automated chat is OFF until the owner
@@ -1530,7 +1532,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   local only) captures the cookie once through the bridge; `warapp_session_status` reports the
   linked state, age and active leg. **The `AuthToken` is a full-account credential:** file `0600`,
   dir `0700` (macOS: no ACL on either), atomic write; scrubbed by value from every upstream error string (mcp-utils
-  `stripBearer` + `scrubToken`); never logged, never in a tool result, never in an error/hint.
+  `stripBearer` + `scrubToken`); never logged, never in a tool result (the one exception is
+  `warapp_sign_in`'s, below), never in an error/hint.
   **Hosted, the direct leg serves only from the token mcp-host captured (#333, owner choice "token
   only"), enforced in code:** on a hosted child (`isHosted`, `src/hosted.ts`) `warapp_link_session` is
   not registered and the session FILE is never read or written (`writeSession` refuses;
@@ -1553,8 +1556,29 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `email` from `WARAPP_EMAIL` and that password, `authToken` into `WARAPP_AUTH_TOKEN`: one war.app
   attempt, the token never in the gateway-readable bag); the captcha / no-password fallback pastes
   the cookie (`warapp-auth-flow-paste.json`). `tests/auth-flow-doc.test.ts` checks both against
-  mcp-host's rules offline. `warapp_sign_in` (part B) is not built yet, so `mint.yaml` declares no
-  flow; the design, trade-off and registration change are in `docs/PLAN-DIRECT.md`.
+  mcp-host's rules offline. **`warapp_sign_in` (part B, `src/direct/sign-in.ts`, `src/tools/sign-in.ts`)
+  is registered ONLY hosted** (locally `warapp_link_session` stays the way). It takes `email` and
+  `password` and makes ONE attempt, never retried (war.app may count failed sign-ins): GET
+  `https://war.app/LogIn` for its cookies (`jses_WS60`, `FirstReferrer`, `AWSELB`; a page without its
+  password form, or a bot check, refuses before any password is sent), then one form POST to the same
+  URL (`Email`, `Password`, `KeepSignedIn=on`, those cookies); redirects are followed by hand, at most 3
+  per phase, every one as a GET (the password is never re-sent, a 307/308 included) and only within
+  the exact origin `https://war.app` (anywhere else is refused unrequested), through netguard's
+  public-only dispatcher, one 30 s deadline, a 2 MiB cap per body. Success is an `AuthToken` set on any
+  hop after the POST (one the page sets alone does not count; a deletion does not count; one that fails
+  `isPlausibleAuthToken`, the hosted child's own shape check, is refused rather than kept). Refusals:
+  `credential_rejected` (the form came back), `edge_blocked` (detectEdgeBlock, captcha markup, 403,
+  429), `transport` / `timeout` (saying whether the POST had gone), `http` / `unknown`; the email (any
+  case), the password and every cookie value of 6+ characters are scrubbed by value and the cause is
+  dropped. **Its result `{ authToken }` is the single documented exception to "never in a tool
+  result":** mcp-host's capture reads the credential from the capture tool's result, and the caller
+  already holds the password, so it grants nothing new; nothing else about the account is returned.
+  Not confirm-gated (the flow sends only the arguments its document declares); annotated not
+  read-only, not destructive, not idempotent, open-world. The registration should hide it from the
+  menu (`enabledTools` left without it): mcp-host never checks a flow's step or capture tool against
+  that allowlist (`wire.ts` `toolCallRequestSchema`). The paste fallback's `auth_token` argument is
+  not built yet, and `mint.yaml` still declares no flow; the design, trade-off and registration
+  change are in `docs/PLAN-DIRECT.md`.
 - **End of game (#178).** `Game.endRules` holds the surrender, boot and AI settings; whether a surrender
   needs acceptance comes from `InstantSurrender`, not the player count (the count is only the fallback;
   #228: the surrender preview reads the game with `settings: true`, which carries it — without them it

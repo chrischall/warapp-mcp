@@ -42,6 +42,7 @@ import { pushWebSocketLeg } from '../push/websocket.js';
 import { readSession } from '../direct/session.js';
 import { createDirectFirstBridge, type DirectFetch } from '../direct/transport.js';
 import { isHosted } from '../hosted.js';
+import { registerSignInTool, type SignInToolDeps } from './sign-in.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
 
 type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
@@ -58,6 +59,8 @@ type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCa
   push?: PushListener;
   /** Test seam: the direct leg's HTTPS primitive (default netguard `fetchPublic`). */
   directFetch?: DirectFetch;
+  /** Test seam: warapp_sign_in's sign-in (hosted only; default src/direct/sign-in.ts). */
+  signIn?: SignInToolDeps['signIn'];
 };
 
 /** Every tool this server serves. index.ts and the tests share this list. */
@@ -170,4 +173,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     ...(env ? { env } : {}),
   });
   registerPushTools(server, live, push, deps.env ? { env: deps.env } : {});
+  // Hosted only: the war.app sign-in mcp-host's authFlow captures the AuthToken from (#333 part B).
+  // Locally warapp_link_session stays the way to the direct transport.
+  if (hosted) registerSignInTool(server, deps.signIn ? { signIn: deps.signIn } : {});
 }

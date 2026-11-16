@@ -35,7 +35,7 @@ capture (or re-capture) the token.
   registration. A hosted child still never reads or writes a session file and never registers
   `warapp_link_session`; without the captured token it is pinned to the bridge exactly as before.
   Part A (built) is the transport, status and hints; part B is the war.app sign-in tool the
-  `authFlow` calls (the flow itself is `docs/examples/warapp-auth-flow.json`, see "Hosted direct
+  `authFlow` calls (`warapp_sign_in`, built) (the flow itself is `docs/examples/warapp-auth-flow.json`, see "Hosted direct
   mode" below) and the `mint.yaml` flow — its form and endpoint are traced live by the owner's
   play session first, never guessed.
 - **The owner does the live capture and verification.** No agent captures or replays the real
@@ -154,20 +154,34 @@ capture (or re-capture) the token.
   serves the direct leg from it, the bridge its fallback; no session file is ever read or written
   hosted, and `warapp_link_session` stays unregistered. Signed out, every hint says "Sign in" on the
   connection, which re-runs the same flow (admin portal **Sign in**, or reconnecting).
-- **`warapp_sign_in` (part B, not built).** Its war.app request is traced live first (#333's sign-in
-  trace: `https://war.app/LogIn`, a plain form POST; how a success answers and where `AuthToken` is
-  set are still unverified) and never guessed here. Its contract, fixed by this flow: inputs `email`
-  and `password` (and `auth_token` for the paste fallback below), host-locked to `https://war.app`,
-  never retried (a refused credential is terminal in mcp-host, and war.app may count failures), an
-  `isError` for a refusal, a captcha or bot page, each told apart in its text; on success a result
-  whose `authToken` key holds the cookie value and nothing else secret. Because that result carries
-  the token, part B must keep it out of a chat client's hands — registered only hosted, and gated so
-  a model cannot call it into a transcript by accident (kiaaccess's `confirm: true` on its export is
-  the precedent; adding an argument means adding it to the flow document, or the call is refused).
-  The flow document is part of that contract: `tests/auth-flow-doc.test.ts` checks it against
-  mcp-host's rules offline (every `{from}` provided earlier, the capture never over an `authField`,
-  a host-set or loader variable, `perUserChild`, the step tools registered hosted with the arguments
-  sent).
+- **`warapp_sign_in` (part B, built: `src/direct/sign-in.ts`, `src/tools/sign-in.ts`).** Built from
+  #333's sign-in trace (`https://war.app/LogIn`, a plain form POST of exactly `Email`, `Password`,
+  `KeepSignedIn=on`, no hidden fields, no captcha); how a success answers and where `AuthToken` is set
+  are still unverified live, so it accepts the cookie on ANY hop after the POST. The exchange: GET the
+  page and keep its cookies (`jses_WS60`, `FirstReferrer`, `AWSELB`); refuse before sending any
+  password when the page shows a bot check or no password form; ONE POST carrying those cookies;
+  follow at most 3 redirects per phase by hand, each as a GET (the password is never re-sent, a
+  307/308 included), only within the exact origin `https://war.app` (anywhere else refused without
+  being requested); netguard's public-only dispatcher, one 30 s deadline, a 2 MiB cap per body. Never
+  retried (a refused credential is terminal in mcp-host, and war.app may count failures). Refusals are
+  each told apart in an `isError`: `credential_rejected` (the form came back), `edge_blocked`
+  (mcp-utils `detectEdgeBlock`, captcha markup, 403, 429), `transport` / `timeout` (saying whether the
+  POST had gone), `http` / `unknown`; their text never holds the email, the password or a cookie value
+  (scrubbed by value, the cause dropped). A token the hosted child would read as malformed
+  (`isPlausibleAuthToken`) is refused, not returned. On success the result is exactly
+  `{ "authToken": … }`, a JSON object in one text block (mcp-host's `toolCallResultFrom` reads the
+  capture's `path` from it). **That result is the one documented exception to "the token is never in
+  a tool result"**: the capture needs it there, and the caller already holds the password, so it
+  grants nothing new. Registered only hosted (locally `warapp_link_session` stays the way). It is
+  not confirm-gated, so the flow sends only the two arguments its document declares; instead the
+  registration should hide it from the connector's menu: leave it out of `enabledTools` (`--tools`).
+  mcp-host never checks a flow's step or capture tool against that allowlist (`packages/core/src/wire.ts`
+  `toolCallRequestSchema`: "a login tool is often hidden from the menu"), so the flow still calls it
+  while no chat client sees it. The paste fallback's `auth_token` argument is not built yet. The flow
+  document is part of the contract: `tests/auth-flow-doc.test.ts` checks it against mcp-host's rules
+  offline (every `{from}` provided earlier, the capture never over an `authField`, a host-set or
+  loader variable, `perUserChild`, the step tools and the capture tool registered hosted with exactly
+  the arguments sent).
 
 ### The security trade-off the owner accepted
 This reverses the "direct mode is local-only" rule. War.app's `AuthToken` is a full-account
@@ -199,6 +213,8 @@ On the hosted registration (`warapp`, today `authFields` `WARAPP_EMAIL` + `WARAP
   before the flow existed);
 - **then** existing connections run **Sign in** once from the admin portal to capture a token;
   until they do they keep the bridge, unchanged.
+- **hide** `warapp_sign_in` from the menu: an `enabledTools` (`--tools`) list of every other tool
+  (the flow still calls it; see above);
 - `mint.yaml` gains `auth.flowPath` (or an inline `auth.flow`) only in part B, once `warapp_sign_in`
   exists — declared earlier, every hosted connect would fail on a tool that is not there. A
   `flowPath` must name a file inside the published package, so part B also adds the document to

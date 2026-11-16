@@ -83,7 +83,16 @@ export function hostedTokenState(env: EnvSource = process.env): 'none' | 'ok' | 
   if (!isHosted(env)) return 'none';
   const v = hostTokenValue(env);
   if (v === undefined) return 'none';
-  return HOST_TOKEN_SHAPE.test(v) && !HOST_TOKEN_FORBIDDEN.test(v) ? 'ok' : 'malformed';
+  return isPlausibleAuthToken(v) ? 'ok' : 'malformed';
+}
+
+/**
+ * Whether `v` is a plausible bare AuthToken cookie value (the loose bounds the
+ * hosted child accepts in {@link HOST_TOKEN_ENV}). warapp_sign_in returns only a
+ * token that passes, so a capture never stores one the child would ignore.
+ */
+export function isPlausibleAuthToken(v: string): boolean {
+  return HOST_TOKEN_SHAPE.test(v) && !HOST_TOKEN_FORBIDDEN.test(v);
 }
 
 /**

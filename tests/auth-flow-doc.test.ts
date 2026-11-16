@@ -180,6 +180,16 @@ describe('docs/examples/warapp-auth-flow.json (hosted direct mode, #333)', () =>
     }
   });
 
+  it('the capture tool is registered on a hosted child and takes exactly the args the flow sends', () => {
+    const tool = hostedTools.find((t) => t.name === FLOW.capture!.tool) as
+      | { inputSchema: { required?: string[]; properties?: Record<string, unknown> } }
+      | undefined;
+    expect(tool).toBeDefined();
+    const sent = Object.keys(FLOW.capture!.args ?? {}).sort();
+    expect([...(tool!.inputSchema.required ?? [])].sort()).toEqual(sent);
+    expect(Object.keys(tool!.inputSchema.properties ?? {}).sort()).toEqual(sent);
+  });
+
   it('mint.yaml declares no flow until warapp_sign_in is registered (part B)', () => {
     const signIn = hostedTools.some((t) => t.name === 'warapp_sign_in');
     if (!signIn) expect(mint).not.toMatch(/^\s+flow(Path)?:/m);
