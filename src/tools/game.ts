@@ -8,6 +8,7 @@ import { historyReport } from '../trend.js';
 import { currentTurn, gameIdArg, mapSummary, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { lossReport } from './how-lost.js';
+import { endOfGame, finishedAccount, type EndOfGameResult } from './end-of-game.js';
 import { foldFinished, type FinishedFold } from './profile-hook.js';
 
 const VIEWS = ['compact', 'full', 'raw'] as const;
@@ -68,9 +69,17 @@ function compact(game: Game) {
  * docs/PLAN-PROFILES.md; off with `WARAPP_PLAYER_PROFILE=off` in `env`): the per-game file kept while it
  * was played, else, once, its cached boards (#264's backfill), reported as `profileFold`. A finished game
  * the cached account did not win says how (`howLost`, #274, src/tools/how-lost.ts), as does (#283) a game
- * still playing once that account's seat is out.
+ * still playing once that account's seat is out. A finished game of mine gets its end-of-game pass once
+ * (`endOfGame`, #312, src/tools/end-of-game.ts): the account is the board cache's, else `identity` (the
+ * signed-in account).
  */
-export function registerGameTool(server: McpServer, client: WarappClient, dir?: () => string, env?: EnvSource): void {
+export function registerGameTool(
+  server: McpServer,
+  client: WarappClient,
+  dir?: () => string,
+  env?: EnvSource,
+  identity?: () => Promise<number | undefined>,
+): void {
   server.registerTool(
     'warapp_get_game',
     {
@@ -90,6 +99,10 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
           'which may instead have fallen before the walk ran), or else my last territories (inferred, never seen). ' +
           'A finished game is folded once into the opponent profiles (`profileFold`; from the turns kept while it was played, ' +
           'else from the boards cached then — a backfill; no other request), as warapp_profile_opponents reads them. ' +
+          'A finished game of mine also gets its end-of-game pass once (`endOfGame`: its history read once — one more ' +
+          'request — and kept name-free for later games: the outcome, my picks, every player\'s income and bonuses by turn, ' +
+          'what stood where my attacks failed; a failed read is recorded and not retried, except by a call with ' +
+          '`include_history`, which re-runs it from that read). ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
       ),
       _meta: lookupMeta(['warzone game', 'war.app game', 'whose turn is it', 'game status']),
@@ -121,6 +134,7 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
       });
       let fold: FinishedFold | undefined;
       let lost: Record<string, unknown> | undefined;
+      let end: EndOfGameResult | undefined;
       if (dir) {
         await recordFinalResult(dir(), game);
         // #274: a game I lost says how, from the boards cached while it was played.
@@ -128,8 +142,18 @@ export function registerGameTool(server: McpServer, client: WarappClient, dir?: 
         // The first read that shows the game finished folds its opponent profile, or backfills it from
         // the cached boards once (#264; best effort, no request).
         if (game.state === 'Finished') fold = await foldFinished(dir(), env ?? process.env, game);
+        // #312: once per finished game of mine, its history read once and kept name-free; an explicit
+        // `include_history` re-runs a failed pass from this read.
+        if (game.state === 'Finished') {
+          const me = await finishedAccount(dir(), game.id, identity);
+          end = await endOfGame({ client, dataDir: dir(), env: env ?? process.env }, game.id, me, game, include_history ? { history: game, retry: true } : {});
+        }
       }
-      const folded = { ...(fold && fold.status !== 'off' ? { profileFold: fold } : {}), ...(lost ? { howLost: lost } : {}) };
+      const folded = {
+        ...(fold && fold.status !== 'off' ? { profileFold: fold } : {}),
+        ...(lost ? { howLost: lost } : {}),
+        ...(end && end.status !== 'off' ? { endOfGame: end } : {}),
+      };
       // #302: with the history asked for, whether it read, and if not why (key names and counts only).
       const report = include_history ? historyReport(game) : undefined;
       const historyRead = report ? ('read' in report ? { historyRead: report.read } : { historyUnreadable: report.unreadable }) : {};

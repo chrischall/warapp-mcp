@@ -8,7 +8,7 @@
 // the filters as a constant 0, and the one other list it asks takes `count` 100), so a wider
 // count is how the whole list is read. UNVERIFIED live: that `All` lists lobbies and finished
 // games together and that the server honours a count above 10.
-import { untrustedEnvelope } from '@chrischall/mcp-utils';
+import { untrustedEnvelope, type EnvSource } from '@chrischall/mcp-utils';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { briefGameLine, gameStateName, isFinished, readMyGames, summarizeMyGames, type MyGame, type RawMyGame } from '../my-games.js';
@@ -17,8 +17,9 @@ import { readAnnotations, respond, untrustedDescription, untrustedText, WARAPP_U
 import { canonicalMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
+import { holdsSeat, playerStateName } from '../player-states.js';
+import { sweepFinished } from './end-of-game.js';
 import { accountUnknown } from './write-kit.js';
-import { playerStateName } from '../player-states.js';
 import { pendingSurrenders, surrenderOwed } from '../surrender-pending.js';
 import { readDetailsSeats, SURRENDER_PENDING_NOTE, surrenderMayBePending, type PendingSurrenderView } from './surrender-pending.js';
 
@@ -133,7 +134,23 @@ export async function myGamesSurrenders(
   return { byGame, skipped: eligible.length - read.length };
 }
 
-export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
+/**
+ * The finished games of `me` (in-game id) in a GetMyGames list where its seat was held, newest first: the
+ * end-of-game sweep's candidates (#312).
+ */
+export function finishedGamesOf(games: readonly RawMyGame[], me: number): number[] {
+  return games
+    .filter((g) => isFinished(g) && g.players.some((p) => p.id === me && holdsSeat(playerStateName(p.stateCode))))
+    .map((g) => g.id)
+    .sort((a, b) => b - a);
+}
+
+/**
+ * Also the end-of-game sweep (#312, src/tools/end-of-game.ts): the account's finished games not yet
+ * processed get their pass, at most `END_OF_GAME_PER_CALL` per call (`endOfGame` in the compact answer).
+ */
+export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: { env?: EnvSource } = {}): void {
+  const env = deps.env ?? process.env;
   server.registerTool(
     'warapp_my_games',
     {
@@ -149,6 +166,8 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
           'Finished games are left out unless ' +
           '`include_finished` (`finishedLeftOut` counts them). `listed` is how many games war.app returned and ' +
           '`complete` false (with a `warning`) means the list may be partial. Use the id with the other warapp tools. ' +
+          'Each call also gives up to two of your finished games not yet processed their end-of-game pass (`endOfGame`: ' +
+          'each game\'s history read once from GameFeed and kept name-free for later games; `pending` counts the rest). ' +
           `${BRIDGE_NOTE} Read-only.`,
       ),
       _meta: canonicalMeta('whats-new', ['my games', 'warzone', 'whose turn', 'games waiting on me', 'which games need me']),
@@ -171,6 +190,11 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
     },
     async ({ view, include_finished }) => {
       const { me, games: raw, partial } = await fetchMyGames(ctx);
+      // #312: the end-of-game sweep, bounded per call; best effort, never throws.
+      const token = ctx.dataDir ? await ctx.myInviteToken().catch(() => undefined) : undefined;
+      const sweep =
+        token !== undefined ? await sweepFinished({ client: ctx.client, dataDir: ctx.dataDir, env }, token, finishedGamesOf(raw, me)) : undefined;
+      const endOfGame = sweep && (sweep.processed.length || sweep.pending) ? { endOfGame: sweep } : {};
       const kept = include_finished ? raw : raw.filter((g) => !isFinished(g));
       const summary = summarizeMyGames(kept, me);
       if (view === 'brief') return briefResult(summary, partial ? raw.length : undefined);
@@ -194,6 +218,7 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext): void {
         listed: raw.length,
         ...(finishedLeftOut ? { finishedLeftOut } : {}),
         complete: !partial,
+        ...endOfGame,
         ...(partial
           ? {
               warning:

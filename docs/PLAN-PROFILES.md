@@ -354,9 +354,22 @@ left alone; no id, game id or name appears anywhere in either file (assert on th
 - **C2, from orders**, only once V2 names the keys: a loose `historyOrders` in `src/trend.ts`, then
   `reinforce`, `stacking`, `firstStrike` and `retaliate` exactly for every pair of players, and card
   habits (a Reinforcement card held unplayed; Order Priority use).
-- **Where the read happens:** in `warapp_get_game` for that game, or on the next
-  `warapp_profile_opponents` call for any game (at most one pending history per call). Not inside
-  `warapp_wait_for_turn`, which should not gain a request.
+- **Where the read happens (#312 E1, built):** the end-of-game pass (`src/tools/end-of-game.ts`)
+  makes the one read, on the first read that shows the game finished — `warapp_get_game`, and (owner
+  request of 2026-11-16, superseding "not inside the wait") `warapp_wait_for_turn`'s read — and in the
+  `warapp_my_games` sweep over the account's finished games not yet processed (`END_OF_GAME_PER_CALL`,
+  2, per call, newest first). It keeps the capture name-free at `<dataDir>/finished/<hmac>.json`
+  (`src/finished-store.ts`: the key an HMAC of my account and the game under the shared salt; players by
+  `playerKey`; 0600, atomic, at most 500, an unparsable file never overwritten), which is also the
+  processed mark: outcome (from the player states) and the turn I was out, my pick list and award,
+  every player's income (`boardIncome`), territories, armies and full bonuses on each history board,
+  what stood on each target my cached orders failed to take, the settings shape and the map id
+  (`src/analysis/finished-game.ts`, pure). A failed request is `read-failed`, an unreadable history
+  `history-unreadable` with #315's reason; neither is retried by a trigger, only by an explicit
+  `warapp_get_game` with `include_history`, from that call's own read. The sweep also folds each game's
+  live profile (`foldFinished`), so #273 needs no `warapp_get_game` per game. C1's habits from the
+  standings (and the history entry replacing the live one) are not built yet: they will read these
+  records, never GameFeed again.
 - One request per finished game, through `WarappClient`, never retried in a loop, never for a game
   the account did not play.
 

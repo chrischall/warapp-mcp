@@ -1033,6 +1033,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   unknown), `warapp_advise_diplomacy`'s per-neighbour `habits` (`retaliate` and `attack`, beside `record`; it keeps no
   turn) and `warapp_scout_player`'s `met` (`metRead`: games met and every habit from the cross-game record alone,
   shrunk toward the all-formats pool; only when the record holds the player).
+- **The end-of-game pass (#312 E1; owner decisions P2–P4 of 2026-11-16) runs once per finished game the account
+  played** (`src/tools/end-of-game.ts`, never throws): it reads the game's history ONCE (`getGame` with history and
+  settings; the map from the cache when the game's map is known, else in the same reply), never retried, and keeps the
+  capture name-free at `<dataDir>/finished/<hmac>.json` (`src/finished-store.ts`: the file name `finishedGameKey`, an
+  HMAC of my account and the game under the ONE shared salt; players inside by `playerKey`; no clock; 0600, atomic, at
+  most `MAX_FINISHED_RECORDS` (500) by last write; a file that does not parse is never overwritten and blocks the pass,
+  `record-unreadable`). The file IS the processed mark: any status stops every trigger. `captured` holds
+  (`src/analysis/finished-game.ts`, pure) the outcome from my player state (`won`, `lost`, `surrendered`, `eliminated`,
+  `booted`, `ended-by-vote`) with the completed turns, the first history board I held no land (`outTurn`) and the
+  winners; my pick list and award (`readPickRecord`); each player's start; per history board (`afterTurn` completed
+  turns) each player's income by `boardIncome` (base or per-territory, plus full bonuses; cards and the army cap aside),
+  territories, armies and full bonuses; for each target my cached orders attacked and did not take (orders of turn T on
+  boards T − 1 and T) what stood there before and after; the settings shape (`nameFreeSettings`, src/replay.ts) and the
+  map id. A failed request is `read-failed` (the error kind only), an unreadable history `history-unreadable` with
+  #315's reason, each with the outcome the read that showed it finished gives; neither is retried by a trigger — only
+  `warapp_get_game` with `include_history` re-runs a failed pass, from that call's own read (no further request).
+  Triggers: `warapp_get_game` (the account: the board cache's, else the signed-in one), `warapp_wait_for_turn`'s read,
+  and the `warapp_my_games` sweep over its finished games (my seat held) not yet processed, newest first, at most
+  `END_OF_GAME_PER_CALL` (2) per call, each also folding its live profile (`foldFinished`, #273); the records are the
+  sweep's cursor (`endOfGame: { processed, pending }`). Only a seat of mine (P3); `WARAPP_PLAYER_PROFILE=off` or no data
+  dir: nothing. Registered hosted like the profile store. Inform only (P1): no planner decision reads it (golden
+  unchanged); the per-map record, the lessons summary and C1's history habits will read these records.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in
