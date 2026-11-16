@@ -1099,9 +1099,20 @@ export function floorTier(
    * contested unit whole that pays back within PAYBACK_TURNS (one CONCEDE_FACTOR made contested)
    * and that what is left covers (best worth per army first, never weighed against spreading) — no
    * concession, no spread — leaving the rest contested for the call after the captures.
+   * `'untrusted'` (#275 b): the same, before any capture, for each contested unit a border of which faces
+   * an opponent whose estimate a tripwire broke (sized for its untrusted figure), whether or not it pays
+   * back: while the estimate is untrusted the gate is held before expansion, never left to what it leaves.
    */
-  const settleContested = (wholeOnly = false) => {
-    const open = units.filter((u) => u.contested && !u.conceded && (!wholeOnly || u.loss !== 'payback'));
+  const settleContested = (mode: boolean | 'untrusted' = false) => {
+    const wholeOnly = mode !== false;
+    const facesUntrusted = (u: Unit) =>
+      u.members.some((m) => {
+        const b = borders.get(m.id);
+        return !heldBorders.has(m.id) && b !== undefined && pc.untrustedAt(b.player, m.id) > 0;
+      });
+    const open = units.filter(
+      (u) => u.contested && !u.conceded && (mode === 'untrusted' ? facesUntrusted(u) : !wholeOnly || u.loss !== 'payback'),
+    );
     if (!open.length) return;
     const need = (u: Unit) => u.members.filter((m) => !heldBorders.has(m.id)).reduce((n, m) => n + m.holdCost, 0);
     const ratio = (u: Unit) => u.worth / Math.max(1, need(u));
@@ -1164,9 +1175,11 @@ export function floorTier(
           u,
           undefined,
           `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: ${floored ? 'past its floor ' : ''}its ${unitBorders(u)} need${u.members.length === 1 ? 's' : ''} ${more}${floored ? ' more' : ''}${why ? ` (${why})` : ''}, ${
-            wholeOnly
-              ? 'before any expansion that completes no bonus (1v1 in contact: an advance ranks below every hold).'
-              : 'and nothing else this turn uses those armies.'
+            mode === 'untrusted'
+              ? `before any capture: player ${[...new Set(u.members.flatMap((m) => { const b = borders.get(m.id); return b && pc.untrustedAt(b.player, m.id) > 0 ? [b.player] : []; }))].sort((a, b) => a - b).join(', ')}'s estimate is untrusted (#275), so the border is held ahead of expansion.`
+              : wholeOnly
+                ? 'before any expansion that completes no bonus (1v1 in contact: an advance ranks below every hold).'
+                : 'and nothing else this turn uses those armies.'
           }`,
         )
       ) {

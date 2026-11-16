@@ -84,3 +84,51 @@ describe('an untrusted estimate (#275 b)', () => {
     expect(plan({ untrusted: [{ player: 99, deploy: 18 }] }).deploys).toEqual(plan().deploys);
   });
 });
+
+// Lesson (the 20/80 game, turns 17–19): 58 armies went to a 12-army wasteland for +1 beside the 170
+// stack while each gate of the bonus it faced was conceded. Home (+2): 1, 2; its gate 2 faces player 20's
+// 20 on 3 (with 4 behind it); Waste (+1): the 6-army neutral 5 beside 1. Income 20; a third player seated.
+describe('an untrusted opponent puts the gate before expansion (#275 b)', () => {
+  const GATE: GameMap = {
+    id: 2,
+    name: 'Gate',
+    territories: [
+      [1, [2, 5]],
+      [2, [1, 3]],
+      [3, [2, 4]],
+      [4, [3]],
+      [5, [1]],
+    ].map(([id, connectedTo]) => ({ id: id as number, name: `T${id}`, connectedTo: connectedTo as number[] })),
+    bonuses: [
+      { id: 501, name: 'Home', value: 2, territoryIds: [1, 2], bonusIds: [] },
+      { id: 502, name: 'Waste', value: 1, territoryIds: [5], bonusIds: [] },
+    ],
+    distributionModes: [],
+  };
+  const gateBoard = board([mine(1, 1), mine(2, 10), enemy(3, 20), enemy(4, 20), neutral(5, 6)]);
+  const gatePlan = (over: Partial<PlanInput> = {}) =>
+    planTurn({ graph: buildGraph(GATE), board: gateBoard, me: ME, income: 20, settings: STD, game: { players: [{ id: ME }, { id: ENEMY }, { id: 30 }] }, ...over });
+  const deployed = (p: TurnPlan, id: number) => p.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
+
+  it('holds the gate whole before a +1 completion when the two do not both fit', () => {
+    // Trusted (estimate 5): the gate needs 5, and both fit.
+    const trusted = gatePlan();
+    expect(trusted.moves.map((m) => m.to)).toEqual([5]);
+    expect(trusted.conceded).toEqual([]);
+    // Untrusted at 25: the gate needs 17 (more than 3 × its worth: contested, #118), the wasteland 10.
+    const p = gatePlan({ untrusted: [{ player: ENEMY, deploy: 25 }] });
+    expect(p.conceded).toEqual([]);
+    expect(p.moves.filter((m) => m.kind === 'attack')).toEqual([]);
+    expect(10 + deployed(p, 2)).toBeGreaterThanOrEqual(holds(19 + 25));
+    expect(p.rationale.join('\n')).toMatch(/Hold bonus Home \(#501\) \(\+2\) whole: .* before any capture: player 20's estimate is untrusted \(#275\)/);
+  });
+
+  it('does the same under defend, and leaves a gate it cannot cover to the concession as before', () => {
+    const d = gatePlan({ untrusted: [{ player: ENEMY, deploy: 25 }], options: { goal: 'defend' } });
+    expect(d.conceded).toEqual([]);
+    expect(d.moves.filter((m) => m.kind === 'attack')).toEqual([]);
+    // At 60 the gate needs ~38, more than the income: nothing is gained by holding the armies back.
+    const far = gatePlan({ untrusted: [{ player: ENEMY, deploy: 60 }] });
+    expect(far.conceded).toEqual([2]);
+  });
+});

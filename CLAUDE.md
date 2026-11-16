@@ -717,7 +717,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   is max(implied, my income) (`PlanInput.untrusted`, forceAt; not under `enemyDeploy`; under Local Deployment that
   figure is not bounded by where the opponent's bonus pools can land, as `deployReaching` bounds the estimate:
   such a border is over-sized, the conservative direction; the guard-off breach price, `breachAt`, sizes the stack
-  that would come through on the same figure), the border guess skips an untrusted opponent
+  that would come through on the same figure; a held bonus contested on that sizing, #118, whose border faces it
+  is held whole before any capture when what is left covers it, `settleContested('untrusted')`, so no expansion
+  goes ahead of the gate; the game profile compares it at its figure and never reads `even` while the mark runs),
+  the border guess skips an untrusted opponent
   (`borderGuess`' `untrusted`, reason `untrusted`: a split drawn from the estimate would undo it), `warapp_check_plan`
   tries that figure by default (source `untrusted`), and both say so in the first warning (under `enemy_deploy`
   `warapp_check_plan` says nothing of it and `warapp_plan_turn`'s warning names the what-if figure it used).

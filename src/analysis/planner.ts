@@ -28,7 +28,12 @@
 // threats.ts's forceAt (a rationale line names those borders); every other border, and an explicit
 // enemyDeploy, are unchanged. Under Local Deployment that figure is not bounded by where the
 // opponent's bonus pools can land (`deployReaching` bounds the estimate): such a border is
-// over-sized, the conservative direction. Absent, the plan is byte-identical.
+// over-sized, the conservative direction. A held bonus contested on that sizing (#118: its hold costs
+// more than CONCEDE_FACTOR × its worth, or does not pay back) whose border faces the untrusted opponent
+// is held whole before any capture when what is left covers it (`settleContested('untrusted')`, every
+// goal), so no expansion goes ahead of the gate; one it cannot cover is conceded as before. The game
+// profile compares that opponent at its figure and is never `even` while the mark runs (profile.ts).
+// Absent, the plan is byte-identical.
 // Rule 1k's commander reserve is read by every phase that spends armies: captures, strike and
 // stand-still keep what holds my commander's territory (#274: where it walks to, when it walks).
 // `byNum` and `pct` live in plan/util.ts.
@@ -2324,8 +2329,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     };
     /** #215, rule 0p.1: the contested units were held whole (where they fit) before the first advance. */
     let contestedDue = false;
+    /** #275 (b): the contested units facing an untrusted opponent were held whole (where they fit) before the first capture. */
+    let untrustedDue = false;
     candidates.forEach((c, i) => {
       if (done.has(c)) return;
+      // #275 (b): while an opponent's estimate is untrusted, a contested held bonus whose border faces
+      // it is held whole before any capture (a +1 expansion once went ahead of the gate it left to fall).
+      if (c.kind !== 'unit' && !c.focus && !untrustedDue) {
+        untrustedDue = true;
+        settleContested('untrusted');
+      }
       // #215, rule 0p.1: an advance ranks below every hold, a contested held bonus's included
       // (#118 lets the captures go first, but in a 1v1 in contact not one that completes nothing):
       // live, a +4 bonus's one border was left to fall while 15 went to a bonus 47 armies from done.
@@ -2408,6 +2421,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     reconsider();
     withdraw();
   } else {
+    // #275 (b): as under `balanced`, the gate facing an untrusted opponent before any capture.
+    settleContested('untrusted');
     for (const p of byCloseness) {
       complete(p);
       garrisonCompleted();
