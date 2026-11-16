@@ -314,6 +314,22 @@ describe('gameProfile: standing', () => {
       expect(p.standingSource).toBe('visible');
     });
 
+    it('an opponent whose estimate a tripwire broke (#275) is compared at its untrusted figure, and is never even', () => {
+      // Income 37 against ~30 reads even; at the untrusted 49 it is behind (0.76×).
+      const at49 = gameProfile(base({ income: 37, estimates: [{ playerId: 20, estimate: 30 }], untrusted: [{ playerId: 20, deploy: 49 }] }));
+      expect(at49.standing).toBe('behind');
+      expect(at49.notes.join(' ')).toMatch(/player 20 \(~49, untrusted \(#275\): an observation broke its estimate of 30\)/);
+      // Still even on the figure (36 against 37): a running tripwire is no even game.
+      const p = gameProfile(base({ income: 37, estimates: [{ playerId: 20, estimate: 30 }], untrusted: [{ playerId: 20, deploy: 36 }] }));
+      expect(p.standing).toBe('behind');
+      expect(p.notes.join(' ')).toMatch(/Standing behind, not even: player 20's estimate is untrusted \(#275\)/);
+      // A figure below the estimate leaves the estimate, but the running mark still reads behind; ahead on the figure stays ahead.
+      expect(gameProfile(base({ income: 37, estimates: [{ playerId: 20, estimate: 30 }], untrusted: [{ playerId: 20, deploy: 10 }] })).standing).toBe('behind');
+      expect(gameProfile(base({ income: 60, estimates: [{ playerId: 20, estimate: 30 }], untrusted: [{ playerId: 20, deploy: 40 }] })).standing).toBe('ahead');
+      // Without the mark, the same incomes read even.
+      expect(gameProfile(base({ income: 37, estimates: [{ playerId: 20, estimate: 30 }] })).standing).toBe('even');
+    });
+
     it('armies in my favour change nothing: the income comparison stands', () => {
       expect(gameProfile(base({ board: touching, income: 10 })).standing).toBe('ahead');
       const p = gameProfile(base({ board: touching, income: 3 }));

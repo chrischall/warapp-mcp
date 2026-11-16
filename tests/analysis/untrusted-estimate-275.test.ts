@@ -66,6 +66,18 @@ describe('an untrusted estimate (#275 b)', () => {
     expect(at(p, 7)).toBeLessThan(holds(9 + 18));
   });
 
+  it('reads the standing at the untrusted figure, and never even while the mark runs', () => {
+    const strong = board([mine(1, 5), mine(2, 10), enemy(3, 10), neutral(5, 2), neutral(6, 2), mine(7, 3)]);
+    // Income 20 against its estimate of 5: ahead.
+    expect(plan({ board: strong, options: { adapt: true } }).profile.standing).toBe('ahead');
+    // Against the untrusted 18 (1.11×): even on the incomes, behind with the mark running; the profile picks defend.
+    const p = plan({ board: strong, options: { adapt: true }, untrusted: [{ player: ENEMY, deploy: 18 }] });
+    expect(p.profile.standing).toBe('behind');
+    expect(p.profile.notes.join(' ')).toMatch(/untrusted \(#275\)/);
+    // A what-if enemy_deploy sizes everything itself: the mark is not read.
+    expect(plan({ board: strong, options: { adapt: true, enemyDeploy: 5 }, untrusted: [{ player: ENEMY, deploy: 18 }] }).profile.standing).toBe('ahead');
+  });
+
   it('changes nothing under an explicit enemy_deploy, or for an opponent not marked', () => {
     const base = plan({ options: { enemyDeploy: 5 } });
     expect(plan({ options: { enemyDeploy: 5 }, untrusted: [{ player: ENEMY, deploy: 18 }] }).deploys).toEqual(base.deploys);

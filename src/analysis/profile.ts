@@ -121,6 +121,11 @@ export interface ProfileInput {
   unseen?: ReadonlyArray<{ playerId: number; turnsUnseen: number; turnsUnseenAtLeast?: boolean; earnedAtLeast: number }>;
   /** #178: the end-of-game settings the profile reads (`Game.endRules`). */
   endRules?: { aisSurrenderWhenOneHumanRemains?: boolean };
+  /**
+   * #275 (b): opponents whose estimate a tripwire broke, with the figure the plan sizes them for: the
+   * standing compares each at the larger of its estimate and that figure, and never reads `even` while one runs.
+   */
+  untrusted?: ReadonlyArray<{ playerId: number; deploy: number }>;
 }
 
 export interface GameProfile {
@@ -278,7 +283,15 @@ export function gameProfile(input: ProfileInput): GameProfile {
 
   // ---- standing ----
   let standing: GameStanding;
-  const enemies = input.estimates.filter((e) => !ally(e.playerId)).sort((a, b) => b.estimate - a.estimate || a.playerId - b.playerId);
+  // #275 (b): an untrusted opponent is compared at the larger of its estimate and the figure it is sized for.
+  const untrustedFigure = new Map((input.untrusted ?? []).filter((u) => !ally(u.playerId)).map((u) => [u.playerId, Math.max(0, Math.floor(u.deploy))]));
+  const enemies = input.estimates
+    .filter((e) => !ally(e.playerId))
+    .map((e) => {
+      const f = untrustedFigure.get(e.playerId);
+      return f !== undefined && f > e.estimate ? { ...e, estimate: f, untrustedFrom: e.estimate } : e;
+    })
+    .sort((a, b) => b.estimate - a.estimate || a.playerId - b.playerId);
   const visible = new Map(board.territories.filter((t) => g.territoryById.has(t.territoryId)).map((t) => [t.territoryId, t]));
   const mineSet = new Set(mine);
   const notMine = [...g.territoryById.keys()].filter((t) => !mineSet.has(t));
@@ -332,7 +345,10 @@ export function gameProfile(input: ProfileInput): GameProfile {
   const fromPrior = teams ? !!strongestSide?.members.some((e) => e.source === 'prior') : strongest?.source === 'prior';
   /** The comparison a standing note states: mine (or my team's) against the strongest opponent (or enemy team). */
   const against = (basis: string) => {
-    if (!teams) return `my income ${input.income} against the strongest opponent, player ${strongest!.playerId} (~${strongest!.estimate}${fromPrior ? priorNote : ` ${basis}`})`;
+    const broke = (e: (typeof enemies)[number]) =>
+      'untrustedFrom' in e ? `, untrusted (#275): an observation broke its estimate of ${e.untrustedFrom}` : undefined;
+    if (!teams)
+      return `my income ${input.income} against the strongest opponent, player ${strongest!.playerId} (~${strongest!.estimate}${broke(strongest!) ?? (fromPrior ? priorNote : ` ${basis}`)})`;
     const mineText = `my team's income ${myIncome} (${[`mine ${input.income}`, ...counted.map((e) => `player ${e.playerId} ~${e.estimate}`)].join(', ')})`;
     const side = strongestSide!;
     const rest = fromPrior ? priorNote : `, ${basis}`;
@@ -435,6 +451,18 @@ export function gameProfile(input: ProfileInput): GameProfile {
         `Not ahead: the income comparison says so, but ${mineText} visible armies are below ${BEHIND_RATIO}× ${theirsText} in view. Standing even.`,
       );
       standing = 'even';
+    }
+  }
+
+  // #275 (b): an observation broke an opponent's estimate: what it really earns is unknown and above it,
+  // so the game is not even.
+  if (standing === 'even') {
+    const running = enemies.filter((e) => untrustedFigure.has(e.playerId)).map((e) => e.playerId).sort((a, b) => a - b);
+    if (running.length) {
+      notes.push(
+        `Standing behind, not even: ${running.map((p) => `player ${p}'s`).join(', ')} estimate is untrusted (#275): an observation broke it, so what ${running.length === 1 ? 'it earns' : 'they earn'} is above the figure compared.`,
+      );
+      standing = 'behind';
     }
   }
 

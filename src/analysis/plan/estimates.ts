@@ -233,6 +233,9 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     // and the FFA ranking read each estimate less its card. PLAN-TEAMS C3: teammates' estimates go
     // too, for the team standing (the profile keeps them off the opponents' side).
     estimates: allEstimates.filter((e) => e.playerId !== me).map((e) => ({ ...e, estimate: incomeOf(e) })),
+    // #275 (b): an untrusted opponent is compared at its figure, and the game is never even while it runs
+    // (not under a what-if enemy_deploy, which sizes everything itself).
+    ...(input.untrusted?.length && input.options?.enemyDeploy === undefined ? { untrusted: input.untrusted.map((u) => ({ playerId: u.player, deploy: u.deploy })) } : {}),
     // #94: opponents the tracker found with nothing in view, for the 'unknown' standing note.
     unseen: (input.tracks ?? []).flatMap((t) =>
       t.earnedAtLeast ? [{ playerId: t.playerId, turnsUnseen: t.turnsUnseen, turnsUnseenAtLeast: t.turnsUnseenAtLeast, earnedAtLeast: t.earnedAtLeast.total }] : [],
