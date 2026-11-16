@@ -733,7 +733,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   is held whole before any capture when what is left covers it, `settleContested('untrusted')`, so no expansion
   goes ahead of the gate — and one it cannot cover, or one triage conceded beside that opponent's stack, gets
   everything left to deploy before any capture and is not conceded (`fillUntrustedGates`, a warning names the deploy
-  that still takes it); the game profile compares it at its figure and never reads `even` while the mark runs),
+  that still takes it) — unless the stacks beside it take it with no deploy at all and what is left cannot make it
+  need some (`firstStand`): that one stays conceded and the armies stay behind it; the game profile compares it at its figure and never reads `even` while the mark runs),
   the border guess skips an untrusted opponent
   (`borderGuess`' `untrusted`, reason `untrusted`: a split drawn from the estimate would undo it), `warapp_check_plan`
   tries that figure by default (source `untrusted`), and both say so in the first warning (under `enemy_deploy`

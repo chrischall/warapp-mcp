@@ -145,6 +145,36 @@ describe('an untrusted opponent puts the gate before expansion (#275 b)', () => 
         expect(p.warnings.some((w) => /T2 \(#2\).*falls to/.test(w) && /untrusted/.test(w))).toBe(true);
       });
 
+  // Review of #275: a gate the stacks beside it take with no deploy at all is lost whatever goes there.
+  // 100 on 3 and 4 beside the gate's 10; a +5 bonus (8, 9) faces player 30's 8 on 11. Without the fix the
+  // untrusted plan put 3 on the gate, took the concession back and kept nothing behind it.
+  it('leaves a gate that falls with no deploy conceded, and spends nothing on it', () => {
+    const LOST: GameMap = {
+      ...GATE,
+      territories: [
+        ...GATE.territories,
+        ...([
+          [8, [9]],
+          [9, [8, 11]],
+          [11, [9]],
+        ] as const).map(([id, connectedTo]) => ({ id, name: `T${id}`, connectedTo: [...connectedTo] })),
+      ],
+      bonuses: [...GATE.bonuses, { id: 503, name: 'North', value: 5, territoryIds: [8, 9], bonusIds: [] }],
+    };
+    const third = (territoryId: number, armies: number): TerritoryState => ({ territoryId, owner: { kind: 'player', playerId: 30 }, armies });
+    const lostBoard = board([mine(1, 1), mine(2, 10), enemy(3, 100), enemy(4, 100), neutral(5, 6), mine(8, 1), mine(9, 5), third(11, 8)]);
+    const lostPlan = (over: Partial<PlanInput> = {}) =>
+      planTurn({ graph: buildGraph(LOST), board: lostBoard, me: ME, income: 20, settings: STD, game: { players: [{ id: ME }, { id: ENEMY }, { id: 30 }] }, ...over });
+    const trusted = lostPlan();
+    expect(trusted.conceded).toEqual([2]);
+    const p = lostPlan({ untrusted: [{ player: ENEMY, deploy: 60 }] });
+    expect(p.conceded).toEqual([2]);
+    expect(deployed(p, 2)).toBe(0);
+    expect(p.deploys).toEqual(trusted.deploys);
+    expect(p.moves).toEqual(trusted.moves);
+    expect(p.warnings.some((w) => /T2 \(#2\) is not conceded though short/.test(w))).toBe(false);
+  });
+
   it('leaves a conceded border facing a trusted opponent to the concession as before', () => {
     // The same gate at a trusted deploy of 60 (enemy_deploy what-if): conceded, the +1 taken.
     const p = gatePlan({ options: { enemyDeploy: 60 } });

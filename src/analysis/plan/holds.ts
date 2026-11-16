@@ -1102,7 +1102,8 @@ export function floorTier(
    * the higher bonus value, then id), each up to its hold. `short` are the contested units the whole holds
    * could not cover (left to #118's concession after the captures otherwise); conceded units are those
    * triage already gave up. A gate that gets armies is no longer conceded or contested (nothing is
-   * withdrawn from it, no later concession); a warning says what still takes it.
+   * withdrawn from it, no later concession); a warning says what still takes it. A gate the stacks beside
+   * it take with no deploy at all gets nothing unless what is left makes it need some of the deploy.
    */
   const fillUntrustedGates = (short: readonly Unit[]) => {
     const untrustedBy = (m: Threatened) => {
@@ -1120,8 +1121,23 @@ export function floorTier(
     if (!gates.length) return;
     const valueAt = (m: Threatened) => Math.max(0, ...units.filter((u) => u.members.includes(m)).map((u) => u.value));
     const given = new Map<Threatened, number>();
+    // Review of #275: a gate the stacks beside it take with no deploy at all is lost whatever goes there, so
+    // it gets armies only when what is left can make it need some of the deploy (`firstStand`, all of it or
+    // none); otherwise it stays conceded and the armies stay behind it (withdrawals, the second line).
+    const firstStand = (m: Threatened) => {
+      let d = 0;
+      while (d < m.holdCost && breakCostWith(m, m.have + d) <= 0) d++;
+      return d;
+    };
+    for (const m of [...gates].sort((a, b) => breakCostWith(a, a.have) - breakCostWith(b, b.have) || valueAt(b) - valueAt(a) || a.id - b.id)) {
+      const d = firstStand(m);
+      if (d === 0 || d > Math.min(ps.budget, roomAt(m.id))) continue;
+      give(m, d);
+      given.set(m, d);
+    }
+    const standing = gates.filter((m) => breakCostWith(m, m.have) > 0);
     while (ps.budget > 0) {
-      const next = gates
+      const next = standing
         .filter((m) => m.holdCost > 0 && roomAt(m.id) > 0)
         .sort((a, b) => breakCostWith(a, a.have) - breakCostWith(b, b.have) || valueAt(b) - valueAt(a) || a.id - b.id)[0];
       if (!next) break;
