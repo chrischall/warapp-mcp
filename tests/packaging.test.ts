@@ -696,3 +696,36 @@ describe('card plays verified live (#296)', () => {
     expect(v9).toMatch(/Airlift[^|]*verified live 2026-11-16/);
   });
 });
+
+describe('packaging for in-app notifications and read marks (#311, N1)', () => {
+  const protocol = readFileSync(new URL('../docs/WEB-PROTOCOL.md', import.meta.url), 'utf8');
+  const start = protocol.indexOf('## Notifications and read marks');
+  const section = start === -1 ? '' : protocol.slice(start, protocol.indexOf('\n## ', start + 1));
+
+  it('lists the notification methods and RegisterChatView in the method table', () => {
+    const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
+    expect(methods).toMatch(/\| 43 \| \*\*RegisterChatView\*\*/);
+    expect(methods).toMatch(/\| 317 \| \*\*GetInAppNotifications\*\*/);
+    expect(methods).toMatch(/\| 318 \| \*\*DeleteInAppNotification\*\*/);
+    expect(methods).toMatch(/\| 319 \| \*\*AcknowledgeInAppNotifications\*\*/);
+  });
+
+  it('documents each method from the bundle, UNVERIFIED live, with its field order', () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(section).toMatch(/UNVERIFIED live/);
+    for (const m of ['GetInAppNotifications', 'DeleteInAppNotification', 'AcknowledgeInAppNotifications', 'RegisterChatView']) {
+      expect(section, m).toContain(`m=${m}&js=1`);
+    }
+    expect(section).toContain('warlight.shared.GetInAppNotificationsReturn');
+    expect(section).toContain('warlight.shared.InAppNotification');
+    expect(section).toContain('warlight.shared.UnreadMailCheckResults');
+    expect(section).toContain('**699**');
+  });
+
+  it('names the GetMyGames GameInfo unread-chat flags by read position', () => {
+    for (const flag of ['unread group', 'unread private', 'unread public', 'unread team']) {
+      expect(section.toLowerCase(), flag).toContain(flag);
+    }
+    expect(section).toMatch(/0-based/);
+  });
+});

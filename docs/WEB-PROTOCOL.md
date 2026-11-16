@@ -91,6 +91,7 @@ string email                  the signed-in account's email
 | 38 | GetGameDetails | |
 | 39 | **GameRefresh** | params: int32 gameId, bool chat, bool nonChat, string "-1", string "-1", bool lobby, optional dict, optional dict; reply `GameDetailsAndChat` — see [Chat](#chat) (the chat-only read of public messages VERIFIED live 2026-11-14; the rest UNVERIFIED) |
 | 40 | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
+| 43 | **RegisterChatView** | params: int32 gameId, string public mark, string team mark, optional dict private counterpart → mark, optional dict game group → mark; no result — marks a game's chat read, see [Notifications and read marks](#notifications-and-read-marks) (UNVERIFIED live) |
 | 48 | GetGameSettings | |
 | 60 | AcceptGame | accept an invitation (not used) |
 | 61 | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
@@ -108,6 +109,9 @@ string email                  the signed-in account's email
 | 79 | GetTerritoryPicks | params: int32 gameId, int32 in-game player id; verified for my own id. `warapp_get_team` also asks it with a teammate's id while picking (UNVERIFIED, V6); a refusal reads as unknown |
 | 80 | **UnCommit** | params: int32 gameId — see [UnCommit](#uncommit) |
 | 81 | GetTurns | |
+| 317 | **GetInAppNotifications** | params: int32 start index, int32 page size (the client sends 30); reply `GetInAppNotificationsReturn` — see [Notifications and read marks](#notifications-and-read-marks) (UNVERIFIED live) |
+| 318 | **DeleteInAppNotification** | params: string notification id (decimal text); no result (UNVERIFIED live) |
+| 319 | **AcknowledgeInAppNotifications** | params: optional list of string notification ids (decimal text); no result — marks them read (UNVERIFIED live) |
 | 238 | Subscribe | push channel only, **no auth**; params: bool true, list of topic strings, string null; reply dict topic→int32 error |
 | 241 | GameUpdated | server push, **no auth**; msgNum `0x80000000`, 61 bytes: the game id, then bools `chat` and `nonChat` (named by the client's own log line; UNVERIFIED live) and an optional dict — re-read GameFeed |
 
@@ -550,13 +554,100 @@ private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `wara
   when the reply cannot be read. Server errors the client names: 36 rate-limited, 33 too long,
   88 game deleted, 333 game archived, 17 not in the game, 202 private messaging disabled. A send
   reaches other people, so it is always confirm-gated, and a refusal is never retried.
-- **Other chat methods** (not used): 43 RegisterChatView, 44 RetrieveChat (gameId and the two
+- **Marking chat read:** 43 RegisterChatView — see [Notifications and read marks](#notifications-and-read-marks).
+- **Other chat methods** (not used): 44 RetrieveChat (gameId and the two
   markers), 45 RetrievePrivateMessageHistory, 46 RetrieveGameGroupMessageHistory. Push 242
   `ChatRoomNewMessage` is the site's chat rooms, not a game's chat.
 - **Push:** `GameUpdated` (241) carries, after the game id, two bools the client's handler logs as
   `chat=` and `nonChat=`. `src/push/socketio.ts` reads the first when present: a push with it set is
   chat activity (`warapp_wait_for_turn` reports `chatActivity: true` for the game, no text), and
   the game is re-read as for any push.
+
+## Notifications and read marks
+
+**Read from the client bundle (cached client `v6.07.0.1`, 2026-11-16, issue #311); UNVERIFIED live.**
+Nothing here has been sent to war.app yet. Each method goes through `WarappRpc` like every other one,
+with the auth block first; field orders are the client writers' and readers' read order.
+
+### In-app notifications (the client's "In App Notifications" screen)
+
+- **List: `GetInAppNotifications` (317)**, `POST /Services?m=GetInAppNotifications&js=1`. After the auth
+  block:
+  1. `int32` start index — the paging offset (the first page is 0);
+  2. `int32` page size — the client always sends 30.
+
+  Reply: a present flag, then **`warlight.shared.GetInAppNotificationsReturn`**:
+  1. an optional list (present flag, int32 count) of optional **`warlight.shared.InAppNotification`**
+     (each a present flag, then the record);
+  2. `int32` the total number of notifications (the client's pager uses it with the page size).
+
+  `InAppNotification`, 7 fields in read order (0-based):
+
+  | # | Field | Read as |
+  |---|---|---|
+  | 0 | sent | datetime (the screen shows it as "Sent …") |
+  | 1 | data | string: a JSON object the client parses for the detail view — `Body`, a `Url` with `UrlText`, or `Urls` (each `Url`, `Label`, `Color`, `Icon`), and sometimes a `NotificationQuestion` (a group invite or a poll) |
+  | 2 | id | string the client parses as a number (a long; the client holds it as a double) — the id the delete and acknowledge calls send back |
+  | 3 | (unknown) | int32 — the client never reads it |
+  | 4 | (unknown) | string — the client never reads it |
+  | 5 | title | string: the one line the list shows per notification |
+  | 6 | unread | bool: the list highlights the row while it is set |
+
+  The client orders the page by the sent date. The `data` JSON is third-party-shaped
+  text: anything a tool shows from it must go through `untrustedText`/`untrustedBody`, and a
+  `NotificationQuestion` answer (method 335, `NotificationQuestionResponse`) or a group join is out of scope.
+- **Mark read: `AcknowledgeInAppNotifications` (319)**, `POST /Services?m=AcknowledgeInAppNotifications&js=1`.
+  After the auth block: an optional list — present flag, `int32` count, then each id as a string
+  (present flag + decimal text; the client writes `"null"` for none). The client sends it when a
+  notification whose unread flag is set is opened, with a one-element list. **No result payload**,
+  so success can only be read back from a later `GetInAppNotifications` (the unread flag cleared).
+  The client throws on any error.
+- **Delete: `DeleteInAppNotification` (318)**, `POST /Services?m=DeleteInAppNotification&js=1`. After
+  the auth block: one string, the id as decimal text. **No result payload.** The client treats
+  server error **699** `InAppNotificationKeyNotFound` as already deleted and throws on any other.
+  Deleting is not marking read: a read-only "mark read" feature needs only 319.
+- **The unread badge** comes with every reply: `warlight.shared.MessageExtrasDown`'s last optional
+  field is **`warlight.shared.UnreadMailCheckResults`** — `bool`, `datetime`, `bool` (`src/protocol/codec.ts`
+  already decodes it as `unreadMail`). The datetime is what the next request echoes as
+  `MessageExtrasUp`'s last-notification time (`kFa`). The client keeps both bools (which one is mail and
+  which is notifications is not named in the bundle) and, when it opens the notifications screen,
+  clears both locally if either is set; that clearing sends nothing.
+
+### Marking a game's chat read
+
+- **`RegisterChatView` (43)**, `POST /Services?m=RegisterChatView&js=1`. After the auth block:
+  1. `int32` game id;
+  2. string — the **public** mark: the highest public message id seen, as decimal text (present
+     flag + text);
+  3. string — the **team** mark, the same for the team channel;
+  4. an optional dict (present flag, `int32` count, then `int32` key, string value…): per private
+     conversation, the counterpart's in-game id → the highest private message id seen;
+  5. an optional dict, the same per game group: game-group id → the highest message id seen.
+
+  **No result payload.** A mark is a `GameMessage` message id (field 4 of [Chat](#chat)'s table).
+  The client keeps, per channel, the highest id it has received and the highest it has shown while
+  that tab was open (its `HighestPublicChatIDSeen` / `HighestTeamChatIDSeen`), and sends 43 whenever a
+  shown mark passes the one it last registered — only while the account is a player in the game.
+  When it marks only a private conversation or a game group it sends `-1` for both channel marks,
+  which suggests `-1` leaves a channel's mark alone (UNVERIFIED). These are the same markers
+  `GameRefresh` (39) takes as its "last seen" strings. So marking a channel read is: read the chat,
+  take the newest message id on that channel, send it as that channel's mark (others `-1` or
+  absent), then read back.
+- **Where the read state shows: `GetMyGames` (50)**, per game in `warlight.shared.GameInfo` (27 fields,
+  0-based read positions, the same numbering as `src/my-games.ts`), four bools the dashboard prints as
+  "Unread … messages":
+
+  | # | Flag |
+  |---|---|
+  | 8 | unread group (game-group) messages |
+  | 17 | unread private messages |
+  | 18 | unread public chat messages |
+  | 23 | unread team chat messages |
+
+  The open-games payload carries the same record, and a `GameInfo` the client builds for itself
+  sets all four false. They are the read-back for `RegisterChatView`: after a mark, the game's
+  flag for that channel should read false (UNVERIFIED live). `MyGamesFilterType` 5
+  (`YourTurnOrPendingChat`) and 7 (`ActiveGameOrPendingChat`) presumably filter on the same state.
 
 ## Open games
 
