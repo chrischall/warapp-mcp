@@ -13,8 +13,10 @@
 // returns it, never logs it, never puts it in an error: it returns only when
 // the capture happened ({@link LinkResult} is `capturedAt` + `host`). Every
 // cookie but `AuthToken` is discarded. A capture that yields no AuthToken
-// throws {@link NoAuthTokenError} and stores nothing. Direct mode is
-// LOCAL-ONLY — the hosted path keeps the browser bridge and stores no token.
+// throws {@link NoAuthTokenError} and stores nothing. Linking is LOCAL-ONLY: a
+// hosted child rides the direct transport only from the session captured at
+// sign-in (mcp-host's authFlow, WARAPP_AUTH_TOKEN, held in memory: #333,
+// src/direct/session.ts) and never links or stores one.
 import { McpToolError, readPortEnv } from '@chrischall/mcp-utils';
 import { captureBearerHeader, type CaptureBearerHeaderOptions } from '@chrischall/mcp-utils/fetchproxy';
 import { isHosted } from '../hosted.js';
@@ -114,10 +116,12 @@ function captureWarappCookie(opts: LinkSessionOptions): Promise<string> {
  * when the captured cookie carries no `AuthToken`.
  */
 export async function linkSession(opts: LinkSessionOptions = {}): Promise<LinkResult> {
-  // Local-only: a hosted child never pulls the full-account cookie into memory
-  // (the tool is not registered there, and writeSession refuses too).
+  // Local-only: a hosted child never pulls the cookie off a tab; it reaches war.app
+  // directly only from the session captured at sign-in (the tool is not
+  // registered there, and writeSession refuses too).
   if (isHosted(opts.env ?? process.env)) {
-    throw new McpToolError('The direct transport is local-only: a hosted server never links a war.app session.', {
+    throw new McpToolError('Linking a war.app session is local-only: a hosted server reaches war.app directly only from the session ' +
+        'captured at sign-in, and never links one.', {
       kind: 'unknown',
     });
   }

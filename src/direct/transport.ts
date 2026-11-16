@@ -79,7 +79,8 @@ export interface SessionStore {
 
 /** What to do about a signed-out host-captured session: mcp-host runs the sign-in again. */
 export const HOST_SIGN_IN_ADVICE =
-  'Use "Sign in" on this war.app connection (mcp-host signs in to war.app again and captures a new session).';
+  'Use "Sign in" on this war.app connection, or reconnect it (mcp-host signs in to war.app again and captures a ' +
+  'new session).';
 
 /** No war.app session is linked — the router (in `auto`) falls back to the bridge. */
 export class SessionNotLinkedError extends McpToolError {

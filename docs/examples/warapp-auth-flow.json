@@ -8,7 +8,7 @@
           "name": "password",
           "label": "war.app password",
           "type": "password",
-          "help": "Used once, to sign in to war.app for you, and never stored: only the session war.app gives back is kept. If it stops working (a changed password, say), use Sign in on this connection again."
+          "help": "Used once to sign in, never stored: it goes to war.app once, with the war.app email you gave above, and only the session war.app gives back is kept. If it stops working (a changed password, say), use Sign in on this connection again, or reconnect it."
         }
       ],
       "title": "Sign in to war.app",

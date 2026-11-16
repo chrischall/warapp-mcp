@@ -198,6 +198,8 @@ describe('accountUnknown on a host-signed-in connection', () => {
   it('points at Sign in on the connection, never a tab or the link tool', () => {
     const hint = accountUnknown({ hosted: true, hostSignIn: true }).hint ?? '';
     expect(hint).toMatch(/Sign in/);
+    // A connection made before the flow existed has no Sign in to re-run: reconnecting runs it.
+    expect(hint).toMatch(/or reconnect it/);
     expect(hint).not.toMatch(/\btab\b/);
     expect(hint).not.toContain(LINK);
     expect(accountUnknown({ hosted: true }).hint).toBe(accountUnknown(true).hint);

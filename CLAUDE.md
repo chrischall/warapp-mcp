@@ -32,7 +32,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   with `loadDotenvSafely` (host env wins). The token and email are scrubbed by value
   from every upstream error string. Never print or commit the real env file.
 - **Hosted per user.** `mint.yaml` uses `identity.perUserChild` + `auth.fields`, because
-  GameFeed answers as the player whose token is presented (fog of war included). Its
+  GameFeed answers as the player whose token is presented (fog of war included), and `auth.flow`
+  (`docs/examples/warapp-auth-flow.json`, a path, so the document ships in the npm package's `files`):
+  the war.app sign-in that captures the hosted direct leg's token (#333, below). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
 - **Thirteen tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
@@ -1546,8 +1548,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`auto`: direct first, the bridge its fallback, the non-GET never re-sent) from that token alone
   (the given store is not consulted); `warapp_session_status` and the healthcheck say
   `linked: 'host-captured'` (no capture time, no age); a signed-out session's errors, log line and
-  hints say to use "Sign in" on the connection (`HOST_SIGN_IN_ADVICE`; mcp-host runs the login
-  again), never `warapp_link_session` and never a tab (`LiveContext.hostSignIn`, `accountUnknown(ctx)`).
+  hints say to use "Sign in" on the connection, or reconnect it (`HOST_SIGN_IN_ADVICE`; mcp-host runs
+  the login again), never `warapp_link_session` and never a tab (`LiveContext.hostSignIn`, `accountUnknown(ctx)`).
   Without it a hosted child is byte-identical to before: the store reads as empty, the router is
   pinned to the browser bridge whatever `WARAPP_TRANSPORT` says, and no hint suggests linking.
   Locally `WARAPP_AUTH_TOKEN` is ignored: only the session file counts. The flow is
@@ -1555,8 +1557,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   read-only `warapp_session_status`; the capture is the sign-in itself, `warapp_sign_in` with
   `email` from `WARAPP_EMAIL` and that password, `authToken` into `WARAPP_AUTH_TOKEN`: one war.app
   attempt, the token never in the gateway-readable bag); the captcha / no-password fallback pastes
-  the cookie (`warapp-auth-flow-paste.json`). `tests/auth-flow-doc.test.ts` checks both against
-  mcp-host's rules offline. **`warapp_sign_in` (part B, `src/direct/sign-in.ts`, `src/tools/sign-in.ts`)
+  the cookie (`warapp-auth-flow-paste.json`, an alternative the operator registers by hand: a
+  registration holds one flow). `mint.yaml` declares the password flow as `auth.flow` (a path inside
+  the package). `tests/auth-flow-doc.test.ts` checks both against mcp-host's rules offline. **`warapp_sign_in` (part B, `src/direct/sign-in.ts`, `src/tools/sign-in.ts`)
   is registered ONLY hosted** (locally `warapp_link_session` stays the way). It takes `email` and
   `password` and makes ONE attempt, never retried (war.app may count failed sign-ins): GET
   `https://war.app/LogIn` for its cookies (`jses_WS60`, `FirstReferrer`, `AWSELB`; a page without its

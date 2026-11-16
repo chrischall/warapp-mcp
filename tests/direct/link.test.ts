@@ -34,7 +34,7 @@ describe('linkSession', () => {
   it('refuses on a hosted child before the cookie is ever captured', async () => {
     const capture = vi.fn(async () => COOKIE);
     const save = vi.fn(async () => {});
-    await expect(linkSession({ env: { MCP_HOST_METER_FILE: '/x' }, capture, save })).rejects.toThrow(/local-only/i);
+    await expect(linkSession({ env: { MCP_HOST_METER_FILE: '/x' }, capture, save })).rejects.toThrow(/local-only.*only from the session captured at sign-in/i);
     expect(capture).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
   });

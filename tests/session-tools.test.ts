@@ -180,7 +180,7 @@ describe('warapp_link_session', () => {
   });
 });
 
-describe('hosted (direct mode is local-only)', () => {
+describe('hosted without a captured session (direct only from the session captured at sign-in)', () => {
   it('does not register warapp_link_session; status reports hosted + the bridge and never suggests linking', async () => {
     const read = vi.fn(async () => session);
     // Even a stub transport claiming the direct leg is reported as the bridge: hosted never rides direct.
@@ -192,6 +192,12 @@ describe('hosted (direct mode is local-only)', () => {
     const res = await call('warapp_session_status');
     const p = payload(res);
     expect(p).toMatchObject({ hosted: true, linked: false, activeTransport: 'fetchproxy' });
+    // Hosted rides the direct leg only from the session captured at sign-in: never "local-only" now.
+    expect(String(p.hostedNote)).toMatch(/only from the session captured at sign-in/);
+    expect(String(p.hostedNote)).toMatch(/or reconnect it/);
+    const status = (await h.client.listTools()).tools.find((t) => t.name === 'warapp_session_status')!;
+    expect(status.description).toMatch(/only from the session captured at sign-in/);
+    expect(JSON.stringify(res) + status.description).not.toMatch(/local-only/);
     expect(JSON.stringify(res)).not.toContain('warapp_link_session');
     expect(textOf(res)).not.toContain(FAKE_TOKEN);
     expect(read).not.toHaveBeenCalled();

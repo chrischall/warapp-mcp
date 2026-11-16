@@ -71,8 +71,9 @@ const HINT_NOT_LINKED =
   'No war.app session is linked. Run warapp_link_session to use the direct (no-browser) transport; the browser ' +
   'bridge is used until then.';
 const NOTE_HOSTED =
-  'This server is hosted: the direct (no-browser) transport is local-only, so war.app calls go through the browser ' +
-  'bridge and your signed-in war.app tab.';
+  'This server is hosted: it reaches war.app directly only from the session captured at sign-in, and this ' +
+  'connection has none, so war.app calls go through the browser bridge and your signed-in war.app tab. ' +
+  HOST_SIGN_IN_ADVICE;
 const NOTE_HOSTED_DIRECT =
   'This server is hosted and signed in to war.app by mcp-host: war.app calls go directly to war.app with the ' +
   'session captured at sign-in, and fall back to the browser bridge only when that session stops working.';
@@ -132,8 +133,9 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
               'a live board has been read, which client bundle decodes boards (a cached stand-in or not) and which of ' +
               'its reader helpers were verified. Never shows the session cookie. Read-only.'
           : hosted
-          ? 'Report which transport serves war.app calls on this hosted server (always the browser bridge: the ' +
-              'direct, no-browser transport is local-only) and which transport the turn-notification push socket ' +
+          ? 'Report which transport serves war.app calls on this hosted server (the browser bridge: hosted, the ' +
+              'direct, no-browser transport runs only from the session captured at sign-in, and this connection ' +
+              'has none) and which transport the turn-notification push socket ' +
               'rides (websocket or xhr-polling) once it has run, and, once a live board has been read, which client ' +
               'bundle decodes boards (a cached stand-in or not) and which of its reader helpers were verified. Read-only.'
           : 'Report whether a signed-in war.app session is linked for the direct (no-browser) transport, when it was ' +

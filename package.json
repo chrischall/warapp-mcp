@@ -33,7 +33,8 @@
     "server.json",
     "manifest.json",
     "skills",
-    "mint.yaml"
+    "mint.yaml",
+    "docs/examples/warapp-auth-flow.json"
   ],
   "scripts": {
     "build": "tsc && npm run bundle",

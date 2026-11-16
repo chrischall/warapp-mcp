@@ -14,18 +14,18 @@ slug: warapp
 # (warapp_link_session, stored on that machine) and then talk to war.app
 # directly without a browser (WARAPP_TRANSPORT=auto/direct). A hosted child
 # never stores a session and never registers warapp_link_session (src/hosted.ts):
-# it rides the direct leg only from the AuthToken mcp-host captures at sign-in
-# into the per-user secret WARAPP_AUTH_TOKEN (#333: the war.app password is asked
-# once in an authFlow and never stored; the token is held in memory), with the
-# bridge above as its fallback on the same registration. Without that token it
-# is pinned to the bridge, as before. The flow is docs/examples/warapp-auth-flow.json
-# (one masked password prompt, then warapp_sign_in with WARAPP_EMAIL and that
-# password as the capture: path authToken into WARAPP_AUTH_TOKEN; the captcha
-# fallback is docs/examples/warapp-auth-flow-paste.json). WARAPP_AUTH_TOKEN is
-# host-captured: this schema's only place for it is `auth.flow` / `auth.flowPath`.
-# warapp_sign_in is built (part B, registered only hosted), but the manifest does
-# not declare the flow yet, so nothing here enables direct mode yet. It is deliberately not in `env`: a
-# capture into a host-set variable is refused.
+# it rides the direct leg only from the session captured at sign-in — the
+# AuthToken mcp-host's authFlow (`auth.flow` below) captures into the per-user
+# secret WARAPP_AUTH_TOKEN (#333: the war.app password is asked once and never
+# stored; the token is held in memory) — with the bridge above as its fallback
+# on the same registration. Without that token it is pinned to the bridge, as
+# before. The flow is docs/examples/warapp-auth-flow.json (shipped in the npm
+# package): one masked password prompt, then warapp_sign_in with WARAPP_EMAIL
+# and that password as the capture, path authToken into WARAPP_AUTH_TOKEN. The
+# paste-the-cookie alternative (a captcha, or an account with no war.app
+# password) is docs/examples/warapp-auth-flow-paste.json; a registration holds
+# one flow, so it is the operator's switch. WARAPP_AUTH_TOKEN is deliberately
+# not in `env`: a capture into a host-set variable is refused.
 summary: >-
   war.app (Warzone) advisor: games waiting on you, maps, scouting, chat and
   turn plans in your war.app tab. Joining, leaving or surrendering games,
@@ -50,10 +50,11 @@ identity:
   perUserChild: true
 
 auth:
-  # Collected once on the connector's authorize page. There is no `flow`:
-  # GameFeed takes the email + token on every request (form body), with no
-  # login exchange, MFA or session to mint. Every auth field is stored as a
-  # per-user secret (the field schema has no separate `secret` flag).
+  # Collected once on the connector's authorize page: GameFeed takes the email
+  # + token on every request (form body), with no login exchange. Every auth
+  # field is stored as a per-user secret (the field schema has no separate
+  # `secret` flag). The `flow` then signs in to war.app once for the direct
+  # transport (see the header): a path inside the package, read at the pin.
   fields:
     - name: WARAPP_EMAIL
       label: war.app email
@@ -68,6 +69,7 @@ auth:
         Your API token, shown at https://war.app/API/GetAPIToken while signed
         in to war.app. Stored as a per-user secret and never shown again.
         Changing your war.app password rotates it — reconnect with the new one.
+  flow: docs/examples/warapp-auth-flow.json
 
 # WARAPP_EMAIL / WARAPP_API_TOKEN are collected per user above, and an auth
 # field may not name a host-set variable, so they are not in `env`. Set them in

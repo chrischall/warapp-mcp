@@ -190,11 +190,24 @@ describe('docs/examples/warapp-auth-flow.json (hosted direct mode, #333)', () =>
     expect(Object.keys(tool!.inputSchema.properties ?? {}).sort()).toEqual(sent);
   });
 
-  it('mint.yaml declares no flow until warapp_sign_in is registered (part B)', () => {
-    const signIn = hostedTools.some((t) => t.name === 'warapp_sign_in');
-    if (!signIn) expect(mint).not.toMatch(/^\s+flow(Path)?:/m);
+  it('mint.yaml declares the password flow by path, inside auth, now that warapp_sign_in is registered (part B)', () => {
+    expect(hostedTools.some((t) => t.name === 'warapp_sign_in')).toBe(true);
+    const auth = mint.slice(mint.indexOf('\nauth:'), mint.indexOf('\nenv:'));
+    // mcp-host reads a string `auth.flow` as a path inside the package (flowPath):
+    // plain relative segments, fetched at the registration's pin.
+    const flows = [...auth.matchAll(/^ {2}flow: (\S+)$/gm)].map((m) => m[1]);
+    expect(flows).toEqual(['docs/examples/warapp-auth-flow.json']);
+    expect(mint.match(/^\s+flow(Path)?:/gm)).toHaveLength(1);
+    // An npm-sourced registration reads it from the published tarball (jsDelivr at the pin).
+    const pkg = JSON.parse(read('../package.json')) as { files: string[] };
+    expect(pkg.files).toContain('docs/examples/warapp-auth-flow.json');
     expect(mint).toMatch(/WARAPP_AUTH_TOKEN/);
-    expect(mint).toMatch(/docs\/examples\/warapp-auth-flow\.json/);
+    expect(mint).toMatch(/docs\/examples\/warapp-auth-flow-paste\.json/);
+  });
+
+  it('the password help says, in so many words, it is used once to sign in and never stored', () => {
+    const [password] = FLOW.steps.flatMap((s) => s.prompt ?? []);
+    expect(password!.help).toMatch(/^Used once to sign in, never stored\b/);
   });
 });
 

@@ -35,9 +35,9 @@ capture (or re-capture) the token.
   registration. A hosted child still never reads or writes a session file and never registers
   `warapp_link_session`; without the captured token it is pinned to the bridge exactly as before.
   Part A (built) is the transport, status and hints; part B is the war.app sign-in tool the
-  `authFlow` calls (`warapp_sign_in`, built) (the flow itself is `docs/examples/warapp-auth-flow.json`, see "Hosted direct
-  mode" below) and the `mint.yaml` flow — its form and endpoint are traced live by the owner's
-  play session first, never guessed.
+  `authFlow` calls (`warapp_sign_in`, built from the form and endpoint the owner's play session
+  traced live, never guessed) and the `mint.yaml` flow (`auth.flow: docs/examples/warapp-auth-flow.json`,
+  declared; see "Hosted direct mode" below).
 - **The owner does the live capture and verification.** No agent captures or replays the real
   token; the capture flow is exercised in tests with a synthetic cookie string only.
 
@@ -153,7 +153,12 @@ capture (or re-capture) the token.
 - **The hosted child** reads `WARAPP_AUTH_TOKEN` into memory (`hostedSession`, part A, built) and
   serves the direct leg from it, the bridge its fallback; no session file is ever read or written
   hosted, and `warapp_link_session` stays unregistered. Signed out, every hint says "Sign in" on the
-  connection, which re-runs the same flow (admin portal **Sign in**, or reconnecting).
+  connection, or reconnect it, which re-runs the same flow (admin portal **Sign in**, or reconnecting).
+- **`mint.yaml` declares the flow** as `auth.flow: docs/examples/warapp-auth-flow.json`. mcp-host reads
+  a string there as a path inside the package (`flowPath`, fetched at the registration's pin: jsDelivr
+  for an npm source), so the document is in `package.json` `files`. Both are checked by
+  `tests/auth-flow-doc.test.ts`. The manifest is a proposal at registration, never applied to an
+  existing registration by itself: the owner adds the flow (steps below).
 - **`warapp_sign_in` (part B, built: `src/direct/sign-in.ts`, `src/tools/sign-in.ts`).** Built from
   #333's sign-in trace (`https://war.app/LogIn`, a plain form POST of exactly `Email`, `Password`,
   `KeepSignedIn=on`, no hidden fields, no captcha); how a success answers and where `AuthToken` is set
@@ -205,20 +210,56 @@ this is the operator's switch, not the person's choice on the page.
 
 ### Registration change for the owner to apply (after part B ships in a release)
 On the hosted registration (`warapp`, today `authFields` `WARAPP_EMAIL` + `WARAPP_API_TOKEN`,
-`perUserChild`, `dataDir`, `bridge: true`, `bridgePortEnv: WARAPP_WS_PORT`):
-- **add** the `authFlow`: `mcp-host register … --auth-flow docs/examples/warapp-auth-flow.json`, or
-  the control API's `authFlow` field with that document;
-- **keep** `authFields`, `perUserChild`, `dataDir`, `bridge: true` and `bridgePortEnv` — the bridge
-  stays the fallback on the same registration (a session that stops working, or a connection made
-  before the flow existed);
-- **then** existing connections run **Sign in** once from the admin portal to capture a token;
-  until they do they keep the bridge, unchanged.
-- **hide** `warapp_sign_in` from the menu: an `enabledTools` (`--tools`) list of every other tool
-  (the flow still calls it; see above);
-- `mint.yaml` gains `auth.flowPath` (or an inline `auth.flow`) only in part B, once `warapp_sign_in`
-  exists — declared earlier, every hosted connect would fail on a tool that is not there. A
-  `flowPath` must name a file inside the published package, so part B also adds the document to
-  `package.json` `files` (or inlines it).
+`perUserChild`, `dataDir`, `bridge: true`, `bridgePortEnv: WARAPP_WS_PORT`): **add** the `authFlow`,
+**keep** everything else (the bridge stays the fallback on the same registration: a session that
+stops working, or a connection that has not signed in yet), and **hide** `warapp_sign_in` from the
+menu. The exact steps:
+
+1. **Wait for the release.** `npm view @chrischall/warapp-mcp version` shows the version with
+   `warapp_sign_in`, and the registration's pin is on it (`mcp-host get <id>`: `source.version`;
+   a `latest` pin resolves at the next spawn, an exact pin needs `mcp-host set <id> --data
+   '{"source":{"type":"npm","pkg":"@chrischall/warapp-mcp","version":"<new>"}}'`).
+2. **Register the flow**, either way:
+   - on the existing registration: `mcp-host set <id> --data "$(jq -c '{authFlow: .}'
+     docs/examples/warapp-auth-flow.json)"` (the control API's `PUT /api/v1/registrations/<id>` with
+     the whole `authFlow` document; it is not part of `configHash`, so no running child is retired
+     and nobody connected is signed out), or
+   - by re-registering from the package: the preview reads `mint.yaml`'s `auth.flow` path from the
+     tarball and proposes the flow; accept it (`mcp-host register … --auth-flow
+     docs/examples/warapp-auth-flow.json` gives the same document explicitly).
+   A refusal at this step (a `{from}` nothing fills, a capture over an `authField`) is mcp-host
+   reading the document: report its text verbatim; `tests/auth-flow-doc.test.ts` should have caught it.
+3. **Hide `warapp_sign_in`** from the connector's menu: `mcp-host set <id> --tools <every other
+   tool>` (an `enabledTools` list). The flow still calls it; mcp-host never checks a flow's step or
+   capture tool against that list.
+4. **Connect.** On the connection (admin portal), run **Sign in** (or disconnect and connect again):
+   the page asks only for the war.app password, masked. Enter it once.
+5. **Verify.** Call `warapp_session_status` on that connection. Expected:
+   `{ hosted: true, linked: "host-captured", activeTransport: "direct" }` and a `hostedNote` saying
+   war.app calls go directly to war.app. Then one live read (`warapp_my_games`) and call
+   `warapp_session_status` again: `activeTransport` still `direct`, no `sessionExpired`. If it says
+   `linked: false` with `activeTransport: "fetchproxy"`, the child is still the one spawned before
+   the sign-in (see UNVERIFIED below): wait for it to idle out, or retire it, and check again.
+
+**What to report** (on #333; never the token, the password or the email): the release and pin; the
+step-2 command's answer (accepted, or the refusal text); what the Sign in page showed (one password
+field, the help text) and whether it succeeded, or the `warapp_sign_in` refusal kind it named
+(`credential_rejected`, `edge_blocked`, `transport`, `timeout`, `http`, `unknown`); the
+`warapp_session_status` answers from step 5 (`linked`, `activeTransport`, `pushTransport` once a turn
+wait has run, `sessionExpired` if present); whether the first calls after Sign in rode the bridge
+until the child respawned; and, over the following days, when (if ever) the session went stale
+(`sessionExpired: true`), which measures the token's lifetime from a hosted egress IP.
+
+**UNVERIFIED, to be checked by those steps:**
+- **A re-run Sign in may not restart a running child.** mcp-host injects `WARAPP_AUTH_TOKEN` at
+  spawn; a child already running when the token is captured (or replaced) may keep the
+  environment it started with until it idles out or is retired, so the first calls after Sign in
+  may still use the bridge (or the old, signed-out token, reported stale) until the respawn.
+- **The hosted push WebSocket depends on mcp-host's egress.** The turn-notification socket
+  upgrades to `wss://war.app/socket.io/1/websocket/<sid>` from the child itself; that works only if
+  mcp-host's egress fence lets the upgrade through to `war.app`. If it does not, the listener falls
+  back to xhr-polling over the bridge (`pushTransport: "xhr-polling"`), which still needs the
+  user's tab: report which `pushTransport` a hosted turn wait shows.
 
 ## Not in scope (note as follow-ups)
 - Joining games (no `/Services` method decoded yet — still a browser action).

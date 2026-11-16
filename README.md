@@ -115,11 +115,12 @@ the host captures war.app's session cookie into the per-user secret `WARAPP_AUTH
 war.app password is asked once at sign-in and never stored), and the server holds it in memory,
 falling back to the browser bridge if it stops working. `warapp_session_status` then reports
 `linked: "host-captured"` (no capture time or age), and a signed-out session says to use
-**Sign in** on the connection. Without that token the hosted server uses the browser bridge, as
+**Sign in** on the connection, or to reconnect it. Without that token the hosted server uses the browser bridge, as
 before. (The war.app sign-in mcp-host runs is `docs/examples/warapp-auth-flow.json`, one password page;
 its capture calls `warapp_sign_in`, a hosted-only tool that signs in to war.app once and returns
-the session cookie to the host. The manifest does not declare the flow yet: until a registration
-adds it, a hosted connection uses the browser bridge.) Locally `WARAPP_AUTH_TOKEN` is ignored.
+the session cookie to the host. `mint.yaml` declares it as `auth.flow`; a registration that does not
+carry it, or a connection that has not signed in since it was added, uses the browser bridge.)
+Locally `WARAPP_AUTH_TOKEN` is ignored.
 
 ## Tools
 
