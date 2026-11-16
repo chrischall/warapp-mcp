@@ -123,12 +123,32 @@ describe('an untrusted opponent puts the gate before expansion (#275 b)', () => 
     expect(p.rationale.join('\n')).toMatch(/Hold bonus Home \(#501\) \(\+2\) whole: .* before any capture: player 20's estimate is untrusted \(#275\)/);
   });
 
-  it('does the same under defend, and leaves a gate it cannot cover to the concession as before', () => {
+  it('does the same under defend', () => {
     const d = gatePlan({ untrusted: [{ player: ENEMY, deploy: 25 }], options: { goal: 'defend' } });
     expect(d.conceded).toEqual([]);
     expect(d.moves.filter((m) => m.kind === 'attack')).toEqual([]);
-    // At 60 the gate needs ~38, more than the income: nothing is gained by holding the armies back.
-    const far = gatePlan({ untrusted: [{ player: ENEMY, deploy: 60 }] });
-    expect(far.conceded).toEqual([2]);
+  });
+
+  // The owner's second trigger: a gate conceded beside the untrusted stack. At 40 or 60 the gate needs
+  // 26 or 38, more than the income of 20; the old plan conceded it, put all 20 on T1 and sent 10 into
+  // the +1 wasteland beside the stack. Nothing that pays +1 goes ahead of it: what is left goes on the gate.
+  for (const deploy of [40, 60])
+    for (const goal of [undefined, 'defend'] as const)
+      it(`funds no expansion ahead of a gate conceded beside the untrusted stack (${deploy}${goal ? `, ${goal}` : ''})`, () => {
+        const p = gatePlan({ untrusted: [{ player: ENEMY, deploy }], ...(goal ? { options: { goal } } : {}) });
+        expect(p.conceded).toEqual([]);
+        expect(p.moves.filter((m) => m.kind === 'attack')).toEqual([]);
+        expect(deployed(p, 2)).toBe(20);
+        expect(p.rationale.join('\n')).toMatch(/T2 \(#2\).*player 20's estimate is untrusted \(#275\)/);
+        // Said once, and not contradicted by a concession warning.
+        expect(p.warnings.some((w) => /T2 \(#2\) cannot be held .*: conceded$/.test(w))).toBe(false);
+        expect(p.warnings.some((w) => /T2 \(#2\).*falls to/.test(w) && /untrusted/.test(w))).toBe(true);
+      });
+
+  it('leaves a conceded border facing a trusted opponent to the concession as before', () => {
+    // The same gate at a trusted deploy of 60 (enemy_deploy what-if): conceded, the +1 taken.
+    const p = gatePlan({ options: { enemyDeploy: 60 } });
+    expect(p.conceded).toEqual([2]);
+    expect(p.moves.map((m) => m.to)).toEqual([5]);
   });
 });

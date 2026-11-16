@@ -31,7 +31,9 @@
 // over-sized, the conservative direction. A held bonus contested on that sizing (#118: its hold costs
 // more than CONCEDE_FACTOR × its worth, or does not pay back) whose border faces the untrusted opponent
 // is held whole before any capture when what is left covers it (`settleContested('untrusted')`, every
-// goal), so no expansion goes ahead of the gate; one it cannot cover is conceded as before. The game
+// goal), so no expansion goes ahead of the gate; one it cannot cover, or one triage conceded beside that
+// opponent's stack, gets everything left to deploy before any capture and is not conceded
+// (`fillUntrustedGates`: nothing that pays +1 goes ahead of it; a warning names what still takes it). The game
 // profile compares that opponent at its figure and is never `even` while the mark runs (profile.ts).
 // Absent, the plan is byte-identical.
 // Rule 1k's commander reserve is read by every phase that spends armies: captures, strike and
