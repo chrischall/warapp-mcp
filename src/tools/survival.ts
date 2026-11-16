@@ -91,6 +91,11 @@ export async function readTripwires(a: {
     // of what a stack never seen began with — no start, and such a stack is not read.
     const banked = bankedReinforcement(a.gameSettings, a.turn);
     const start = symmetricStart(a.gameSettings) ? trackGame([], a.gameSettings, a.map).start : undefined;
+    // Who else may play a card (a Gift of a territory with its stack): every player with an estimate, on a
+    // team or owning a territory on a board, me included, a static seat (#270) aside.
+    const players = new Set<number>([a.me, ...estimatesNow.keys(), ...(a.teams?.keys() ?? [])]);
+    for (const b of a.boards) for (const t of b.board.territories) if (t.owner.kind === 'player') players.add(t.owner.playerId);
+    for (const q of a.staticSeats?.keys() ?? []) players.delete(q);
     fresh = brokenEstimates({
       ...(start ? { start } : {}),
       graph: a.graph,
@@ -121,7 +126,7 @@ export async function readTripwires(a: {
       },
       estimateKept: (p, t) => survival.estimates.get(t)?.has(p) === true,
       // My Gift of a territory is no capture; with my card plays unrecorded, captures of mine are unknown.
-      ...(!a.gameSettings || a.gameSettings.cards.includes('Gift') ? { gift: true } : {}),
+      ...(!a.gameSettings || a.gameSettings.cards.includes('Gift') ? { gift: true, players: [...players].sort((x, y) => x - y) } : {}),
     });
   } catch {
     // A board this reader cannot follow: no observation.

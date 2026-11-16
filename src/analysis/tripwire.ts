@@ -18,15 +18,22 @@
 //                walk in unseen, and no sighting credits them. The stock is known only when every turn's
 //                estimate is the one kept from that turn's plan (`estimateKept`): a stand-in may under-count
 //                an opponent whose estimate a bonus break has lowered since, so the start then counts as
-//                unknown. With the start unknown there is no stock
-//                to bound them: a stack with a territory within reach (as below) hidden on every board
-//                since its sighting is not read at all. A stack walking in is not
+//                unknown. With the start known, a stack walking in is not
 //                income (#123 lesson 5): its armies that left view or shrank are credited too: for each other
 //                territory, every drop of its movable armies between two consecutive sightings since the
 //                stack's own, and from the latest sighting to now (all of them when hidden now or another's),
 //                each when within reach (graph distance at most the turns from the earlier sighting to now).
+//                With the start unknown there is no stock, and a drop in view is net (a stack may walk in
+//                while another fills in behind it), so the bound is every army that could reach it: from a
+//                board on which every territory within reach (distance at most the turns left) is in view,
+//                what stood on it then, its movable armies within reach and its estimates since, boards
+//                chained for the least (`reachBound`); with no such chain (a territory within reach hidden
+//                on the turn a stack passed it, or a board missing from the cache) it is not read.
 //                Not read when Gift may be in play (`gift`) and the territory was last seen another player's:
-//                that player (a third one in a free-for-all) may have gifted it with its stack.
+//                that player (a third one in a free-for-all) may have gifted it with its stack; nor, with a
+//                third player in the game (`players`), when no board showed it its own (never seen, last
+//                seen neutral): that player may have taken it out of view and gifted it, armies no stock or
+//                sighting counts.
 //                Under Multi-Attack,
 //                or when the settings do not say, a chain covers many hops in one turn: every such
 //                territory is within reach, whatever its distance;
@@ -170,6 +177,11 @@ export interface TripInput {
    */
   gift?: boolean;
   /**
+   * The players still in the game who may play a card (me included or not): with `gift`, a third one (neither
+   * me nor the player read) may have gifted a territory with its stack. Undefined: unknown, one may.
+   */
+  players?: readonly number[];
+  /**
    * Reinforcement armies an opponent may have banked and played at once beyond its estimate (which carries
    * at most one card, #164): added to what a capture, a held attack or a stack out of the fog with its start
    * unknown allows. `Infinity` (the cards cannot be counted): none of them is read. With the start known a
@@ -206,6 +218,8 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     const team = teams?.get(p);
     return team !== undefined && team >= 0 && [...teams!].some(([q, t]) => q !== p && t === team);
   };
+  /** Another player than me and `p` may be in the game (`players` unknown: one may). */
+  const thirdParty = (p: number) => input.players === undefined || input.players.some((q) => q !== me && q !== p);
   /** Every turn before this one has `p`'s estimate as that turn's plan kept it. */
   const stockKept = (p: number) => {
     if (!input.estimateKept) return true;
@@ -277,15 +291,48 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     return credit;
   };
 
-  /** Some territory within `reach` of `id` (any distance under chains) is hidden on every board in `since`. */
-  const hiddenSince = (id: number, since: readonly TripBoard[], reach: number): boolean => {
+  /**
+   * #275 review, with the start unknown: the most armies of `p` that can stand on `id` now, from its
+   * sighting on `since[0]` (`base`). Every army on `id` now stood on `id` or within reach on any earlier
+   * board (graph distance at most the turns left: one step a turn; any distance under chains), or was
+   * deployed since. So from a board `j` on which every territory within reach of `id` is in view, the
+   * armies on `id` at a later turn `h` are at most those on `id` at `j`, plus its movable armies within
+   * `h − j` of `id` on `j`, plus its estimates from `j` to `h − 1`; chaining boards keeps the bound tight
+   * (a stack still out of reach on a later board counts nothing). Counting every army within reach, not
+   * only the drops seen, credits a stack that walked in while another filled in behind it; a territory
+   * hidden on the turn a stack passed it (or a board missing from the cache) bounds nothing through that
+   * board. Undefined when no chain of boards in view bounds it.
+   */
+  const reachBound = (id: number, p: number, base: number, since: readonly TripBoard[]): number | undefined => {
     const dist = bfsDistances(graph, [id]);
-    const boardsSince = since.map((b) => index(b.board));
-    for (const [x, d] of dist) {
-      if (x === id || (!chains && d > reach)) continue;
-      if (boardsSince.every((b) => visibleState(b.get(x)) === undefined)) return true;
+    const views = since.map((b) => ({ turn: b.turn, at: index(b.board) }));
+    const bound = new Map<number, number>([[views[0]!.turn, base]]);
+    const targets = [...views.slice(1).map((v) => v.turn), T];
+    for (const h of targets) {
+      let best: number | undefined;
+      for (const v of views) {
+        const from = bound.get(v.turn);
+        if (v.turn >= h || from === undefined) continue;
+        let within = 0;
+        let open = true;
+        for (const [x, d] of dist) {
+          if (x === id || (!chains && d > h - v.turn)) continue;
+          const st = visibleState(v.at.get(x));
+          if (!st) {
+            open = false;
+            break;
+          }
+          if (playerOf(st) === p) within += Math.max(0, st.armies! - guard);
+        }
+        if (!open) continue;
+        let deploys = 0;
+        for (let k = v.turn; k < h; k++) deploys += est(p, k);
+        const b = from + within + deploys;
+        if (best === undefined || b < best) best = b;
+      }
+      if (best !== undefined) bound.set(h, best);
     }
-    return false;
+    return bound.get(T);
   };
 
   for (const id of [...cur.keys()].sort(byNum)) {
@@ -311,21 +358,29 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       const since = last ? boards.slice(boards.indexOf(last), -1) : [];
       // A history board since that sighting may have hidden a stack walking in: only the stock bound reads it.
       if (!start && since.some((b) => b.source === 'history')) continue;
-      // A territory within reach hidden on every board since the sighting may have banked a stack that
-      // walked in unseen; no sighting credits it, and only the stock (the start) bounds it: not read.
-      if (!start && last && hiddenSince(id, since, T - last.turn)) continue;
       const startArmies = start ? start.territories * start.armiesPerTerritory : 0;
       const from = last?.turn ?? 1;
       const seen = last ? visibleState(index(last.board).get(id)) : undefined;
       // Last seen another player's: with Gift in play it may have given the territory with its stack.
       if (input.gift && seen && seen.owner.kind === 'player' && playerOf(seen) !== p) continue;
+      // Never seen, or last seen neutral, with Gift in play and a third player in the game: that player may
+      // have taken it out of view and gifted it, its stack with it; neither the stock nor a sighting counts
+      // that player's armies.
+      if (input.gift && thirdParty(p) && playerOf(seen) !== p) continue;
       // With no stock to bound it, Reinforcement cards banked before the sighting may all land after it.
       if (!start && !Number.isFinite(bank)) continue;
       const base = seen ? (playerOf(seen) === p ? seen.armies! : 0) : startArmies;
       let deploys = 0;
       for (let k = from; k < T; k++) deploys += est(p, k);
       const turns = Math.max(1, T - from);
-      const walked = last ? walkIn(id, p, since.filter((b) => b.source !== 'history')) : 0;
+      let walked: number;
+      if (start) walked = last ? walkIn(id, p, since.filter((b) => b.source !== 'history')) : 0;
+      else {
+        // No stock bounds it: only the armies that could reach it from boards in view (#275 review).
+        const reach = reachBound(id, p, base, since);
+        if (reach === undefined) continue;
+        walked = reach - base - deploys;
+      }
       let allowed = base + deploys + walked + (start ? 0 : bank);
       let implied = Math.ceil((armies - base - walked) / turns);
       if (last && start) {

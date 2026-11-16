@@ -692,12 +692,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn, so the two may differ for one border, and the #268 line says so. `src/analysis/tripwire.ts` (pure) reads my two latest boards: a stack out of the fog, a capture,
   or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
   more), marks that opponent untrusted (a stack no board ever showed is credited its whole start, from the
-  settings, and is not read when they do not give it or the start was not even — `symmetricStart`: a custom scenario sets each start by hand —; a stack out of the fog is credited its armies in view that
+  settings, and is not read when they do not give it or the start was not even — `symmetricStart`: a custom scenario sets each start by hand —; with the start known a stack out of the fog is credited its armies in view that
   left or shrank within reach since — a walk-in is not income, #123 lesson 5; every drop between two sightings
-  of a territory counts, and the drop from the latest to now, each within reach from the earlier sighting — and,
-  with the start known, never below its whole stock (every start plus each turn's estimate) less its armies in
-  view elsewhere now, so armies banked under the fog since early on do not trip it — with the start unknown nothing
-  bounds those, so a stack with a territory within reach hidden on every board since its sighting is not read; the
+  of a territory counts, and the drop from the latest to now, each within reach from the earlier sighting — and
+  is never below its whole stock (every start plus each turn's estimate) less its armies in
+  view elsewhere now, so armies banked under the fog since early on do not trip it; with the start unknown a drop
+  in view is net (a stack may walk in while another fills in behind it), so it is bounded by every army that could
+  reach it (`reachBound`: from a board with every territory within reach in view, what stood there, its movable
+  armies within reach and its estimates since, boards chained for the least), and not read when no such chain
+  exists (a territory within reach hidden on the turn a stack passed it, or a board missing from the cache); with
+  Gift in play a stack on a territory last seen another player's is not read, nor, with a third player in the game
+  (`players`, from `readTripwires`), one on a territory no board showed its own (never seen, last seen neutral); the
   stock counts as known only when every turn's estimate was kept (`estimateKept`): a turn not kept stands in at the
   most the opponent was kept at or is now (`estimateAt`), which may still under-count one whose estimate a bonus
   break lowered, so then the stack is read as with the start unknown (a stack no board showed is not read); an opponent commander counts as 7 on

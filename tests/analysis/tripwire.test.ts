@@ -542,7 +542,73 @@ describe('brokenEstimates (#275 b)', () => {
     ];
     const ffa = (gift: boolean) => brokenEstimates({ graph: G5, boards, me: ME, settings: STD, ...(gift ? { gift } : {}), estimateAt: () => 5 });
     expect(ffa(true)).toEqual([]);
-    expect(ffa(false)).toMatchObject([{ kind: 'fog-stack', territory: 3, observed: 40, allowed: 10 }]);
+    // Without Gift: two turns of 5, and the 2 movable on each of 4 and 5 that could have walked in.
+    expect(ffa(false)).toMatchObject([{ kind: 'fog-stack', territory: 3, observed: 40, allowed: 14 }]);
+  });
+
+  it('with its start unknown, reads no stack that may have walked through a territory hidden on the turn it passed (#275 review)', () => {
+    // Line 1-2-3-4-5, me on 1, estimate 5. Turn 1: its 1s on 2, 3 and 4; 5 hidden (a banked 50 there).
+    // Turns 2 and 3: 2, 3 and 4 hidden, its 1 on 5. Turn 4: 51 on 2. The 50 walked 5 → 4 → 3 → 2 unseen:
+    // 5 was hidden on turn 1, three hops from 2 with three turns to go. Every territory was in view at
+    // some time, never on the turn the stack passed it.
+    const G5 = buildGraph(line(5));
+    const run5 = (boards: TripBoard[]) => brokenEstimates({ graph: G5, boards, me: ME, settings: STD, estimateAt: () => 5 });
+    const t1 = at(1, [mine(1, 5), foe(2, 1), foe(3, 1), foe(4, 1), fogged(5)]);
+    const hid = (turn: number) => at(turn, [mine(1, 5), fogged(2), fogged(3), fogged(4), foe(5, 1)]);
+    const t4 = at(4, [mine(1, 5), foe(2, 51), foe(3, 1), foe(4, 1), foe(5, 1)]);
+    expect(run5([t1, hid(2), hid(3), t4])).toEqual([]);
+    // A turn missing from the cache hides as much: turn 2 never planned.
+    expect(run5([t1, hid(3), t4])).toEqual([]);
+    // With 5 in view on turn 1 (its 1) the 50 cannot have come from anywhere: 1 seen + 15 deployed.
+    const open = at(1, [mine(1, 5), foe(2, 1), foe(3, 1), foe(4, 1), foe(5, 1)]);
+    expect(run5([open, hid(2), hid(3), t4])).toEqual([
+      { player: FOE, turn: 4, kind: 'fog-stack', territory: 2, observed: 51, allowed: 16, implied: 17 },
+    ]);
+  });
+
+  it('with its start unknown, credits a stack that walked in while another took its place: a drop in view is net (#275 review)', () => {
+    // Line 1-6, me on 1 and 6, estimate 5, every territory but 2 in view on every board. Turn 3: its 1 on
+    // 2 and 3, 51 on 4 and 5. Turn 4 (2 hidden): 51 on 3 and 4, 1 on 5. Turn 5: 51 on 2 and 3, 1 on 4
+    // and 5. The 50 from 4 walked 4 → 3 → 2 while the 50 from 5 filled in behind it: no territory within
+    // reach dropped when it left. Every army within reach on the sighting counts: 1 + 50 + 10 = 61.
+    const G6 = buildGraph(line(6));
+    const boards = [
+      at(3, [mine(1, 5), foe(2, 1), foe(3, 1), foe(4, 51), foe(5, 51), mine(6, 5)]),
+      at(4, [mine(1, 5), fogged(2), foe(3, 51), foe(4, 51), foe(5, 1), mine(6, 5)]),
+      at(5, [mine(1, 5), foe(2, 51), foe(3, 51), foe(4, 1), foe(5, 1), mine(6, 5)]),
+    ];
+    const run6 = (b: TripBoard[]) => brokenEstimates({ graph: G6, boards: b, me: ME, settings: STD, estimateAt: () => 5 });
+    expect(run6(boards)).toEqual([]);
+    // 100 is beyond every army that could have reached it.
+    boards[2] = at(5, [mine(1, 5), foe(2, 100), foe(3, 51), foe(4, 1), foe(5, 1), mine(6, 5)]);
+    expect(run6(boards)).toEqual([{ player: FOE, turn: 5, kind: 'fog-stack', territory: 2, observed: 100, allowed: 61, implied: 25 }]);
+  });
+
+  it('with Gift in play and a third player, reads no stack out of the fog on a territory not last seen its own (#275 review)', () => {
+    // A third player may have taken the territory out of view and gifted it, its stack with it: neither the
+    // stock nor any sighting counts that player's armies. Start 2 × 5, estimate 5.
+    const G5 = buildGraph(line(5));
+    const Q = 30;
+    const run5 = (boards: TripBoard[], players?: number[]) =>
+      brokenEstimates({ graph: G5, boards, me: ME, settings: STD, start: START, gift: true, ...(players ? { players } : {}), estimateAt: () => 5 });
+    // Never seen: 80 on turn 5.
+    const never = [at(4, [mine(1, 5), mine(2, 5), fogged(3), fogged(4), fogged(5)]), at(5, [mine(1, 5), mine(2, 5), foe(3, 80), fogged(4), fogged(5)])];
+    expect(run5(never)).toEqual([]);
+    expect(run5(never, [ME, FOE, Q])).toEqual([]);
+    // Last seen neutral on turn 4, hidden on turn 5, 80 of its own on turn 6.
+    const neutralSeen = [
+      at(4, [mine(1, 5), mine(2, 5), neutral(3, 2), fogged(4), fogged(5)]),
+      at(5, [mine(1, 5), mine(2, 5), fogged(3), fogged(4), fogged(5)]),
+      at(6, [mine(1, 5), mine(2, 5), foe(3, 80), fogged(4), fogged(5)]),
+    ];
+    expect(run5(neutralSeen)).toEqual([]);
+    expect(run5(neutralSeen, [ME, FOE, Q])).toEqual([]);
+    // In a 1v1 no one else could have gifted it: both trip.
+    expect(run5(never, [ME, FOE])).toMatchObject([{ kind: 'fog-stack', territory: 3, observed: 80, allowed: 30 }]);
+    expect(run5(neutralSeen, [ME, FOE])).toMatchObject([{ kind: 'fog-stack', territory: 3, observed: 80, allowed: 35 }]);
+    // Last seen its own, the stock still bounds it with a third player in the game.
+    const ownSeen = neutralSeen.map((b, i) => (i === 0 ? at(4, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4), fogged(5)]) : b));
+    expect(run5(ownSeen, [ME, FOE, Q])).toMatchObject([{ kind: 'fog-stack', territory: 3, observed: 80, allowed: 35 }]);
   });
 
   it('needs the previous board: no reading across a gap', () => {
