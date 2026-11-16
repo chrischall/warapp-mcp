@@ -745,6 +745,56 @@ describe('brokenEstimates (#275 b)', () => {
     expect(read(5)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
   });
 
+  it('reads no held attack when a web-client edit sent part of the attack into a neutral instead: a territory newly mine contradicts the cache (#275 review)', () => {
+    // Edges 1-2, 2-3, 3-4, 2-6. The cache attacks 3 from 2 with 45; the edit attacked with 10 (all died
+    // against 10 + 5) and took the neutral 6 with 35. 2's losses fit the cached attack, since the 35 left it;
+    // but 6 is mine now with 34 where no cached order sent anything: the orders that ran are not the cached
+    // ones. Read from the cache, 28 defenders would imply 18.
+    const g = buildGraph(graphOf([
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [2, 6],
+    ]));
+    const order = { deploys: [], moves: [{ from: 2, to: 3, armies: 45 }] };
+    const before = [mine(1, 3), mine(2, 50), foe(3, 10), foe(4, 1), neutral(6, 2)];
+    const read = (after: TerritoryState[]) =>
+      brokenEstimates({ graph: g, boards: [at(4, before, order), at(5, after)], me: ME, settings: STD, estimateAt: () => 5 });
+    expect(read([mine(1, 3), mine(2, 5), foe(3, 9), foe(4, 1), mine(6, 34)])).toEqual([]);
+    // 6 untouched and the cached attack's losses on 2: it trips.
+    expect(read([mine(1, 3), mine(2, 5), foe(3, 1), foe(4, 1), neutral(6, 2)])).toMatchObject([
+      { kind: 'held-attack', territory: 3, observed: 28 },
+    ]);
+  });
+
+  it('reads no capture when a web-client edit added an attack into a neutral from the territory I lost (#275 review)', () => {
+    // Same map, no cached orders. The edit took 6 from 2 with 19; its 5 movable and 5 deployed took 2,
+    // which had 1 left. Read from the cache, 20 defenders would need 33: a false trip. 6 is mine now with
+    // 19 where no cached order sent anything, so the cache is not what ran.
+    const g = buildGraph(graphOf([
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [2, 6],
+    ]));
+    const before = [mine(1, 3), mine(2, 20), foe(3, 6), foe(4, 1), neutral(6, 1)];
+    const read = (after: TerritoryState[], moves: { from: number; to: number; armies: number }[] = []) =>
+      brokenEstimates({
+        graph: g,
+        boards: [at(4, before, { deploys: [], moves }), at(5, after)],
+        me: ME,
+        settings: STD,
+        estimateAt: () => 5,
+      });
+    expect(read([mine(1, 3), foe(2, 9), foe(3, 1), foe(4, 1), mine(6, 19)])).toEqual([]);
+    // Cached as it ran, 2 kept 1: no trip either.
+    expect(read([mine(1, 3), foe(2, 9), foe(3, 1), foe(4, 1), mine(6, 19)], [{ from: 2, to: 6, armies: 19 }])).toEqual([]);
+    // 6 untouched: the 20 on 2 needed 33 against 5 + 5, and it trips.
+    expect(read([mine(1, 3), foe(2, 9), foe(3, 1), foe(4, 1), neutral(6, 1)])).toMatchObject([
+      { kind: 'capture', territory: 2, observed: 33, allowed: 10 },
+    ]);
+  });
+
   it('reads no capture with luck: a lucky roll takes a territory with fewer than the luck-free attackers (#275 review)', () => {
     const capture = [
       at(4, [mine(1, 1), mine(2, 10), foe(3, 3), fogged(4)], { deploys: [], moves: [] }),

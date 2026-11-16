@@ -290,7 +290,8 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
    * #275 review: whether the board agrees with my cached orders, so they are the orders war.app ran (orders
    * modified in the web client after this server cached them are not). Every territory of mine on both
    * boards with no card play or order in outside `moves` touching it, borders included, ends at most at what
-   * it had plus my deploys there plus what my orders in could send. Each one that stayed mine with no other
+   * it had plus my deploys there plus what my orders in could send; every territory newly mine, at most at
+   * what my orders in could send. Each one that stayed mine with no other
    * player or fog beside it, no card play or order outside `moves` touching it, and only transfers out of it
    * into territories that stayed mine, must end at what it had plus my deploys there, less what went out,
    * plus what came in (an order in from a territory that may have been hit first: up to what it sends).
@@ -316,6 +317,15 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     for (const x of [...before.keys()].sort(byNum)) {
       if (!isMine(before.get(x)) || !isMine(cur.get(x)) || carded.has(x) || unlisted((m) => m.to === x)) continue;
       const most = before.get(x)!.armies! + deployedOn(x) + sentInto(x).reduce((n, i) => n + i.into, 0);
+      if (visibleState(cur.get(x))!.armies! > most) return false;
+    }
+    // Every territory newly mine (a neutral, another player's or one the fog hid): only my orders into it
+    // put armies there, so it ends at most at what they could send (#275 review: a web-client edit that sent
+    // armies into a neutral instead, from an attack source or a territory I later lost, shows here; both
+    // loops above and below skip a territory that was not mine on the previous board).
+    for (const x of [...cur.keys()].sort(byNum)) {
+      if (isMine(before.get(x)) || !isMine(cur.get(x)) || carded.has(x) || unlisted((m) => m.to === x)) continue;
+      const most = sentInto(x).reduce((n, i) => n + i.into, 0);
       if (visibleState(cur.get(x))!.armies! > most) return false;
     }
     let checked = 0;
