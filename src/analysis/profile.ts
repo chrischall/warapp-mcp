@@ -455,7 +455,8 @@ export function gameProfile(input: ProfileInput): GameProfile {
   }
 
   // #275 (b): an observation broke an opponent's estimate: what it really earns is unknown and above it,
-  // so the game is not even.
+  // so the game is not even. Only a running tripwire does this: reading `behind` on armies in view alone
+  // (an opponent's ≥ 1.25 × mine, no tripwire) is not part of #275 — it is deferred to #287.
   if (standing === 'even') {
     const running = enemies.filter((e) => untrustedFigure.has(e.playerId)).map((e) => e.playerId).sort((a, b) => a - b);
     if (running.length) {

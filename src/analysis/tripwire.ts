@@ -39,7 +39,8 @@
 //                territory is within reach, whatever its distance;
 //   capture      it took a territory of mine or a visible neutral that needed more attackers
 //                (`armiesToTake` of the defenders) than its stacks beside it could move (a commander of
-//                its counted as COMMANDER_STRENGTH, 7) plus its estimate. Never when a territory beside it was hidden on the previous board (a
+//                its counted as COMMANDER_STRENGTH, 7) plus its estimate. With no luck and straight rounding only
+//                (a lucky roll takes it with fewer). Never when a territory beside it was hidden on the previous board (a
 //                stack of its could have stood there), when a third player stood beside it, under
 //                Multi-Attack or when the settings do not say (a chain lands from further), or when my
 //                orders that turn are unknown
@@ -48,7 +49,10 @@
 //                percentage order, which `sent` lists and `moves` leaves out, sends an unknown count, so
 //                none may leave the territory of mine nor go into the neutral. A territory my Gift card gave
 //                it (`orders.cards`) is no capture, and with my card plays not recorded (`cards` absent) no
-//                capture of mine is read when Gift may be in play (`gift`);
+//                capture of mine is read when Gift may be in play (`gift`). My cached orders count only when
+//                the board agrees they ran (`ordersLanded`, shared with the held attack): orders modified in the
+//                web client after this server cached them (a deploy that never landed) read no capture of mine,
+//                nor one of a neutral beside mine;
 //   held-attack  an attack of mine (my cached orders) failed on a territory of its that held: the
 //                defenders it took to hold (one more than my attackers kill) beyond the armies there
 //                (its commander there counted as 7, as on its stacks beside it),
@@ -61,7 +65,8 @@
 //                board), nor from one that ended with fewer armies than my orders left it; and only what
 //                the source had left after its earlier orders in list order, so not from a source an
 //                order outside `moves` (Transfer Only, Attack Only, percentage) left too, nor with my
-//                orders cached before `sent` existed. A Transfer Only order
+//                orders cached before `sent` existed, nor when the board disagrees with them (`ordersLanded`).
+//                A Transfer Only order
 //                (flagged in `sent`) attacks nothing, and a player a Diplomacy card may have kept at
 //                peace with me (`peace`) is not read, nor anyone while a Diplomacy card may have been in
 //                force on the turn the attack ran (`diplomacy`: the cards in effect now do not say). A
@@ -253,6 +258,66 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
   /** An order of mine matching `match` that `sent` lists but `moves` lacks: its armies are unknown. */
   const unlisted = (match: (m: { from: number; to: number }) => boolean): boolean =>
     myOrders !== undefined && myOrders.sent!.filter(match).length > myOrders.moves.filter(match).length;
+  /** My cached deploys on `x`. */
+  const deployedOn = (x: number) => (myOrders?.deploys ?? []).filter((d) => d.territoryId === x).reduce((n, d) => n + d.armies, 0);
+  /**
+   * What each of my orders out of `f` sends, in list order: an order sends what is left (transfers in are
+   * not counted: armies move once a turn). Exact when nothing hit `f` first; else an upper bound.
+   */
+  const sentFrom = (f: number): { to: number; armies: number }[] => {
+    let left = Math.max(0, (visibleState(before.get(f))?.armies ?? 0) + deployedOn(f) - guard);
+    return (myOrders?.moves ?? [])
+      .filter((m) => m.from === f)
+      .map((m) => {
+        const took = Math.min(m.armies, left);
+        left -= took;
+        return { to: m.to, armies: took };
+      });
+  };
+  const isMine = (t: TerritoryState | undefined) => playerOf(visibleState(t)) === me;
+  /** Mine on both boards, and nothing but my territories and neutrals, all in view, beside it on the previous one. */
+  const quiet = (x: number) =>
+    isMine(before.get(x)) &&
+    isMine(cur.get(x)) &&
+    neighborsOf(graph, x).every((n) => {
+      const t = visibleState(before.get(n));
+      return t !== undefined && (t.owner.kind === 'neutral' || playerOf(t) === me);
+    });
+  /**
+   * #275 review: whether the board agrees with my cached orders, so they are the orders war.app ran (orders
+   * modified in the web client after this server cached them are not). Each territory of mine that stayed
+   * mine with no other player or fog beside it, no card play or order outside `moves` touching it, and only
+   * transfers out of it into territories that stayed mine, must end at what it had plus my deploys there,
+   * less what went out, plus what came in (an order in from a territory that may have been hit first: up to
+   * what it sends). Needs one such territory: with none, nothing agrees. Shared by the capture and the held
+   * attack, which both read my cached orders.
+   */
+  let landed: boolean | undefined;
+  const ordersLanded = (): boolean => {
+    if (landed !== undefined) return landed;
+    landed = false;
+    if (!myOrders) return false;
+    const carded = new Set((myOrders.cards ?? []).flatMap((c) => [c.from, c.to, c.target].filter((x): x is number => x !== undefined)));
+    let checked = 0;
+    for (const x of [...before.keys()].sort(byNum)) {
+      if (!quiet(x) || carded.has(x) || unlisted((m) => m.from === x || m.to === x)) continue;
+      const outs = sentFrom(x);
+      if (outs.some((o) => !isMine(before.get(o.to)) || !isMine(cur.get(o.to)))) continue;
+      let low = before.get(x)!.armies! + deployedOn(x) - outs.reduce((n, o) => n + o.armies, 0);
+      let high = low;
+      for (const f of [...new Set(myOrders.moves.filter((m) => m.to === x).map((m) => m.from))].sort(byNum)) {
+        const into = sentFrom(f).filter((o) => o.to === x).reduce((n, o) => n + o.armies, 0);
+        if (quiet(f) && !unlisted((m) => m.from === f)) low += into;
+        high += into;
+      }
+      high = Math.max(high, low);
+      const end = visibleState(cur.get(x))!.armies!;
+      if (end < low || end > high) return false;
+      checked++;
+    }
+    landed = checked > 0;
+    return landed;
+  };
   /**
    * #123 lesson 5: the armies of `p` that could have walked into `id` since `since[0]`: per other territory,
    * every drop of its movable armies between consecutive sightings among `since`, and from the latest to now
@@ -405,7 +470,8 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     // capture: it holds what was mine or a visible neutral's.
     const wasOwner = playerOf(was);
     if (wasOwner !== p && (wasOwner === me || was.owner.kind === 'neutral')) {
-      if (chains || input.bomb || !Number.isFinite(bank) || !clearAround(id)) continue;
+      // With luck a roll may take it with fewer than the luck-free attackers.
+      if (!exact || chains || input.bomb || !Number.isFinite(bank) || !clearAround(id)) continue;
       const third = neighborsOf(graph, id).some((n) => {
         const o = playerOf(visibleState(before.get(n)));
         return o !== undefined && o !== p && o !== me;
@@ -413,14 +479,14 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       if (third) continue;
       let defenders = was.armies!;
       if (wasOwner === me) {
-        if (!myOrders || unlisted((m) => m.from === id) || giftUnknown || gifted.has(id)) continue;
+        // The cached deploys and moves count only when the board agrees they ran.
+        if (!myOrders || !ordersLanded() || unlisted((m) => m.from === id) || giftUnknown || gifted.has(id)) continue;
         const out = myOrders.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0);
-        const added = myOrders.deploys.filter((d) => d.territoryId === id).reduce((n, d) => n + d.armies, 0);
-        defenders = Math.max(guard, defenders + added - out);
+        defenders = Math.max(guard, defenders + deployedOn(id) - out);
       } else {
         // My own attack on the neutral would have worn it down first.
         const mineBeside = neighborsOf(graph, id).some((n) => playerOf(before.get(n)) === me);
-        if (mineBeside && (!myOrders || myOrders.sent!.some((m) => m.to === id))) continue;
+        if (mineBeside && (!myOrders || !ordersLanded() || myOrders.sent!.some((m) => m.to === id))) continue;
       }
       const needed = armiesToTake(defenders, rates);
       if (needed === null) continue;
@@ -436,7 +502,19 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       const o = playerOf(visibleState(before.get(n)));
       return o !== undefined && o !== p && !friend(o);
     });
-    if (wasOwner === p && exact && !chains && !input.bomb && Number.isFinite(bank) && !otherBeside && myOrders && clearAround(id) && !input.peace?.has(p) && !input.diplomacy) {
+    if (
+      wasOwner === p &&
+      exact &&
+      !chains &&
+      !input.bomb &&
+      Number.isFinite(bank) &&
+      !otherBeside &&
+      myOrders &&
+      ordersLanded() &&
+      clearAround(id) &&
+      !input.peace?.has(p) &&
+      !input.diplomacy
+    ) {
       const transferOnly = new Set(myOrders.sent!.filter((m) => m.transferOnly).map((m) => `${m.from}:${m.to}`));
       const fromIds = [...new Set(myOrders.moves.filter((m) => m.to === id && !transferOnly.has(`${m.from}:${id}`)).map((m) => m.from))].sort(byNum);
       let attackers = 0;
@@ -446,17 +524,10 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
         if (playerOf(src) !== me || playerOf(after) !== me) continue;
         // An order out of it that `moves` leaves out took an unknown share first.
         if (unlisted((m) => m.from === f)) continue;
-        const added = myOrders.deploys.filter((d) => d.territoryId === f).reduce((n, d) => n + d.armies, 0);
+        const added = deployedOn(f);
         // An order sends what is left: in list order, each order out of the source takes from what the
         // earlier ones left (transfers in are not counted: they may land after it).
-        let left = Math.max(0, src!.armies! + added - guard);
-        let sent = 0;
-        for (const m of myOrders.moves) {
-          if (m.from !== f) continue;
-          const took = Math.min(m.armies, left);
-          left -= took;
-          if (m.to === id) sent += took;
-        }
+        const sent = sentFrom(f).filter((o) => o.to === id).reduce((n, o) => n + o.armies, 0);
         // Another stack beside the source could have shrunk it first: my attack then sent less.
         const exposed = neighborsOf(graph, f).some((n) => {
           if (n === id) return false;

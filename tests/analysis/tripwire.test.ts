@@ -257,8 +257,9 @@ describe('brokenEstimates (#275 b)', () => {
       at(5, [mine(1, 31), mine(2, 1), foe(3, 4), foe(4, 1)]),
     ];
     expect(run(boards)).toEqual([]);
-    // Listed first, the attack had its 35.
+    // Listed first, the attack had its 35 (and the transfer the 4 left: 1 ends at 5).
     boards[0] = at(4, [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }, { from: 2, to: 1, armies: 30 }] });
+    boards[1] = at(5, [mine(1, 5), mine(2, 1), foe(3, 4), foe(4, 1)]);
     expect(run(boards)).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22 }]);
   });
 
@@ -407,17 +408,23 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run([at(4, before, { deploys: [], moves: [], sent: [{ from: 2, to: 1 }] }), after])).toEqual([]);
     // Orders cached before `sent` existed: what went out of 2 is unknown.
     expect(run([oldCache(4, before, { deploys: [], moves: [] }), after])).toEqual([]);
-    // With nothing sent out of 2, the same capture trips.
-    expect(run([at(4, before, { deploys: [], moves: [] }), after])).toMatchObject([{ kind: 'capture', territory: 2 }]);
+    // With nothing sent out of 2 (1 still at 1, as the board agrees), the same capture trips.
+    expect(run([at(4, before, { deploys: [], moves: [] }), at(5, [mine(1, 1), foe(2, 10), foe(3, 1), fogged(4)])])).toMatchObject([
+      { kind: 'capture', territory: 2 },
+    ]);
   });
 
   it('reads no capture of a neutral my Attack Only or percentage order may have worn down first', () => {
     // Its 3 beside the neutral 10 move 2: with a 5 deploy 7, where 16 were needed.
     const before = [mine(1, 20), neutral(2, 10), foe(3, 3), fogged(4)];
     const after = at(5, [mine(1, 10), foe(2, 2), foe(3, 1), fogged(4)]);
-    expect(run([at(4, before, { deploys: [], moves: [] }), after])).toMatchObject([{ kind: 'capture', territory: 2, observed: 16, allowed: 7 }]);
+    // With no order of mine, 1 still holds its 20 (the board agrees).
+    const still = at(5, [mine(1, 20), foe(2, 2), foe(3, 1), fogged(4)]);
+    expect(run([at(4, before, { deploys: [], moves: [] }), still])).toMatchObject([{ kind: 'capture', territory: 2, observed: 16, allowed: 7 }]);
     expect(run([at(4, before, { deploys: [], moves: [], sent: [{ from: 1, to: 2 }] }), after])).toEqual([]);
     expect(run([oldCache(4, before, { deploys: [], moves: [] }), after])).toEqual([]);
+    // No order cached, but 10 left 1 (orders changed in the web client): the board disagrees, not read.
+    expect(run([at(4, before, { deploys: [], moves: [] }), after])).toEqual([]);
   });
 
   it('reads no held attack from a source an order outside `moves` also left', () => {
@@ -428,8 +435,10 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run([at(4, before, { deploys: [], moves, sent: [{ from: 2, to: 1 }, { from: 2, to: 3 }] }), after])).toEqual([]);
     // Orders cached before `sent` existed: unknown, not read.
     expect(run([oldCache(4, before, { deploys: [], moves }), after])).toEqual([]);
-    // With the attack the only order out of 2, it trips.
-    expect(run([at(4, before, { deploys: [], moves }), after])).toMatchObject([{ kind: 'held-attack', territory: 3, observed: 22, allowed: 10 }]);
+    // With the attack the only order out of 2 (1 still at 1, as the board agrees), it trips.
+    expect(run([at(4, before, { deploys: [], moves }), at(5, [mine(1, 1), mine(2, 6), foe(3, 4), foe(4, 1)])])).toMatchObject([
+      { kind: 'held-attack', territory: 3, observed: 22, allowed: 10 },
+    ]);
   });
 
   it('credits a stack that shrank between two sightings, not only since its latest one (#275 review)', () => {
@@ -609,6 +618,54 @@ describe('brokenEstimates (#275 b)', () => {
     // Last seen its own, the stock still bounds it with a third player in the game.
     const ownSeen = neutralSeen.map((b, i) => (i === 0 ? at(4, [mine(1, 5), mine(2, 5), foe(3, 2), fogged(4), fogged(5)]) : b));
     expect(run5(ownSeen, [ME, FOE, Q])).toMatchObject([{ kind: 'fog-stack', territory: 3, observed: 80, allowed: 35 }]);
+  });
+
+  it('reads no capture of mine when a cached deploy never landed: the board disagrees with my orders (#275 review)', () => {
+    // Line 1-5, me on 1 and 2, its 11 on 3. The cached orders deploy 20 on 2, but the orders were changed
+    // in the web client: the 20 went to 1. Its 10 take my 5 on 2. Read from the cache, 25 defenders needed
+    // 41 against 10 + 5: a false trip implying 31.
+    const G5 = buildGraph(line(5));
+    const before = [mine(1, 1), mine(2, 5), foe(3, 11), fogged(4), fogged(5)];
+    const orders = { deploys: [{ territoryId: 2, armies: 20 }], moves: [] };
+    const run5 = (after: TerritoryState[]) =>
+      brokenEstimates({ graph: G5, boards: [at(4, before, orders), at(5, after)], me: ME, settings: STD, estimateAt: () => 5 });
+    expect(run5([mine(1, 21), foe(2, 4), foe(3, 1), fogged(4), fogged(5)])).toEqual([]);
+    // When the board agrees (1 stayed at 1, so the 20 went where the cache says) 25 defenders fell to 10: it trips.
+    expect(run5([mine(1, 1), foe(2, 4), foe(3, 1), fogged(4), fogged(5)])).toEqual([
+      { player: FOE, turn: 5, kind: 'capture', territory: 2, observed: 41, allowed: 15, implied: 31 },
+    ]);
+    // With no territory of mine the board can check the orders on, nothing agrees: not read.
+    const lone = [neutral(1, 1), mine(2, 5), foe(3, 11), fogged(4), fogged(5)];
+    expect(
+      brokenEstimates({
+        graph: G5,
+        boards: [at(4, lone, orders), at(5, [neutral(1, 1), foe(2, 4), foe(3, 1), fogged(4), fogged(5)])],
+        me: ME,
+        settings: STD,
+        estimateAt: () => 5,
+      }),
+    ).toEqual([]);
+  });
+
+  it('reads no held attack when a cached deploy never landed: the same check as a capture (#275 review)', () => {
+    // The attack from 2 is real (2 lost armies), but the cache's deploy of 10 on 1 is not on the board.
+    const orders = { deploys: [{ territoryId: 1, armies: 10 }], moves: [{ from: 2, to: 3, armies: 35 }] };
+    const before = [mine(1, 1), mine(2, 40), foe(3, 5), foe(4, 1)];
+    expect(run([at(4, before, orders), at(5, [mine(1, 1), mine(2, 20), foe(3, 4), foe(4, 1)])])).toEqual([]);
+    // Landed where the cache says, it trips.
+    expect(run([at(4, before, orders), at(5, [mine(1, 11), mine(2, 20), foe(3, 4), foe(4, 1)])])).toMatchObject([
+      { kind: 'held-attack', territory: 3, observed: 22 },
+    ]);
+  });
+
+  it('reads no capture with luck: a lucky roll takes a territory with fewer than the luck-free attackers (#275 review)', () => {
+    const capture = [
+      at(4, [mine(1, 1), mine(2, 10), foe(3, 3), fogged(4)], { deploys: [], moves: [] }),
+      at(5, [mine(1, 1), foe(2, 8), foe(3, 1), fogged(4)]),
+    ];
+    expect(run(capture)).toMatchObject([{ kind: 'capture' }]);
+    expect(run(capture, 5, { ...STD, luckModifier: 0.5 })).toEqual([]);
+    expect(run(capture, 5, { ...STD, roundingMode: 'WeightedRandom' })).toEqual([]);
   });
 
   it('needs the previous board: no reading across a gap', () => {

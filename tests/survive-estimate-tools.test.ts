@@ -36,7 +36,7 @@ function game(turnsDone = '2', o: { allSeats?: boolean; airlift?: boolean; bomb?
 }
 
 // Fixture map: 159 Hornwood – 161 Sheepshead Hills – 157 Widow's Watch form bonus 118 (+2); 158 Bolton
-// Moors borders all three; 1567 borders 161 and 157; 135 borders 159 and 158.
+// Moors borders all three; 1567 borders 161, 157 and 453745; 135 borders 159 and 158.
 async function live(territories: SyntheticTerritory[], dataDir?: string, feed = [game()]): Promise<Harness> {
   return liveHarness({
     feed,
@@ -106,7 +106,9 @@ describe('the broken-estimate tripwire (#275 b)', () => {
       { territoryId: 161, owner: owner(ANN.feed), armies: 20 },
       { territoryId: 157, owner: owner(ANN.feed), armies: 10 },
       { territoryId: 158, owner: owner(BOB.feed), armies: 3 },
-      { territoryId: 1567, owner: { kind: 'neutral' }, armies: 2 },
+      // Mine with only mine and a neutral beside it: the board shows my cached orders ran (`ordersLanded`).
+      { territoryId: 1567, owner: owner(ANN.feed), armies: 2 },
+      { territoryId: 453745, owner: { kind: 'neutral' }, armies: 2 },
       { territoryId: 135, owner: { kind: 'unknown' }, armies: null, fogLevel: 'Fogged' },
     ],
   };
@@ -116,7 +118,8 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 20 },
     { id: 157, fogLevel: 1, owner: BOB.inGame, armies: 8 },
     { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 1 },
-    { id: 1567, fogLevel: 1, owner: 0, armies: 2 },
+    { id: 1567, fogLevel: 1, owner: ANN.inGame, armies: 2 },
+    { id: 453745, fogLevel: 1, owner: 0, armies: 2 },
     { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
   ];
 

@@ -715,7 +715,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   Transfer Only order or on a player a Diplomacy card in force keeps at peace, nor at all once anyone may have held
   a Diplomacy card on the turn it ran (the cards in effect now do not say what was in force then); my orders count as known only with
   `sent`, an older cache as unknown, and a Transfer Only, Attack Only or percentage order — in `sent`, left out
-  of `moves` — out of my territory, into the neutral or out of my attack's source means that one is not read)
+  of `moves` — out of my territory, into the neutral or out of my attack's source means that one is not read;
+  and they count only when the board agrees they ran, `ordersLanded`, one check for the capture and the held
+  attack: every territory of mine that stayed mine with only mine and neutrals in view beside it, no card play or
+  order outside `moves` on it and only transfers out into territories that stayed mine ends at what it had plus my
+  deploys less what went out plus what came in — up to what an order sends from a source that may have been hit
+  first — and at least one such territory exists, so orders changed in the web client after the cache, a deploy
+  that never landed, read nothing; a capture is read with no luck and straight rounding only, as a held attack is)
   for `UNTRUSTED_TURNS` (3).
   Under Multi-Attack, or when the settings do not say, a chain moves armies many hops in one turn: no capture
   or held attack is read, and a stack out of the fog credits armies that left view at any distance. Nothing is
@@ -975,7 +981,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     in a team game both incomes and armies are summed by team, PLAN-TEAMS C3, as is the outlook;
     an enemy still playing with no estimate is named and forbids `ahead`, which reads `unknown`; #275: an
     opponent whose estimate a tripwire broke, `PlanInput.untrusted`, is compared at the larger of its estimate and
-    its untrusted figure, and the standing is never `even` while one runs: it reads `behind`, not under `enemyDeploy`)
+    its untrusted figure, and the standing is never `even` while one runs: it reads `behind`, not under `enemyDeploy`;
+    reading `behind` on armies in view alone, an opponent's ≥ 1.25 × mine with no tripwire, is not done: deferred to #287)
     and the strategy settings. `warapp_plan_turn` passes `adapt: true`: with no `goal` the profile picks
     it (behind → `defend`, else `balanced`) and its rules fire (1v1 in contact: advances rank
     below holds and breaks; FFA with 2+ opponents: no second front; behind: no pressure margin;
