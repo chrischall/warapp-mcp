@@ -139,6 +139,23 @@ describe('the planner prices a border by its breach with the guard off (#275 pat
     expect(p.rationale.some((r) => /alone shields/.test(r))).toBe(false);
   });
 
+  it('sizes the stack that would come through for an untrusted figure, as the hold does (#275 b)', () => {
+    //   1 (enemy, 6) ─ 2 (my border, Gate +1 alone) ─ 3 (30) ─ 4: Inner (+6) = 3, 4. The 30 on 3 answer the
+    //   6 with its estimate; while its estimate is untrusted at 40 they do not, and the breach is priced.
+    const GATE = makeMap(6, [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6]], [[100, 6, [3, 4]], [200, 1, [2]], [300, 3, [5, 6]]]);
+    const at = (over: Partial<PlanInput> = {}) =>
+      planTurn({
+        graph: buildGraph(GATE),
+        board: board([foe(1, 6), mine(2, 1), mine(3, 30), mine(4, 0), neutral(5, 1), neutral(6, 1)]),
+        me: ME,
+        income: 10,
+        settings: OFF,
+        ...over,
+      });
+    expect(at().rationale.some((r) => /alone shields/.test(r))).toBe(false);
+    expect(at({ untrusted: [{ player: FOE, deploy: 40 }] }).rationale.some((r) => /T2 \(#2\) alone shields T3 \(#3\), T4 \(#4\)/.test(r))).toBe(true);
+  });
+
   it('changes nothing with the guard on', () => {
     const p = plan(ON, 1);
     expect(p.rationale.some((r) => /alone shields/.test(r))).toBe(false);

@@ -55,13 +55,21 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run(boards)).toEqual([
       { player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 60, allowed: 30, implied: 13 },
     ]);
-    // Its start unknown: the sighting and the deploys since alone.
-    expect(run(boards, 5, STD, null)).toEqual([
+    // Its start unknown, 4 beside it hidden on every board since the sighting: a stack banked there may
+    // have walked in, and nothing bounds it without the stock. Not read.
+    expect(run(boards, 5, STD, null)).toEqual([]);
+    // With 4 in view on every board, the sighting and the deploys since alone.
+    const open = [
+      at(3, [mine(1, 5), mine(2, 5), foe(3, 2), mine(4, 5)]),
+      at(4, [mine(1, 5), mine(2, 5), fogged(3), mine(4, 5)]),
+      at(5, [mine(1, 5), mine(2, 5), foe(3, 60), mine(4, 5)]),
+    ];
+    expect(run(open, 5, STD, null)).toEqual([
       { player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 60, allowed: 12, implied: 29 },
     ]);
     // 15 is within 1.5 × 12: nothing.
-    boards[2] = at(5, [mine(1, 5), mine(2, 5), foe(3, 15), fogged(4)]);
-    expect(run(boards, 5, STD, null)).toEqual([]);
+    open[2] = at(5, [mine(1, 5), mine(2, 5), foe(3, 15), mine(4, 5)]);
+    expect(run(open, 5, STD, null)).toEqual([]);
   });
 
   it('credits its starting armies to a stack no board ever showed: an opening reveal does not trip', () => {
@@ -98,7 +106,11 @@ describe('brokenEstimates (#275 b)', () => {
       at(5, [mine(1, 5), mine(2, 5), foe(3, 52), fogged(4), foe(5, 1)]),
     ];
     expect(run5(far)).toEqual([{ player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 52, allowed: 29, implied: 11 }]);
-    expect(brokenEstimates({ graph: G5, boards: far, me: ME, settings: STD, estimateAt: () => 5 })).toEqual([
+    // Its start unknown, 4 hidden on every board since the sighting: not read.
+    expect(brokenEstimates({ graph: G5, boards: far, me: ME, settings: STD, estimateAt: () => 5 })).toEqual([]);
+    // With 4 in view (mine), the sighting and the deploys since alone.
+    const farOpen = far.map((b) => ({ ...b, board: board(b.board.territories.map((t) => (t.territoryId === 4 ? mine(4, 5) : t))) }));
+    expect(brokenEstimates({ graph: G5, boards: farOpen, me: ME, settings: STD, estimateAt: () => 5 })).toEqual([
       { player: FOE, turn: 5, kind: 'fog-stack', territory: 3, observed: 52, allowed: 12, implied: 25 },
     ]);
   });
@@ -114,8 +126,9 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run(bank(45))).toEqual([]);
     // 90 is beyond its whole stock: it trips, allowed the stock and implied over every turn since turn 1.
     expect(run(bank(90))).toEqual([{ player: FOE, turn: 10, kind: 'fog-stack', territory: 3, observed: 90, allowed: 55, implied: 9 }]);
-    // Its start unknown: only what was seen and deployed since, so 45 trips as before.
-    expect(run(bank(45), 5, STD, null)).toEqual([{ player: FOE, turn: 10, kind: 'fog-stack', territory: 3, observed: 45, allowed: 12, implied: 22 }]);
+    // Its start unknown: nothing bounds what 4, hidden on every board since the sighting, banked. Not read.
+    expect(run(bank(45), 5, STD, null)).toEqual([]);
+    expect(run(bank(90), 5, STD, null)).toEqual([]);
     // Armies of its in view elsewhere now are not in the stack: the stock less them.
     const G5 = buildGraph(line(5));
     const run5 = (boards: TripBoard[]) => brokenEstimates({ graph: G5, boards, me: ME, settings: STD, start: START, estimateAt: () => 5 });
@@ -178,6 +191,26 @@ describe('brokenEstimates (#275 b)', () => {
     expect(run(boards)).toEqual([{ player: FOE, turn: 5, kind: 'held-attack', territory: 3, observed: 22, allowed: 10, implied: 17 }]);
     // With luck, a failed attack proves nothing.
     expect(run(boards, 5, { ...STD, luckModifier: 0.16 })).toEqual([]);
+  });
+
+  it('counts an opponent commander as 7: on the target of a held attack and on its stacks beside a capture', () => {
+    const cmd = (t: TerritoryState): TerritoryState => ({ ...t, specialUnits: [{ kind: 'commander', id: 'c'.repeat(32), playerId: FOE }] });
+    // 35 attackers kill 21: 22 to hold, where 5 and its commander (12) stood with a 5 deploy: 17 allowed, no trip.
+    const held = [
+      at(4, [mine(1, 1), mine(2, 40), cmd(foe(3, 5)), foe(4, 1)], { deploys: [], moves: [{ from: 2, to: 3, armies: 35 }] }),
+      at(5, [mine(1, 1), mine(2, 20), cmd(foe(3, 4)), foe(4, 1)]),
+    ];
+    expect(run(held)).toEqual([]);
+    // My 10 on 2 need 16 attackers; its 6 beside it move 5, its commander 7 more, with a 5 deploy 17: no trip.
+    const capture = [
+      at(4, [mine(1, 1), mine(2, 10), cmd(foe(3, 6)), fogged(4)], { deploys: [], moves: [] }),
+      at(5, [mine(1, 1), foe(2, 8), foe(3, 1), fogged(4)]),
+    ];
+    expect(run(capture)).toEqual([]);
+    // Without the commander both trip.
+    const plain = (b: TripBoard[]) => b.map((x) => ({ ...x, board: board(x.board.territories.map(({ specialUnits: _, ...t }) => t)) }));
+    expect(run(plain(held))).toMatchObject([{ kind: 'held-attack', allowed: 10 }]);
+    expect(run(plain(capture))).toMatchObject([{ kind: 'capture', observed: 16, allowed: 10 }]);
   });
 
   it('reads no held attack from a source another stack could have hit first', () => {

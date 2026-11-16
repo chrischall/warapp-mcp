@@ -693,7 +693,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   settings, and is not read when they do not give it; a stack out of the fog is credited its armies in view that
   left or shrank within reach since — a walk-in is not income, #123 lesson 5 — and, with the start known, never
   below its whole stock (every start plus each turn's estimate) less its armies in view elsewhere now, so armies
-  banked under the fog since early on do not trip it; a board from GameFeed history (`source: 'history'`) is no
+  banked under the fog since early on do not trip it — with the start unknown nothing bounds those, so a stack with
+  a territory within reach hidden on every board since its sighting is not read; an opponent commander counts as 7 on
+  the target of a held attack and on its stacks beside a capture or a held attack; a board from GameFeed history (`source: 'history'`) is no
   sighting and no previous board — the opponent-profile observer skips them too; a held attack is not read from a
   source another stack beside it could have hit first, or that ended below what my orders left it, counts only
   what the source had left after its earlier orders — an order sends what is left —, and is not read from a
@@ -702,14 +704,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   or held attack is read, and a stack out of the fog credits armies that left view at any distance. Nothing is
   read once an opponent may hold an Airlift card (the card clock, `opponentCanHold`): armies it lands look like
   income; a Reinforcement card is already in the estimate (#164). Nothing is read either while `resolveTeams`
-  says the teams are unknown (`known: false`): an opponent may be a teammate; `headroom` rows then carry
+  says the teams are unknown (`known: false`): an opponent may be a teammate, and the stored marks are applied
+  to nothing but kept unchanged (`TripwireRead.keep`: one such call never erases a running mark); `headroom` rows then carry
   `mayBeTeammate: true` and `warapp_submit_turn`'s headroom warning says so. The marks and each turn's per-opponent
   estimates live in the board cache file (`estimates`, `tripwires`, ids only; `readSurvival`/`writeSurvival`
   in `src/trend.ts`, kept by every cache writer), written by `warapp_plan_turn` only. While untrusted, the
   planner sizes borders of bonuses held in full at the start for max(estimate, the figure) where the figure
   is max(implied, my income) (`PlanInput.untrusted`, forceAt; not under `enemyDeploy`; under Local Deployment that
   figure is not bounded by where the opponent's bonus pools can land, as `deployReaching` bounds the estimate:
-  such a border is over-sized, the conservative direction), the border guess skips an untrusted opponent
+  such a border is over-sized, the conservative direction; the guard-off breach price, `breachAt`, sizes the stack
+  that would come through on the same figure), the border guess skips an untrusted opponent
   (`borderGuess`' `untrusted`, reason `untrusted`: a split drawn from the estimate would undo it), `warapp_check_plan`
   tries that figure by default (source `untrusted`), and both say so in the first warning (under `enemy_deploy`
   `warapp_check_plan` says nothing of it and `warapp_plan_turn`'s warning names the what-if figure it used).

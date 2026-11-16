@@ -15,7 +15,9 @@
 //                there); with its start unknown such a stack is not read. When a board showed it and the
 //                start is known, never below its whole stock (every start plus its estimate for every turn
 //                so far) less its armies in view elsewhere now: armies banked under the fog since early on
-//                walk in unseen, and no sighting credits them. A stack walking in is not
+//                walk in unseen, and no sighting credits them. With the start unknown there is no stock
+//                to bound them: a stack with a territory within reach (as below) hidden on every board
+//                since its sighting is not read at all. A stack walking in is not
 //                income (#123 lesson 5): its armies that left view or shrank are credited too: for each other
 //                territory, from its latest sighting since the stack's own and when within reach (graph
 //                distance at most the turns since that sighting), its movable armies then less its
@@ -23,14 +25,15 @@
 //                or when the settings do not say, a chain covers many hops in one turn: every such
 //                territory is within reach, whatever its distance;
 //   capture      it took a territory of mine or a visible neutral that needed more attackers
-//                (`armiesToTake` of the defenders) than its stacks beside it could move plus its
-//                estimate. Never when a territory beside it was hidden on the previous board (a
+//                (`armiesToTake` of the defenders) than its stacks beside it could move (a commander of
+//                its counted as COMMANDER_STRENGTH, 7) plus its estimate. Never when a territory beside it was hidden on the previous board (a
 //                stack of its could have stood there), when a third player stood beside it, under
 //                Multi-Attack or when the settings do not say (a chain lands from further), or when my
 //                orders that turn are unknown
 //                and could have moved armies out of mine (or attacked the neutral) first;
 //   held-attack  an attack of mine (my cached orders) failed on a territory of its that held: the
-//                defenders it took to hold (one more than my attackers kill) beyond the armies there,
+//                defenders it took to hold (one more than my attackers kill) beyond the armies there
+//                (its commander there counted as 7, as on its stacks beside it),
 //                its estimate and its stacks beside it that could move in. With no luck and straight
 //                rounding only, not under Multi-Attack or when the settings do not say (a chain brings
 //                armies from beyond its stacks beside it), and not when a territory beside it was hidden.
@@ -54,7 +57,7 @@
 // The estimate compared is the one the plan used that turn (`estimateAt`), the caller's to supply.
 
 import type { BoardState, TerritoryState } from '../board.js';
-import { armiesToTake, luckFraction, straightKills } from './combat.js';
+import { armiesToTake, COMMANDER_STRENGTH, luckFraction, straightKills } from './combat.js';
 import type { MapGraph } from './graph.js';
 import { bfsDistances, neighborsOf } from './graph.js';
 import type { MyOrders } from './opponents.js';
@@ -151,11 +154,14 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
   };
   /** Every neighbour of `id` was in view on the previous board. */
   const clearAround = (id: number) => neighborsOf(graph, id).every((n) => visibleState(before.get(n)) !== undefined);
-  /** What `p` could move from its stacks beside `id` on the previous board. */
+  /** `p`'s commanders on `t`, each fighting as {@link COMMANDER_STRENGTH}. */
+  const commanders = (t: TerritoryState | undefined, p: number) =>
+    (t?.specialUnits ?? []).filter((u) => u.kind === 'commander' && u.playerId === p).length * COMMANDER_STRENGTH;
+  /** What `p` could move from its stacks beside `id` on the previous board, a commander counted as 7. */
   const stacksBeside = (id: number, p: number) =>
     neighborsOf(graph, id).reduce((n, x) => {
       const t = visibleState(before.get(x));
-      return n + (playerOf(t) === p ? Math.max(0, t!.armies! - guard) : 0);
+      return n + (playerOf(t) === p ? Math.max(0, t!.armies! - guard) + commanders(t, p) : 0);
     }, 0);
   const myOrders = prev.orders;
   /**
@@ -186,6 +192,17 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
     return credit;
   };
 
+  /** Some territory within `reach` of `id` (any distance under chains) is hidden on every board in `since`. */
+  const hiddenSince = (id: number, since: readonly TripBoard[], reach: number): boolean => {
+    const dist = bfsDistances(graph, [id]);
+    const boardsSince = since.map((b) => index(b.board));
+    for (const [x, d] of dist) {
+      if (x === id || (!chains && d > reach)) continue;
+      if (boardsSince.every((b) => visibleState(b.get(x)) === undefined)) return true;
+    }
+    return false;
+  };
+
   for (const id of [...cur.keys()].sort(byNum)) {
     const t = visibleState(cur.get(id));
     const p = playerOf(t);
@@ -202,6 +219,9 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       const since = last ? boards.slice(boards.indexOf(last), -1) : [];
       // A history board since that sighting may have hidden a stack walking in: only the stock bound reads it.
       if (!input.start && since.some((b) => b.source === 'history')) continue;
+      // A territory within reach hidden on every board since the sighting may have banked a stack that
+      // walked in unseen; no sighting credits it, and only the stock (the start) bounds it: not read.
+      if (!input.start && last && hiddenSince(id, since, T - last.turn)) continue;
       const startArmies = input.start ? input.start.territories * input.start.armiesPerTerritory : 0;
       const from = last?.turn ?? 1;
       const seen = last ? visibleState(index(last.board).get(id)) : undefined;
@@ -296,7 +316,8 @@ export function brokenEstimates(input: TripInput): TripObservation[] {
       if (attackers <= 0) continue;
       const defenders = straightKills(attackers, s.offensiveKillRate ?? 60) + 1;
       const stacks = stacksBeside(id, p);
-      const standing = was.armies!;
+      // Its commander on the target defends as 7 more.
+      const standing = was.armies! + commanders(was, p);
       trip({
         player: p,
         kind: 'held-attack',

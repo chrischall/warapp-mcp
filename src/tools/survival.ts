@@ -22,6 +22,12 @@ export interface TripwireRead {
   tripwires: Tripwire[];
   /** This turn's estimate per opponent (what warapp_plan_turn keeps for the next turns' tripwire). */
   estimatesNow: Map<number, number>;
+  /**
+   * The marks warapp_plan_turn keeps: `tripwires`, or the stored marks unchanged while the teams are
+   * unknown (none is applied then, and none is erased: one call that cannot read the teams must not
+   * clear a mark the next call, with the teams read, still needs).
+   */
+  keep: Tripwire[];
   survival: Survival;
 }
 
@@ -30,7 +36,7 @@ export interface TripwireRead {
  * boards that this turn's estimates (or the ones kept for the turns it reads) cannot explain. None while
  * the teams are unknown (`teamsKnown: false`: a game of 3+ seats whose teams could not be read, where an
  * opponent may be a teammate), and no observation once an opponent may hold an Airlift card (the card
- * clock). Never throws.
+ * clock). While the teams are unknown the stored marks are kept unchanged (`keep`), never applied. Never throws.
  */
 export async function readTripwires(a: {
   dataDir: string | undefined;
@@ -53,7 +59,8 @@ export async function readTripwires(a: {
 }): Promise<TripwireRead> {
   const estimatesNow = new Map(a.estimates.map((e) => [e.playerId, e.estimate]));
   const survival = a.dataDir ? await readSurvival(a.dataDir, a.gameId, a.me) : { estimates: new Map(), tripwires: [] };
-  if (a.turn === null || a.teamsKnown === false) return { tripwires: [], estimatesNow, survival };
+  if (a.teamsKnown === false) return { tripwires: [], estimatesNow, survival, keep: [...survival.tripwires] };
+  if (a.turn === null) return { tripwires: [], estimatesNow, survival, keep: [] };
   let fresh: ReturnType<typeof brokenEstimates> = [];
   try {
     const start = trackGame([], a.gameSettings, a.map).start;
@@ -72,13 +79,14 @@ export async function readTripwires(a: {
   } catch {
     // A board this reader cannot follow: no observation.
   }
-  return { tripwires: activeTripwires(survival.tripwires, fresh, a.turn), estimatesNow, survival };
+  const tripwires = activeTripwires(survival.tripwires, fresh, a.turn);
+  return { tripwires, estimatesNow, survival, keep: tripwires };
 }
 
-/** Keep this turn's estimates and the running marks (warapp_plan_turn only). Never throws. */
+/** Keep this turn's estimates and the marks `read.keep` names (warapp_plan_turn only). Never throws. */
 export async function keepTripwires(dataDir: string | undefined, gameId: number, me: number, turn: number | null, read: TripwireRead): Promise<void> {
   if (!dataDir || turn === null) return;
-  await writeSurvival(dataDir, gameId, me, turn, { estimates: read.estimatesNow, tripwires: read.tripwires });
+  await writeSurvival(dataDir, gameId, me, turn, { estimates: read.estimatesNow, tripwires: read.keep });
 }
 
 /** What an untrusted opponent is sized for: the larger of what tripped it and my own income. */

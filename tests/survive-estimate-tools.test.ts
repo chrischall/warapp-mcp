@@ -198,6 +198,19 @@ describe('the broken-estimate tripwire (#275 b)', () => {
     for (const r of c.headroom) expect(r.mayBeTeammate).toBe(true);
   });
 
+  it('keeps a running mark unchanged, and applies none, while the teams are unknown for a plan', async () => {
+    const dir = await seeded();
+    const mark = { player: Number(BOB.feed), since: 2, until: 4, kind: 'fog-stack' as const, territory: 158, observed: 40, allowed: 12, implied: 20 };
+    await writeSurvival(dir, GAME, Number(ANN.feed), 2, { estimates: new Map([[Number(BOB.feed), 5]]), tripwires: [mark] });
+    h = await live(now, dir, [game('2', { allSeats: true })]);
+    const p = payload<{ warnings: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.some((x) => /untrusted/.test(x))).toBe(false);
+    const kept = await readSurvival(dir, GAME, Number(ANN.feed));
+    expect(kept.tripwires).toEqual([mark]);
+    // This turn's estimates are still kept.
+    expect(kept.estimates.has(3)).toBe(true);
+  });
+
   it('reads nothing without the previous board', async () => {
     h = await live(now);
     const p = payload<Checked>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [] }));

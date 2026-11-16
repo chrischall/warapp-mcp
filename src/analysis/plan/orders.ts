@@ -31,7 +31,7 @@ export type DeployBook = ReturnType<typeof deployBook>;
 export function deployBook(ctx: PlanCtx, ps: PlanState) {
   const {
     g, territories: state, s, mine, mineSet, myCommanders, foe, guard, noSplit, armiesOf, incomeGain, label, income,
-    reserve, econCostAt, paybackTurns, baseIncome, unitsAt, deployOf,
+    reserve, econCostAt, paybackTurns, baseIncome, unitsAt, deployOf, untrustedAt,
   } = ctx;
   const { warnings, rationale, deployed, avail, coverKeep, captured, moves } = ps;
   // ---- mutable plan state ----
@@ -232,14 +232,16 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
     if (guard) return null;
     if (breachCache.has(t)) return breachCache.get(t)!;
     // The stack that would come through: the largest visible foe stack beside `t` with its owner's
-    // deploy. A territory behind is hollow when none of mine beside it (itself included, `t` left
-    // out) holds as many: a stack that can answer the breach is no hollow interior.
+    // deploy — the untrusted figure when larger (#275 b), as the hold at `t` is sized. A territory
+    // behind is hollow when none of mine beside it (itself included, `t` left out) holds as many: a
+    // stack that can answer the breach is no hollow interior.
     const through = Math.max(
       0,
       ...neighborsOf(g, t).map((n) => {
         const st = state.get(n);
         const o = st?.owner;
-        return o?.kind === 'player' && foe(o.playerId) && st!.armies !== null ? st!.armies + unitsAt(n) + deployOf(o.playerId) : 0;
+        if (o?.kind !== 'player' || !foe(o.playerId) || st!.armies === null) return 0;
+        return st!.armies + unitsAt(n) + Math.max(deployOf(o.playerId), untrustedAt(o.playerId, t));
       }),
     );
     const hollow = (x: number) =>
