@@ -41,3 +41,43 @@ player name.**
 ### S2 — Docs
 `docs/WEB-PROTOCOL.md`: method 67 parameters and errors (verified), the multi-player pending rule.
 Strict surface lint 0 warnings (recipe in docs/PLAN-TURN.md T4).
+
+## Accepting another player's surrender (#317)
+
+Owner request of 2026-11-16 ("Support it"): see a pending surrender, raise it when my acceptance is
+owed, and accept it with `AcceptSurrender` (68), confirm-gated. Method 68 was out of scope above.
+
+### S1 — the facts and the encoder (done)
+Read from the client bundle locally, UNVERIFIED live; written up in docs/WEB-PROTOCOL.md "Accepting a
+surrender": a pending surrender is the `Surrendered` flag on `warlight.shared.GamePlayer` in the game
+details (`GameWL`, from GameRefresh), with `PlayersAcceptedMySurrender` (in-game id → time) saying who
+accepted; GetMyGames and LatestGameInfo carry nothing. My acceptance is owed when that player is
+`Playing` and `Surrendered`, my seat is `Playing` and not turned AI, the game is not
+`InstantSurrender`, and my id is not in the dict. The writer sends the game id, the surrendering
+player's in-game id, the accept flag and a mod-hook bool (false); no result payload.
+`writeAcceptSurrenderParams` in `src/protocol/methods.ts`, golden-pinned.
+
+### S2 — see it and raise it (done)
+`src/surrender-pending.ts` decodes the seats from a GameRefresh asked for the details only
+(`readGameDetailsSeats`) and gives `pendingSurrenders`: `{ inGameId, player, owedByMe }` per surrender
+still pending (mine left out), `owedByMe` `null` when my seat is not known. `src/tools/surrender-pending.ts`
+reads it only for a game being played or picked where my seat plays; a failed or unreadable read is
+`null`, never an empty list. Reported by `warapp_my_games` (per game and the count `surrenderPending`; those
+games first; at most 20 reads a call, none for `brief`), `warapp_wait_for_turn` (returns `surrender_pending`
+unless `ignore_surrenders`; `surrenders` names the games; after one failed details read it stops asking
+for the rest of the wait, `surrenderUnread` saying why once) and `warapp_plan_turn` (`surrenderPending`, and
+the first warning when one is owed). Checked offline: a synthetic frame in the real layout decodes through
+the cached real bundle's own readers (14 GameWL fields; the player's link back to the game comes first).
+
+### S3 — accept it (done)
+`warapp_accept_surrender` (`src/tools/accept-surrender.ts`; the pure part in `src/analysis/accept-surrender.ts`),
+confirm-gated, method 68 with accept = true. Refuses a finished game, a lobby, a game I am not playing, an
+instant-surrender game, unreadable game details, no surrender pending from the player named (or none, or several
+with none named), and my acceptance not owed. The preview: whose seat (`player`, the GameFeed id or `null`, beside `inGameId`; name
+through `untrustedText`); its land neutral or AI (`SurrenderedPlayersTurnIntoAIs`); the players bordering that land on the
+live board, each by how many of its territories border it (`null` when the board does not read); who else still
+owes an acceptance; whether accepting leaves only my side playing (`winsGame`); and one advice line — the win, or in
+a free-for-all the neighbour that gains most, citing `ffa-surrender-veto`. The outcome is read back from GameFeed
+and the game details: `accepted` / `pending` (both `confirmed`), `unconfirmed`, `unknown`; never resent. The skill
+reads chat for surrender requests before each turn and checks pending surrenders at every status sweep; it
+accepts only after the owner says so, unless accepting simply wins the game (then it tells the owner afterwards).

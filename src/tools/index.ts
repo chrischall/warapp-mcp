@@ -29,6 +29,7 @@ import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
 import { registerStrategyTool } from './strategy.js';
 import { registerSurrenderTool } from './surrender.js';
+import { registerAcceptSurrenderTool } from './accept-surrender.js';
 import { registerTeamTool } from './team.js';
 import { registerTeamBriefTool } from './team-brief.js';
 import { registerTurnTools } from './turn.js';
@@ -117,6 +118,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerJoinGameTool(server, live);
   registerLeaveGameTool(server, live);
   registerSurrenderTool(server, live);
+  registerAcceptSurrenderTool(server, live);
   registerBeginTurnTool(server, live);
   registerScoutTool(server, live, deps.env ? { env: deps.env } : {});
   registerTurnTools(server, live, deps.env ? { env: deps.env } : {});

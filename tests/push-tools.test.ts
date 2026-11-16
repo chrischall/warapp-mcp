@@ -1,4 +1,5 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
+import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeRequest, fromHex } from '../src/protocol/codec.js';
 import type { GameUpdate } from '../src/push/listener.js';
@@ -9,6 +10,8 @@ import { fakeSocketIo, framed, gameUpdatedHex, type FakeSocketIo } from './push/
 import { writeMyGamesReturn, type SyntheticGame } from './protocol/my-games-bundle.js';
 import type { Writer } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
+import { FROZEN_TAB_HINT } from '../src/tools/live-context.js';
+import { writeGameDetailsAndChat, type SyntheticSeat } from './protocol/chat-bundle.js';
 
 const GAME = 12345678;
 const ANN = '3312345644';
@@ -90,7 +93,8 @@ describe('warapp_wait_for_turn', () => {
     expect(p.untrusted_content).toBe(true);
     expect(p.status).toBe('your_turn');
     expect(p.ready).toEqual([GAME]);
-    expect(p.games).toEqual([{ id: GAME, name: 'Synthetic lobby game', state: 'Playing', turn: 3, waitingOnYou: true }]);
+    // #317: this fake answers GameRefresh with no result, so the pending surrenders are unknown (null).
+    expect(p.games).toEqual([{ id: GAME, name: 'Synthetic lobby game', state: 'Playing', turn: 3, waitingOnYou: true, surrenderPending: null }]);
     expect(p.updates).toBe(0);
     expect(p.next).toMatch(/warapp_plan_turn/);
     // Nothing to wait for: the push socket is not started and nothing is subscribed (#131).
@@ -99,6 +103,104 @@ describe('warapp_wait_for_turn', () => {
     expect(subscribes(socket)).toEqual([]);
     // A turn check needs no map: never download one for it (#131).
     expect(h!.calls.every((c) => c.url.includes('GetMap=false'))).toBe(true);
+  });
+
+  describe('a pending surrender (#317)', () => {
+    const BOB_IN_GAME = 765432;
+    const details = (seats: SyntheticSeat[]) => (req: { method: number }) => {
+      if (req.method !== Method.GameRefresh) throw new Error(`unexpected method ${req.method}`);
+      return { body: (w: Writer) => writeGameDetailsAndChat(w, null, seats) };
+    };
+
+    it('returns surrender_pending when a surrender waits on my acceptance and no turn does', async () => {
+      socket = fakeSocketIo();
+      h = await liveHarness({
+        feed: [COMMITTED()],
+        pages: ME_PAGE,
+        socket,
+        warapp: details([{ id: ANN_IN_GAME }, { id: BOB_IN_GAME, surrendered: true }]),
+      });
+      const p = payload(await call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 60 }));
+      expect(p.status).toBe('surrender_pending');
+      expect(p.surrenders).toEqual([GAME]);
+      expect(p).not.toHaveProperty('ready');
+      const g = (p.games as GameCheck[])[0]!;
+      expect(g.waitingOnYou).toBe(false);
+      expect(g.surrenderOwed).toBe(true);
+      expect(g.surrenderPending).toEqual([{ inGameId: BOB_IN_GAME, player: null, owedByMe: true, name: null }]);
+      expect(p.next).toMatch(new RegExp(`Game ${GAME}: A surrender is waiting for you to accept it.*ignore_surrenders`));
+      expect(String(p.surrenderNote)).toMatch(/UNVERIFIED live/);
+      // Nothing to wait for: not watched.
+      expect(subscribes(socket)).toEqual([]);
+    });
+
+    it('a turn waiting on me wins (your_turn), and the surrender is still listed', async () => {
+      socket = fakeSocketIo();
+      h = await liveHarness({
+        feed: [READY()],
+        pages: ME_PAGE,
+        socket,
+        warapp: details([{ id: ANN_IN_GAME }, { id: BOB_IN_GAME, surrendered: true }]),
+      });
+      const p = payload(await call('warapp_wait_for_turn', { game_ids: [GAME] }));
+      expect(p.status).toBe('your_turn');
+      expect(p.surrenders).toEqual([GAME]);
+    });
+
+    it('a details read that times out (a frozen tab) is not asked again in that wait, and says why once', async () => {
+      socket = fakeSocketIo();
+      let refreshes = 0;
+      h = await liveHarness({
+        feed: [COMMITTED(), COMMITTED(), READY()],
+        pages: ME_PAGE,
+        socket,
+        warapp: (req) => {
+          if (req.method !== Method.GameRefresh) throw new Error(`unexpected method ${req.method}`);
+          refreshes++;
+          throw new FetchproxyTimeoutError({ url: 'https://war.app/Services?m=GameRefresh&js=1', timeoutMs: 30000, retrySafe: true });
+        },
+      });
+      const pending = call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 60 });
+      await until(() => subscribes(socket!).length === 1 && h!.calls.length === 2, 'subscribe + first checks');
+      socket.push(`3:::${gameUpdatedHex(GAME)}`);
+      const p = payload(await pending);
+      expect(p.status).toBe('your_turn');
+      // Three GameFeed reads (the check, the connect re-read, the push), one details read.
+      expect(h.calls).toHaveLength(3);
+      expect(refreshes).toBe(1);
+      expect((p.games as GameCheck[])[0]!.surrenderPending).toBeNull();
+      const why = String(p.surrenderUnread);
+      expect(why).toMatch(/skipped for the rest of this wait/);
+      expect(why.split(FROZEN_TAB_HINT)).toHaveLength(2);
+      expect(JSON.stringify(p).split(FROZEN_TAB_HINT)).toHaveLength(2);
+    });
+
+    it('a details read that works reports no surrenderUnread', async () => {
+      socket = fakeSocketIo();
+      h = await liveHarness({ feed: [READY()], pages: ME_PAGE, socket, warapp: details([{ id: ANN_IN_GAME }]) });
+      const p = payload(await call('warapp_wait_for_turn', { game_ids: [GAME] }));
+      expect((p.games as GameCheck[])[0]!.surrenderPending).toEqual([]);
+      expect(p).not.toHaveProperty('surrenderUnread');
+    });
+
+    it('ignore_surrenders waits on, and one I already accepted does not wake it', async () => {
+      const cases: Array<[SyntheticSeat[], Record<string, unknown>]> = [
+        [[{ id: ANN_IN_GAME }, { id: BOB_IN_GAME, surrendered: true }], { ignore_surrenders: true }],
+        [[{ id: ANN_IN_GAME }, { id: BOB_IN_GAME, surrendered: true, acceptedBy: [ANN_IN_GAME] }], {}],
+      ];
+      for (const [seats, args] of cases) {
+        socket = fakeSocketIo();
+        socket.failHandshake(...Array.from({ length: 5 }, () => ({ status: 503, body: '', url: '' })));
+        h = await liveHarness({ feed: [COMMITTED()], pages: ME_PAGE, socket, warapp: details(seats) });
+        const p = payload(await call('warapp_wait_for_turn', { game_ids: [GAME], timeout_seconds: 1, ...args }));
+        expect(p.status).toBe('timed_out');
+        expect((p.games as GameCheck[])[0]!.surrenderPending).toHaveLength(1);
+        await h.harness.close();
+        socket.close();
+      }
+      h = undefined;
+      socket = undefined;
+    }, 10_000);
   });
 
   it('a finished game or an eliminated seat returns at once: no turn is coming (#130)', async () => {
@@ -370,6 +472,30 @@ describe('waitForTurn', () => {
       check: (id: number) => new Promise<GameCheck>((resolve) => reads.push({ id, resolve })),
     };
   }
+
+  it('#317: wakes on a surrender owed only with wakeOnSurrender, at the start or on a re-read', async () => {
+    const owed = (id: number): GameCheck => ({ ...notReady(id), surrenderPending: [], surrenderOwed: true });
+    const fp = fakePush();
+    expect((await waitForTurn({ gameIds: [1], timeoutMs: 1000, push: fp.push, check: async (id) => owed(id), wakeOnSurrender: true })).status).toBe(
+      'surrender_pending',
+    );
+    // A re-read after a push finds it.
+    let n = 0;
+    const pending = waitForTurn({
+      gameIds: [1],
+      timeoutMs: 1000,
+      push: fp.push,
+      wakeOnSurrender: true,
+      check: async (id) => (++n >= 2 ? owed(id) : notReady(id)),
+    });
+    await settleUntil(() => n === 1 && fp.watched.length === 1, 'initial check');
+    fp.emit(1);
+    expect((await pending).status).toBe('surrender_pending');
+    // Without it, the wait runs to its timeout.
+    const quiet = waitForTurn({ gameIds: [1], timeoutMs: 50, push: fp.push, check: async (id) => owed(id) });
+    await vi.advanceTimersByTimeAsync(60);
+    expect((await quiet).status).toBe('timed_out');
+  });
 
   it('records a failed re-read and keeps waiting; ticks progress; cleans up its listener', async () => {
     const fp = fakePush();
@@ -681,5 +807,13 @@ describe('isWaitingOn / checkOf', () => {
   it('reports the turn being played, null before the game starts', () => {
     expect(checkOf(g('Playing'), Number(ANN)).turn).toBe(3);
     expect(checkOf(g('DistributingTerritories'), Number(ANN)).turn).toBeNull();
+  });
+  it('#317: carries the pending surrenders when given (null kept: unknown), and marks one owed', () => {
+    expect(checkOf(g('Playing'), Number(ANN))).not.toHaveProperty('surrenderPending');
+    expect(checkOf(g('Playing'), Number(ANN), null)).toMatchObject({ surrenderPending: null });
+    expect(checkOf(g('Playing'), Number(ANN), null)).not.toHaveProperty('surrenderOwed');
+    const owed = [{ inGameId: 7, player: null, owedByMe: true, name: null }];
+    expect(checkOf(g('Playing'), Number(ANN), owed)).toMatchObject({ surrenderPending: owed, surrenderOwed: true });
+    expect(checkOf(g('Playing'), Number(ANN), [{ ...owed[0]!, owedByMe: false }])).not.toHaveProperty('surrenderOwed');
   });
 });

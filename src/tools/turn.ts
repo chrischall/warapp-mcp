@@ -95,6 +95,7 @@ import {
 } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
 import { chatSummary } from './chat.js';
+import { readPendingSurrenders, surrenderOwedLine } from './surrender-pending.js';
 import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
@@ -2070,6 +2071,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`reads` (opponent profiles, as warapp_profile_opponents reads them; reported only, the plan never uses them): ' +
           'each opponent in contact with a habit at the confidence bar or a label — its labels, `lastAttackTurn` (the last turn it attacked you), those habits with `n` and ' +
           '`basis`, `gamesMet` — a likelihood, never a certainty, and never to be quoted to another player. ' +
+          '`surrenderPending` lists the surrenders other players asked for that are still pending (from the game details, ' +
+          'unverified live; null when they could not be read, never "none"), each with `owedByMe`; when one waits on your ' +
+          'acceptance the first warning says so. ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on war.app; it never submits orders.`,
       ),
       _meta: lookupMeta(['plan my turn', 'warzone turn plan', 'what should i deploy', 'suggest my orders']),
@@ -2159,11 +2163,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       requirePlayingSeat(feed, seat);
       // The teams: GameFeed's, else the game list's (asked once per game, kept).
       const { game, me, source: teamSource, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
-      const [{ territories, info }, history, chat] = await Promise.all([
+      const [{ territories, info }, history, chat, surrenders] = await Promise.all([
         loadLiveGame(ctx, game),
         boardHistory(ctx, game, me, turn),
         // Unread chat per channel (counts only), so the agent reads chat before it submits.
         chatSummary(ctx, game),
+        // #317: a surrender waiting on my acceptance (the game details; null when unreadable). Never throws.
+        readPendingSurrenders(ctx, game, me),
       ]);
       const setup = await livePlanSetup(ctx, {
         game, map, me, turn, territories, info, history, teamsKnown,
@@ -2440,12 +2446,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(advised ? { orderPriority: true } : {}),
       });
       const guessOrders = guess ? guessOrdersOf(orders, guess) : undefined;
+      // #317: a surrender waiting on my acceptance is the first thing said, before the commander's line.
+      const owedLine = surrenderOwedLine(surrenders);
+      if (owedLine) warnings.unshift(owedLine);
 
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, turn: currentTurn(game) },
         player: { id: me.id, name: me.name },
         // Part A1: messages not yet marked seen (warapp_get_chat reads them); absent when no chat can be read.
         ...(chat ? { chat } : {}),
+        // #317: the surrenders pending (the game details; null: unreadable, never "none").
+        surrenderPending: surrenders,
         goal: plan.goal,
         goalSource: goal !== undefined ? 'explicit' : 'profile',
         // #276: the guard case first, on or off, with what it means for interior defence.

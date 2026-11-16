@@ -1091,8 +1091,8 @@ Format:
   owner's one deploy ("I lead this free-for-all"); chat stays advice. Derived. Source: <https://war.app/Forum/546500-ffa-competition-league>
 - `ffa-buffer-neighbour` — an elimination pays only the land; a weak neighbour may be a buffer worth
   keeping. **Advice only.** Derived. Source: <https://war.app/Forum/169693-keeping-players-game-longer>
-- `ffa-surrender-veto` — where surrenders must be accepted, accepting one is a move; done in the game
-  client. **Advice only.** Derived. Source: <https://war.app/wiki/Surrender>
+- `ffa-surrender-veto` — where surrenders must be accepted, accepting one is a move; sent by
+  `warapp_accept_surrender` (unverified live), whose preview names the neighbour that gains most. **Advice only.** Derived. Source: <https://war.app/wiki/Surrender>
 - `ffa-truce-end` — end a truce before the partner is too strong, not while the leader gains; give the
   notice agreed. **Advice only.** Source: <https://war.app/Forum/5231-ffa-ffa>
 - `ffa-lost-game-exit` — a lost free-for-all may be played on; leaving feeds a neighbour, so choose when.

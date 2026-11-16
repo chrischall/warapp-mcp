@@ -4,7 +4,7 @@
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
   "version": "0.1.0",
-  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends, marking notifications and chat read, deleting notifications and linking a session (local only) are confirm-gated.",
+  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, accepting another player's surrender, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends, marking notifications and chat read, deleting notifications and linking a session (local only) are confirm-gated.",
   "author": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com",
@@ -118,6 +118,10 @@
     {
       "name": "warapp_surrender",
       "description": "Surrender a war.app game you are playing, or take back a pending surrender (confirm-gated)"
+    },
+    {
+      "name": "warapp_accept_surrender",
+      "description": "Accept another player's pending surrender in a war.app game, after a preview of what it does (confirm-gated)"
     },
     {
       "name": "warapp_begin_turn",

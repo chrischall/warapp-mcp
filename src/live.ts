@@ -274,6 +274,15 @@ export function inGameId(player: Pick<Player, 'id' | 'feedId'>): number {
   return Number(text.slice(2, -2));
 }
 
+/** {@link inGameId}, or `undefined` for a player whose id is not a GameFeed id (e.g. an AI slot). */
+export function inGameOf(player: Pick<Player, 'id' | 'feedId'>): number | undefined {
+  try {
+    return inGameId(player);
+  } catch {
+    return undefined;
+  }
+}
+
 /** In-game id → GameFeed player, for the players whose ids can be derived. */
 export function playersByInGameId(players: readonly Player[]): Map<number, Player> {
   const out = new Map<number, Player>();

@@ -161,6 +161,7 @@ describe('packaging for the browser bridge (phase 2)', () => {
     'warapp_join_game',
     'warapp_leave_game',
     'warapp_surrender',
+    'warapp_accept_surrender',
     'warapp_begin_turn',
     'warapp_uncommit_turn',
   ];
@@ -376,7 +377,7 @@ describe('packaging for open games (phase 10)', () => {
 
   it('README counts warapp_join_game among the confirm-gated writes', () => {
     expect(readme).toMatch(/confirmation-gated/);
-    const gated = readme.slice(readme.indexOf('confirmation-gated') - 200, readme.indexOf('confirmation-gated'));
+    const gated = readme.slice(readme.indexOf('## Confirming writes'), readme.indexOf('confirmation-gated'));
     expect(gated).toContain('warapp_join_game');
   });
 });
@@ -394,7 +395,7 @@ describe('packaging for surrender (phase 11)', () => {
   });
 
   it('README counts warapp_surrender among the confirm-gated writes and only-reads exceptions', () => {
-    const gated = readme.slice(readme.indexOf('confirmation-gated') - 200, readme.indexOf('confirmation-gated'));
+    const gated = readme.slice(readme.indexOf('## Confirming writes'), readme.indexOf('confirmation-gated'));
     expect(gated).toContain('warapp_surrender');
     const reads = readme.slice(readme.indexOf('Everything except'), readme.indexOf('only reads'));
     expect(reads).toContain('warapp_surrender');
@@ -406,10 +407,24 @@ describe('packaging for surrender (phase 11)', () => {
     expect(skill).toMatch(/warapp_surrender[^\n]*\*\*change\*\*|\*\*change\*\*[^.]*warapp_surrender/s);
   });
 
+  it('WEB-PROTOCOL.md documents AcceptSurrender (68): where a pending surrender lives, when mine is owed, the params (#317)', () => {
+    const start = protocol.indexOf('## Accepting a surrender');
+    expect(start).toBeGreaterThan(-1);
+    const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
+    expect(section).toContain('UNVERIFIED live');
+    expect(section).toContain('m=AcceptSurrender&js=1');
+    for (const s of ['warlight.shared.GamePlayer', 'GameWL', 'Surrendered', 'PlayersAcceptedMySurrender', 'InstantSurrender'])
+      expect(section, s).toContain(s);
+    expect(section).toMatch(/int32[^\n]*game id/);
+    expect(section).toMatch(/int32[^\n]*in-game id/);
+    for (const code of ['**4**', '**7**', '**186**', '**230**']) expect(section, code).toContain(code);
+    expect(section).toMatch(/no result payload/);
+  });
+
   it('WEB-PROTOCOL.md documents Surrender (67): parameters, errors and the multi-player pending rule', () => {
     const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
     expect(methods).toMatch(/\| 67 \| \*\*Surrender\*\*/);
-    expect(methods).toMatch(/\| 68 \| AcceptSurrender/);
+    expect(methods).toMatch(/\| 68 \| \*\*AcceptSurrender\*\*/);
     const start = protocol.indexOf('## Surrender');
     expect(start).toBeGreaterThan(-1);
     const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
@@ -593,9 +608,10 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
       return [...src.matchAll(/defineGatedWrite\([\s\S]*?name: '(warapp_\w+)'/g)].map((m) => m[1]!);
     })
     .sort();
-  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'];
+  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen'];
   // How the store-facing prose names each write.
   const plain: Record<string, RegExp> = {
+    warapp_accept_surrender: /\baccept/i,
     warapp_begin_turn: /\bbegin/i,
     warapp_delete_notification: /\bdelet/i,
     warapp_dismiss_notification: /\bnotifications?\b/i,

@@ -20,9 +20,9 @@ slug: warapp
 # Nothing in this manifest enables direct mode.
 summary: >-
   war.app (Warzone) advisor: games waiting on you, maps, scouting, chat and
-  turn planning via your war.app tab. Joining, leaving or surrendering games,
-  Begin, picks, turn orders or their withdrawal, chat sends, marking chat read
-  and notification read marks or deletes happen only after you confirm.
+  turn plans in your war.app tab. Joining, leaving or surrendering games,
+  accepting surrenders, Begin, picks, turn orders and withdrawals, chat sends,
+  chat read and notification marks and deletes happen only after you confirm.
 examples:
   - prompt: Which of my war.app games are waiting on me?
     note: Lists your games through your war.app tab, the ones waiting on you first.

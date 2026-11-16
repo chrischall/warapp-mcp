@@ -730,6 +730,30 @@ describe('DeclineGame (method 64): leaving a lobby (#217)', () => {
   });
 });
 
+describe('AcceptSurrender (method 68, #317)', () => {
+  it('has the client method-table id and takes the auth block', async () => {
+    const { Method, methodName } = await import('../../src/protocol/methods.js');
+    const { methodTakesAuth } = await import('../../src/protocol/rpc.js');
+    expect(Method.AcceptSurrender).toBe(68);
+    expect(methodName(68)).toBe('AcceptSurrender');
+    expect(methodTakesAuth(Method.AcceptSurrender)).toBe(true);
+  });
+
+  // Read from the client's writer (UNVERIFIED live): after the auth block the int32 LE game id, the
+  // int32 LE in-game id of the player whose surrender is accepted, the accept flag (false takes an
+  // acceptance back), then the per-method mod-hook bool, sent false.
+  // 0x00BC614E = 4E 61 BC 00; player 0x0001E240 (123456) = 40 E2 01 00.
+  it('writes the game id, the player id, the accept flag, then the mod-hook flag false (golden)', async () => {
+    const { writeAcceptSurrenderParams } = await import('../../src/protocol/methods.js');
+    expect(hex((w) => writeAcceptSurrenderParams(w, { gameId: 0x00bc614e, playerId: 123456, accept: true }))).toBe(
+      '4E61BC00' + '40E20100' + '01' + '00',
+    );
+    expect(hex((w) => writeAcceptSurrenderParams(w, { gameId: 7, playerId: 9, accept: false }))).toBe(
+      '07000000' + '09000000' + '00' + '00',
+    );
+  });
+});
+
 // Part D (PLAN-TEAMS): the targeted card plays. Each layout is read from the client bundle's
 // writer for its `GameOrderPlayCard<X>` class (the tag, the card's own fields in write order, the
 // card GUID, the order base) and its phase from the class's TurnPhase; UNVERIFIED live (V9).
