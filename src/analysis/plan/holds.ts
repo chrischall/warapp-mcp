@@ -9,6 +9,7 @@ import { bfsDistances, neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
 import { twoStepReaches, type TwoStepReach } from '../lookahead.js';
 import {
+  BREACH_WEIGHT,
   CITE_CLOSE,
   CITE_OPEN,
   CITE_SEP,
@@ -537,7 +538,7 @@ export function holdOrConcede(
 ) {
   const { goal, paybackTurns, label, unitsAt, bombOn, toTake, myCommanders } = pc;
   const { warnings, rationale, locked } = ps;
-  const { deploy, valueOf, stakeAt, cutOff } = book;
+  const { deploy, valueOf, stakeAt, cutOff, breachAt } = book;
   const { borders, recentlyTakenFrom } = threats;
   const { threatened, conceded } = hb;
   const { stayAt } = prev;
@@ -547,6 +548,8 @@ export function holdOrConcede(
    */
   /** #235: the borders whose cut is already named. */
   const cutNoted = new Set<number>();
+  /** #275: the borders whose breach is already named. */
+  const breachNoted = new Set<number>();
   /** Rule 1a's pre-deploy threat warning per border, restated once the deploys are known. */
   const threatWarnings = new Map<number, { text: string; threat: number }>();
   const assessThreats = () => {
@@ -576,6 +579,16 @@ export function holdOrConcede(
           `${label(b.id)} links my holdings: losing it cuts off ${named}${more} (${cut.armies} armies${cut.income > 0 ? `, +${cut.income} income` : ''}) from the rest, so ${
             cut.income > 0 ? `it protects +${cut.income} more and ` : ''
           }its worth counts those ${cut.armies} armies (/ ${paybackTurns} turns) (#235).`,
+        );
+      }
+      // #275: with the guard off, a border whose breach opens earning territory behind it says so.
+      const breach = breachAt(b.id);
+      if (breach && !breachNoted.has(b.id)) {
+        breachNoted.add(b.id);
+        const named = breach.ids.slice(0, MAX_CUT_NAMED).map(label).join(', ');
+        const more = breach.ids.length > MAX_CUT_NAMED ? ` and ${breach.ids.length - MAX_CUT_NAMED} more` : '';
+        rationale.push(
+          `${label(b.id)} alone shields ${named}${more} within two moves behind it (+${breach.income} income): with the guard off a breach walks straight in, so its value counts ${BREACH_WEIGHT * 100}% of that (+${breach.worth}) (#275).`,
         );
       }
       const from = recentlyTakenFrom(b.id);
@@ -1082,14 +1095,105 @@ export function floorTier(
   const bestResponseLoss = (us: readonly Unit[], have: ReadonlyMap<Threatened, number>, short: (m: Threatened) => boolean) =>
     bestResponse(us, have, short).loss;
   /**
+   * #275 (b), the second trigger: a border of a held bonus conceded beside the stack of an opponent
+   * whose estimate a tripwire broke. Nothing that pays +1 goes ahead of it (the 20/80 game, turns 17–19:
+   * 58 armies to a +1 wasteland beside the stack while each gate was conceded): what is left to deploy
+   * goes there before any capture, one army at a time to the gate that deploy breaks most cheaply (ties:
+   * the higher bonus value, then id), each up to its hold. `short` are the contested units the whole holds
+   * could not cover (left to #118's concession after the captures otherwise); conceded units are those
+   * triage already gave up. A gate that gets armies is no longer conceded or contested (nothing is
+   * withdrawn from it, no later concession); a warning says what still takes it. A gate the stacks beside
+   * it take with no deploy at all gets nothing unless what is left makes it need some of the deploy.
+   */
+  const fillUntrustedGates = (short: readonly Unit[]) => {
+    const untrustedBy = (m: Threatened) => {
+      const b = borders.get(m.id);
+      return b !== undefined && pc.untrustedAt(b.player, m.id) > 0 ? b.player : undefined;
+    };
+    const gates = [
+      ...new Set([
+        ...units.filter((u) => u.conceded).flatMap((u) => u.members.filter((m) => conceded.has(m.id))),
+        ...short.flatMap((u) => u.members),
+      ]),
+    ]
+      .filter((m) => !heldBorders.has(m.id) && !m.critical && untrustedBy(m) !== undefined)
+      .sort((a, b) => a.id - b.id);
+    if (!gates.length) return;
+    const valueAt = (m: Threatened) => Math.max(0, ...units.filter((u) => u.members.includes(m)).map((u) => u.value));
+    const given = new Map<Threatened, number>();
+    // Review of #275: a gate the stacks beside it take with no deploy at all is lost whatever goes there, so
+    // it gets armies only when what is left can make it need some of the deploy (`firstStand`, all of it or
+    // none); otherwise it stays conceded and the armies stay behind it (withdrawals, the second line).
+    const firstStand = (m: Threatened) => {
+      let d = 0;
+      while (d < m.holdCost && breakCostWith(m, m.have + d) <= 0) d++;
+      return d;
+    };
+    for (const m of [...gates].sort((a, b) => breakCostWith(a, a.have) - breakCostWith(b, b.have) || valueAt(b) - valueAt(a) || a.id - b.id)) {
+      const d = firstStand(m);
+      if (d === 0 || d > Math.min(ps.budget, roomAt(m.id))) continue;
+      give(m, d);
+      given.set(m, d);
+    }
+    const standing = gates.filter((m) => breakCostWith(m, m.have) > 0);
+    while (ps.budget > 0) {
+      const next = standing
+        .filter((m) => m.holdCost > 0 && roomAt(m.id) > 0)
+        .sort((a, b) => breakCostWith(a, a.have) - breakCostWith(b, b.have) || valueAt(b) - valueAt(a) || a.id - b.id)[0];
+      if (!next) break;
+      give(next, 1);
+      given.set(next, (given.get(next) ?? 0) + 1);
+    }
+    for (const [m, n] of [...given].sort((a, b) => a[0].id - b[0].id)) {
+      conceded.delete(m.id);
+      locked.add(m.id);
+      // Drop its concession warning: it is no longer conceded.
+      const conceding = `${label(m.id)} cannot be held `;
+      for (let i = warnings.length - 1; i >= 0; i--)
+        if (warnings[i]!.startsWith(conceding) && warnings[i]!.endsWith(': conceded')) warnings.splice(i, 1);
+      const player = untrustedBy(m)!;
+      const bonuses = units.filter((u) => u.members.includes(m)).map((u) => `${bonusName(u.bonusId)} (+${u.value})`).join(', ');
+      rationale.push(
+        `Deploy ${m.given ?? n} to ${label(m.id)}, a border of held bonus ${bonuses}, before any capture: player ${player}'s estimate is untrusted (#275), so nothing that pays less goes ahead of the gate beside its stack (${m.have} armies, ${toTake(m.have + m.units)} to take).`,
+      );
+      if (m.holdCost <= 0) heldBorders.add(m.id);
+      else
+        warnings.push(
+          `${label(m.id)} is not conceded though short: player ${player}'s estimate is untrusted (#275), and against its figure the border needs ${m.holdCost} more, so it still falls to a deploy of ${Math.max(0, breakCostWith(m, m.have))} or more there; every army left went there rather than to expansion.`,
+        );
+    }
+    // A contested unit a gate of which got armies is settled here: #118's later concession would undo it.
+    for (const u of short) if (u.members.some((m) => given.has(m))) u.contested = false;
+    // A unit none of whose members is still conceded is no longer conceded as a whole: drop its warning.
+    for (const u of units) {
+      if (!u.conceded || u.members.some((m) => conceded.has(m.id)) || !u.members.some((m) => given.has(m))) continue;
+      const conceding = `conceding bonus ${bonusName(u.bonusId)} (+${u.value}):`;
+      for (let i = warnings.length - 1; i >= 0; i--) if (warnings[i]!.startsWith(conceding)) warnings.splice(i, 1);
+    }
+  };
+  /**
    * `wholeOnly` (#215, rule 0p.1: a 1v1 in contact, before the first advance): only hold each
    * contested unit whole that pays back within PAYBACK_TURNS (one CONCEDE_FACTOR made contested)
    * and that what is left covers (best worth per army first, never weighed against spreading) — no
    * concession, no spread — leaving the rest contested for the call after the captures.
+   * `'untrusted'` (#275 b): the same, before any capture, for each contested unit a border of which faces
+   * an opponent whose estimate a tripwire broke (sized for its untrusted figure), whether or not it pays
+   * back: while the estimate is untrusted the gate is held before expansion, never left to what it leaves.
    */
-  const settleContested = (wholeOnly = false) => {
-    const open = units.filter((u) => u.contested && !u.conceded && (!wholeOnly || u.loss !== 'payback'));
-    if (!open.length) return;
+  const settleContested = (mode: boolean | 'untrusted' = false) => {
+    const wholeOnly = mode !== false;
+    const facesUntrusted = (u: Unit) =>
+      u.members.some((m) => {
+        const b = borders.get(m.id);
+        return !heldBorders.has(m.id) && b !== undefined && pc.untrustedAt(b.player, m.id) > 0;
+      });
+    const open = units.filter(
+      (u) => u.contested && !u.conceded && (mode === 'untrusted' ? facesUntrusted(u) : !wholeOnly || u.loss !== 'payback'),
+    );
+    if (!open.length) {
+      if (mode === 'untrusted') fillUntrustedGates([]);
+      return;
+    }
     const need = (u: Unit) => u.members.filter((m) => !heldBorders.has(m.id)).reduce((n, m) => n + m.holdCost, 0);
     const ratio = (u: Unit) => u.worth / Math.max(1, need(u));
     const order = [...open].sort((a, b) => ratio(b) - ratio(a) || a.members[0]!.id - b.members[0]!.id);
@@ -1151,9 +1255,11 @@ export function floorTier(
           u,
           undefined,
           `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: ${floored ? 'past its floor ' : ''}its ${unitBorders(u)} need${u.members.length === 1 ? 's' : ''} ${more}${floored ? ' more' : ''}${why ? ` (${why})` : ''}, ${
-            wholeOnly
-              ? 'before any expansion that completes no bonus (1v1 in contact: an advance ranks below every hold).'
-              : 'and nothing else this turn uses those armies.'
+            mode === 'untrusted'
+              ? `before any capture: player ${[...new Set(u.members.flatMap((m) => { const b = borders.get(m.id); return b && pc.untrustedAt(b.player, m.id) > 0 ? [b.player] : []; }))].sort((a, b) => a - b).join(', ')}'s estimate is untrusted (#275), so the border is held ahead of expansion.`
+              : wholeOnly
+                ? 'before any expansion that completes no bonus (1v1 in contact: an advance ranks below every hold).'
+                : 'and nothing else this turn uses those armies.'
           }`,
         )
       ) {
@@ -1169,6 +1275,7 @@ export function floorTier(
         for (const m of u.members) if (conceded.has(m.id)) locked.delete(m.id);
       }
     }
+    if (mode === 'untrusted') fillUntrustedGates(open.filter((u) => u.contested));
     if (wholeOnly) return;
     const short = units
       .filter((u) => u.contested && !u.conceded)
@@ -1555,7 +1662,7 @@ export function reconsiderAndGarrison(
 ) {
   const { g, guarded, reserve, paybackTurns, label, bonusName, mine, mineSet, unitsAt, toTake, myCommanders } = pc;
   const { warnings, rationale, deployed, locked, captured, moves } = ps;
-  const { orderOf, deploy, pools, valueCache, cutCache, valueOf } = book;
+  const { orderOf, deploy, pools, valueCache, cutCache, breachCache, valueOf } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { borders } = threats;
   const { conceded, kept, garrisoned } = hb;
@@ -1570,6 +1677,7 @@ export function reconsiderAndGarrison(
     ps.holdings = new Set([...mine, ...captured]);
     valueCache.clear();
     cutCache.clear();
+    breachCache.clear();
     if (!conceded.size) return;
     for (const t of [...conceded].sort(byNum)) {
       // Already withdrawn from (rule 1b ran first): its armies are gone, and it stays conceded.

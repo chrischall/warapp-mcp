@@ -198,6 +198,8 @@ export async function checkMessageCommitments(
   me: Player,
   args: readonly CommitmentArg[],
   audience: MessageAudience,
+  /** Whether the teams are known (`resolveTeams`): false, the plan reads no #275 tripwire, as warapp_plan_turn's does not. */
+  teamsKnown = true,
 ): Promise<MessageCommitments> {
   if (!ctx.dataDir) {
     throw new McpToolError('This server has no data directory, so the commitments could not be recorded: nothing was sent.', {
@@ -215,7 +217,7 @@ export async function checkMessageCommitments(
   const map = mapOf(game);
   const commitments = resolveCommitments(game, map, args);
   const [{ territories, info }, history] = await Promise.all([loadLiveGame(ctx, game), boardHistory(ctx, game, me, turn)]);
-  const setup = await livePlanSetup(ctx, { game, map, me, turn, territories, info, history, award: false });
+  const setup = await livePlanSetup(ctx, { game, map, me, turn, territories, info, history, award: false, teamsKnown });
   const submitted = (await readCachedOrders(ctx.dataDir, game.id, me.id)).get(turn);
   let moves: OrderMove[];
   let source: 'plan' | 'submitted';

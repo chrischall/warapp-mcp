@@ -44,6 +44,7 @@ function uniformArmies(board: BoardState, me: number): number | null {
  * The award of `game` as `me` can read it, with the board to plan on; `undefined` when no pick
  * list is kept for this player, the list did not explain the start, or the first board has
  * passed unread. Reads the award (and keeps it) on turn 1; later turns reuse what was kept.
+ * `write: false` reads it the same way and keeps nothing (#275 pattern 3: a write's preview).
  * Never throws.
  */
 export async function loadAward(
@@ -52,6 +53,7 @@ export async function loadAward(
   me: Player,
   board: BoardState,
   turn: number | null,
+  o: { write?: boolean } = {},
 ): Promise<AwardContext | undefined> {
   if (!dataDir || turn === null || game.players.length < 2) return undefined;
   const record = await readPickRecord(dataDir, game.id, me.id);
@@ -71,7 +73,7 @@ export async function loadAward(
     const state = new Map(board.territories.map((t) => [t.territoryId, t]));
     // A start the board shows as nobody's, mine or a neutral cannot be another player's: the list is not the one awarded from.
     if (reading?.opponentStarts.some((t) => contradicts(state.get(t), me.id))) reading = null;
-    await writeAward(dataDir, game.id, me.id, reading);
+    if (o.write !== false) await writeAward(dataDir, game.id, me.id, reading);
   }
   if (!reading) return undefined;
   const pickable = record.pickable ? { pickable: record.pickable } : {};
@@ -240,7 +242,7 @@ interface FirstMoverView {
 /**
  * Who moves first on `turn` (#127): `first_mover` when given, else what this server knows — a
  * turn kept at `<dataDir>/move-order/` alternated, or the award of picks — in a two-player game
- * under a cyclic move order. What is newly known is kept for later turns. Never throws.
+ * under a cyclic move order. What is newly known is kept for later turns (not with `write: false`). Never throws.
  */
 export async function firstMoverFor(
   dataDir: string | undefined,
@@ -249,6 +251,7 @@ export async function firstMoverFor(
   turn: number | null,
   explicit: FirstMover | undefined,
   award: AwardContext | undefined,
+  o: { write?: boolean } = {},
 ): Promise<{ firstMover?: FirstMover; verified?: boolean; view: FirstMoverView | null; warnings: string[] }> {
   const cyclicDuel = game.players.length === 2 && isCyclicMoveOrder(game.settings?.moveOrder);
   const remembered = dataDir && cyclicDuel ? await readFirstMover(dataDir, game.id, me.id) : undefined;
@@ -259,7 +262,7 @@ export async function firstMoverFor(
     award: award?.firstMover ?? null,
     ...(remembered ? { remembered } : {}),
   });
-  if (dataDir && record) await writeFirstMover(dataDir, game.id, me.id, record);
+  if (dataDir && record && o.write !== false) await writeFirstMover(dataDir, game.id, me.id, record);
   if (!resolved) return { view: null, warnings };
   return {
     firstMover: resolved.firstMover,

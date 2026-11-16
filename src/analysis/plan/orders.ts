@@ -4,10 +4,11 @@
 // a territory of mine (R2, #122, #128) judged against `ps.holdings`. Run once, right after the
 // estimates: it sets the starting `avail`, pays the sentinels, and states both in the rationale.
 import { bonusTerritories } from '../bonuses.js';
+import { breachBehind, type Breach } from '../breach.js';
 import { neighborsOf } from '../graph.js';
 import { chargeDeploys, deployPools } from '../local-deploy.js';
 import { territoryIncome } from '../player.js';
-import { WASTELAND_FACTOR, type PlannedMove } from './shared.js';
+import { BREACH_WEIGHT, WASTELAND_FACTOR, type PlannedMove } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
 import { secondLineOf } from './guard-off.js';
@@ -30,7 +31,7 @@ export type DeployBook = ReturnType<typeof deployBook>;
 export function deployBook(ctx: PlanCtx, ps: PlanState) {
   const {
     g, territories: state, s, mine, mineSet, myCommanders, foe, guard, noSplit, armiesOf, incomeGain, label, income,
-    reserve, econCostAt, paybackTurns, baseIncome,
+    reserve, econCostAt, paybackTurns, baseIncome, unitsAt, deployOf, untrustedAt,
   } = ctx;
   const { warnings, rationale, deployed, avail, coverKeep, captured, moves } = ps;
   // ---- mutable plan state ----
@@ -214,10 +215,52 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
     return cut;
   };
   const cutCache = new Map<number, Cut | null>();
+  /** #275: my `x` faces a visible enemy or the fog (a territory whose owner the board does not show). */
+  const front = (x: number) =>
+    neighborsOf(g, x).some((n) => {
+      const o = state.get(n)?.owner;
+      return o === undefined || o.kind === 'unknown' || (o.kind === 'player' && foe(o.playerId));
+    });
+  /**
+   * #275 (pattern 2): with the guard off, what a breach of my border `t` opens — the territories
+   * within two steps behind it that only it shields ({@link breachBehind}), what losing it cuts off
+   * left out (#235 counts that whole), and the income they make: the bonuses held in full with a
+   * member among them (not `t`'s own), plus their per-territory income. `null` with the guard on,
+   * or when it opens nothing that earns.
+   */
+  const breachAt = (t: number): (Breach & { worth: number }) | null => {
+    if (guard) return null;
+    if (breachCache.has(t)) return breachCache.get(t)!;
+    // The stack that would come through: the largest visible foe stack beside `t` with its owner's
+    // deploy — the untrusted figure when larger (#275 b), as the hold at `t` is sized. A territory
+    // behind is hollow when none of mine beside it (itself included, `t` left out) holds as many: a
+    // stack that can answer the breach is no hollow interior.
+    const through = Math.max(
+      0,
+      ...neighborsOf(g, t).map((n) => {
+        const st = state.get(n);
+        const o = st?.owner;
+        if (o?.kind !== 'player' || !foe(o.playerId) || st!.armies === null) return 0;
+        return st!.armies + unitsAt(n) + Math.max(deployOf(o.playerId), untrustedAt(o.playerId, t));
+      }),
+    );
+    const hollow = (x: number) =>
+      [x, ...neighborsOf(g, x)].every((y) => y === t || !mineSet.has(y) || armiesOf(y) + unitsAt(y) < through);
+    const b = through > 0 ? breachBehind(g, ps.holdings, front, t, new Set(cutOff(t)?.ids ?? []), hollow) : { ids: [], bonuses: [], income: 0 };
+    let income = b.income;
+    const per = s.bonusArmyPer ?? 0;
+    const n = ps.holdings.size;
+    if (per > 0 && b.ids.length) income += territoryIncome(n, baseIncome, per) - territoryIncome(n - b.ids.length, baseIncome, per);
+    const out = income > 0 ? { ...b, income, worth: Math.round(BREACH_WEIGHT * income * 10) / 10 } : null;
+    breachCache.set(t, out);
+    return out;
+  };
+  const breachCache = new Map<number, (Breach & { worth: number }) | null>();
   const protectedValue = (t: number): number => {
     // Each bonus is visited once, so it counts once however many of its borders are threatened.
     // #235: plus the income of what losing it cuts off from the rest of my holdings.
-    let v = cutOff(t)?.income ?? 0;
+    // #275: plus, with the guard off, BREACH_WEIGHT × what a breach of it opens behind it.
+    let v = (cutOff(t)?.income ?? 0) + (breachAt(t)?.worth ?? 0);
     const mineWithout = (x: number) => x !== t && ps.holdings.has(x);
     for (const b of g.map.bonuses) {
       const ts = bonusTerritories(g, b.id);
@@ -286,6 +329,8 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
     valueOf,
     cutOff,
     cutCache,
+    breachAt,
+    breachCache,
     stakeAt,
   };
 }

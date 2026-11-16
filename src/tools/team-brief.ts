@@ -95,7 +95,7 @@ export function registerTeamBriefTool(server: McpServer, ctx: LiveContext): void
       }
       requirePlayingSeat(feed, seat);
       // The teams, after the seat refusals: GameFeed's, else the game list's (asked once per game, kept).
-      const { game, me, source } = await resolveTeamsFor(ctx, feed, seat);
+      const { game, me, source, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       if (source === 'none' || !carriesTeam(me.team)) {
         throw new McpToolError(`Game ${game.id} is not a team game, or your team there is unknown.`, {
           hint: "GameFeed's team field is unverified and your game list did not name a team either. warapp_get_team reads the team.",
@@ -154,7 +154,7 @@ export function registerTeamBriefTool(server: McpServer, ctx: LiveContext): void
       const turn = currentTurn(game);
       const [{ territories, info }, history] = await Promise.all([loadLiveGame(ctx, game), boardHistory(ctx, game, me, turn)]);
       // award: false — reading the award on turn 1 writes it, and a team plan does not use it (two players only).
-      const setup = await livePlanSetup(ctx, { game, map, me, turn, territories, info, history, award: false });
+      const setup = await livePlanSetup(ctx, { game, map, me, turn, territories, info, history, award: false, teamsKnown });
       const plan = planTurn(setup.input);
       const { estimates } = planEnemyEstimates({
         graph,

@@ -2,7 +2,7 @@
 // (pieces per card, starting pieces, guaranteed pieces per turn, pieces handed out per turn).
 import { describe, expect, it } from 'vitest';
 import { normalizeSettings } from '../../src/normalize.js';
-import { capturePieceValue, cardArmiesBy, cardArmyCeiling, cardClock } from '../../src/strategy/card-clock.js';
+import { capturePieceValue, cardArmiesBy, cardArmyCeiling, cardClock, reinforcementHand } from '../../src/strategy/card-clock.js';
 import { fixtureSettings } from '../analysis/helpers.js';
 
 const card = (o: Record<string, unknown>) => ({ NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 0, Weight: 1, ...o });
@@ -192,5 +192,23 @@ describe('cardArmyCeiling (#205)', () => {
     expect(cardArmyCeiling(settings({ ReinforcementCard: 'none' }))).toBeUndefined();
     // Without NumberOfCardsToReceiveEachTurn the random pieces a turn are unknown: no ceiling.
     expect(cardArmyCeiling(settings({ ReinforcementCard: card({ FixedArmies: 5, MinimumPiecesPerTurn: 1 }) }))).toBeUndefined();
+  });
+});
+
+describe('reinforcementHand (#275 review): the Reinforcement cards a player can hold at once', () => {
+  const r = (o: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    settings({ NumberOfCardsToReceiveEachTurn: 1, MaxCardsHold: 3, ReinforcementCard: card({ NumPieces: 2, FixedArmies: 7, ...o }), ...extra });
+  it('counts the cards earned by a capture every turn, at most MaxCardsHold', () => {
+    // 2 pieces a card, 1 a turn: turn 3 plays the 2 pieces of turns 1–2, turn 7 the 6 of turns 1–6.
+    expect(reinforcementHand(r({}), 2)).toEqual({ cards: 0, armiesPerCard: 7 });
+    expect(reinforcementHand(r({}), 3)).toEqual({ cards: 1, armiesPerCard: 7 });
+    expect(reinforcementHand(r({}), 7)).toEqual({ cards: 3, armiesPerCard: 7 });
+    expect(reinforcementHand(r({}), 20)).toEqual({ cards: 3, armiesPerCard: 7 });
+    expect(reinforcementHand(r({}, { MaxCardsHold: undefined }), 20)?.cards).toBe(9);
+  });
+  it('says what it cannot count, and nothing when no Reinforcement card is in play', () => {
+    expect(reinforcementHand(r({}, { NumberOfCardsToReceiveEachTurn: undefined }), 9)).toEqual({ cards: null, armiesPerCard: 7 });
+    expect(reinforcementHand(r({ Mode: 'ProgressiveByNumberOfTurns' }), 9)?.armiesPerCard).toBeNull();
+    expect(reinforcementHand(settings({ NumberOfCardsToReceiveEachTurn: 1, SpyCard: card({}) }), 9)).toBeUndefined();
   });
 });

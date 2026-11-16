@@ -145,7 +145,7 @@ export function registerDiplomacyTool(server: McpServer, ctx: LiveContext, opts:
       const offered = offer ? offerTerms(game, map, graph, me, offer) : undefined;
       const [{ territories, info }, history] = await Promise.all([loadLiveGame(ctx, game), boardHistory(ctx, game, me, turn)]);
       // award: false — the award of picks shapes only a two-player plan, and reading it on turn 1 writes it.
-      const setup = await livePlanSetup(ctx, { game, map, me, turn, territories, info, history, award: false });
+      const setup = await livePlanSetup(ctx, { game, map, me, turn, territories, info, history, award: false, teamsKnown });
       const input = setup.input;
       // The no-deal plan, shared by every partner with no recorded relation; for one with a relation
       // the input already holds its truce, so priceTruce plans the no-deal side itself.

@@ -1,9 +1,13 @@
 // #274: warapp_submit_turn refuses orders that leave my commander takeable by a single-deploy
 // reply (sized at the larger of the opponent's estimate and my own income) unless the call passes
 // accept_commander_risk: true, which the result then records. Synthetic board, ids only.
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
+import { writeSurvival } from '../src/trend.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
@@ -346,6 +350,12 @@ describe('warapp_plan_turn commander block (#274)', () => {
     const preview = payload<{ confirmToken?: string; preview?: { warnings: string[] } }>(await h.call('warapp_submit_turn', { game_id: GAME, orders: p.orders }));
     expect(preview.confirmToken).toEqual(expect.any(String));
     expect(JSON.stringify(preview)).not.toMatch(/accept_commander_risk/);
+    // #275 meets #274: the plan's own orders are compared with the plan walking the commander too, so
+    // they leave no border below it, and the plan's headroom table carries the walk as the check's does.
+    expect(JSON.stringify(preview)).not.toMatch(/below the hold/);
+    const full = payload<{ headroom: unknown[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }));
+    const checked = payload<{ headroom: unknown[] }>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: p.orders, view: 'full' }));
+    expect(full.headroom).toEqual(checked.headroom);
   });
 
   it('first_mover me: the walk keeps its transit hold, so warapp_submit_turn takes the plan\'s orders (#274 review)', async () => {
@@ -426,5 +436,46 @@ describe('warapp_check_plan commander block: the submit\'s own check (#274 revie
     ];
     const c = await check({ orders: walk, first_mover: 'me' });
     expect(c.commander!.replies).toBeGreaterThan(0);
+  });
+});
+
+describe('an untrusted opponent in the commander check (#275 review)', () => {
+  // A 1v1 (the fixture's other seats dropped: with nine seats and no team read the teams are unknown,
+  // and no tripwire runs). Bob's estimate is untrusted until turn 5 at 30 a turn: 16 + 30 − 1 = 45
+  // attackers kill 27, above the 13 + the commander HOME leaves; at my income 7 HOME holds.
+  const MARK = { player: Number(BOB.feed), since: 3, until: 5, kind: 'fog-stack' as const, territory: 158, observed: 70, allowed: 20, implied: 30 };
+  const duel = () => {
+    const g = feedGame(CMD);
+    return { ...g, players: (g.players as unknown[]).slice(0, 2) };
+  };
+  async function seeded(): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-commander-untrusted-'));
+    await writeSurvival(dir, GAME, Number(ANN.feed), 2, { estimates: new Map([[Number(BOB.feed), 5]]), tripwires: [MARK] });
+    return dir;
+  }
+
+  it('warapp_check_plan sizes its commander block at the untrusted figure, as its stress test does', async () => {
+    h = await liveHarness({ feed: [duel()], pages: ME_PAGE, warapp: server(BOARD()).warapp, dataDir: await seeded() });
+    const c = payload<CheckPayload>(await h.call('warapp_check_plan', { game_id: GAME, orders: HOME }));
+    expect(c.commander).toMatchObject({ territory: { id: 159 }, replyDeploy: 30 });
+    expect(c.commander!.replies).toBeGreaterThan(0);
+    expect(c.commander!.text).toMatch(/an untrusted opponent.s at least at the figure its tripwire gave it/);
+  });
+
+  it('warapp_submit_turn refuses on it, and warapp_plan_turn\'s block reads the same figure', async () => {
+    const s = server(BOARD());
+    h = await liveHarness({ feed: [duel()], pages: ME_PAGE, warapp: s.warapp, dataDir: await seeded() });
+    const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: HOME });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/single deploy of 30 by player/);
+    expect(s.sent).toEqual([]);
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.commander!.replyDeploy).toBe(30);
+  });
+
+  it('without the mark, HOME holds at my income', async () => {
+    h = await liveHarness({ feed: [duel()], pages: ME_PAGE, warapp: server(BOARD()).warapp });
+    const c = payload<CheckPayload>(await h.call('warapp_check_plan', { game_id: GAME, orders: HOME }));
+    expect(c.commander).toMatchObject({ replies: 0, replyDeploy: 7 });
   });
 });

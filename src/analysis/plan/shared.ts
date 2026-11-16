@@ -33,6 +33,12 @@ import type { TeamView } from './team.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
+/**
+ * #275 (pattern 2): with the guard off, the share of a breach's income (`breachBehind`, src/analysis/breach.ts) a
+ * border's protected value counts. Half: the bonuses behind fall only if the breaching stack walks on
+ * next turn, and a border may still be retaken or the stack turned elsewhere.
+ */
+export const BREACH_WEIGHT = 0.5;
 /** #201: the shortest payback horizon once the game is decided. */
 export const DECIDED_PAYBACK_MIN = 3;
 /** …or when one remaining territory alone costs more than this many times its value (a wasteland). */
@@ -425,6 +431,14 @@ export interface PlanInput {
    * `sanctionsOnOthers`): a figure read off the board is cut by them ({@link EnemyDeployEstimate.sanctioned}).
    */
   sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
+  /**
+   * #275 (b): opponents whose estimate a tripwire marked untrusted (src/analysis/tripwire.ts), each with
+   * the deploy to size against instead — the caller's larger of what tripped it and my own income. Only
+   * a border of a bonus I hold in full at the start of the turn is sized for it (never below the
+   * estimate); every other border, and an explicit `options.enemyDeploy`, are unchanged. Absent or empty,
+   * the plan is what it was without.
+   */
+  untrusted?: readonly { player: number; deploy: number }[];
 }
 
 /** Why a truce's trust is `watch` ({@link PlanRelation.watch}). */

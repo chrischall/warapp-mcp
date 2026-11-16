@@ -233,3 +233,22 @@ export function cardArmiesBy(c: CardArmyCeiling, turn: number): number {
   const pieces = c.initialPieces + c.piecesPerTurn * Math.max(0, turn - 1);
   return Math.floor(pieces / c.pieces) * c.armiesPerCard;
 }
+
+/**
+ * The Reinforcement cards one player can hold when it plays on `turn` (every capturing turn from turn 1,
+ * every random piece its own, at most `MaxCardsHold`) and one card's armies: `cards` null when the
+ * pieces a turn are not stated, `armiesPerCard` null when its armies are not a fixed number. `undefined`
+ * when no Reinforcement card is in play.
+ */
+export function reinforcementHand(settings: GameSettings | undefined, turn: number): { cards: number | null; armiesPerCard: number | null } | undefined {
+  const clock = cardClock(settings);
+  const r = clock?.cards.find((c) => c.card === 'Reinforcement');
+  if (!clock || !r) return undefined;
+  const raw = settings!.raw.ReinforcementCard as Rec;
+  const fixed = asInt(raw.FixedArmies);
+  const armiesPerCard = fixed !== undefined && fixed > 0 && (raw.Mode === undefined || FIXED_MODES.has(String(raw.Mode).toLowerCase())) ? fixed : null;
+  if (!clock.piecesPerTurnKnown) return { cards: null, armiesPerCard };
+  const rate = r.minimumPerTurn + (r.weight > 0 ? clock.randomPerTurn : 0);
+  const earned = Math.floor((r.initialPieces + rate * Math.max(0, turn - 1)) / r.pieces);
+  return { cards: clock.maxCardsHold === null ? earned : Math.min(earned, Math.max(0, clock.maxCardsHold)), armiesPerCard };
+}

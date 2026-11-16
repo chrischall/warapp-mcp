@@ -20,6 +20,8 @@
 // planner sizes that hold at my income and every stack within two moves, more than this model's one
 // deploy, and warapp_submit_turn refuses orders that leave the commander takeable. Pure and deterministic (ties on ascending id),
 // no I/O; the sample is drawn from a caller's seed with mulberry32.
+// No guess against an opponent whose estimate the #275 tripwire marked untrusted (`untrusted`): the
+// plan sized its held-bonus borders above the estimate, and a split drawn from the estimate would undo it.
 
 import type { BoardState, TerritoryState } from '../board.js';
 import { bonusTerritories } from './bonuses.js';
@@ -55,6 +57,11 @@ export interface GuessInput {
   enemyDeploy?: number;
   /** The game's players, for teams: a teammate is never an opponent. */
   players?: readonly ProfilePlayer[];
+  /**
+   * #275 (b): opponents whose estimate is untrusted. The plan sized their held-bonus borders above the
+   * estimate, which a split drawn from the estimate would undo: no guess against one (unless `enemyDeploy`).
+   */
+  untrusted?: readonly number[];
   /** Seeds the sample (e.g. {@link guessSeed}). */
   seed: number;
 }
@@ -116,7 +123,8 @@ type GuessSkipReason =
   | 'one-border'
   | 'too-many-borders'
   | 'fixed-split-holds'
-  | 'small-gain';
+  | 'small-gain'
+  | 'untrusted';
 
 interface GuessSkipped {
   kind: 'skipped';
@@ -259,6 +267,8 @@ export function borderGuess(input: GuessInput): GuessResult {
   if (opponents.size > 1)
     return skip('several-opponents', `${opponents.size} opponents touch my borders: the guess models one opponent with one deploy.`);
   const opp = [...opponents][0]!;
+  if (input.enemyDeploy === undefined && input.untrusted?.includes(opp))
+    return skip('untrusted', `Player ${opp}'s deploy estimate is untrusted (#275): the plan sized its borders above it, and a guess drawn from the estimate would undo that.`);
   const D = Math.max(0, Math.floor(input.enemyDeploy ?? input.estimates?.find((e) => e.playerId === opp)?.estimate ?? plan.enemyDeploy));
 
   const ids = mine.filter((t) => neighborsOf(g, t).some((n) => foeStack(n) && ownerOf(n) === opp));

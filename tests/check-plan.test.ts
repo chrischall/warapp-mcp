@@ -164,7 +164,8 @@ describe('warapp_check_plan', () => {
     h = await live(at(20, 20, 3));
     spy.mockClear();
     const plain = await check({ orders });
-    expect(spy).toHaveBeenCalledTimes(1);
+    // Its own call, then the default plan's (#275 pattern 3: `belowPlan`); the first is the stress test's.
+    expect(spy).toHaveBeenCalledTimes(2);
     expect(spy.mock.calls[0]![0].game).toMatchObject({ fog: 'Foggy' });
     expect(spy.mock.calls[0]![0].game).not.toHaveProperty('reinforcement');
     await h.harness.close();

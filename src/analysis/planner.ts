@@ -23,6 +23,20 @@
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
 //   T1–T9. truces (B2, `relations`): the rule logic .............. plan/relations.ts
 //   PLAN-TEAMS C3.3–C3.6, `team`, the team focus (C3.4) ........ plan/team.ts
+// #275 (b): `PlanInput.untrusted` — an opponent whose estimate the tripwire (tripwire.ts) broke is sized,
+// at the borders of bonuses I hold in full at the start, for max(its deploy, the caller's figure), in
+// threats.ts's forceAt (a rationale line names those borders); every other border, and an explicit
+// enemyDeploy, are unchanged. Under Local Deployment that figure is not bounded by where the
+// opponent's bonus pools can land (`deployReaching` bounds the estimate): such a border is
+// over-sized, the conservative direction. A held bonus contested on that sizing (#118: its hold costs
+// more than CONCEDE_FACTOR × its worth, or does not pay back) whose border faces the untrusted opponent
+// is held whole before any capture when what is left covers it (`settleContested('untrusted')`, every
+// goal), so no expansion goes ahead of the gate; one it cannot cover, or one triage conceded beside that
+// opponent's stack, gets everything left to deploy before any capture and is not conceded
+// (`fillUntrustedGates`: nothing that pays +1 goes ahead of it; a warning names what still takes it) — unless
+// its stacks take it with no deploy whatever is left goes there: that one stays conceded. The game
+// profile compares that opponent at its figure and is never `even` while the mark runs (profile.ts).
+// Absent, the plan is byte-identical.
 // Rule 1k's commander reserve is read by every phase that spends armies: captures, strike and
 // stand-still keep what holds my commander's territory (#274: where it walks to, when it walks).
 // `byNum` and `pct` live in plan/util.ts.
@@ -458,7 +472,14 @@
 //     income) in its protected value, their armies in its worth (/ PAYBACK_TURNS) — and a
 //     rationale line names the cut ("… links my holdings: losing it cuts off …") when it can change
 //     the judgement: income, or at least PAYBACK_TURNS armies (never a 1-army leaf). The cut's
-//     per-territory share uses my start-of-turn count, as the border's own does. Its hold cost is the fewest
+//     per-territory share uses my start-of-turn count, as the border's own does. #275 (pattern 2),
+//     guard off only: a border also protects BREACH_WEIGHT (0.5) of its breach cost
+//     (src/analysis/breach.ts, the deploy book's `breachAt`): the positive bonuses held in full (its own
+//     left out) with a member among my territories within two steps behind it that face no enemy or
+//     fog, that no other front reaches within two steps, and that are hollow (none of mine beside
+//     them, themselves included, holds the largest visible foe stack beside the border plus its
+//     owner's deploy), plus their per-territory income; what #235 cuts off is not counted twice. A
+//     rationale line names it ("… alone shields … (#275)"). Its hold cost is the fewest
 //     deploys making `armiesToTake(armies + d) > threat`. Every border facing one
 //     opponent is sized for that opponent's whole deploy (#69): it picks where to land
 //     after I commit, so that is each border's worst case, and a sure hold of several
@@ -1136,7 +1157,9 @@
 //     the first protects nothing too), an army at a time to the one that breaks at the smallest
 //     deploy (its armies' take less the stacks beside it), ties to the most at stake: the smallest
 //     deploy that breaks any of them is as large as it can be, the estimate being only a floor
-//     ("Spread the leftover N over the borders facing player P (#268) …"; Local Deployment's pools
+//     ("Spread the leftover N over the borders facing player P (#268) …", its "~D" the threat
+//     arithmetic before any move, which #275's headroom table — the whole turn carried out — may
+//     not match, and the line says so; Local Deployment's pools
 //     respected, no Bomb split, since it already makes several stacks). With fewer than two such
 //     borders, when the first is my commander's or an attack's source, or when every army would go
 //     to the first anyway, the rest goes to the first as before — else (#125) it saves toward a capture this turn cannot afford:
@@ -2309,8 +2332,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     };
     /** #215, rule 0p.1: the contested units were held whole (where they fit) before the first advance. */
     let contestedDue = false;
+    /** #275 (b): the contested units facing an untrusted opponent were held whole (where they fit) before the first capture. */
+    let untrustedDue = false;
     candidates.forEach((c, i) => {
       if (done.has(c)) return;
+      // #275 (b): while an opponent's estimate is untrusted, a contested held bonus whose border faces
+      // it is held whole before any capture (a +1 expansion once went ahead of the gate it left to fall).
+      if (c.kind !== 'unit' && !c.focus && !untrustedDue) {
+        untrustedDue = true;
+        settleContested('untrusted');
+      }
       // #215, rule 0p.1: an advance ranks below every hold, a contested held bonus's included
       // (#118 lets the captures go first, but in a 1v1 in contact not one that completes nothing):
       // live, a +4 bonus's one border was left to fall while 15 went to a bonus 47 armies from done.
@@ -2393,6 +2424,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     reconsider();
     withdraw();
   } else {
+    // #275 (b): as under `balanced`, the gate facing an untrusted opponent before any capture.
+    settleContested('untrusted');
     for (const p of byCloseness) {
       complete(p);
       garrisonCompleted();

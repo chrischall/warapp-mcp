@@ -9,11 +9,14 @@ import {
   boardCachePath,
   boardFromHistory,
   CACHED_TURNS,
+  SURVIVAL_TURNS,
   readBoardCache,
   readBoardHistory,
   readCachedOrders,
   readExpectedIncome,
+  readSurvival,
   writeBoardCache,
+  writeSurvival,
   writeOrdersCache,
   dropOrdersCache,
 } from '../src/trend.js';
@@ -348,5 +351,54 @@ describe('expected next income (#194)', () => {
     expect(await readExpectedIncome(dir, 7, ANN.id, 2)).toBeUndefined();
     expect(await readExpectedIncome(dir, 7, ANN.id, 3)).toBe(4);
     expect(await readExpectedIncome(dir, 7, ANN.id, 4)).toBeUndefined();
+  });
+});
+
+describe('the survival side store (#275 b)', () => {
+  const board: BoardState = { source: 'browser', verified: true, territories: [{ territoryId: 1, owner: { kind: 'player', playerId: ANN.id }, armies: 5 }] };
+  const wire = { player: BOB.id, since: 4, until: 6, kind: 'capture' as const, territory: 2, observed: 16, allowed: 7, implied: 14 };
+
+  it('keeps each turn\'s estimates and the untrusted marks beside the boards, by player id only', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    expect(await readSurvival(dir, 42, ANN.id)).toEqual({ estimates: new Map(), tripwires: [] });
+    await writeBoardCache(dir, 42, ANN.id, 3, board, 9);
+    await writeSurvival(dir, 42, ANN.id, 3, { estimates: new Map([[BOB.id, 6]]), tripwires: [] });
+    await writeSurvival(dir, 42, ANN.id, 4, { estimates: new Map([[BOB.id, 7]]), tripwires: [wire] });
+    // Board, orders and expected-income writes keep it.
+    await writeBoardCache(dir, 42, ANN.id, 4, board, 10);
+    await writeOrdersCache(dir, 42, ANN.id, 4, { deploys: [], moves: [] });
+    await dropOrdersCache(dir, 42, ANN.id, 4);
+    const kept = await readSurvival(dir, 42, ANN.id);
+    expect(kept.estimates).toEqual(
+      new Map([
+        [3, new Map([[BOB.id, 6]])],
+        [4, new Map([[BOB.id, 7]])],
+      ]),
+    );
+    expect(kept.tripwires).toEqual([wire]);
+    expect(await readExpectedIncome(dir, 42, ANN.id, 3)).toBe(9);
+    expect(await readBoardHistory(dir, 42, ANN.id)).toHaveLength(2);
+    // No names: only ids and numbers are written.
+    expect(readFileSync(boardCachePath(dir, 42), 'utf8')).not.toMatch(/Bob|Ann/);
+    // Another player's view sees none.
+    expect(await readSurvival(dir, 42, BOB.id)).toEqual({ estimates: new Map(), tripwires: [] });
+  });
+
+  it('reads loosely and keeps only the newest turns of estimates', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    // #275 review: every turn of a game, not only the boards' newest CACHED_TURNS: the tripwire's stock
+    // bound reads every turn's kept estimate from turn 1.
+    for (let t = 1; t <= CACHED_TURNS + 2; t++) await writeSurvival(dir, 42, ANN.id, t, { estimates: new Map([[BOB.id, t]]), tripwires: [] });
+    expect((await readSurvival(dir, 42, ANN.id)).estimates.size).toBe(CACHED_TURNS + 2);
+    for (let t = CACHED_TURNS + 3; t <= SURVIVAL_TURNS + 2; t++) await writeSurvival(dir, 42, ANN.id, t, { estimates: new Map([[BOB.id, t]]), tripwires: [] });
+    const { estimates } = await readSurvival(dir, 42, ANN.id);
+    expect(estimates.size).toBe(SURVIVAL_TURNS);
+    expect(estimates.has(2)).toBe(false);
+    expect(estimates.has(3)).toBe(true);
+    writeFileSync(
+      boardCachePath(dir, 7),
+      JSON.stringify({ gameId: 7, playerId: ANN.id, turns: {}, estimates: { '2': { '5': 'x', '6': 3 } }, tripwires: [{ player: 'x' }, wire] }),
+    );
+    expect(await readSurvival(dir, 7, ANN.id)).toEqual({ estimates: new Map([[2, new Map([[6, 3]])]]), tripwires: [wire] });
   });
 });

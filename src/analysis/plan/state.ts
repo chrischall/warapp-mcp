@@ -89,6 +89,12 @@ export interface OpponentsCtx {
   deployOf: (player: number) => number;
   /** One opponent's income per turn: {@link deployOf} less the Reinforcement card it adds (#164). */
   incomeOfPlayer: (player: number) => number;
+  /**
+   * #275 (b): the deploy `player` is sized for at my territory `t` while its estimate is untrusted: the
+   * caller's figure when `t` is in a bonus I hold in full at the start; 0 otherwise (and with no mark,
+   * or under an explicit enemy deploy).
+   */
+  untrustedAt: (player: number, t: number) => number;
   /** #201: the game is decided, with the turns it has left. */
   decidedGame: { state: 'winning' | 'losing'; turns: number; loser: number; rate: number; estimated?: true } | undefined;
   /** The turns every payback test counts (#201). */

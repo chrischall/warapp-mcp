@@ -101,7 +101,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   three tools (`commanderCheckOn`, `src/tools/commander-check.ts`; `stressOpponents` reads a static seat (#270) as
   neutral land, never a killer): the same opponents, teams, free-for-all lead — two opponents striking together
   when I lead — Order Priority and Airlifts, each reply at max(estimate, my income), `enemy_deploy` only raising
-  it, both move orders always (`first_mover` is not passed). `warapp_check_plan` reports `commander` (with
+  it and so does an untrusted opponent's #275 figure (`untrusted`: max(implied, my income), the figure
+  `warapp_check_plan`'s stress test tries; the submit reads the marks from the board cache, the plan passes its
+  own), both move orders always (`first_mover` is not passed). `warapp_check_plan` reports `commander` (with
   `replyDeploy` and `sizing`) by that check, so its count and `needs` may differ from the stress test's
   `atRisk.commander`, which tries the estimates, and leads its summary with it when a reply kills it;
   `warapp_plan_turn` carries a `commander` block every turn (and a first warning when the plan's orders would be
@@ -370,7 +372,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   description key is UNVERIFIED, shown through `untrustedText`.
 - **A message promises only what the plan does (B4, `src/analysis/commitments.ts`, pure; `src/tools/commitments.ts`).**
   `warapp_send_chat` takes `commitments` (no-attack, will-attack, notice, propose, accept), declared — the text is
-  never parsed — and its plan step checks each against this turn's orders (`livePlanSetup` with `award: false`,
+  never parsed — and its plan step checks each against this turn's orders (`livePlanSetup` with `award: false` and the teams as resolved — unknown, no #275 tripwire, as in warapp_plan_turn —,
   then `planTurn`; the orders this server submitted this turn, `readCachedOrders`, stand in when there are any)
   and the ledger (`agreementChange`: the same rule `recordCommitments` re-applies after the send). One not
   carried refuses the send. A notice's `ends_turn` must be the turn the agreed notice gives (0 turns of notice:
@@ -675,6 +677,130 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `src/trend.ts`) only for turns the cache lacks, not at all when the two previous turns are
   cached; it reports `trendSource`. A board the decoder refuses is never written there. Each
   write keeps the game's settings beside it (`<dataDir>/games/<gameId>.json`, see "Offline replay").
+- **Surviving a wrong estimate (#275, pattern 1).** An estimate is a floor. `src/analysis/headroom.ts`
+  (pure; `headroomTable`) gives, for every border of mine after my orders, the smallest single deploy on a
+  neighbouring enemy stack that takes it (turn simulator, both move orders unless known; the attack is tried
+  at every place in the zigzag the opponent can reach by holding it back behind filler orders — before my
+  first order, between two, after my last — so a border my later orders drain is judged as drained; a commander walk of the plan's goes with its move, as
+  in warapp_check_plan's table on the same orders), the
+  bonuses it breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
+  `headroom`, and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
+  my income. A static seat (#270, `staticSeats`) gets no row: its territories are neutrals there, as the
+  planner reads them (`HeadroomInput.staticSeats`; the hold diff below takes the same). Its figure is not
+  #268's "falls to a deploy of less than ~D" line: that one is the planner's threat arithmetic on the
+  deploys before any move (the border's take less the stacks beside it), this one carries out the whole
+  turn, so the two may differ for one border, and the #268 line says so. `src/analysis/tripwire.ts` (pure) reads my two latest boards: a stack out of the fog, a capture,
+  or an attack of mine held, needing `TRIP_RATIO` (1.5) × what the estimate allowed (and `TRIP_MIN_EXCESS`
+  more), marks that opponent untrusted (a stack no board ever showed is credited its whole start, from the
+  settings, and is not read when they do not give it or the start was not even — `symmetricStart`: a custom scenario sets each start by hand —; with the start known a stack out of the fog is credited its armies in view that
+  left or shrank within reach since — a walk-in is not income, #123 lesson 5; every drop between two sightings
+  of a territory counts, and the drop from the latest to now, each within reach from the earlier sighting — and
+  is never below its whole stock (every start plus each turn's estimate) less its armies in
+  view elsewhere now, so armies banked under the fog since early on do not trip it; with the start unknown a drop
+  in view is net (a stack may walk in while another fills in behind it), so it is bounded by every army that could
+  reach it (`reachBound`: from a board with every territory within reach in view, what stood there, its movable
+  armies within reach and its estimates since, boards chained for the least), and not read when no such chain
+  exists (a territory within reach hidden on the turn a stack passed it, or a board missing from the cache); with
+  Gift in play a stack on a territory last seen another player's is not read, nor, with a third player in the game
+  (`players`, from `readTripwires`), one on a territory no board showed its own (never seen, last seen neutral); the
+  stock counts as known only when every turn's estimate was kept (`estimateKept`): a turn not kept stands in at the
+  most the opponent was kept at or is now (`estimateAt`), which may still under-count one whose estimate a bonus
+  break lowered, so then the stack is read as with the start unknown (a stack no board showed is not read); an opponent commander counts as 7 on
+  the target of a held attack and on its stacks beside a capture or a held attack; a board from GameFeed history (`source: 'history'`) is no
+  sighting and no previous board — the opponent-profile observer skips them too; a held attack is not read from a
+  source another stack beside it could have hit first, or that ended below what my orders left it, nor from one
+  that lost nothing (at or above that plus what the attack sent: a failed attack on a defender always costs
+  attackers, so it never ran — a Diplomacy card, or orders withdrawn in the web client), counts only
+  what the source had left after its earlier orders — an order sends what is left —, and is not read from a
+  Transfer Only order or on a player a Diplomacy card in force keeps at peace, nor at all once anyone may have held
+  a Diplomacy card on the turn it ran (the cards in effect now do not say what was in force then); my orders count as known only with
+  `sent`, an older cache as unknown, and a Transfer Only, Attack Only or percentage order — in `sent`, left out
+  of `moves` — out of my territory, into the neutral or out of my attack's source means that one is not read;
+  and they count only when the board agrees they ran, `ordersLanded`, one check for the capture and the held
+  attack: every territory of mine that stayed mine with only mine and neutrals in view beside it, no card play or
+  order outside `moves` on it and only transfers out into territories that stayed mine ends at what it had plus my
+  deploys less what went out plus what came in — up to what an order sends from a source that may have been hit
+  first — and at least one such territory exists, and every territory of mine on both boards, borders included,
+  ends at most at what it had plus my deploys there plus what my orders in could send, less what its transfers
+  out into territories mine on both boards sent (none with an order out outside `moves`), every territory newly
+  mine at most at what my orders in could send, and every neutral in view beside only mine at least at what it
+  had less what my cached attacks into it could kill, so orders changed in the web client after the cache — a
+  deploy that never landed, a transfer dropped or rerouted between borders, an attack added — read nothing; a
+  capture of mine never counts a cached deploy on the territory lost (the board cannot confirm it), nor is read
+  beside a neutral that shrank with no attack of mine cached into it (a failed attack added out of the lost
+  territory into its taker's own territory is the one edit no board shows), and a held attack is not read when its source
+  lost fewer than the defenders it needed kill — every attacker, or round(defensive kill rate × defenders) —
+  since the attack that ran was smaller; a capture is read with no luck and straight rounding only, as a held attack is)
+  for `UNTRUSTED_TURNS` (3).
+  Under Multi-Attack, or when the settings do not say, a chain moves armies many hops in one turn: no capture
+  or held attack is read, and a stack out of the fog credits armies that left view at any distance. Nothing is
+  read once an opponent may hold an Airlift card (the card clock, `opponentCanHold`): armies it lands look like
+  income; a Reinforcement card is already in the estimate (#164), one at most, so a capture or a held attack also
+  allows every card the clock says an opponent can hold (at most `MaxCardsHold`) when that is more than one
+  (`bankedReinforcement`: banked cards played at once), and neither is read when those cannot be counted
+  (pieces a turn unstated, armies not fixed); so does a stack out of the fog with its start unknown (with it known,
+  its stock credits a card every turn), likewise not read when they cannot be counted. No capture or held attack is read once one
+  may hold a Bomb (it runs before the attacks and halves my source or the territory taken; a stack out of the fog
+  still is). A territory my own Gift card gave it (`MyOrders.cards`) is no capture, and with my card plays not
+  recorded (an older cache) no capture of mine is read when Gift is in play (`gift`: the settings list it, or
+  are unread), nor a stack out of the fog on a territory last seen another player's (it may have been gifted
+  with its stack). Another player's armies are never its: no held attack is read with any player but it beside the
+  target (a teammate may have sent armies in), and no fog stack of a player with a teammate. A static seat
+  (#270) is never read, nor a player with no estimate now (never compared against 0). Nothing is read either while `resolveTeams`
+  says the teams are unknown (`known: false`): an opponent may be a teammate, and the stored marks are applied
+  to nothing but kept unchanged (`TripwireRead.keep`: one such call never erases a running mark); `headroom` rows then carry
+  `mayBeTeammate: true` and `warapp_submit_turn`'s headroom warning says so. The marks and each turn's per-opponent
+  estimates live in the board cache file (`estimates`, `tripwires`, ids only; `readSurvival`/`writeSurvival`
+  in `src/trend.ts`, kept by every cache writer; the newest `SURVIVAL_TURNS` (200) turns of estimates, not
+  the boards' ten, since the stock reads every turn's), written by `warapp_plan_turn` only. While untrusted, the
+  planner sizes borders of bonuses held in full at the start for max(estimate, the figure) where the figure
+  is max(implied, my income) (`PlanInput.untrusted`, forceAt; not under `enemyDeploy`; under Local Deployment that
+  figure is not bounded by where the opponent's bonus pools can land, as `deployReaching` bounds the estimate:
+  such a border is over-sized, the conservative direction; the guard-off breach price, `breachAt`, sizes the stack
+  that would come through on the same figure; a held bonus contested on that sizing, #118, whose border faces it
+  is held whole before any capture when what is left covers it, `settleContested('untrusted')`, so no expansion
+  goes ahead of the gate — and one it cannot cover, or one triage conceded beside that opponent's stack, gets
+  everything left to deploy before any capture and is not conceded (`fillUntrustedGates`, a warning names the deploy
+  that still takes it) — unless the stacks beside it take it with no deploy at all and what is left cannot make it
+  need some (`firstStand`): that one stays conceded and the armies stay behind it; the game profile compares it at its figure and never reads `even` while the mark runs),
+  the border guess skips an untrusted opponent
+  (`borderGuess`' `untrusted`, reason `untrusted`: a split drawn from the estimate would undo it), `warapp_check_plan`
+  tries that figure by default (source `untrusted`), and both say so in the first warning (under `enemy_deploy`
+  `warapp_check_plan` says nothing of it and `warapp_plan_turn`'s warning names the what-if figure it used).
+- **Given orders against the default plan (#275, pattern 3).** `src/analysis/hold-diff.ts` (pure,
+  `holdsBelowPlan`): for each border (mine at the start, beside an enemy stack in view, a teammate no enemy,
+  not conceded by the plan; picked on the start-of-turn board, so one whose enemy stack the given orders
+  capture still counts) what stands on it after the default plan's deploys and moves and after the given
+  ones, on the turn simulator with no opponent order (my commander as 7, walking with the move that carries it on both sides — #274; card plays not carried out); a border
+  the given orders leave lower is named with `planLeaves`, `left`, `short`, largest first. `planLeaves` is
+  everything the plan leaves there (leftover, margins, idle stacks), not the least that holds it, so a border
+  named may still hold (the headroom table says what takes it). `bordersBelowPlan` (`src/tools/turn.ts`)
+  makes the one extra plan per call as warapp_plan_turn makes it with no args: `livePlanSetup` with
+  `award: 'read'` (the award of picks and the first mover read, nothing written), then `planTurn`;
+  warapp_check_plan passes the history warapp_plan_turn reads, while the submit preview reads the board cache
+  alone (`cacheOnly`, no GameFeed request added) and its warning names the recent turns the cache lacks
+  (`historyGap`), where warapp_plan_turn's plan may differ. When the given deploys are
+  that plan's border guess (`planBorderGuess`, shared with warapp_plan_turn, drawn with the kept salt read by
+  `peekGuessSalt`, never created here) the guess is the reference (`against: 'guess'`), since the guess only
+  moves the plan's deploys between borders. `warapp_check_plan` returns `belowPlan` and `belowPlanAgainst`
+  (absent only when the plan could not be made; `belowPlanBasis` on full) and `warapp_submit_turn`'s preview
+  warns (never refuses). Orders warapp_plan_turn made with options (goal, focus, reserve, enemy_deploy,
+  first_mover) differ from the default plan by design. Report only: no plan reads it, so the golden corpus is
+  unchanged.
+- **A hollow interior with the guard off (#275, pattern 2).** `src/analysis/breach.ts` (pure, `breachBehind`):
+  a border's breach is my territories within two steps behind it (through my holdings) that face no enemy or
+  fog, that no other front of mine reaches within two steps (so nothing is counted twice), and that are hollow
+  (the caller's test), with the bonuses I hold in full that they are in, the border's own left out. Every
+  `headroom` row carries `breach` (territories, income; hollow = none of mine beside it, itself included,
+  holds the stack that takes the border at its headroom; no deploy takes it → empty), guard on or off. The
+  planner, **guard off only**, adds `BREACH_WEIGHT` (0.5) × that income (plus its per-territory income; hollow
+  = below the largest visible foe stack beside the border plus its owner's deploy; #235's cut not counted
+  twice) to the border's protected value (`breachAt` in the deploy book), with a rationale line ("… alone
+  shields …"). It brings no garrison of its own: the second line behind a border is #276's
+  (`secondLineOf` / `fillSecondLine`, `plan/guard-off.ts`), and this rule only prices the hollow interior.
+  Measured on the golden corpus against the planner without it (916 guard-off boards): plans changed on 59,
+  orders on 7, no capture lost, next income never lower, 5 fewer concessions, never more warnings; no
+  guard-on plan changes.
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
   turn, income = the most of the last three observed turns (or its stock and flow when more),
@@ -862,7 +988,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     the board overrule it — never `ahead` while my visible armies are below 0.8 × an opponent's
     in view, and `behind` when below half, fog or not, since what it shows is the least it has;
     in a team game both incomes and armies are summed by team, PLAN-TEAMS C3, as is the outlook;
-    an enemy still playing with no estimate is named and forbids `ahead`, which reads `unknown`)
+    an enemy still playing with no estimate is named and forbids `ahead`, which reads `unknown`; #275: an
+    opponent whose estimate a tripwire broke, `PlanInput.untrusted`, is compared at the larger of its estimate and
+    its untrusted figure, and the standing is never `even` while one runs: it reads `behind`, not under `enemyDeploy`;
+    reading `behind` on armies in view alone, an opponent's ≥ 1.25 × mine with no tripwire, is not done: deferred to #287)
     and the strategy settings. `warapp_plan_turn` passes `adapt: true`: with no `goal` the profile picks
     it (behind → `defend`, else `balanced`) and its rules fire (1v1 in contact: advances rank
     below holds and breaks; FFA with 2+ opponents: no second front; behind: no pressure margin;
@@ -1003,7 +1132,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     one that breaks at the smallest deploy, ties to the most at stake, so the smallest deploy that
     breaks any of them is as large as it can be (live: the rest on the border protecting the most left
     two others to fall at ~1.5× the estimate). One such border, my commander's, or an attack's source
-    keeps the old rule; the pools of Local Deployment are respected.
+    keeps the old rule; the pools of Local Deployment are respected. Its "~D" is the threat arithmetic on
+    the deploys before any move, not #275's `headroom` (the whole turn carried out), and its line says so.
     #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
     reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
     sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,

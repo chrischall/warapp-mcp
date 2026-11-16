@@ -580,7 +580,11 @@ export function leftoverDeploy(
       rationale.push(
         `Spread the leftover ${total} over the borders facing player ${lead.player} (#268), so the smallest deploy that breaks one of them is as large as possible: ${parts.join(', ')}${
           marginFirst ? '' : ', once every short border has its comfortable margin'
-        }: none of them now falls to a deploy of less than ~${least} on top of the stacks beside it (the estimate is ~${lead.deploy}, a floor under fog); all of it on ${label(lead.id)}, the one with the most at stake (protects +${valueOf(lead.id)}), would leave another to fall to less.`,
+        }: none of them now falls to a deploy of less than ~${least} on top of the stacks beside it (threat arithmetic on the deploys, before any move: the headroom table carries out the whole turn and may differ; ${
+          pc.untrustedAt(lead.player, lead.id) > 0 && pc.untrustedAt(lead.player, lead.id) >= lead.deploy
+            ? `sized for ~${lead.deploy} (untrusted, #275)`
+            : `the estimate is ~${lead.deploy}, a floor under fog`
+        }); all of it on ${label(lead.id)}, the one with the most at stake (protects +${valueOf(lead.id)}), would leave another to fall to less.`,
       );
       for (const id of got.keys()) {
         locked.add(id);

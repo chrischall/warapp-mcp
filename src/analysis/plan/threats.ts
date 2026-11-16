@@ -97,6 +97,18 @@ export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput) {
   } = src;
   const { chainAt, stacksAt, forceAt, threatAt, nextTurnAt, expectedAt, exposure } = forces;
   const seen = visibleOpponents(pc, input);
+  // #275 (b): say which held bonus's borders an untrusted estimate sized.
+  if (!pc.custom)
+    for (const u of [...(input.untrusted ?? [])].sort((a, b) => a.player - b.player)) {
+      const sized = [...borders.values()].filter((b) => b.player === u.player && pc.untrustedAt(u.player, b.id) > 0).map((b) => b.id).sort(byNum);
+      ps.rationale.push(
+        `Player ${u.player}'s estimate is untrusted (#275: an observation broke it): ${
+          sized.length
+            ? `the border${sized.length === 1 ? '' : 's'} of my held bonuses facing it (${sized.map(pc.label).join(', ')}) ${sized.length === 1 ? 'is' : 'are'} sized for a deploy of ${Math.floor(u.deploy)}, not its estimate of ${pc.deployOf(u.player)}`
+            : `no border of a bonus I hold faces it, so nothing is sized for its ${Math.floor(u.deploy)}`
+        }.`,
+      );
+    }
   return {
     ...seen,
     growthOf,
@@ -383,7 +395,7 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
 
 /** What each opponent can bring against one territory: its stacks, its deploy, its Multi-Attack chains (#199). */
 export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
-  const { g, board, s, foe, territories: state, mineSet, unitsAt, guard, rates, toTake, ffaLeader } = pc;
+  const { g, board, s, foe, territories: state, mineSet, unitsAt, guard, rates, toTake, ffaLeader, untrustedAt } = pc;
   const { captured } = ps;
   /**
    * G2 (T9, D3): a player a Diplomacy card shields me from only this turn is a foe again next turn:
@@ -536,7 +548,8 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
     const each = [...byPlayer]
       .sort((a, b) => a[0] - b[0])
       .map(([player, p]) => {
-        const deploy = truced === player ? 0 : deployReaching(player, p.stacks.map((x) => x.id));
+        // #275 (b): a held bonus's border is sized for an untrusted estimate's figure, never below the estimate.
+        const deploy = truced === player ? 0 : Math.max(deployReaching(player, p.stacks.map((x) => x.id)), untrustedAt(player, t));
         const growth = truced === player ? 0 : p.growth;
         const movable = p.stacks.reduce((n, x) => n + x.movable, 0);
         const add = Math.max(deploy, growth);
