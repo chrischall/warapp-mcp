@@ -8,7 +8,7 @@ import {
 import { AUTH_FAILED_HINT, PROBE_GAME_ID, WarappClient, type WarappClientOptions } from '../client.js';
 import { readCredentials, TOKEN_URL, WarappConfigError } from '../config.js';
 import { readSessionSync } from '../direct/session.js';
-import type { WarappDirectBridge } from '../direct/transport.js';
+import { HOST_SIGN_IN_ADVICE, SessionExpiredError, type WarappDirectBridge } from '../direct/transport.js';
 import type { WarappBridge } from '../transport-bridge.js';
 
 /**
@@ -29,6 +29,14 @@ import type { WarappBridge } from '../transport-bridge.js';
  * which is the whole time the direct leg is serving calls ("on direct, the
  * credential probe"). Either way the result carries which leg is active and
  * whether a direct session is linked and how old it is — never the token.
+ *
+ * with a direct session (linked, or captured by mcp-host when hosted) the
+ * credential arm also asks war.app whether that SESSION is signed in — one GET
+ * of the invite-token page with it (`sessionCheck`: signed-in / signed-out /
+ * unknown) — and reports the router's `wall` (why it left the direct leg, when,
+ * and when it tries again). A session war.app shows signed out fails the check
+ * as `session_expired`, even when the API token is fine: before, a hosted
+ * healthcheck said ok while every live tool failed.
  */
 
 export { PROBE_GAME_ID };
@@ -63,10 +71,37 @@ function transportHealth(status: DirectFirstStatus, env: NodeJS.ProcessEnv | und
 export function registerHealthcheckTool(
   server: McpServer,
   bridge: WarappBridge,
-  direct: Pick<WarappDirectBridge, 'status'>,
+  direct: Pick<WarappDirectBridge, 'status'> & Partial<Pick<WarappDirectBridge, 'wall' | 'checkSession' | 'ready'>>,
   deps: HealthcheckDeps = {},
 ): void {
   const now = deps.now ?? Date.now;
+  /** What this call's session check found, echoed in the result; reset at each check. */
+  let lastCheck: { sessionCheck?: string; wall?: unknown } = {};
+  /** Check the direct session when there is one and the router may use it; never throws. */
+  const checkSession = async (): Promise<string | undefined> => {
+    lastCheck = {};
+    if (!direct.checkSession || direct.status().mode === 'fetchproxy') return undefined;
+    if (!readSessionSync(deps.env)) return undefined;
+    const verdict = await direct.checkSession().catch(() => 'unknown' as const);
+    if (verdict === 'none') return undefined;
+    const wall = direct.wall?.() ?? null;
+    lastCheck = { sessionCheck: verdict, ...(wall ? { wall } : {}) };
+    return verdict;
+  };
+  const health = (): HealthcheckPath => ({ ...transportHealth(direct.status(), deps.env, now), ...lastCheck });
+  const signedOut = (): SessionExpiredError =>
+    new SessionExpiredError({ hostSignIn: readSessionSync(deps.env)?.origin === 'host' });
+  const classifySignedOut = (err: unknown) =>
+    err instanceof SessionExpiredError
+      ? {
+          kind: 'session_expired',
+          hint:
+            'war.app shows the session the live tools use as signed out. ' +
+            (err.hostSignIn ? HOST_SIGN_IN_ADVICE : 'Run warapp_link_session to relink.'),
+        }
+      : undefined;
+  /** The session check this call's resolver made, read by its probe. */
+  let resolvedVerdict: string | undefined;
   registerAdaptiveHealthcheckTool({
     server,
     prefix: 'warapp',
@@ -81,35 +116,48 @@ export function registerHealthcheckTool(
     bridge: {
       probePath: BRIDGE_PROBE_PATH,
       transport: () => bridge.transport(),
-      path: () => transportHealth(direct.status(), deps.env, now),
+      path: health,
       probeFn: async (path) => {
-        const res = await (await bridge.ready()).fetch({ method: 'GET', path });
+        // Off the direct leg with a session: ask war.app about the session first. Signed
+        // out is the answer; signed in lifts the wall, and the probe then rides the direct leg.
+        const verdict = await checkSession();
+        if (verdict === 'signed-out') throw signedOut();
+        const viaRouter = verdict === 'signed-in' && direct.ready !== undefined;
+        const leg = viaRouter ? await direct.ready!() : await bridge.ready();
+        const res = await leg.fetch({ method: 'GET', path });
         if (res.status !== 200) {
-          throw new McpToolError(`war.app answered HTTP ${res.status} through the bridge.`, {
+          throw new McpToolError(`war.app answered HTTP ${res.status}${viaRouter ? '' : ' through the bridge'}.`, {
             status: res.status,
             kind: 'http',
           });
         }
         return res.body;
       },
+      classifyThrown: classifySignedOut,
     },
     credential: {
       probePath: PROBE_PATH,
       resolveCredential: async () => {
-        const health = transportHealth(direct.status(), deps.env, now);
+        resolvedVerdict = await checkSession();
+        const detail = health();
         try {
           readCredentials(deps.env);
-          return { source: 'env', detail: health };
+          return { source: 'env', detail };
         } catch (e) {
-          if (e instanceof WarappConfigError) return { source: null, detail: { ...health, reason: e.message } };
+          if (e instanceof WarappConfigError) return { source: null, detail: { ...detail, reason: e.message } };
           throw e;
         }
       },
-      probeFn: () => new WarappClient(deps).probeAuth(),
+      probeFn: async () => {
+        const res = await new WarappClient(deps).probeAuth();
+        // The API token works; the live tools ride the session, which war.app says is signed out.
+        if (resolvedVerdict === 'signed-out') throw signedOut();
+        return res;
+      },
       classifyThrown: (err) =>
         err instanceof McpToolError && err.kind === 'credential_rejected'
           ? { kind: 'credential_rejected', hint: AUTH_FAILED_HINT }
-          : undefined,
+          : classifySignedOut(err),
       hints: { no_credential: `Set WARAPP_EMAIL and WARAPP_API_TOKEN (token from ${TOKEN_URL}).` },
     },
   });

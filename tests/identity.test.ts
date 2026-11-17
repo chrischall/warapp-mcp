@@ -209,10 +209,12 @@ describe('the identity follows the real direct-first router', () => {
     const held = new Promise<void>((r) => (release = r));
     let inviteReached!: () => void;
     const reached = new Promise<void>((r) => (inviteReached = r));
-    // The InviteToken read on the direct leg is held open and then answers A;
-    // any other direct call answers a sign-in form, which moves the router.
+    // The first InviteToken read on the direct leg is held open and then answers A;
+    // any other direct call — the probe confirming the sign-out included —
+    // answers a sign-in form, which moves the router.
+    let invites = 0;
     const directFetch: DirectFetch = async (url) => {
-      if (url === INVITE) {
+      if (url === INVITE && invites++ === 0) {
         inviteReached();
         await held;
         return { status: 200, body: page(A), url };
