@@ -90,7 +90,9 @@ So war.app reads each request in the protocol it declares — its method ids and
 - **The window to adapt is long**: the protocol this server speaks stays accepted well past the next several
   releases. Update deliberately, not in a hurry.
 - **When the window closes the sign is error 48 `ClientOutOfDate`** (49 is `ClientVersionTooHigh`). Treat it
-  as "this server's protocol is retired". (#344's closed-window check does not name error 48 yet.)
+  as "this server's protocol is retired". The server does: a reply carrying error 48 or 49 throws
+  `ClientOutOfDateError` (`src/protocol/rpc.ts`), whose message says the protocol is retired and whose hint
+  points here; retrying or signing in again does not help.
 
 To re-measure: frame a read with the protocol field (the header's first uint16) set to older values and look for
 error 48 in the reply (byte 15 = 5, then the int32 code). Read-only; a dozen requests is enough. Only error 48
@@ -130,6 +132,5 @@ in, so play continues while this is done.
 
 ## Possible follow-ups (not built)
 
-- Name error 48 `ClientOutOfDate` in #344's closed-window check.
 - Watch the blog's RSS feed so a release (and its feature list) is seen within minutes.
 - Keep every build the server sees rather than only the newest recorded ones, since none can be fetched later.

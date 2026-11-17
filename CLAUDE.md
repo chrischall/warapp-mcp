@@ -47,7 +47,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   error) or comes in another protocol version (`ProtocolVersionError`) is `StandInClosedError` (war.app no longer answers the
   old build; #340), never a board. Hosted, `MCP_DATA_DIR` holds both files like the cache.
   How and when war.app ships clients, which protocols it still accepts (223–243 on 2026-11-17; older get error 48
-  `ClientOutOfDate`) and the checklist for a protocol bump are in `docs/CLIENT-RELEASES.md`; what 243 changed is
+  `ClientOutOfDate`, which `WarappRpc` throws as `ClientOutOfDateError`, as it does 49 `ClientVersionTooHigh`) and the checklist for a protocol bump are in `docs/CLIENT-RELEASES.md`; what 243 changed is
   `docs/WEB-PROTOCOL.md` "Protocol 243".
 - **The healthcheck probes a game that does not exist** (`GameID=2147483647`): war.app
   checks credentials first, so `ServerGameKeyNotFound` proves the token works without

@@ -90,8 +90,9 @@ export class WarappServerError extends McpToolError {
   constructor(
     readonly code: number,
     message: string,
+    hint?: string,
   ) {
-    super(message, { kind: 'unknown' });
+    super(message, { kind: 'unknown', ...(hint ? { hint } : {}) });
   }
 }
 
@@ -247,7 +248,36 @@ export class WarappRpc {
   }
 }
 
+/** war.app's `ClientOutOfDate`: the protocol this server speaks is older than war.app still accepts. */
+export const CLIENT_OUT_OF_DATE = 48;
+/** war.app's `ClientVersionTooHigh`: the client version this server sends is newer than war.app knows. */
+export const CLIENT_VERSION_TOO_HIGH = 49;
+
+/**
+ * war.app refused this server's client as out of date (48) or too new (49). Probed live 2026-11-17: war.app
+ * keeps answering about 21 older protocols, and a request below that window gets 48 — the sign that war.app
+ * has retired the protocol this server speaks, which no retry or relink fixes: only the update in
+ * docs/CLIENT-RELEASES.md ("Updating to a new client") does.
+ */
+export class ClientOutOfDateError extends WarappServerError {
+  override name = 'ClientOutOfDateError';
+  constructor(methodName: string, code: number) {
+    super(
+      code,
+      code === CLIENT_OUT_OF_DATE
+        ? `war.app refused ${methodName} as ClientOutOfDate (war.app error 48): it no longer accepts protocol ` +
+            `${PROTOCOL_VERSION}, the one this server speaks, so every war.app call through the web protocol will fail ` +
+            'until this server is updated to war.app’s current client.'
+        : `war.app refused ${methodName} as ClientVersionTooHigh (war.app error 49): it does not know client ` +
+            `${CLIENT_VERSION}, the version this server sends.`,
+      'This server needs an update to war.app’s current client: see docs/CLIENT-RELEASES.md, "Updating to a new ' +
+        'client". Retrying or signing in again will not help.',
+    );
+  }
+}
+
 function serverError(methodName: string, code: number, message: string | null, email: string | null): WarappServerError {
+  if (code === CLIENT_OUT_OF_DATE || code === CLIENT_VERSION_TOO_HIGH) return new ClientOutOfDateError(methodName, code);
   const known = SERVER_ERROR_MESSAGES[code];
   if (known) return new WarappServerError(code, `${known} (war.app error ${code})`);
   // Unmapped: the message can be a whole server stack trace — keep its first
