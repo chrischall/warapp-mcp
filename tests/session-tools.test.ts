@@ -73,6 +73,13 @@ describe('warapp_session_status', () => {
     await h.close();
     h = await harnessWith({ hosted: true, decoder: () => ({ ...report, fallback: false }) });
     expect(payload(await call('warapp_session_status')).decoder).toEqual({ ...report, fallback: false });
+    await h.close();
+    const standIn = { ...report, fallback: false, standInFor: { version: '639304451701341657', reason: 'refused' } };
+    h = await harnessWith({ decoder: () => standIn });
+    expect(payload(await call('warapp_session_status')).decoder).toEqual({
+      ...standIn,
+      note: expect.stringMatching(/current client \(639304451701341657\) cannot be read/),
+    });
   });
 
   it('reports not-linked and points to warapp_link_session', async () => {

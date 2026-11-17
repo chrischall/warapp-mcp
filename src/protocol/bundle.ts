@@ -105,6 +105,11 @@ export interface DecoderReport {
   fallback: boolean;
   /** The reader helpers checked at load (#148): verified, and the ones that are not, with why. */
   helpers: { verified: string[]; unverified: string[]; reasons?: Record<string, string> };
+  /**
+   * The pinned known-good client ({@link KNOWN_GOOD_BUNDLE}) decoded the board because war.app's current
+   * client was refused: its version, and why it was refused.
+   */
+  standInFor?: { version: string; reason: string };
 }
 
 /** A loaded bundle: reads wire classes by stable type name. */
@@ -113,6 +118,9 @@ export class WarappBundle {
 
   /** Loaded from the cache because the current version could not be looked up. */
   fallback = false;
+
+  /** Set when this is the pinned known-good client standing in for a refused current one. */
+  standInFor: { version: string; reason: string } | undefined;
 
   constructor(
     src: string,
@@ -155,6 +163,7 @@ export class WarappBundle {
       bundleVersion: this.version,
       fallback: this.fallback,
       helpers: { verified: [...verified], unverified: [...unverified], ...(reasons ? { reasons: { ...reasons } } : {}) },
+      ...(this.standInFor ? { standInFor: { ...this.standInFor } } : {}),
     };
   }
 
@@ -192,7 +201,33 @@ interface BundleLoaderOptions {
   interp?: InterpOptions;
   /** Clock for {@link BundleProvider}'s fallback expiry (tests). */
   now?: () => number;
+  /**
+   * The client release to decode with when the current one is refused (default {@link KNOWN_GOOD_BUNDLE};
+   * `null`: none, the refusal stands).
+   */
+  knownGood?: KnownGoodBundle | null;
 }
+
+/** A client release pinned by version and the SHA-256 of its bytes. */
+export interface KnownGoodBundle {
+  version: string;
+  digest: string;
+}
+
+/**
+ * The client release the built-in readers (src/protocol/interp.ts `DEFAULT_DIALECT`) and every
+ * hand-written encoder are written for: client v6.07, protocol 242. war.app's CDN still serves it by
+ * version, byte for byte, and war.app still answers a protocol-242 request in 242's layout. So when
+ * the current client is refused (2026-11-17: 639304451701341657 renamed every reader on protocol
+ * 243), this one stands in and decodes those replies exactly. Only bytes with this digest are used.
+ */
+export const KNOWN_GOOD_BUNDLE: KnownGoodBundle = {
+  version: '639294131571648437',
+  digest: 'dec5cf174f6affb9e4c08802534cf8c6c6496eff977847aaf1497535e3371404',
+};
+
+/** The CDN URL of a client release, by version (the location {@link discoverBundleUrl} pins). */
+const bundleUrlOf = (version: string) => `https://${BUNDLE_HOST}${BUNDLE_PATH}?v=${version}`;
 
 /** A cached bundle: `<version>.<sha256 of its bytes>.js`. */
 const BUNDLE_FILE = /^([A-Za-z0-9._-]{1,64})\.([0-9a-f]{64})\.js$/;
@@ -241,10 +276,10 @@ async function abandoned(file: string, pid: number): Promise<boolean> {
  * Delete every cached bundle but `keep` (each is ~16 MB, one per client release), every file of an
  * earlier cache layout and any abandoned unfinished download. Best effort: never throws.
  */
-async function pruneBundles(dir: string, keep: string): Promise<void> {
+async function pruneBundles(dir: string, keep: readonly string[]): Promise<void> {
   try {
     for (const name of await readdir(dir)) {
-      if (name === keep) continue;
+      if (keep.includes(name)) continue;
       const partial = PARTIAL_FILE.exec(name);
       if (!partial && !BUNDLE_FILE.test(name) && !LEGACY_FILE.test(name)) continue;
       if (partial && !(await abandoned(join(dir, name), Number(partial[1])))) continue;
@@ -350,22 +385,76 @@ async function readVerified(file: string, digest: string): Promise<string | null
   return null;
 }
 
+/** Whether `e` is the load-time refusal of a client this server cannot read (#131, #148). */
+const isDialectRefusal = (e: unknown): e is BundleError =>
+  e instanceof BundleError && (e.kind === 'dialect-mismatch' || e.kind === 'dialect-unverified');
+
+/** Write `src` into the cache as `name` (`0700` directories, an atomic `0600` file). */
+async function cacheBundle(dataDir: string, dir: string, name: string, src: string): Promise<void> {
+  await ensurePrivateDir(dataDir);
+  await ensurePrivateDir(dir);
+  await writePrivateAtomic(join(dir, name), Buffer.from(src, 'utf8'));
+}
+
+/**
+ * The pinned known-good client, from the cache or downloaded by version and kept only when its bytes
+ * hash to the pinned digest; it stands in for `refused`, whose refusal is rethrown when it cannot.
+ */
+async function loadKnownGood(
+  opts: BundleLoaderOptions,
+  dir: string,
+  kg: KnownGoodBundle,
+  refused: BundleError,
+  refusedVersion: string,
+): Promise<{ bundle: WarappBundle; name: string }> {
+  const name = bundleName(kg.version, kg.digest);
+  let src = await readVerified(join(dir, name), kg.digest);
+  if (src === null) {
+    let fetched: string;
+    try {
+      fetched = await opts.fetchText(bundleUrlOf(kg.version));
+    } catch {
+      throw refused;
+    }
+    if (sha256(Buffer.from(fetched, 'utf8')) !== kg.digest || !looksLikeBundle(fetched)) throw refused;
+    await cacheBundle(opts.dataDir, dir, name, fetched);
+    src = fetched;
+  }
+  let bundle: WarappBundle;
+  try {
+    bundle = new WarappBundle(src, kg.version, opts.interp);
+  } catch {
+    throw refused;
+  }
+  bundle.standInFor = { version: refusedVersion, reason: refused.message };
+  return { bundle, name };
+}
+
 /** Discover, fetch (or reuse the verified cached copy of) and load the current client bundle. */
 export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundle> {
   const pageUrl = opts.pageUrl ?? DEFAULT_PAGE_URL;
   const dir = join(opts.dataDir, 'bundle');
+  const kg = opts.knownGood === undefined ? KNOWN_GOOD_BUNDLE : opts.knownGood;
   let source: BundleSource;
   try {
     source = discoverBundleUrl(await opts.fetchText(pageUrl), pageUrl);
   } catch (e) {
     // The page naming the current version could not be read (a frozen tab, a signed-out page):
     // a copy already on disk still decodes, rather than failing every live read (#131).
-    // Only a copy that still matches its recorded digest stands in.
-    const cached = await newestVerified(dir);
-    if (!cached) throw e;
-    const b = new WarappBundle(cached.src, cached.version, opts.interp);
-    b.fallback = true;
-    return b;
+    // Only a copy that still matches its recorded digest stands in, newest first, skipping one
+    // this server refuses to read (a client it was never written for).
+    for (const c of await cachedNewestFirst(dir)) {
+      const src = await readVerified(c.file, c.digest);
+      if (src === null) continue;
+      try {
+        const b = new WarappBundle(src, c.version, opts.interp);
+        b.fallback = true;
+        return b;
+      } catch (err) {
+        if (!isDialectRefusal(err)) throw err;
+      }
+    }
+    throw e;
   }
   const { url, version } = source;
   const cached = await newestVerified(dir, version);
@@ -378,15 +467,22 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
     if (!looksLikeBundle(src)) {
       throw new BundleError('bad-bundle', `${url} does not look like the war.app client bundle`);
     }
-    await ensurePrivateDir(opts.dataDir);
-    await ensurePrivateDir(dir);
-    const bytes = Buffer.from(src, 'utf8');
     // One file, its digest in its name, made visible by one rename: never a bundle without its digest.
-    name = bundleName(version, sha256(bytes));
-    await writePrivateAtomic(join(dir, name), bytes);
+    name = bundleName(version, sha256(Buffer.from(src, 'utf8')));
+    await cacheBundle(opts.dataDir, dir, name, src);
   }
-  const bundle = new WarappBundle(src, version, opts.interp);
-  await pruneBundles(dir, name);
+  const keepKnownGood = kg ? [bundleName(kg.version, kg.digest)] : [];
+  let bundle: WarappBundle;
+  try {
+    bundle = new WarappBundle(src, version, opts.interp);
+  } catch (e) {
+    if (!kg || kg.version === version || !isDialectRefusal(e)) throw e;
+    const standIn = await loadKnownGood(opts, dir, kg, e, version);
+    // Both stay: the refused copy so the next lookup does not download it again, the stand-in in use.
+    await pruneBundles(dir, [name, standIn.name]);
+    return standIn.bundle;
+  }
+  await pruneBundles(dir, [name, ...keepKnownGood]);
   return bundle;
 }
 
@@ -395,6 +491,12 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
  * the current version is looked up again.
  */
 const FALLBACK_RETRY_MS = 5 * 60_000;
+
+/**
+ * How long the known-good stand-in is used before the current version is looked up again: re-checking
+ * a refused ~16 MB bundle costs seconds of parsing, and a client release changes rarely.
+ */
+const STAND_IN_RETRY_MS = 60 * 60_000;
 
 /**
  * Loads the bundle once per process; a failed load is retried on the next call, except a bundle
@@ -417,13 +519,15 @@ export class BundleProvider {
       p.then(
         (b) => {
           // A cached copy stands in only until the version can be looked up again.
-          if (b.fallback && this.pending === p) this.fallbackUntil = now() + FALLBACK_RETRY_MS;
+          if (this.pending !== p) return;
+          if (b.standInFor) this.fallbackUntil = now() + STAND_IN_RETRY_MS;
+          else if (b.fallback) this.fallbackUntil = now() + FALLBACK_RETRY_MS;
         },
         (e) => {
           if (this.pending !== p) return;
           // A bundle this server cannot read stays unreadable: remember the refusal for a while
           // instead of re-reading and re-checking ~16 MB on every live call (#131).
-          if (e instanceof BundleError && (e.kind === 'dialect-mismatch' || e.kind === 'dialect-unverified')) {
+          if (isDialectRefusal(e)) {
             this.fallbackUntil = now() + FALLBACK_RETRY_MS;
           } else this.pending = null;
         },

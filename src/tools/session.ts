@@ -114,9 +114,15 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
     return {
       decoder: {
         ...d,
-        ...(d.fallback
-          ? { note: "A cached copy of war.app's client is decoding boards: the current version could not be looked up." }
-          : {}),
+        ...(d.standInFor
+          ? {
+              note:
+                `war.app's current client (${d.standInFor.version}) cannot be read by this server, so the client release ` +
+                'it was written for (still served by war.app) is decoding boards; war.app answers this server in that layout.',
+            }
+          : d.fallback
+            ? { note: "A cached copy of war.app's client is decoding boards: the current version could not be looked up." }
+            : {}),
       },
     };
   };
