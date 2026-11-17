@@ -247,7 +247,7 @@ describe('warapp_analyze_board', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/war\.app has no board for game 12345678 yet/i);
     expect(textOf(res)).toMatch(/WaitingForPlayers/);
-    expect(h.exchanges.map((e) => e.request.method)).toEqual([40]);
+    expect(h.exchanges.map((e) => e.request.method)).toEqual([41]);
   });
 
   it('asks which player when none is given, listing them', async () => {

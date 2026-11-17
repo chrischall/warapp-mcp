@@ -423,8 +423,8 @@ describe('packaging for surrender (phase 11)', () => {
 
   it('WEB-PROTOCOL.md documents Surrender (67): parameters, errors and the multi-player pending rule', () => {
     const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
-    expect(methods).toMatch(/\| 67 \| \*\*Surrender\*\*/);
-    expect(methods).toMatch(/\| 68 \| \*\*AcceptSurrender\*\*/);
+    expect(methods).toMatch(/\| 68 \[67\] \| \*\*Surrender\*\*/);
+    expect(methods).toMatch(/\| 69 \[68\] \| \*\*AcceptSurrender\*\*/);
     const start = protocol.indexOf('## Surrender');
     expect(start).toBeGreaterThan(-1);
     const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
@@ -495,7 +495,7 @@ describe('packaging for the speed first turn (#44)', () => {
 
   it('WEB-PROTOCOL.md documents BeginFirstTurn (78) as read from the bundle, not verified live', () => {
     const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
-    expect(methods).toMatch(/\| 78 \| \*\*BeginFirstTurn\*\*/);
+    expect(methods).toMatch(/\| 80 \[78\] \| \*\*BeginFirstTurn\*\*/);
     const start = protocol.indexOf('## Begin first turn');
     expect(start).toBeGreaterThan(-1);
     const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
@@ -535,7 +535,7 @@ describe('packaging for uncommit (#61)', () => {
 
   it('WEB-PROTOCOL.md documents UnCommit (80) as verified from the bundle, not live', () => {
     const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
-    expect(methods).toMatch(/\| 80 \| \*\*UnCommit\*\*/);
+    expect(methods).toMatch(/\| 82 \[80\] \| \*\*UnCommit\*\*/);
     const start = protocol.indexOf('## UnCommit');
     expect(start).toBeGreaterThan(-1);
     const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
@@ -554,7 +554,7 @@ describe('packaging for leaving a lobby (#217)', () => {
 
   it('WEB-PROTOCOL.md documents DeclineGame (64) as read from the bundle and verified live (open-seat lobby)', () => {
     const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
-    expect(methods).toMatch(/\| 64 \| \*\*DeclineGame\*\*/);
+    expect(methods).toMatch(/\| 65 \[64\] \| \*\*DeclineGame\*\*/);
     const start = protocol.indexOf('## DeclineGame');
     expect(start).toBeGreaterThan(-1);
     const section = protocol.slice(start, protocol.indexOf('\n## ', start + 1));
@@ -567,7 +567,7 @@ describe('packaging for leaving a lobby (#217)', () => {
   });
 
   it('CLAUDE.md and the skill say how a leave is confirmed', () => {
-    expect(doc('../CLAUDE.md')).toMatch(/DeclineGame` \(64\) via `warapp_leave_game`/);
+    expect(doc('../CLAUDE.md')).toMatch(/DeclineGame` \(65\) via `warapp_leave_game`/);
     expect(doc('../skills/warapp-mcp/SKILL.md')).toMatch(/`warapp_leave_game` with `game_id`/);
   });
 });
@@ -730,10 +730,10 @@ describe('packaging for in-app notifications and read marks (#311, N1)', () => {
 
   it('lists the notification methods and RegisterChatView in the method table', () => {
     const methods = protocol.slice(protocol.indexOf('## Methods'), protocol.indexOf('## Replies'));
-    expect(methods).toMatch(/\| 43 \| \*\*RegisterChatView\*\*/);
-    expect(methods).toMatch(/\| 317 \| \*\*GetInAppNotifications\*\*/);
-    expect(methods).toMatch(/\| 318 \| \*\*DeleteInAppNotification\*\*/);
-    expect(methods).toMatch(/\| 319 \| \*\*AcknowledgeInAppNotifications\*\*/);
+    expect(methods).toMatch(/\| 44 \[43\] \| \*\*RegisterChatView\*\*/);
+    expect(methods).toMatch(/\| 323 \[317\] \| \*\*GetInAppNotifications\*\*/);
+    expect(methods).toMatch(/\| 324 \[318\] \| \*\*DeleteInAppNotification\*\*/);
+    expect(methods).toMatch(/\| 325 \[319\] \| \*\*AcknowledgeInAppNotifications\*\*/);
   });
 
   it('documents each method from the bundle, UNVERIFIED live, with its field order', () => {

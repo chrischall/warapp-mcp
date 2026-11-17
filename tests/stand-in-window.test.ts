@@ -64,7 +64,7 @@ const longReply: Reply = () => ({
   },
 });
 /** A reply framed in another protocol version. */
-const otherVersion: Reply = () => ({ version: 243, body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame]) });
+const otherVersion: Reply = () => ({ version: 244, body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame]) });
 
 async function harness(b: WarappBundle, reply: Reply): Promise<Harness> {
   return liveHarness({
@@ -117,7 +117,7 @@ describe('when war.app stops answering the old protocol, the error says so', () 
     const res = await h.call('warapp_get_live_board', { game_id: GAME });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/no longer answers/);
-    expect(textOf(res)).toMatch(/protocol version 243/);
+    expect(textOf(res)).toMatch(/protocol version 244/);
   });
 
   it('without a stand-in, another protocol version is the plain version error', async () => {
@@ -125,7 +125,7 @@ describe('when war.app stops answering the old protocol, the error says so', () 
     h = await harness(b, otherVersion);
     const res = await h.call('warapp_get_live_board', { game_id: GAME });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toMatch(/protocol version 243/);
+    expect(textOf(res)).toMatch(/protocol version 244/);
     expect(textOf(res)).not.toMatch(/no longer answers/);
   });
 });

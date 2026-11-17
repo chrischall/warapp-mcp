@@ -25,7 +25,7 @@ export interface SocketTransport {
   fetch(init: FetchproxyFetchInit): Promise<FetchproxyFetchResult>;
 }
 
-/** A Subscribe frame (method 238, no auth block) as the uppercase hex a message packet carries. */
+/** A Subscribe frame (method 242 in protocol 243, no auth block) as the uppercase hex a message packet carries. */
 export function subscribeFrameHex(topics: readonly string[], msgNum: number, extras: ExtrasUp): string {
   return toHex(
     encodeRequest({
@@ -46,7 +46,7 @@ type PushMessage =
 
 /**
  * Decode a frame from a message packet. A server push is a request-shaped
- * frame (MessageExtrasUp, no auth): GameUpdated (241) starts with the game id,
+ * frame (MessageExtrasUp, no auth): GameUpdated (245 in protocol 243) starts with the game id,
  * then two bools the client logs as `chat` and `nonChat` (read from the bundle's
  * handler; UNVERIFIED live), then an optional dict this server does not read.
  * The flags are read only when present: a push without them is a plain update.

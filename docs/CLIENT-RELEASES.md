@@ -68,6 +68,11 @@ Build vs blog post (UTC), since build times were read as Pacific:
   and `GameMessage` gained two optional lists for the reactions and images. In the bundle, the protocol number
   is the last argument of the request-header writer, `(-2147483648,a,!1,<protocol>)`.
 
+- **A protocol bump can renumber the methods.** 243 inserted six methods into the method table
+  (`warlight.shared.messages.MessageType`) and every id after each moved (GetInAppNotifications 317 → 323,
+  SendOrders 74 → 76, …). `Method` in `src/protocol/methods.ts` is one protocol's table: it moves with
+  `PROTOCOL_VERSION`.
+
 ## How long war.app keeps answering an old protocol
 
 Probed live 2026-11-17 with one read-only request (`GetInAppNotifications`, start 0, count 1) framed at each
@@ -75,37 +80,53 @@ protocol number, current client 6.08 / 243:
 
 | Protocol in the request header | war.app's answer |
 |---|---|
-| 243 | parsed in 243's request layout (our 242-layout body got `IncompleteMessage`) |
+| 243 | answered `IncompleteMessage`: in 243, id 317 is another method (243 renumbered the method table; see below) |
 | 223 – 242 | answered |
 | 222 and older | error **48 `ClientOutOfDate`** |
 
-So war.app parses each request in the layout of the protocol it declares and accepts about **21 protocol
-versions at once**: the oldest, 223, is client 5.34 (March 2025), about 20 months back. Two consequences:
+So war.app reads each request in the protocol it declares — its method ids and its layouts — and accepts about
+**21 protocol versions at once**: the oldest, 223, is client 5.34 (March 2025), about 20 months back. Two consequences:
 
 - **The window to adapt is long**: the protocol this server speaks stays accepted well past the next several
   releases. Update deliberately, not in a hurry.
 - **When the window closes the sign is error 48 `ClientOutOfDate`** (49 is `ClientVersionTooHigh`). Treat it
   as "this server's protocol is retired". (#344's closed-window check does not name error 48 yet.)
 
-To re-measure: frame the same read with the protocol field (the header's first uint16) set to older values and
-look for error 48 in the reply (byte 15 = 5, then the int32 code). Read-only; a dozen requests is enough.
+To re-measure: frame a read with the protocol field (the header's first uint16) set to older values and look for
+error 48 in the reply (byte 15 = 5, then the int32 code). Read-only; a dozen requests is enough. Only error 48
+counts: below the current protocol the same method id can name another method, so an answer says the
+protocol is accepted, not that the read made sense.
 
-## Updating to a new client (issue #340)
+## Updating to a new client
 
-1. **Get the build.** Download `ujs.js` from the page's current `?v=` the day it ships, before Cloudflare
-   evicts it, and keep it.
-2. **Read the release.** The blog post lists the features. Diff the new bundle against the last one: new and
-   removed `W["…"]` classes, new error codes (`case N:return"Name"`), the protocol number, the version string.
-3. **Map the names.** Derive the new reader-method and helper names (the BinaryReader prototype under
-   `W["system.io.BinaryReader"]`, the `P` helpers by what they call) and check them with `verifyDialect`.
-4. **Bump the protocol** (`PROTOCOL_VERSION`, `src/protocol/codec.ts`) only with every reader and encoder this
-   server uses checked against the new layouts: new optional fields (like `GameMessage`'s two lists) shift every
-   field after them. Golden-pin the encoders again from real traffic.
-5. **Verify live, read-only first**: a board, the chat, my games; then one write on a game that can take it.
-6. **Move the pin**: `KNOWN_GOOD_BUNDLE` to the new build (version and SHA-256), and update this page and
-   WEB-PROTOCOL.md's version line.
+How it was done for 6.08 / 243 (#340), the way to do it next time.
 
-Until then nothing is urgent: the stand-in decodes, and war.app keeps answering the protocol we speak.
+**Every build (hotfixes too): nothing to do.** The reader dialect is derived from the bundle itself
+(`src/protocol/dialect.ts`): the classes by their registered type names, the haxe Input methods by what they
+do, the BinaryReader methods by the Input method they call, and the Serializer, SharedUtility, MessagePump and
+Enumerable helpers by their canonical form (every minified name replaced by its order of appearance, reader
+methods by their role, class vars by their type name). `verifyDialect` still probes the bundle's own helper
+definitions against the built-ins, and a build whose names cannot be derived falls back to the built-in v6.07
+names, so a misreading build is refused, never decoded through. 6.07.0.1, 6.08.0.1 and 6.08.0.2 all derive.
+
+**A protocol bump: this checklist.** A build whose readers default to another protocol than
+`PROTOCOL_VERSION` is refused at load (`protocol-mismatch`), and the last recorded build that speaks it stands
+in, so play continues while this is done.
+
+1. **Get the build** the day it ships and keep it (the CDN cannot serve it later).
+2. **Diff the wire, not the names.** Canonicalize both builds and compare, per class, the reader (`Ha` and the
+   statics it calls) and the writer (the prototype method that defaults its version), and per method the
+   request writer (the code after `za.qc(<size>,<method id>,…)` up to `za.SendMessage`). Compare the method
+   table (`MessageType`) by name. For 243 that left: the method renumbering, two trailing request parameters
+   (GameRefresh, SendChat), two `GameMessage` lists, one `GameDetailsAndChat` string and dict, one `GamePlayer`
+   int (docs/WEB-PROTOCOL.md, "Protocol 243").
+3. **Change only what moved:** `PROTOCOL_VERSION` and `CLIENT_VERSION`, the `Method` table, each encoder whose
+   request changed, each positional reader whose class gained or moved a field (`src/chat.ts`,
+   `src/surrender-pending.ts`, …: every one checks an exact field count, so a moved field reads as unknown,
+   never wrong). Re-pin the goldens.
+4. **Verify live, read-only first:** my games, a board against the previous protocol's decode of the same turn,
+   check_plan, notifications, the chat inbox, the push socket. Then one write on a game that can take it.
+5. **Move the pin:** `KNOWN_GOOD_BUNDLE` to the new build (version and SHA-256).
 
 ## Possible follow-ups (not built)
 

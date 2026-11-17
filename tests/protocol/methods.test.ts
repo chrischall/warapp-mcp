@@ -75,22 +75,22 @@ describe('SendChat params', () => {
     return toHex(w.bytes());
   };
 
-  it('public: game id, text, channel -1, no recipient, no group, empty markers, no last-seen dicts', () => {
+  it('public: game id, text, channel -1, no recipient, no group, empty markers, no last-seen dicts, no images', () => {
     expect(CHAT_CHANNEL_PUBLIC).toBe(-1);
     expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'gg' }))).toBe(
-      '05000000' + str('gg') + 'FFFFFFFF' + '00' + '00' + '00' + '00' + '00' + '00',
+      '05000000' + str('gg') + 'FFFFFFFF' + '00' + '00' + '00' + '00' + '00' + '00' + '00', // 243: no image list
     );
   });
 
   it('team: the channel is the team number', () => {
     expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'go', channel: 2 }))).toBe(
-      '05000000' + str('go') + '02000000' + '00' + '00' + '00' + '00' + '00' + '00',
+      '05000000' + str('go') + '02000000' + '00' + '00' + '00' + '00' + '00' + '00' + '00',
     );
   });
 
   it('private: the recipient is a present int32', () => {
     expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'hi', recipient: 1234567 }))).toBe(
-      '05000000' + str('hi') + 'FFFFFFFF' + '01' + '87D61200' + '00' + '00' + '00' + '00' + '00',
+      '05000000' + str('hi') + 'FFFFFFFF' + '01' + '87D61200' + '00' + '00' + '00' + '00' + '00' + '00',
     );
   });
 });
@@ -102,16 +102,16 @@ describe('GameRefresh params (UNVERIFIED live, from the client serializer)', () 
     return toHex(w.bytes());
   };
 
-  it('chat only, in a game being played: game id, chat, no details, two -1 markers, not a lobby, no group dicts', () => {
+  it('chat only, in a game being played: game id, chat, no details, two -1 markers, not a lobby, no group dicts, no last value', () => {
     expect(hex((w) => writeGameRefreshParams(w, { gameId: 5, chat: true, nonChat: false, lobby: false }))).toBe(
-      '05000000' + '01' + '00' + str('-1') + str('-1') + '00' + '00' + '00',
+      '05000000' + '01' + '00' + str('-1') + str('-1') + '00' + '00' + '00' + '00', // 243: no last optional value
     );
     expect(str('-1')).toBe('01022D31');
   });
 
   it('a lobby sets the lobby flag', () => {
     expect(hex((w) => writeGameRefreshParams(w, { gameId: 5, chat: true, nonChat: false, lobby: true }))).toBe(
-      '05000000' + '01' + '00' + '01022D31' + '01022D31' + '01' + '00' + '00',
+      '05000000' + '01' + '00' + '01022D31' + '01022D31' + '01' + '00' + '00' + '00',
     );
   });
 });
@@ -123,9 +123,9 @@ describe('RegisterChatView params (UNVERIFIED live, from the client writer; #311
     return toHex(w.bytes());
   };
 
-  it('is method 43', () => {
-    expect(Method.RegisterChatView).toBe(43);
-    expect(methodName(43)).toBe('RegisterChatView');
+  it('is method 44', () => {
+    expect(Method.RegisterChatView).toBe(44);
+    expect(methodName(44)).toBe('RegisterChatView');
   });
 
   it('game id, the public and team marks, then no dicts; a channel not marked is -1', () => {
@@ -566,13 +566,13 @@ describe('AcceptOpenSeat (join an open game)', () => {
     const { Method } = await import('../../src/protocol/methods.js');
     expect(Method).toMatchObject({
       GetOpenGames: 10,
-      GetGameDetails: 38,
-      GetGameSettings: 48,
-      AcceptGame: 60,
-      AcceptOpenSeat: 61,
-      AcceptOpenAutoGame: 62,
-      GetOpenAutoGame: 63,
-      DeclineGame: 64,
+      GetGameDetails: 39,
+      GetGameSettings: 49,
+      AcceptGame: 61,
+      AcceptOpenSeat: 62,
+      AcceptOpenAutoGame: 63,
+      GetOpenAutoGame: 64,
+      DeclineGame: 65,
     });
   });
 
@@ -614,10 +614,10 @@ describe('AcceptOpenSeat (join an open game)', () => {
   });
 });
 
-describe('Surrender (method 67)', () => {
+describe('Surrender (method 68)', () => {
   it('has the client method-table id', async () => {
     const { Method } = await import('../../src/protocol/methods.js');
-    expect(Method.Surrender).toBe(67);
+    expect(Method.Surrender).toBe(68);
   });
 
   // Hand-built: int32 LE game id 0x00BC614E = 4E 61 BC 00; bool surrender
@@ -634,10 +634,10 @@ describe('Surrender (method 67)', () => {
   });
 });
 
-describe('UnCommit (method 80)', () => {
+describe('UnCommit (method 82)', () => {
   it('has the client method-table id', async () => {
     const { Method } = await import('../../src/protocol/methods.js');
-    expect(Method.UnCommit).toBe(80);
+    expect(Method.UnCommit).toBe(82);
   });
 
   // From the client bundle's writer (not yet a live capture): after the auth block,
@@ -664,12 +664,12 @@ describe('discard orders', () => {
   });
 });
 
-describe('BeginFirstTurn (method 78)', () => {
+describe('BeginFirstTurn (method 80)', () => {
   it('has the client method-table id and takes the auth block', async () => {
     const { Method, methodName } = await import('../../src/protocol/methods.js');
     const { methodTakesAuth } = await import('../../src/protocol/rpc.js');
-    expect(Method.BeginFirstTurn).toBe(78);
-    expect(methodName(78)).toBe('BeginFirstTurn');
+    expect(Method.BeginFirstTurn).toBe(80);
+    expect(methodName(80)).toBe('BeginFirstTurn');
     expect(methodTakesAuth(Method.BeginFirstTurn)).toBe(true);
   });
 
@@ -682,7 +682,7 @@ describe('BeginFirstTurn (method 78)', () => {
     expect(hex((w) => writeBeginFirstTurnParams(w, 7))).toBe('07000000');
   });
 
-  it('round-trips through a request frame as method 78 with the game id after the auth block', async () => {
+  it('round-trips through a request frame as method 80 with the game id after the auth block', async () => {
     const { Method, writeBeginFirstTurnParams } = await import('../../src/protocol/methods.js');
     const { decodeRequest, encodeRequest } = await import('../../src/protocol/codec.js');
     const bytes = encodeRequest({
@@ -693,19 +693,19 @@ describe('BeginFirstTurn (method 78)', () => {
       params: (w) => writeBeginFirstTurnParams(w, 4001),
     });
     const req = decodeRequest(bytes, { hasAuth: true });
-    expect(req.method).toBe(78);
+    expect(req.method).toBe(80);
     expect(req.email).toBe('test@example.com');
     expect(req.body.int32()).toBe(4001);
     expect(req.body.remaining).toBe(0);
   });
 });
 
-describe('DeclineGame (method 64): leaving a lobby (#217)', () => {
+describe('DeclineGame (method 65): leaving a lobby (#217)', () => {
   it('has the client method-table id and takes the auth block', async () => {
     const { Method, methodName } = await import('../../src/protocol/methods.js');
     const { methodTakesAuth } = await import('../../src/protocol/rpc.js');
-    expect(Method.DeclineGame).toBe(64);
-    expect(methodName(64)).toBe('DeclineGame');
+    expect(Method.DeclineGame).toBe(65);
+    expect(methodName(65)).toBe('DeclineGame');
     expect(methodTakesAuth(Method.DeclineGame)).toBe(true);
   });
 
@@ -730,12 +730,12 @@ describe('DeclineGame (method 64): leaving a lobby (#217)', () => {
   });
 });
 
-describe('AcceptSurrender (method 68, #317)', () => {
+describe('AcceptSurrender (method 69, #317)', () => {
   it('has the client method-table id and takes the auth block', async () => {
     const { Method, methodName } = await import('../../src/protocol/methods.js');
     const { methodTakesAuth } = await import('../../src/protocol/rpc.js');
-    expect(Method.AcceptSurrender).toBe(68);
-    expect(methodName(68)).toBe('AcceptSurrender');
+    expect(Method.AcceptSurrender).toBe(69);
+    expect(methodName(69)).toBe('AcceptSurrender');
     expect(methodTakesAuth(Method.AcceptSurrender)).toBe(true);
   });
 

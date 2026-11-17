@@ -35,6 +35,22 @@ describe('readGameRefreshChat', () => {
     ]);
   });
 
+  it("reads 243's message layout: the shared images and the reactions around the text do not shift the fields", () => {
+    const lines = readGameRefreshChat(
+      bundle,
+      bytes((w) =>
+        writeGameDetailsAndChat(w, [
+          { id: 7, date: at(7), from: BOB, text: 'look', images: ['img-1', 'img-2'], reactions: [11, 12], channel: 4, turn: 3 },
+          { id: 8, date: at(8), from: ANN, text: 'nice', images: [], turn: 3 },
+        ]),
+      ),
+    );
+    expect(lines).toEqual([
+      { id: '7', sender: BOB, text: 'look', time: at(7).toISOString(), timeMs: at(7).getTime(), turn: 3, channel: 'team', team: 4 },
+      { id: '8', sender: ANN, text: 'nice', time: at(8).toISOString(), timeMs: at(8).getTime(), turn: 3, channel: 'public' },
+    ]);
+  });
+
   it('a message without a date keeps its place by id and has no time', () => {
     const lines = readGameRefreshChat(
       bundle,

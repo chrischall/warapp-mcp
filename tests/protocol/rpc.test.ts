@@ -58,7 +58,7 @@ describe('WarappRpc.call', () => {
     expect(req.body).toMatch(/^[0-9A-F]+$/);
 
     const { request } = exchanges[0]!;
-    expect(request.version).toBe(242);
+    expect(request.version).toBe(243);
     expect(request.method).toBe(Method.GetTerritoryPicks);
     expect(request.email).toBe(TEST_EMAIL);
     expect(request.body.int32()).toBe(4242);
@@ -91,7 +91,7 @@ describe('WarappRpc.call', () => {
     const { rpc, exchanges } = setup(() => ({ body: (w) => w.bool(true) }));
     await rpc.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks);
     const { extras } = exchanges[0]!.request;
-    expect(extras.client).toBe('v6.07.0.1');
+    expect(extras.client).toBe('v6.08.0.2');
     expect(extras.platform).toBe(15);
     expect(extras.dict).toEqual(new Map());
     expect(extras.serverInfoVersionA).toBe(348);

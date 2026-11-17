@@ -24,13 +24,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Errors are HTTP 200.** GameFeed answers failures as 200 JSON `{ termsOfUse, error }`
   (`Auth failed`, `…ServerGameKeyNotFound`, `GameID must be an integer`). Never decide
   success from the status alone.
-- **The decoder is pinned to client v6.07 / protocol 242 (`KNOWN_GOOD_BUNDLE`, `src/protocol/bundle.ts`).** The
-  built-in reader names (`DEFAULT_DIALECT`) and every hand-written encoder are that release's. war.app's CDN serves
-  it only while Cloudflare still caches its exact URL (the origin ignores `?v=` and returns the current build:
-  `docs/CLIENT-RELEASES.md`), and war.app still answers a 242 request in 242's layout, so when the current
-  client is refused at load (2026-11-17: 639304451701341657 renamed every reader and moved to protocol 243) the
-  pinned one stands in, only with its pinned SHA-256, kept on disk beside the refused copy and re-looked-up hourly;
-  `report().standInFor` and `warapp_session_status` say so. Moving to 243 means new names AND new layouts, not a rename.
+- **The decoder speaks protocol 243 (client v6.08.0.2) and derives the client's names (#340).** Every build renames
+  the reader's methods and helpers, so `src/protocol/dialect.ts` derives them from the bundle (classes by registered
+  type name, the haxe Input and BinaryReader methods by what they read, the Serializer/SharedUtility/MessagePump/
+  Enumerable helpers by canonical form; never runs bundle code); `BundleInterpreter` uses the derived names, falling
+  back to the built-in v6.07 ones when any role is missing, and `verifyDialect` still probes the derived helpers
+  (`helperClass`, `requiredHelpers` by role). Every hand-written encoder, the `Method` table (243 renumbered it) and
+  the positional readers are 243's; a bundle whose readers default to another protocol (`bundleProtocol`) is refused
+  at load (`protocol-mismatch`, a stand-in refusal like a dialect one), since war.app answers in the protocol a
+  request declares. The pin (`KNOWN_GOOD_BUNDLE`) is 639304508939095333. war.app's CDN serves a build by version only
+  while Cloudflare still caches its exact URL (the origin ignores `?v=`: `docs/CLIENT-RELEASES.md`).
   **The last build that worked stands in first (the owner, 2026-11-17: fall back gracefully).** A bundle is recorded in
   `<dataDir>/bundle/known-good.json` (version, digest, `verifiedAt`; newest first, `MAX_KNOWN_GOOD` (3); 0600, atomic,
   path-locked; a file that does not parse is never overwritten) once a live board decodes with it, every byte read and the
@@ -43,8 +46,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   warnings with `standInLine`. While one stands in, a reply that does not decode with it (bytes left over, a frame or layout
   error) or comes in another protocol version (`ProtocolVersionError`) is `StandInClosedError` (war.app no longer answers the
   old build; #340), never a board. Hosted, `MCP_DATA_DIR` holds both files like the cache.
-  How and when war.app ships clients, which protocols it still accepts (223–242 on 2026-11-17; older get error 48
-  `ClientOutOfDate`) and the checklist for moving to a new client are in `docs/CLIENT-RELEASES.md`.
+  How and when war.app ships clients, which protocols it still accepts (223–243 on 2026-11-17; older get error 48
+  `ClientOutOfDate`) and the checklist for a protocol bump are in `docs/CLIENT-RELEASES.md`; what 243 changed is
+  `docs/WEB-PROTOCOL.md` "Protocol 243".
 - **The healthcheck probes a game that does not exist** (`GameID=2147483647`): war.app
   checks credentials first, so `ServerGameKeyNotFound` proves the token works without
   loading a real game, and `Auth failed` is a rejected credential.
@@ -252,8 +256,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   VERIFIED LIVE 2026-11-14 (count, time, turn, sender and channel matched GameFeed `GetChat=true`); team and
   private channels, `mark_seen` / the cursor, `warapp_plan_turn`'s `chat.unread`, `chatActivity` and sending
   remain UNVERIFIED. `warapp_get_chat` reads
-  `GameRefresh` (39, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
-  fields by read order, a private counterpart first, then a game group (`unknown`), then the channel,
+  `GameRefresh` (40, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
+  fields by read order (243: 12 fields, the shared images at 5 and the reactions at 7, both optional lists), a private counterpart first, then a game group (`unknown`), then the channel,
   -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
   failure, GameFeed's `chat` (no channel: `unknown`). **A web read with fewer messages than GameFeed's chat (#313:
   a finished game's surrender line was missing) uses GameFeed's too**, from the GameFeed read the tool already made
@@ -280,7 +284,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   those (`limit` newest, `markedUnshown`), the others are `quiet`, and a failed read is in `failed`, never
   thrown. Only `mark_seen: true` writes the cursor (every channel, `markChatSeen`, shared with `warapp_get_chat`).
   **Read marks on war.app (#311, VERIFIED live 2026-11-16 on nine games, direct transport) are `warapp_mark_chat_read`, confirm-gated** (`src/tools/chat-read-mark.ts`;
-  one game, every channel or one): it sends `RegisterChatView` (43; `writeRegisterChatViewParams`, golden-pinned): per
+  one game, every channel or one): it sends `RegisterChatView` (44; `writeRegisterChatViewParams`, golden-pinned): per
   channel the highest message id read (`chatViewMarks`, `src/chat.ts`, mine included; private conversations keyed by
   the counterpart — the recipient of my message, else the sender; game groups, the web client's `unknown`, by group
   id; a channel not marked goes as `-1`). It refuses the account unknown, a chat read only from GameFeed (no message
@@ -295,7 +299,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
   is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
-- **In-app notifications (#311) are `GetInAppNotifications` (317) via `warapp_get_notifications`** (read-only,
+- **In-app notifications (#311) are `GetInAppNotifications` (323) via `warapp_get_notifications`** (read-only,
   hosted too; `src/notifications.ts`, the reply decoded by the bundle's readers by type name —
   `GetInAppNotificationsReturn` / `InAppNotification`, 7 fields by read order — like GetMyGames). Name-free
   beyond ids: `id` (decimal text), `kind` (`game-ended` only on the client's own title wording, `Game "<name>" has
@@ -309,19 +313,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   read each; `endOfGame: { processed: [{ gameId, status, turns?, profileFold? }], pending }`), which folds its live
   profile too; then a game's opponent profile still kept unfolded is folded through `foldFinishedGame`
   (`hasUnfoldedProfile`): one GameFeed read (no map), at most `FOLD_LOOKUPS` (5) per call, else no request.
-  `warapp_dismiss_notification` (confirm-gated) sends `AcknowledgeInAppNotifications` (319: marks read, never
+  `warapp_dismiss_notification` (confirm-gated) sends `AcknowledgeInAppNotifications` (325: marks read, never
   deletes) for the listed unread ids; the preview names ids and game ids only; read back by listing
   again (up to `MAX_FIND_PAGES` pages): `dismissed` (`confirmed`) only when every id reads read or is seen gone —
   the pages read cover the whole list, or reach past where it stood in the plan by as many as the list has grown
   (`seenGone`); an id not found otherwise is `notSeen` ("not seen in the pages read") and the outcome
   `unconfirmed`, as is one still unread; `unknown` never resent. `warapp_delete_notification` (confirm-gated,
-  destructive: the client's Delete button, as #311 asked) sends `DeleteInAppNotification` (318,
+  destructive: the client's Delete button, as #311 asked) sends `DeleteInAppNotification` (324,
   `writeDeleteInAppNotificationParams`: one decimal-text id) once per listed id, in order, never retried; error
   699 (`NOTIFICATION_NOT_FOUND`) is `alreadyGone`; any other refusal throws when nothing changed yet, else stops
   there (`refused`, the rest `notSent`, `unconfirmed`); no answer stops there too and is `unknown`, never read back
   or resent. Read back by the same listing and `seenGone`: `deleted` (`confirmed`) only when every id sent is seen
   gone; still listed (`stillListed`) or `notSeen` is `unconfirmed`. The preview names ids and game ids only.
-  Encoders golden-pinned; 317, 318, 319 and 43 VERIFIED live 2026-11-16 (direct transport). Not a chat send (D2).
+  Encoders golden-pinned; these four (242 ids 317, 318, 319 and 43) VERIFIED live 2026-11-16 on protocol 242 (direct transport); on 243 only the list read is checked live. Not a chat send (D2).
 - **Team games read (part C1 of `docs/PLAN-TEAMS.md`).** One team test everywhere: `isTeamGame` /
   `teammatesOf` (`src/teams.ts`, over `carriesTeam`); teammate ids are GameFeed ids at the tool boundary
   (an AI seat has no in-game id: it owns nothing on the board, never a throw). The read-only
@@ -469,8 +473,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   gives the same warnings for its plan (the planner never reads commitments). A will-attack is only for the current turn.
 - **A pending surrender is read from the game details (#317, `src/surrender-pending.ts`, UNVERIFIED live).**
   GameFeed keeps a player who asked to surrender `Playing`, and GetMyGames / LatestGameInfo carry nothing:
-  only GameRefresh (39) asked with `nonChat` does — `GameDetailsAndChat` → `GameWL` (14 fields, players at 7) →
-  `GamePlayer` (36 fields; the reader's link back to the game, set first, is dropped before counting).
+  only GameRefresh (40) asked with `nonChat` does — `GameDetailsAndChat` → `GameWL` (14 fields, players at 7) →
+  `GamePlayer` (37 fields since 243; the reader's link back to the game, set first, is dropped before counting).
   `pendingSurrenders` gives `{ inGameId, player (GameFeed id or null), owedByMe }`, owed by the client's own
   test (their seat `Playing` + `Surrendered`, mine `Playing`, not AI or turned AI, my id not in their
   `PlayersAcceptedMySurrender`); my own surrender is left out. `src/tools/surrender-pending.ts` reads it only
@@ -483,7 +487,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   owed). Each read costs one GameRefresh; nothing is cached (a surrender can come any moment). A GameFeed id and
   an in-game id are never one field: results carry `player` (GameFeed id or `null`) beside `inGameId`, and the
   in-game id of a GameFeed player comes from one helper, `inGameOf` (`src/live.ts`).
-- **Accepting another player's surrender is `AcceptSurrender` (68) via `warapp_accept_surrender`, confirm-gated**
+- **Accepting another player's surrender is `AcceptSurrender` (69) via `warapp_accept_surrender`, confirm-gated**
   (#317; encoder read from the bundle's writer, golden-pinned, UNVERIFIED live). `player` names the surrendering
   player (optional with one pending). The plan reads the game details and refuses a finished game, a lobby, a game
   I am not playing, an instant-surrender game, unreadable details, no surrender pending from that player, and my
@@ -497,7 +501,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `ffa-surrender-veto`. The outcome is read back from GameFeed (the seat `SurrenderAccepted`, handed to an AI, or
   the game over → `accepted`) and the game details (my id among those that accepted → `pending`, others still owe
   theirs; both `confirmed`); else `unconfirmed`, and no answer is `unknown`. Never resent.
-- **Surrender is `Surrender` (67) via `warapp_surrender`, confirm-gated** (`undo` takes back a
+- **Surrender is `Surrender` (68) via `warapp_surrender`, confirm-gated** (`undo` takes back a
   pending one). It refuses finished games and games the account is not playing, and reads the
   outcome from GameFeed (`surrendered` / `pending` — the others' acceptance is needed when the game's
   `InstantSurrender` says so, and MAY be needed with more than two players when it is unread (#228) — /
@@ -505,14 +509,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **A speed first turn hides the board until Begin.** With MoveOrder `NoLuckCycle` war.app sends
   no standing on turn 1 (or while picking) until the player presses Begin, which starts their
   turn timer; the live tools say so instead of the lobby error. `warapp_begin_turn` sends
-  `BeginFirstTurn` (78, confirm-gated, encoding read from the bundle — not verified live) and
+  `BeginFirstTurn` (80, confirm-gated, encoding read from the bundle — not verified live) and
   reports `begun` only once the board reads back.
-- **Withdrawing committed orders is `UnCommit` (80) via `warapp_uncommit_turn`, confirm-gated.** Its
+- **Withdrawing committed orders is `UnCommit` (82) via `warapp_uncommit_turn`, confirm-gated.** Its
   parameters (only the int32 game id after the auth block) are read from the bundle's writer and
   golden-pinned, NOT yet verified live. It refuses outside a turn phase and when `hasCommittedOrders`
   is false, and reads the outcome from GameFeed (`uncommitted` / `unconfirmed`); a transport failure
   is `unknown`, never retried. `warapp_submit_turn`'s "already committed" refusal points to it.
-- **Leaving a lobby is `DeclineGame` (64) via `warapp_leave_game`, confirm-gated** (#217): the lobby's
+- **Leaving a lobby is `DeclineGame` (65) via `warapp_leave_game`, confirm-gated** (#217): the lobby's
   Decline button, also how a seated player leaves a game still `WaitingForPlayers`. Its parameters
   (the int32 game id, then a "mod hooks the decline" bool sent false) are read from the bundle's writer
   and golden-pinned; **verified live 2026-11-14** for a seat taken through an open seat (an invited
@@ -528,7 +532,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   too). The open-games record carries no map size, so `markLotteries` asks GameFeed (map included)
   only for lobbies with that settings shape, at most `LOTTERY_LOOKUPS` (5) per call, else uses a
   cached map. A lottery breaks the joining policy.
-- **Open games come from the `/MultiPlayer/OpenGames` page payload (`AllOpenGamesData`), not a `/Services` call; joining is `AcceptOpenSeat` (61) via `warapp_join_game`, confirm-gated** and reported `joined` only once GameFeed or `GetMyGames` shows the account seated (`docs/WEB-PROTOCOL.md` "Open games").
+- **Open games come from the `/MultiPlayer/OpenGames` page payload (`AllOpenGamesData`), not a `/Services` call; joining is `AcceptOpenSeat` (62) via `warapp_join_game`, confirm-gated** and reported `joined` only once GameFeed or `GetMyGames` shows the account seated (`docs/WEB-PROTOCOL.md` "Open games").
 - **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (card plays, then deploys, then moves;
   encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =
   GameFeed `numberOfTurns` + 1 — every tool reports this as `turn` (`currentTurn()`); the
@@ -669,7 +673,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (no session, signed out, no `websocket` transport, failed upgrade) — **xhr-polling over the
   bridge** (`src/push/socketio.ts`): the first poll must return the connect packet `1::` before
   any POST (a POST first is HTTP 400). Both answer `2::` heartbeats and send `Subscribe`
-  (method 238, no auth block) to `Game.<id>`. A push is method 241 `GameUpdated` carrying the game
+  (method 242, no auth block) to `Game.<id>`. A push is method 245 `GameUpdated` carrying the game
   id and its chat flags (no text), so `warapp_wait_for_turn` re-reads GameFeed after one (debounced per game, below). **A reconnect loses the
   pushes sent during the gap** (war.app has closed a healthy socket after ~60 s): close, error
   or a missed heartbeat reconnects (new handshake, new sid, re-subscribe) and `onReconnect`

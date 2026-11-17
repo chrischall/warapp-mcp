@@ -21,7 +21,7 @@ import {
 import { Method } from './methods.js';
 
 /** The client version string the current web client sends. */
-export const CLIENT_VERSION = 'v6.07.0.1';
+export const CLIENT_VERSION = 'v6.08.0.2';
 /** EnumSerialization_Platform: the website. */
 export const PLATFORM_WEBSITE = 15;
 /**

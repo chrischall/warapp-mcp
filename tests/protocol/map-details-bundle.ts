@@ -13,7 +13,7 @@ export const MAP_DETAILS_BUNDLE = [
   REQUIRED_HELPER_DEFS,
   'function Mdx(){}function Dmx(){this.k=0}function Ndx(){this.k=0}function Scx(){this.k=0}',
   'W["warlight.shared.MapDetails"]=Mdx;',
-  'Mdx.Ha=function(a,b,d){null==d&&(d=242);return Mdx.rd(a,b,d)};',
+  'Mdx.Ha=function(a,b,d){null==d&&(d=243);return Mdx.rd(a,b,d)};',
   'Mdx.rd=function(a,b,d){var e=new Mdx;e.m0=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return P.wc(a)}):null;' +
     'e.m1=P.Td(a);e.m2=P.Ya(a);' +
     'e.m3=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Dmx.Ha(a,e,d):null}):null;' +

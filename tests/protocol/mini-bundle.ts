@@ -22,7 +22,7 @@ export const MINI_BUNDLE = [
   'function Bd(){}function Ci(a){this.r=a}function Sq(){}function Op(){}',
   'function Bk(a){this.ok=a.nope.deeper}',
   'W["demo.shared.Point"]=Pt;Pt.aa="demo.shared.Point";',
-  'Pt.Ha=function(a,b,d){null==d&&(d=242);return Pt.rd(a,d)};',
+  'Pt.Ha=function(a,b,d){null==d&&(d=243);return Pt.rd(a,d)};',
   // Whitespace-tolerant `X.fn = function`.
   'Pt.rd = function(a,b){var d=new Pt;d.x=P.Ya(a);d.y=P.Ya(a);return d};',
   'W["demo.shared.Army"]=Ar;',
@@ -36,7 +36,7 @@ export const MINI_BUNDLE = [
   'W["demo.shared.Kind"]=Kd;',
   'Kd.Ha=function(a){return P.uq(a)};',
   'W["demo.shared.Board"]=Bd;',
-  'Bd.Ha = function(a,b,d){null==d&&(d=242);return Bd.rd(a,b,d)};',
+  'Bd.Ha = function(a,b,d){null==d&&(d=243);return Bd.rd(a,b,d)};',
   'Bd.rd=function(a,b,d){var e=new Bd,f;e.name=P.wc(a);e.origin=a.Ua()?Pt.Ha(a,e,d):null;' +
     'e.points=a.Ua()?P.Sd(a,function(){return a.Ua()?Pt.Ha(a,e,d):null}):null;' +
     'e.owners=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return P.wc(a)}):null;' +
@@ -56,7 +56,7 @@ export const MINI_BUNDLE = [
     'd.len=d.raw.length;d.id=za.rc(4);if(d.not){d.branch="then"}else{d.branch="else"}for(;;){break}' +
     'return d};',
   'W["warlight.shared.LatestGameInfo"]=NE;',
-  'NE.Ha=function(a,b,d){null==d&&(d=242);var e=new NE;e.turn=P.Ya(a);e.ver=d;return e};',
+  'NE.Ha=function(a,b,d){null==d&&(d=243);var e=new NE;e.turn=P.Ya(a);e.ver=d;return e};',
   'function NE(){this.turn=0}',
   // Constructs the interpreter does not support, each to be reported with its location.
   'W["demo.shared.Loop"]=Lp;Lp.Ha=function(a){while(a.Ua()){}return 1};',

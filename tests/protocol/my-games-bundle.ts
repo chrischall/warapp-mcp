@@ -15,7 +15,7 @@ export const MY_GAMES_BUNDLE = [
   REQUIRED_HELPER_DEFS,
   'function Mr(){}function Gi(){}function Gp(){}function Sx(){}function Ox(){}function Cl(){}function Pr(){}function Ip(){}',
   'W["warlight.shared.MyGamesReturn"]=Mr;',
-  'Mr.Ha=function(a,b,d){null==d&&(d=242);var e=new Mr;' +
+  'Mr.Ha=function(a,b,d){null==d&&(d=243);var e=new Mr;' +
     'e.m1=a.Ua()?P.Sd(a,function(){return a.Ua()?Gi.Ha(a,e,d):null}):null;e.m2=P.Ya(a);return e};',
   'W["warlight.shared.GameInfo"]=Gi;',
   'Gi.Ha=function(a,b,d){var e=new Gi;e.a1=P.Ya(a);e.a2=P.ak(a);e.a3=P.wc(a);e.a4=P.Ya(a);e.a5=P.Ya(a);' +

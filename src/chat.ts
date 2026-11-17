@@ -21,9 +21,12 @@ import { asInt } from './scalars.js';
 export const GAME_DETAILS_AND_CHAT = 'warlight.shared.GameDetailsAndChat';
 export const GAME_MESSAGE = 'warlight.shared.GameMessage';
 
-/** GameMessage field positions in read order, and its whole field count. */
-const GM = { date: 0, sender: 1, group: 2, id: 4, text: 5, channel: 6, to: 7, turn: 9 } as const;
-export const GAME_MESSAGE_FIELDS = 10;
+/**
+ * GameMessage field positions in read order, and its whole field count (protocol 243: the shared images,
+ * an optional list of strings, at 5, and the reactions, an optional list of records, at 7).
+ */
+const GM = { date: 0, sender: 1, group: 2, id: 4, images: 5, text: 6, reactions: 7, channel: 8, to: 9, turn: 11 } as const;
+export const GAME_MESSAGE_FIELDS = 12;
 
 /** The public channel's value (any other is a team). */
 export const PUBLIC_CHANNEL = -1;
@@ -70,7 +73,11 @@ function webLine(m: unknown): ChatLine | undefined {
   const channel = f[GM.channel];
   const to = f[GM.to];
   const turn = f[GM.turn];
+  const images = f[GM.images];
+  const reactions = f[GM.reactions];
   if (!(date === null || date instanceof Date) || !optInt(sender) || !optInt(group) || !optInt(to) || !optInt(turn)) return undefined;
+  // Not reported, but checked: a field of another type here means the layout is not 243's.
+  if (!(images === null || Array.isArray(images)) || !(reactions === null || Array.isArray(reactions))) return undefined;
   if (!(id === null || typeof id === 'string' || isInt(id)) || typeof text !== 'string' || !isInt(channel)) return undefined;
   const line: ChatLine = { sender, text, turn, channel: 'unknown' };
   if (id !== null) line.id = String(id);

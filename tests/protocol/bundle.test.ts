@@ -115,7 +115,7 @@ describe('loadBundle', () => {
     expect(b.readClass('warlight.shared.LatestGameInfo', r)).toEqual({
       $type: 'warlight.shared.LatestGameInfo',
       turn: 12,
-      ver: 242,
+      ver: 243,
     });
     expect(b.has('warlight.shared.LatestGameInfo')).toBe(true);
     expect(b.has('warlight.shared.Nope')).toBe(false);
@@ -668,11 +668,11 @@ describe('a known-good bundle stands in when the current one is refused (2026-11
     expect(f.calls).toEqual([PAGE, CDN, GOOD_URL, PAGE]);
   });
 
-  it('pins the client release the built-in readers are written for (v6.07, protocol 242)', async () => {
+  it('pins the client release every encoder is written for (v6.08.0.2, protocol 243)', async () => {
     const { KNOWN_GOOD_BUNDLE } = await import('../../src/protocol/bundle.js');
     expect(KNOWN_GOOD_BUNDLE).toEqual({
-      version: '639294131571648437',
-      digest: 'dec5cf174f6affb9e4c08802534cf8c6c6496eff977847aaf1497535e3371404',
+      version: '639304508939095333',
+      digest: '3c55e2d08681d05661eb350b3d72d02f25729130bb78dc9c5d3b1febd73febd1',
     });
   });
 });
