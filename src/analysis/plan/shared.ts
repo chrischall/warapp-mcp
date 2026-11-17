@@ -40,6 +40,11 @@ export const PAYBACK_TURNS = 10;
  * next turn, and a border may still be retaken or the stack turned elsewhere.
  */
 export const BREACH_WEIGHT = 0.5;
+/**
+ * #291: the share of what a gate's loss opens (`opensBehind`: held bonuses every route from an enemy or the fog
+ * reaches only through it) that its protected value counts — the enemy still has to walk in, as with a breach.
+ */
+export const OPENS_WEIGHT = 0.5;
 /** #201: the shortest payback horizon once the game is decided. */
 export const DECIDED_PAYBACK_MIN = 3;
 /** …or when one remaining territory alone costs more than this many times its value (a wasteland). */

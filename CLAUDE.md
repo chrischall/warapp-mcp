@@ -119,7 +119,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   deterministic like the planner, and neither is called by it. The look-ahead itself lives in
   `src/analysis/lookahead.ts` (`twoStepReaches`), one computation shared with the planner's two-step
   hold (#172, applied wherever armies leave a guarded territory: attacks and their softeners,
-  transfers, staging, top-ups): change it there, and `exposedNextTurn` and the planner move together.
+  transfers, staging, top-ups — guarded: my commander's, a held bonus's member, or (#291) a territory whose loss opens
+  held bonuses, so the gate behind a conceded border keeps a hold; #257's step into that conceded border cuts the reach
+  through it and is not blocked): change it there, and `exposedNextTurn` and the planner move together.
 - **Commander safety (#274, `src/analysis/commander-safety.ts`, pure).** One question of the stress test: of
   the single-deploy replies that strike my commander's territory after my orders (`stressPlan`'s `targets`,
   no look-ahead), which kill it, and the armies it needs there to survive them all (`needs`, searched by adding
@@ -1209,7 +1211,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     held ÷ size) of a bonus I am building — every missing member a visible neutral, finishing it
     economic (#122) — plus per-territory income, plus (#235) the income of what its loss cuts off
     from the rest of my holdings (every part but the largest when it is a cut vertex; named in the rationale
-    only with income or at least `PAYBACK_TURNS` armies); its
+    only with income or at least `PAYBACK_TURNS` armies), plus (#291, guard on or off) `OPENS_WEIGHT` (0.5) of the held
+    bonuses its loss OPENS — my territories every route from an enemy or the fog reaches only through it
+    (`opensBehind`, `src/analysis/opens.ts`; none containing it, none its cut or breach counts; an "… is the only way
+    in to …" line); its
     **worth** adds the armies a hold saves as income (armies / `PAYBACK_TURNS`), those cut off
     included, so a big stack is topped up rather than abandoned. Holds go in order of worth per army of hold cost. A
     border is **conceded** when holding costs more than `CONCEDE_FACTOR` (3) × its worth or than the income left

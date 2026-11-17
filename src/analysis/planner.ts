@@ -484,7 +484,13 @@
 //     fog, that no other front reaches within two steps, and that are hollow (none of mine beside
 //     them, themselves included, holds the largest visible foe stack beside the border plus its
 //     owner's deploy), plus their per-territory income; what #235 cuts off is not counted twice. A
-//     rationale line names it ("… alone shields … (#275)"). Its hold cost is the fewest
+//     rationale line names it ("… alone shields … (#275)"). #291, guard on or off: a gate — a border
+//     every route from an enemy or the fog takes to reach territories of mine behind it
+//     (src/analysis/opens.ts `opensBehind`) — also protects OPENS_WEIGHT (0.5) of the held bonuses its
+//     loss opens (none containing it, none its cut or breach counts), with a line ("… is the only way in
+//     to …"); and a territory whose loss opens held bonuses guards against a stack two steps away
+//     (#172) like a bonus member, so the gate behind a conceded border keeps a hold — save when a stack
+//     steps into that conceded border and makes it hold (#257), which cuts the reach. Its hold cost is the fewest
 //     deploys making `armiesToTake(armies + d) > threat`. Every border facing one
 //     opponent is sized for that opponent's whole deploy (#69): it picks where to land
 //     after I commit, so that is each border's worst case, and a sure hold of several

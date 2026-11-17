@@ -8,6 +8,7 @@ import { bonusTerritories } from '../bonuses.js';
 import { bfsDistances, neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
 import { twoStepReaches, type TwoStepReach } from '../lookahead.js';
+import { opensBehind } from '../opens.js';
 import {
   BREACH_WEIGHT,
   CITE_CLOSE,
@@ -359,7 +360,22 @@ export function twoStepHolds(
     }
     return v;
   };
-  const guardsTwoStep = (t: number) => myCommanders.has(t) || heldBonusValue(t) > 0;
+  /**
+   * #291: my `t` is the only way in to held bonuses (they are not its own): behind a conceded border it is the next
+   * gate, not interior, so it guards against a stack two steps away too. Judged on the start of the turn, as the
+   * reaches are (found once per plan).
+   */
+  const opensMemo = new Map<number, boolean>();
+  const source = (x: number) => {
+    const o = state.get(x)?.owner;
+    return o === undefined || o.kind === 'unknown' || (o.kind === 'player' && foe(o.playerId));
+  };
+  const opensHeld = (t: number): boolean => {
+    let v = opensMemo.get(t);
+    if (v === undefined) opensMemo.set(t, (v = opensBehind(g, heldAtStart, source, t, new Set()).income > 0));
+    return v;
+  };
+  const guardsTwoStep = (t: number) => myCommanders.has(t) || heldBonusValue(t) > 0 || opensHeld(t);
   /**
    * Every two-step reach to a territory of mine worth guarding (lookahead.ts, as check_plan), by
    * territory: found once per {@link planTurn} (it depends only on the start board) and shared by
@@ -538,7 +554,7 @@ export function holdOrConcede(
 ) {
   const { goal, paybackTurns, label, unitsAt, bombOn, toTake, myCommanders } = pc;
   const { warnings, rationale, locked } = ps;
-  const { deploy, valueOf, stakeAt, cutOff, breachAt } = book;
+  const { deploy, valueOf, stakeAt, cutOff, breachAt, opensAt } = book;
   const { borders, recentlyTakenFrom } = threats;
   const { threatened, conceded } = hb;
   const { stayAt } = prev;
@@ -550,6 +566,8 @@ export function holdOrConcede(
   const cutNoted = new Set<number>();
   /** #275: the borders whose breach is already named. */
   const breachNoted = new Set<number>();
+  /** #291: the gates whose opened value is already named. */
+  const opensNoted = new Set<number>();
   /** Rule 1a's pre-deploy threat warning per border, restated once the deploys are known. */
   const threatWarnings = new Map<number, { text: string; threat: number }>();
   const assessThreats = () => {
@@ -589,6 +607,16 @@ export function holdOrConcede(
         const more = breach.ids.length > MAX_CUT_NAMED ? ` and ${breach.ids.length - MAX_CUT_NAMED} more` : '';
         rationale.push(
           `${label(b.id)} alone shields ${named}${more} within two moves behind it (+${breach.income} income): with the guard off a breach walks straight in, so its value counts ${BREACH_WEIGHT * 100}% of that (+${breach.worth}) (#275).`,
+        );
+      }
+      // #291: a gate whose loss opens held bonuses to the enemy says so.
+      const opens = opensAt(b.id);
+      if (opens && !opensNoted.has(b.id)) {
+        opensNoted.add(b.id);
+        const named = opens.ids.slice(0, MAX_CUT_NAMED).map(label).join(', ');
+        const more = opens.ids.length > MAX_CUT_NAMED ? ` and ${opens.ids.length - MAX_CUT_NAMED} more` : '';
+        rationale.push(
+          `${label(b.id)} is the only way in to ${named}${more} (+${opens.income} income): losing it opens them to the enemy, so its value counts half of that (+${opens.worth}) (#291).`,
         );
       }
       const from = recentlyTakenFrom(b.id);
@@ -1662,7 +1690,7 @@ export function reconsiderAndGarrison(
 ) {
   const { g, guarded, reserve, paybackTurns, label, bonusName, mine, mineSet, unitsAt, toTake, myCommanders } = pc;
   const { warnings, rationale, deployed, locked, captured, moves } = ps;
-  const { orderOf, deploy, pools, valueCache, cutCache, breachCache, valueOf } = book;
+  const { orderOf, deploy, pools, valueCache, cutCache, breachCache, opensCache, valueOf } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { borders } = threats;
   const { conceded, kept, garrisoned } = hb;
@@ -1678,6 +1706,7 @@ export function reconsiderAndGarrison(
     valueCache.clear();
     cutCache.clear();
     breachCache.clear();
+    opensCache.clear();
     if (!conceded.size) return;
     for (const t of [...conceded].sort(byNum)) {
       // Already withdrawn from (rule 1b ran first): its armies are gone, and it stays conceded.
