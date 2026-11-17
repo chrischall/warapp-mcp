@@ -65,7 +65,7 @@ import { holdsBelowPlan, type HoldOrders, type HoldShortfall } from '../analysis
 import { guardCase } from '../analysis/profile.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
 import { armiesForGold, commerceRules, goldForArmies, type CommerceDeploy } from '../commerce.js';
-import { commerceDeployOf } from './commerce-deploy.js';
+import { commerceDeployOf, submitCommerceCheck } from './commerce-deploy.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
 import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
 import {
@@ -3085,6 +3085,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const incomeOnBoard = incomeDetail(graphOf(map), board, me.id, game.settings);
         // #332: in a commerce game the deploy is what my gold buys, as warapp_plan_turn has it.
         const commerce = commerceDeployOf(game, me, info, incomeOnBoard.income);
+        const commerceCheck = submitCommerceCheck(commerce);
         const modelled = commerce ? commerce.armies : incomeOnBoard.income;
         const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
         // #130: war.app's own number, given after an error 11, replaces the model for the check.
@@ -3135,7 +3136,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           guard: game.settings?.oneArmyStandsGuard ?? true,
           deploys,
           moves,
-          ...(commerce && givenIncome === undefined ? { commerce: { gold: commerce.gold, armyCostMultiplier: commerce.armyCostMultiplier } } : {}),
+          ...(commerceCheck.commerce && givenIncome === undefined ? { commerce: commerceCheck.commerce } : {}),
           airlifts: plays.flatMap((p) =>
             p.kind === 'Airlift' && p.targets?.from && p.targets.to && p.targets.armies !== undefined
               ? [{ from: p.targets.from.id, to: p.targets.to.id, armies: p.targets.armies }]
@@ -3152,7 +3153,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           incomeUncertain:
             givenIncome !== undefined
               ? []
-              : deployCheckUncertainties(game.settings, incomeOnBoard.cap ? { armyCap: incomeOnBoard.cap } : {}),
+              : [
+                  ...deployCheckUncertainties(game.settings, incomeOnBoard.cap ? { armyCap: incomeOnBoard.cap } : {}),
+                  ...commerceCheck.uncertain,
+                ],
           poolsUncertain: [
             ...overrideUncertainties(game.settings),
             ...(overridden ? [`The ${overridden}, so the bonus pools may differ too.`] : []),

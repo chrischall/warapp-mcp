@@ -549,7 +549,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   GameStanding's Resources, gold = 1, only my own entry under fog; VERIFIED live), which already carries saved gold and
   any Sanctions (so none is applied on top), else with the modelled income (`source: 'model'`, a warning).
   `warapp_plan_turn` reports `commerce` (gold, armies, cost, gold left, multiplier). The submit allows a smaller deploy
-  (the gold carries over; a warning names it) and refuses one the gold cannot pay for (error 597, before sending);
+  (the gold carries over; a warning names it) and refuses one the gold cannot pay for (error 597, before sending) —
+  only when the gold was read from the board (`submitCommerceCheck`, `src/tools/commerce-deploy.ts`): the model's figure
+  leaves out saved gold, so then a different total is a warning (an `incomeUncertain` reason), as before #332;
   593/596/597/599–602 have messages. A territory's cities (`TerritoryStanding`'s structures dict, `"1"` = City) ride on
   `LiveTerritory.cities` / `TerritoryState.cities` (absent at 0) and pay `CityIncome` gold each (`cityGold` in
   `incomeDetail` / `visibleIncomeFor`). With multiplier > 0 an opponent's estimate read off the board (`visible`,

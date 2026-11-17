@@ -15,3 +15,22 @@ export function commerceDeployOf(game: Game, me: Player, info: unknown, modelGol
   const id = inGameOf(me);
   return commerceDeploy(rules, id === undefined ? undefined : standingGold(info, id), modelGold);
 }
+
+/**
+ * What `warapp_submit_turn` checks a commerce deploy against (#353 review). Gold read from the board is authoritative,
+ * so it is the deploy budget (`commerce`: deploying more than it buys is refused, error 597; less saves gold). Gold
+ * from the income model leaves out what was saved on earlier turns, so it is not enforced: it adds an `uncertain`
+ * reason instead, and a different total is a warning, as an uncertain income always was.
+ */
+export function submitCommerceCheck(c: CommerceDeploy | undefined): {
+  commerce?: { gold: number; armyCostMultiplier: number };
+  uncertain: string[];
+} {
+  if (!c) return { uncertain: [] };
+  if (c.source === 'standing') return { commerce: { gold: c.gold, armyCostMultiplier: c.armyCostMultiplier }, uncertain: [] };
+  return {
+    uncertain: [
+      `Your gold could not be read from the board, so the check uses the income model's ${c.gold}, which leaves out gold saved from earlier turns.`,
+    ],
+  };
+}
