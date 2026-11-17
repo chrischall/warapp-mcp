@@ -986,6 +986,13 @@
 //     territory my commander walks from — all that stands there is its transit hold (rule 1w,
 //     `commanderTransit` sizes it on the whole stack); a commander that stays keeps its worst-case
 //     hold through `keepOf`, as from any capture.
+//     #297, a 1v1 only: every border of mine facing the opponent is a gate, each sized for its stack plus the
+//     opponent's whole deploy, since that one deploy floats to whichever it picks. A capture that adds a gate is
+//     stopped when the frontier would then need more next turn than the next income and more than without it
+//     (`gateStop`, src/analysis/plan/captures.ts) — rule 4d's start-of-turn escape does not apply in a 1v1, and
+//     rule 4e's contact fallback, where 4d is only a cost (#114), runs it too. The plan reports `gates` (each gate's
+//     need and armies, conceded ones marked, the summed need, what stands on them, the per-gate deficit, the next
+//     income and the shortfall) and warns when its own captures open a gate the income cannot hold.
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
 //     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative

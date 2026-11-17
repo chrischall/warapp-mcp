@@ -2134,7 +2134,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           "game's settings: your income, deploys and attacks/transfers by territory name and id (each attack with " +
           '`winChance`, its exact capture probability), the expected captures, completed bonuses and next income ' +
           '(with `nextIncomeIfConcededFall` and `bonusesAtRisk` when the plan concedes borders of a bonus you hold), ' +
-          'the borders given up (`conceded`), the `frontier` budget, your cards (plays and discards when you must), ' +
+          'the borders given up (`conceded`), the `frontier` budget, in a 1v1 the `gates` (every border facing the opponent against its one floating deploy: what they need, what stands on them, the shortfall), your cards (plays and discards when you must), ' +
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
@@ -2706,6 +2706,19 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                   ? `; the plan counts on ${plan.frontier.income}`
                   : ''
               }`,
+        // #297: in a 1v1, the gates against the opponent's one floating deploy (compact: one line).
+        ...(plan.gates
+          ? {
+              gates:
+                rung === 'full'
+                  ? { ...plan.gates, gates: plan.gates.gates.map((x) => ({ ...x, territory: name(x.id) })) }
+                  : `${plan.gates.gates.length} gates facing player ${plan.gates.player}${
+                      plan.gates.gates.some((x) => x.conceded) ? ` (${plan.gates.gates.filter((x) => x.conceded).length} conceded)` : ''
+                    }: they need ${plan.gates.need} against its one floating deploy, ${plan.gates.onGates} stand on them (${plan.gates.deficit} short across them), next income ${plan.gates.income}${
+                      plan.gates.short > 0 ? `: ${plan.gates.short} short` : ': it covers them'
+                    }`,
+            }
+          : {}),
         // #275 (a): each border's headroom, the weakest first (compact: the first few).
         headroom: headroomView(headroom, map, myIncome, rung === 'full', !teamsKnown),
         ...(rung !== 'full' && headroom.length > HEADROOM_COMPACT ? { headroomMore: headroom.length - HEADROOM_COMPACT } : {}),

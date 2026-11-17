@@ -1497,6 +1497,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       In that fallback a capture that completes a bonus this turn is never ranked last for opening a
       second front (rule 0p.2), and one whose bonus repays its cost within the payback horizon goes
       first among the affordable candidates (#240); every other keeps the cost order.
+      **The 1v1 gate budget (#297, `gateStop` in `plan/captures.ts`).** In a 1v1 every border of mine facing the
+      opponent is a gate, each sized for its stack plus the opponent's whole deploy (one deploy floats to whichever
+      it picks). A capture that adds a gate is stopped when the frontier would then need more next turn than the next
+      income and more than without that capture: rule 4d's start-of-turn escape does not apply in a 1v1 (its line
+      then carries the gate arithmetic, "… in this 1v1 it opens another gate …"; when 4d's own check fires its line
+      gains "In this 1v1 that is another gate …"), and the contact fallback runs it where 4d is only a cost. The plan
+      reports `gates` (1v1 only; each gate's `needs` and `armies`, `conceded` marked — a conceded gate is still a way
+      in — `need`, `onGates`, `deficit` = the per-gate shortfalls summed, `income` = the frontier's, `short` =
+      deficit − income) and warns only when its own captures open a gate the income cannot hold. Measured on the
+      golden corpus against main: every non-1v1 plan byte-identical; of 4,926 1v1 plans orders changed on 12 (12
+      captures stopped, next income never lower), the warning on 280.
   - **Game rules** (`docs/PLAN-PLANNER-4.md`, `tests/analysis/lessons-game-rules.test.ts`; the
     full-rung `settings` echo shows each):
     - **Kill rates (#28).** Every combat computation uses the game's offensive/defensive kill

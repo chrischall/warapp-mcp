@@ -676,6 +676,8 @@ export interface TurnPlan {
    * expected enemy deploy, and the next income that pays for them.
    */
   frontier: FrontierBudget;
+  /** #297: the gate budget, in a 1v1 with the opponent in contact; absent otherwise. */
+  gates?: GateBudget;
   /**
    * The offensive options this plan considered (#72): each bonus break (its cheapest visible
    * member, "probable" when the opponent tracker inferred the bonus), each counter-attack on a
@@ -823,6 +825,30 @@ export function bonusesAtRisk(g: MapGraph, after: ReadonlySet<number>, conceded:
       value: b.value,
       conceded: ts.filter((t) => conceded.has(t)).sort(byNum),
     }));
+}
+
+/**
+ * #297: in a 1v1, every border of mine facing the opponent is a gate, each sized for its stack beside it plus its
+ * whole deploy (the deploy lands where it chooses, so each gate's worst case is the same floating deploy).
+ */
+export interface GateBudget {
+  /** The opponent the gates face. */
+  player: number;
+  /** Each gate: what it needs to hold next turn, and what stands on it after this plan. */
+  gates: { id: number; needs: number; armies: number; conceded?: true }[];
+  /** What the gates need together. */
+  need: number;
+  /** What stands on them after this plan. */
+  onGates: number;
+  /**
+   * What each gate still lacks, summed (armies on one gate do not defend another): rule 4d's hold cost on the gates,
+   * plus what the gates it concedes lack (a conceded gate is still a way in).
+   */
+  deficit: number;
+  /** The next income that can add to them ({@link FrontierBudget}'s figure). */
+  income: number;
+  /** deficit − income, at least 0. */
+  short: number;
 }
 
 export interface FrontierBudget {
