@@ -5,6 +5,7 @@
 // rationale and warnings that state them. Pure: it reads the input and writes only
 // `state.warnings` / `state.rationale`.
 import type { BoardState } from '../../board.js';
+import { armiesForGold } from '../../commerce.js';
 import { holdsSeat } from '../../player-states.js';
 import { isTeamGame, teammatesOf } from '../../teams.js';
 import { bonusTerritories } from '../bonuses.js';
@@ -143,7 +144,23 @@ export function planEnemyEstimates(input: {
     reinforcement: ctx.reinforcement,
     ...(previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
-  return { estimates: applySanctions(estimates, input.sanctions ?? []), prior, ...(skipped ? { priorSkipped: skipped } : {}) };
+  const priced = applyArmyPrice(applySanctions(estimates, input.sanctions ?? []), input.settings?.armyCostMultiplier ?? 0);
+  return { estimates: priced, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
+}
+
+/**
+ * #332: in a commerce game with a rising army price (multiplier m > 0), what each estimate read off the board
+ * (`visible`, `exact`: its base and bonuses, in gold) buys in armies, its Reinforcement card's armies kept on top.
+ * An observed, tracked or prior figure is already armies and is left as it is. Unchanged with m = 0.
+ */
+export function applyArmyPrice(estimates: EnemyDeployEstimate[], m: number): EnemyDeployEstimate[] {
+  if (!(m > 0)) return estimates;
+  return estimates.map((e) => {
+    if (e.source !== 'visible' && e.source !== 'exact') return e;
+    const card = e.card?.armies ?? 0;
+    const gold = e.estimate - card;
+    return { ...e, estimate: armiesForGold(gold, m) + card, armyPrice: { gold, multiplier: m } };
+  });
 }
 
 /**

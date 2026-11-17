@@ -1209,13 +1209,29 @@ describe('plannerSettings', () => {
   });
 });
 
-describe('commerceWarning (#167)', () => {
-  it('says gold and cities are not modelled in a commerce game, and nothing otherwise', () => {
+describe('commerceWarning (#167, #332)', () => {
+  const deploy = (source: 'standing' | 'model') => ({ source, gold: 9, armies: 9, cost: 9, left: 0, armyCostMultiplier: 0 });
+  it('says a commerce game is unmodelled only when its Commerce settings did not read, and nothing otherwise', () => {
     expect(commerceWarning(undefined)).toEqual([]);
     expect(commerceWarning({ cards: [], raw: {}, commerce: false })).toEqual([]);
     const w = commerceWarning({ cards: [], raw: {}, commerce: true });
     expect(w).toHaveLength(1);
-    expect(w[0]).toMatch(/commerce game.*gold.*cities/i);
+    expect(w[0]).toMatch(/commerce game.*did not read.*gold.*cities/i);
+  });
+
+  it('is silent where the plan models the game: one gold per army, no cities, the gold read', () => {
+    expect(commerceWarning({ cards: [], raw: {}, commerce: true, commerceRules: { armyCostMultiplier: 0 } }, deploy('standing'))).toEqual([]);
+  });
+
+  it('names what is still not modelled: unread gold, a rising army price, cities', () => {
+    const w = commerceWarning(
+      { cards: [], raw: {}, commerce: true, commerceRules: { armyCostMultiplier: 2, cityBaseCost: 5, cityIncome: 1 } },
+      deploy('model'),
+    );
+    expect(w).toHaveLength(3);
+    expect(w[0]).toMatch(/gold could not be read.*9 gold/);
+    expect(w[1]).toMatch(/army cost multiplier 2/);
+    expect(w[2]).toMatch(/allows cities.*does not buy/);
   });
 });
 
@@ -2894,6 +2910,15 @@ describe('Local Deployment in the turn tools (G2, issue #29)', () => {
         moves: [],
         ...(localDeployments !== undefined ? { localDeployments } : {}),
       });
+
+    it('#332, commerce: deploying less saves the gold (a warning), deploying more than the gold buys is refused (597)', () => {
+      const commerce = { gold: 7, armyCostMultiplier: 0 };
+      const at = (armies: number) =>
+        validateTurn({ map, board: live, myInGameId: ANN.inGame, income: 7, guard: true, deploys: [{ territory: T(161), armies }], moves: [], commerce });
+      expect(at(7)).toEqual({ warnings: [] });
+      expect(at(5).warnings).toEqual([expect.stringMatching(/deploy 5 of the 7 armies your 7 gold buys: 2 gold is saved/)]);
+      expect(() => at(8)).toThrow(/deploy 8 armies, which cost 8 gold, but you have 7 gold \(buying 7 armies\)/);
+    });
 
     it('refuses a pooled-income deploy that spends bonus armies outside the bonus, naming it and the overspend', () => {
       expect(() => run([[453745, 6], [159, 1]], true)).toThrow(

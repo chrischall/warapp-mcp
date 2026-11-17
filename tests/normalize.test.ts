@@ -225,6 +225,27 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ Wastelands: 'x' }).wastelands).toBeUndefined();
   });
 
+  it("reads a commerce game's settings from the Commerce object (#332, the real shapes of 2026-11-17)", () => {
+    // A game without cities: only the army price.
+    expect(normalizeSettings({ Commerce: { ArmyCostMultiplier: 0 } }).commerceRules).toEqual({ armyCostMultiplier: 0 });
+    // A game with cities.
+    const lunar = normalizeSettings({
+      Commerce: { ArmyCostMultiplier: 0, CityBaseCost: 5, TerritoryCityCostIncrease: 1, GlobalCityCostIncrease: 0, CityIncome: 1 },
+    });
+    expect(lunar.commerce).toBe(true);
+    expect(lunar.commerceRules).toEqual({
+      armyCostMultiplier: 0,
+      cityBaseCost: 5,
+      territoryCityCostIncrease: 1,
+      globalCityCostIncrease: 0,
+      cityIncome: 1,
+    });
+    // A plain game's `{}`: no rules.
+    expect(normalizeSettings({ Commerce: {} }).commerceRules).toBeUndefined();
+    // A value that is not an integer is left out, never guessed.
+    expect(normalizeSettings({ Commerce: { ArmyCostMultiplier: 'x', CityIncome: 2 } }).commerceRules).toEqual({ cityIncome: 2 });
+  });
+
   it('lists enabled cards only', () => {
     expect(s.cards).toEqual(['Reinforcement', 'Blockade', 'Airlift', 'Diplomacy', 'Sanctions', 'Reconnaissance']);
   });

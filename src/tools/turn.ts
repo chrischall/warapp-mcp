@@ -64,6 +64,8 @@ import { guardOffExposure } from '../analysis/guard-off.js';
 import { holdsBelowPlan, type HoldOrders, type HoldShortfall } from '../analysis/hold-diff.js';
 import { guardCase } from '../analysis/profile.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
+import { armiesForGold, commerceRules, goldForArmies, type CommerceDeploy } from '../commerce.js';
+import { commerceDeployOf } from './commerce-deploy.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
 import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
 import {
@@ -306,6 +308,9 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (s.localDeployments) out.localDeployments = true;
   if (s.noSplit) out.noSplit = true;
   if (s.armyCap !== undefined && s.armyCap !== null && s.armyCap > 0) out.armyCap = s.armyCap;
+  // #332: a commerce game's rising army price (0, one gold per army, changes nothing and is left out).
+  const m = commerceRules(s)?.armyCostMultiplier ?? 0;
+  if (m > 0) out.armyCostMultiplier = m;
   if (s.wastelands && s.wastelands.count > 0) out.wastelands = { ...s.wastelands };
   // #271 review: the first turn an opponent may play a Bomb (a bomb reads as a failed attack on my hold).
   const bombFrom = cardClock(s)?.cards.find((c) => c.card === 'Bomb')?.firstPlayableTurn.fastest;
@@ -508,12 +513,29 @@ export function modsWarning(s: GameSettings | undefined): string[] {
  * armies only. Said whenever the feed's `Commerce` object carries settings (the shape a commerce
  * game sends is unverified: a plain game sends `{}`).
  */
-export function commerceWarning(s: GameSettings | undefined): string[] {
+export function commerceWarning(s: GameSettings | undefined, deploy?: CommerceDeploy): string[] {
   if (!s?.commerce) return [];
-  return [
-    'This looks like a commerce game (its Commerce settings are not empty): the plan models income as armies only — ' +
-      'it does not model gold, buying armies or cities. Check what gold buys before following it.',
-  ];
+  const rules = commerceRules(s);
+  if (!rules) {
+    return [
+      'This looks like a commerce game, but its Commerce settings did not read: the plan models income as armies ' +
+        'only — it does not model gold, the army price or cities. Check what gold buys before following it.',
+    ];
+  }
+  const out: string[] = [];
+  if (deploy?.source === 'model')
+    out.push(
+      `Commerce: your gold could not be read from the board, so the deploy is what this turn's modelled income ` +
+        `(${deploy.gold} gold) buys; gold saved from earlier turns is not counted.`,
+    );
+  if (rules.armyCostMultiplier > 0)
+    out.push(
+      `Commerce: armies cost more the more you buy in a turn (army cost multiplier ${rules.armyCostMultiplier}), but ` +
+        'the plan values income, bonuses and payback at one army per gold.',
+    );
+  if (rules.cityBaseCost !== null)
+    out.push('Commerce: this game allows cities; the plan does not buy any (a city pays more gold on later turns).');
+  return out;
 }
 
 /**
@@ -623,6 +645,12 @@ export function validateTurn(args: {
   multiAttack?: boolean;
   /** Why the modelled income may be wrong; non-empty makes the deploy-total check a warning. */
   incomeUncertain?: readonly string[];
+  /**
+   * #332, a commerce game: `income` is what my `gold` buys at the army price (card armies on top). Gold not spent
+   * carries over, so a smaller deploy is allowed (a warning names the gold saved); a larger one is refused, since
+   * war.app answers it with error 597 InsufficientGold.
+   */
+  commerce?: { gold: number; armyCostMultiplier: number };
   /** Why the Local Deployment pools may be wrong (overridden bonuses); non-empty makes that check a warning. */
   poolsUncertain?: readonly string[];
   /**
@@ -709,7 +737,24 @@ export function validateTurn(args: {
     }
   }
   const deployed = deploys.reduce((s, d) => s + d.armies, 0);
-  if (deployed !== income && args.incomeUncertain?.length) {
+  if (args.commerce && deployed !== income) {
+    const { gold, armyCostMultiplier: m } = args.commerce;
+    const cards = income - armiesForGold(gold, m);
+    if (deployed < income) {
+      const saved = gold - goldForArmies(Math.max(0, deployed - cards), m);
+      warnings.push(
+        `These orders deploy ${deployed} of the ${income} armies your ${gold} gold buys` +
+          `${cards > 0 ? ` (with ${cards} card armies)` : ''}: ${saved} gold is saved for a later turn.`,
+      );
+    } else {
+      const cost = goldForArmies(Math.max(0, deployed - cards), m);
+      throw new McpToolError(
+        `These orders deploy ${deployed} armies, which cost ${cost} gold, but you have ${gold} gold (buying ${income} armies` +
+          `${cards > 0 ? `, ${cards} of them from cards` : ''}).`,
+        { hint: `Deploy at most ${income} armies — war.app refuses a deploy you cannot pay for (error 597 InsufficientGold).` },
+      );
+    }
+  } else if (deployed !== income && args.incomeUncertain?.length) {
     warnings.push(
       `These orders deploy ${deployed} armies, but the modelled income is ${income} this turn. The model may be off ` +
         `(${args.incomeUncertain.join(' ')}), so they are not refused here: check the "armies per turn" the game ` +
@@ -1586,7 +1631,10 @@ export async function livePlanSetup(
   // a Diplomacy card with a player makes it no foe this turn (T9).
   const effect = boardCardsInEffect(game, me, turn, info);
   const sanction = sanctionMyIncome(boardIncome, effect, { localDeployments: settings.localDeployments === true });
-  const income = sanction.income + cards.extraArmies;
+  // #332: in a commerce game the income is gold and the deploy is what it buys at the game's army price. The
+  // standing's gold already holds what was saved and any Sanctions (war.app pays it); the model is the fallback.
+  const commerce = commerceDeployOf(game, me, info, sanction.income);
+  const income = (commerce ? commerce.armies : sanction.income) + cards.extraArmies;
   const trend = history.previous;
   const previousOrders = turn !== null ? history.boards.find((b) => b.turn === turn - 1)?.orders : undefined;
   // The opponents over my board history: one observed over 2+ turns gets its tracked income;
@@ -1730,9 +1778,10 @@ export async function livePlanSetup(
   return {
     graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
-    effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true, estimates, trip, teams,
+    effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true, estimates, trip, teams, commerce,
   };
 }
+
 
 /**
  * #274: whether these orders leave my commander takeable by a single-deploy reply (`commanderCheckOn`,
@@ -2319,7 +2368,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...plan.warnings,
         ...promised,
         ...modsWarning(game.settings),
-        ...commerceWarning(game.settings),
+        ...commerceWarning(game.settings, setup.commerce),
         ...guardOffWarnings(graph, map, board, me.id, friendsOf(game.players, me), game.settings, plan.deploys, plan.moves),
       ];
       // The plan advises Order Priority (a withdrawal, a commander strike): play the one I
@@ -2515,6 +2564,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(pace ? { pace } : {}),
         // #253: the army cap's arithmetic (min(income, round(cap × income) − my armies on the board)), when the game has one.
         ...(setup.incomeCap ? { incomeCapped: setup.incomeCap } : {}),
+        // #332: a commerce game's gold and what it buys (the deploy total is `armies`, card armies on top).
+        ...(setup.commerce ? { commerce: setup.commerce } : {}),
         enemyDeploy: plan.enemyDeploy,
         // #127: who moves first this turn and how it is known; null when unknown.
         firstMover: mover.view,
@@ -3032,7 +3083,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const options = checkMoveOptions({ moves, board: territories, myInGameId: playerId, settings: game.settings, teammates, deployedOn });
         // #253: the army cap's cut included (min(income, round(cap × income) − my armies on the board)).
         const incomeOnBoard = incomeDetail(graphOf(map), board, me.id, game.settings);
-        const modelled = incomeOnBoard.income;
+        // #332: in a commerce game the deploy is what my gold buys, as warapp_plan_turn has it.
+        const commerce = commerceDeployOf(game, me, info, incomeOnBoard.income);
+        const modelled = commerce ? commerce.armies : incomeOnBoard.income;
         const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
         // #130: war.app's own number, given after an error 11, replaces the model for the check.
         const income = (givenIncome ?? modelled) + cardArmies;
@@ -3082,6 +3135,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           guard: game.settings?.oneArmyStandsGuard ?? true,
           deploys,
           moves,
+          ...(commerce && givenIncome === undefined ? { commerce: { gold: commerce.gold, armyCostMultiplier: commerce.armyCostMultiplier } } : {}),
           airlifts: plays.flatMap((p) =>
             p.kind === 'Airlift' && p.targets?.from && p.targets.to && p.targets.armies !== undefined
               ? [{ from: p.targets.from.id, to: p.targets.to.id, armies: p.targets.armies }]

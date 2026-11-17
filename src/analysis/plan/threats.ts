@@ -1012,6 +1012,11 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               : `Player ${p} is under Sanctions (${pct}, until turn ${z.untilTurn}, read from the board by an unverified decoder), but its estimate ~${income} is not cut: ${e.source === 'prior' ? 'it is a prior, a floor guessed from what it could earn, not its income' : `it is ${e.source} from its deploys, which may already carry the cut`}.`,
           );
         }
+        // #332: a commerce game's rising army price, applied to a figure read off the board.
+        if (e.armyPrice)
+          warnings.push(
+            `Player ${p} earns ~${e.armyPrice.gold} gold, which buys ~${income} armies at the army cost multiplier ${e.armyPrice.multiplier} (commerce).`,
+          );
         const withCard = e.card ? `, plus +${e.card.armies} from its Reinforcement card (~${e.estimate} in all)` : '';
         // #235 1c: the track's newest turn read more with the armies beside the fog as deploys: a label,
         // never income (#123 lesson 5); the higher figure is the caller's to test.

@@ -1092,6 +1092,54 @@ appearance, so only real layout changes show.
   web chat message (none of the games read had one on the channels GameRefresh returns), a push, and every
   write.
 
+## Commerce games (#332)
+
+In a commerce game players earn **gold**, not armies, and spend it on armies and (where the game allows) cities.
+Everything here was read from the client bundle (client 6.08.0.2, by stable type name; nothing quoted, nothing
+run) and, where marked, checked live on two commerce games on 2026-11-17 (direct transport).
+
+**Settings (VERIFIED live).** GameFeed's `settings.Commerce` object, `{}` in every plain game:
+
+| Key | Meaning |
+|---|---|
+| `ArmyCostMultiplier` | the army price (below); `0` = one gold per army |
+| `CityBaseCost` | the first city's cost; absent when the game allows no cities |
+| `TerritoryCityCostIncrease` | added per city already on that territory |
+| `GlobalCityCostIncrease` | added per city I already own anywhere, and per earlier city in the same order |
+| `CityIncome` | gold each city pays per turn |
+
+One game sent only `{ ArmyCostMultiplier: 0 }`; one with cities sent all five (`0, 5, 1, 0, 1`).
+
+**The army price (from the bundle; the multiplier-0 case VERIFIED live).** `GameSettings` holds both directions:
+with multiplier `m = 0` an army costs 1 gold. With `m > 0` armies are bought in batches of `m` each turn, the first
+batch at 1 gold each, the next at 2 each, and so on: gold → armies walks the batches while the gold lasts; armies →
+gold is `Σ price × min(m, rest)`. The client's own guide text says the same ("the first army you purchase each turn
+costs 1 gold, and then the next … 2 gold" for `m = 1`). A turn-1 deploy of 25 armies with 25 gold and `m = 0`
+committed live.
+
+**A deploy is the purchase.** "Armies are automatically purchased as you deploy." `GameOrderDeploy`'s bool is the
+**Free** flag: a deploy that is not free costs `cost(already deployed this turn + n) − cost(already deployed)` gold;
+this server always sends `false` (paid), which is what a commerce game needs (VERIFIED live: the turn above).
+Server refusals the client names: 593 `ExpectedCostInaccurate`, 596 `DeploymentsCannotBeFree`, 597
+`InsufficientGold`; `warapp_submit_turn` refuses a deploy the gold cannot pay for before sending (597) and allows a
+smaller one, since unspent gold carries over (carry-over is the standing's gold being more than the turn's income:
+read from the bundle's resource store, not yet seen live).
+
+**Gold on the board (VERIFIED live).** `GameStanding`'s 7th field (`Resources`) is a dict player (in-game id) →
+dict resource type → amount; `ResourceType.Gold = 1`. Live it held only my own entry (`[[me, [[1, 25]]]]` and
+`[[me, [[1, 8]]]]`, each the turn's income with nothing carried), so another player's gold is not visible.
+`standingGold` (`src/live.ts`) reads it by shape (the one field of that shape; two refuse).
+
+**Cities (from the bundle; the empty case VERIFIED live).** `TerritoryStanding`'s last field is an optional dict
+structure type (a string) → count; a City is `"1"` (`StructureType2`). No territory on either live board carried
+one, so a non-empty dict is UNVERIFIED live. The purchase order is `GameOrderPurchase`: tag **24**, an optional dict
+int32 territory → int32 cities, then the order base; its turn phase is 0 (before every other order); one per turn
+(599). Its cost, per city, is `CityBaseCost + (cities already on that territory) × TerritoryCityCostIncrease +
+(cities I already own everywhere, then each earlier city in this order) × GlobalCityCostIncrease` — the global
+count starts at 0 only when `GlobalCityCostIncrease` is 0. Refusals: 600 (not my territory), 601 (negative), 602
+(no cities in this game). Each city pays `CityIncome` gold a turn, added to the income like a bonus (before the army
+cap).
+
 ## Data handling
 
 Request frames contain the account email in plaintext. Treat captures as personal data:

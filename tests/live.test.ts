@@ -7,6 +7,7 @@ import {
   readLatestGameInfo,
   currentStanding,
   standingFromInfo,
+  standingGold,
   boardStateFromLive,
   toBoardState,
   type ClassReader,
@@ -147,6 +148,16 @@ describe('readLiveStanding', () => {
     expect(reading(null)).toThrow(LiveBoardFormatError);
     expect(reading(standing([[3, ts({ a: 1, b: 3 })]]))).toThrow(/lacks its fields/);
     expect(reading(standing([[3, ts({ a: 1, b: 9, c: armies, d: 0 })]]))).toThrow(/standing 3 reads as territory 9/);
+  });
+
+  it('reads the cities on a territory from its structures (#332: structure "1" is a City)', () => {
+    // TerritoryStanding's last field (client 6.08.0.2): an optional dict of structure type (string) → count.
+    expect(reading(standing([ts({ a: 1, b: 3, c: armies, d: 0, e: [['1', 2], ['2', 5]] })]))()).toEqual([
+      { territoryId: 3, fogLevel: 1, fogged: false, owner: 0, armies: 3, cities: 2 },
+    ]);
+    // No City entry, or none at all: no key (every plain game's board stays as it was).
+    expect(reading(standing([ts({ a: 1, b: 3, c: armies, d: 0, e: [['2', 5]] })]))()?.[0]).not.toHaveProperty('cities');
+    expect(reading(standing([ts({ a: 1, b: 3, c: armies, d: 0, e: null })]))()?.[0]).not.toHaveProperty('cities');
   });
 
   it('accepts a plain list of standings', () => {
@@ -533,5 +544,32 @@ describe('boardStateFromLive', () => {
   it('does not duplicate me when the player list already has me', () => {
     const board = boardStateFromLive(live, me, [me, other]);
     expect(board.territories[0]!.owner).toEqual({ kind: 'player', playerId: 3312345644 });
+  });
+});
+
+describe('standingGold (#332)', () => {
+  const ts = { $type: 'warlight.shared.TerritoryStanding', a: 1, b: 3, c: { $type: 'warlight.shared.Armies', f: false, n: 3 }, d: 0 };
+  // GameStanding (client 6.08.0.2) in read order; its 7th field is Resources: player → (resource type → amount),
+  // read live 2026-11-17 as [[1548743, [[1, 25]]]] (Gold = 1, only my own entry under fog).
+  const info = (resources: unknown) => ({
+    $type: 'warlight.shared.LatestGameInfo',
+    s: { $type: 'warlight.shared.GameStanding', a: [], b: [[1, {}]], c: null, d: [], e: null, f: [], g: resources, h: null, t: [[3, ts]] },
+  });
+
+  it('reads my gold from the standing', () => {
+    expect(standingGold(info([[1548743, [[1, 25]]]]), 1548743)).toBe(25);
+  });
+
+  it('is undefined when the standing holds no gold for me, or no resources at all', () => {
+    expect(standingGold(info([[99, [[1, 7]]]]), 1548743)).toBeUndefined();
+    expect(standingGold(info([[1548743, [[2, 7]]]]), 1548743)).toBeUndefined();
+    expect(standingGold(info(null), 1548743)).toBeUndefined();
+    expect(standingGold(null, 1548743)).toBeUndefined();
+  });
+
+  it('refuses two fields shaped as resources rather than guess which is gold', () => {
+    const two = info([[1548743, [[1, 25]]]]);
+    (two.s as Record<string, unknown>).h = [[1548743, [[1, 99]]]];
+    expect(standingGold(two, 1548743)).toBeUndefined();
   });
 });
