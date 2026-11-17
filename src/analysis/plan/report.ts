@@ -23,6 +23,7 @@ import {
   type EliminateEta,
   type ExchangeView,
   type FrontierBudget,
+  type GateBudget,
   type OffenceEntry,
   type OpponentExits,
   type PlannedMove,
@@ -55,6 +56,7 @@ export interface Expected {
   ifFall: number;
   reportRisk: boolean;
   frontier: FrontierBudget;
+  gates?: GateBudget;
 }
 
 /** The expected outcome, the frontier, the two-step holds and the gambled and shared borders. */
@@ -120,6 +122,32 @@ export function reportExpected(
     ...frontierOf(after, (x) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0))),
     income: keptIncome(after),
   };
+  // #297: in a 1v1, the gates — every border of mine facing the opponent — against its one floating deploy.
+  const gates = ((): GateBudget | undefined => {
+    if (pc.profile.format !== '1v1') return undefined;
+    const have = (x: number) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0)) + (mineSet.has(x) ? unitsAt(x) : 0);
+    const list: GateBudget['gates'] = [];
+    let player: number | undefined;
+    for (const x of [...after].sort(byNum)) {
+      const th = threats.nextTurnAt(x, (n) => after.has(n));
+      if (!th) continue;
+      player ??= th.player;
+      list.push({ id: x, needs: threats.holdArmies(th.threat), armies: have(x), ...(conceded.has(x) ? { conceded: true as const } : {}) });
+    }
+    if (player === undefined || !list.length) return undefined;
+    const need = list.reduce((n, g) => n + g.needs, 0);
+    const onGates = list.reduce((n, g) => n + g.armies, 0);
+    const deficit = list.reduce((n, g) => n + Math.max(0, g.needs - g.armies), 0);
+    return { player, gates: list, need, onGates, deficit, income: frontier.income, short: Math.max(0, deficit - frontier.income) };
+  })();
+  // Warned only when this plan's own captures open a gate the budget cannot pay for (the shortfall alone is in the report).
+  const opened = gates ? gates.gates.filter((x) => captured.has(x.id)).map((x) => x.id) : [];
+  if (gates && gates.short > 0 && opened.length)
+    warnings.push(
+      `Gate budget (#297): this plan's capture of ${opened.map(label).join(', ')} opens ${opened.length === 1 ? 'a gate' : 'gates'} the income cannot hold — ${gates.gates.length} gates facing player ${gates.player}${
+        gates.gates.some((x) => x.conceded) ? ` (${gates.gates.filter((x) => x.conceded).length} conceded)` : ''
+      } need ${gates.need} against its one floating deploy; ${gates.onGates} stand on them, ${gates.deficit} short across them, and the next income is ${gates.income}: ${gates.short} short.`,
+    );
   const startCost = startHold();
   const outgrown = frontier.holdCost > frontier.income && frontier.holdCost > startCost;
   // A capture stopped by one pass but taken by a later one (the next income grew in between) is
@@ -289,7 +317,7 @@ export function reportExpected(
       'No-Split is on: each order sends its territory\'s whole stack less the one army that stands guard; whether war.app leaves that army behind under No-Split is unverified (a live turn with the guard off left every source at 0).',
     );
 
-  return { completed, nextIncome, atRisk, ifFall, reportRisk, frontier };
+  return { completed, nextIncome, atRisk, ifFall, reportRisk, frontier, ...(gates ? { gates } : {}) };
 }
 
 /** The offence report (#72), the warnings that follow the deploys, and the "Not attacking" line (#167). */
@@ -636,7 +664,7 @@ export function finishPlan(
   const { reinforcementAt, borders, ownedBy, ownerOf, fogEdge } = threats;
   const { conceded, stayAt } = hd;
   const { offence, offenceSkip } = tgt;
-  const { completed, nextIncome, atRisk, ifFall, reportRisk, frontier } = expected;
+  const { completed, nextIncome, atRisk, ifFall, reportRisk, frontier, gates } = expected;
   const offenceList = [...offence.values()].map(({ bonusId, ...o }): OffenceEntry => {
     // A strike attack's cost is what the final orders send (a top-up can raise it).
     // The strike stack's own entry is final as built.
@@ -775,6 +803,7 @@ export function finishPlan(
     cardAdvice: ps.cardAdvice,
     multiSourceCaptures: [...combined].sort(byNum),
     frontier,
+    ...(gates ? { gates } : {}),
     offence: offenceList,
     moveSlots: moves.map((m) => SLOT_NAMES[slotOf(m)]!),
     ...(exchanges.length ? { exchanges } : {}),
