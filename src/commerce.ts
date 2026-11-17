@@ -96,3 +96,76 @@ export function commerceDeploy(rules: CommerceRules, standingGold: number | unde
   const b = deployBudget(standingGold ?? modelGold, rules.armyCostMultiplier);
   return { source, ...b, armyCostMultiplier: rules.armyCostMultiplier };
 }
+
+/** Cities to build on one territory in a purchase order. */
+export interface CityPurchase {
+  territoryId: number;
+  count: number;
+}
+
+/**
+ * What a purchase order's cities cost, by the client's formula (`GameOrderPurchase`, client 6.08.0.2): per city,
+ * CityBaseCost + (cities on that territory so far) × TerritoryCityCostIncrease + (my cities so far, everywhere — the
+ * ones I own, then each earlier city of this order) × GlobalCityCostIncrease, the global count starting at 0 when its
+ * increase is 0. `existing` gives the cities already on each territory, `myCities` all I own. `undefined` in a game
+ * that allows no cities.
+ */
+export function cityPurchaseCost(
+  rules: CommerceRules,
+  order: readonly CityPurchase[],
+  existing: ReadonlyMap<number, number>,
+  myCities: number,
+): number | undefined {
+  if (rules.cityBaseCost === null) return undefined;
+  let total = 0;
+  let global = rules.globalCityCostIncrease === 0 ? 0 : whole(myCities);
+  for (const { territoryId, count } of order) {
+    let onTerritory = whole(existing.get(territoryId) ?? 0);
+    for (let n = 0; n < count; n++) {
+      total += rules.cityBaseCost + onTerritory * rules.territoryCityCostIncrease + global * rules.globalCityCostIncrease;
+      onTerritory++;
+      global++;
+    }
+  }
+  return total;
+}
+
+/** One of my territories as the city advice weighs it. */
+export interface CitySite {
+  territoryId: number;
+  /** No neighbour I do not hold: a city there is not on a front. */
+  interior: boolean;
+  cities: number;
+}
+
+/**
+ * #332, advice only (never an order of the plan): the cheapest city I can place on an interior territory this turn,
+ * and how many turns its income takes to repay its cost (`paysBackInTurns`, `worthIt` within `horizon` turns). A
+ * city's gold comes out of this turn's deploy. `undefined` when the game allows no cities or pays nothing for them,
+ * no interior territory is mine, or the gold does not cover one.
+ */
+export function cityAdvice(
+  rules: CommerceRules,
+  sites: readonly CitySite[],
+  gold: number,
+  horizon: number,
+): { territoryId: number; cost: number; cityIncome: number; paysBackInTurns: number; worthIt: boolean; order: { territory: number; count: 1 } } | undefined {
+  if (rules.cityBaseCost === null || !(rules.cityIncome > 0)) return undefined;
+  const myCities = sites.reduce((n, s) => n + s.cities, 0);
+  let best: { territoryId: number; cost: number } | undefined;
+  for (const s of sites) {
+    if (!s.interior) continue;
+    const cost = cityPurchaseCost(rules, [{ territoryId: s.territoryId, count: 1 }], new Map([[s.territoryId, s.cities]]), myCities)!;
+    if (!best || cost < best.cost || (cost === best.cost && s.territoryId < best.territoryId)) best = { territoryId: s.territoryId, cost };
+  }
+  if (!best || best.cost > gold) return undefined;
+  const paysBackInTurns = Math.ceil(best.cost / rules.cityIncome);
+  return {
+    territoryId: best.territoryId,
+    cost: best.cost,
+    cityIncome: rules.cityIncome,
+    paysBackInTurns,
+    worthIt: paysBackInTurns <= horizon,
+    order: { territory: best.territoryId, count: 1 },
+  };
+}

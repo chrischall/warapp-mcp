@@ -1138,7 +1138,8 @@ int32 territory → int32 cities, then the order base; its turn phase is 0 (befo
 (cities I already own everywhere, then each earlier city in this order) × GlobalCityCostIncrease` — the global
 count starts at 0 only when `GlobalCityCostIncrease` is 0. Refusals: 600 (not my territory), 601 (negative), 602
 (no cities in this game). Each city pays `CityIncome` gold a turn, added to the income like a bonus (before the army
-cap).
+cap). `warapp_submit_turn`'s `cities` sends it (encoder golden-pinned to the bundle's writer: `18 01
+<count> (<territory> <cities>)… <player> 00 00`, little-endian int32s); no purchase has been sent live yet.
 
 ## Data handling
 

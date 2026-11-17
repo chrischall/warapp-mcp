@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { armiesForGold, commerceDeploy, commerceRules, goldForArmies, deployBudget } from '../src/commerce.js';
+import { armiesForGold, cityAdvice, cityPurchaseCost, commerceDeploy, commerceRules, goldForArmies, deployBudget } from '../src/commerce.js';
 
 // The client's own functions (GameSettings, client 6.08.0.2; read from the bundle, never run):
 // armies a gold amount buys, and what a number of armies costs, under CommerceArmyCostMultiplier m.
@@ -95,5 +95,47 @@ describe('commerceDeploy', () => {
 
   it("falls back to the modelled income when the standing's gold could not be read", () => {
     expect(commerceDeploy(rules(2), undefined, 10)).toEqual({ source: 'model', gold: 10, armies: 5, cost: 9, left: 1, armyCostMultiplier: 2 });
+  });
+});
+
+describe('cityPurchaseCost (GameOrderPurchase, the client formula)', () => {
+  const lunar = { armyCostMultiplier: 0, cityBaseCost: 5, territoryCityCostIncrease: 1, globalCityCostIncrease: 0, cityIncome: 1 };
+
+  it('prices each city: base + cities already on that territory × the territory increase', () => {
+    // Two cities on an empty territory: 5 + 6.
+    expect(cityPurchaseCost(lunar, [{ territoryId: 7, count: 2 }], new Map(), 0)).toBe(11);
+    // One more where one already stands: 6.
+    expect(cityPurchaseCost(lunar, [{ territoryId: 7, count: 1 }], new Map([[7, 1]]), 1)).toBe(6);
+  });
+
+  it('adds the global increase per city I already own anywhere, then per earlier city in the order', () => {
+    const g = { ...lunar, territoryCityCostIncrease: 0, globalCityCostIncrease: 2 };
+    // I own 3 cities: the next two cost 5 + 3×2 and 5 + 4×2.
+    expect(cityPurchaseCost(g, [{ territoryId: 1, count: 1 }, { territoryId: 2, count: 1 }], new Map(), 3)).toBe(11 + 13);
+  });
+
+  it('is undefined in a game that allows no cities', () => {
+    expect(cityPurchaseCost({ ...lunar, cityBaseCost: null }, [{ territoryId: 1, count: 1 }], new Map(), 0)).toBeUndefined();
+  });
+});
+
+describe('cityAdvice (advice only)', () => {
+  const lunar = { armyCostMultiplier: 0, cityBaseCost: 5, territoryCityCostIncrease: 1, globalCityCostIncrease: 0, cityIncome: 1 };
+
+  it('names the cheapest interior territory and how many turns the city takes to pay back', () => {
+    const a = cityAdvice(lunar, [
+      { territoryId: 1, interior: false, cities: 0 },
+      { territoryId: 2, interior: true, cities: 1 },
+      { territoryId: 3, interior: true, cities: 0 },
+    ], 8, 10);
+    expect(a).toEqual({ territoryId: 3, cost: 5, cityIncome: 1, paysBackInTurns: 5, worthIt: true, order: { territory: 3, count: 1 } });
+  });
+
+  it('says a city does not pay back within the horizon, and gives nothing it cannot afford or place safely', () => {
+    expect(cityAdvice({ ...lunar, cityBaseCost: 30 }, [{ territoryId: 3, interior: true, cities: 0 }], 30, 10)).toMatchObject({ paysBackInTurns: 30, worthIt: false });
+    expect(cityAdvice(lunar, [{ territoryId: 3, interior: true, cities: 0 }], 4, 10)).toBeUndefined();
+    expect(cityAdvice(lunar, [{ territoryId: 1, interior: false, cities: 0 }], 8, 10)).toBeUndefined();
+    expect(cityAdvice({ ...lunar, cityBaseCost: null }, [{ territoryId: 3, interior: true, cities: 0 }], 8, 10)).toBeUndefined();
+    expect(cityAdvice({ ...lunar, cityIncome: 0 }, [{ territoryId: 3, interior: true, cities: 0 }], 8, 10)).toBeUndefined();
   });
 });
