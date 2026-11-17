@@ -191,7 +191,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   said as `profile.liveError` (a short reason, `FROZEN_TAB_HINT` after a bridged timeout), never dropped. `warapp_plan_turn`'s full view
   adds `notes`, the ids of `notesFor` its own profile (never compact; the plan never reads them). The answer carries the game's `cardClock` (`src/strategy/card-clock.ts`: per card, the
   capturing turns to the first one, fastest and guaranteed, from the pieces, starting pieces, minimums and pieces
-  per turn in the settings; whether a commerce game is on is read from a non-empty `Commerce` object, unverified).
+  per turn in the settings; whether a commerce game is on is read from a non-empty `Commerce` object, verified 2026-11-17).
   With no game and no topic the compact answer is the topic index, with `notes` as ids and topics only. A `map_id` alone works only for
   a map this process has cached, since GameFeed serves maps only with a game.
 - **The pick advisor `warapp_plan_picks` is read-only** and refuses outside `DistributingTerritories` or when the
@@ -540,6 +540,25 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   only for lobbies with that settings shape, at most `LOTTERY_LOOKUPS` (5) per call, else uses a
   cached map. A lottery breaks the joining policy.
 - **Open games come from the `/MultiPlayer/OpenGames` page payload (`AllOpenGamesData`), not a `/Services` call; joining is `AcceptOpenSeat` (62) via `warapp_join_game`, confirm-gated** and reported `joined` only once GameFeed or `GetMyGames` shows the account seated (`docs/WEB-PROTOCOL.md` "Open games").
+- **Commerce games (#332, `src/commerce.ts` pure, `src/tools/commerce-deploy.ts`; docs/WEB-PROTOCOL.md "Commerce
+  games").** GameFeed's `Commerce` object is parsed into `settings.commerceRules` (VERIFIED live on two games) and read
+  through `commerceRules`. The deploy is the purchase: `armiesForGold` / `goldForArmies` are the client's price
+  functions (multiplier 0: one gold per army; m > 0: batches of m at 1, 2, 3 … gold each), and `commerceDeployOf` —
+  one computation for `warapp_plan_turn`'s deploy budget, `warapp_submit_turn`'s deploy check and `warapp_check_plan`'s
+  income (through `stressOpponents`) — buys armies with my gold from the live standing (`standingGold`, `src/live.ts`:
+  GameStanding's Resources, gold = 1, only my own entry under fog; VERIFIED live), which already carries saved gold and
+  any Sanctions (so none is applied on top), else with the modelled income (`source: 'model'`, a warning).
+  `warapp_plan_turn` reports `commerce` (gold, armies, cost, gold left, multiplier). The submit allows a smaller deploy
+  (the gold carries over; a warning names it) and refuses one the gold cannot pay for (error 597, before sending) —
+  only when the gold was read from the board (`submitCommerceCheck`, `src/tools/commerce-deploy.ts`): the model's figure
+  leaves out saved gold, so then a different total is a warning (an `incomeUncertain` reason), as before #332;
+  593/596/597/599–602 have messages. A territory's cities (`TerritoryStanding`'s structures dict, `"1"` = City) ride on
+  `LiveTerritory.cities` / `TerritoryState.cities` (absent at 0) and pay `CityIncome` gold each (`cityGold` in
+  `incomeDetail` / `visibleIncomeFor`). With multiplier > 0 an opponent's estimate read off the board (`visible`,
+  `exact`) is converted to the armies its gold buys (`applyArmyPrice`, after Sanctions; `PlannerSettings.
+  armyCostMultiplier`, set only above 0); observed, tracked and prior figures are already armies. Every plain game is
+  byte-identical (golden corpus). Still not modelled, and said by `commerceWarning` only when it applies: unread gold, a
+  rising price in the plan's own values and payback (priced one gold per army), and buying cities.
 - **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (card plays, then deploys, then moves;
   encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =
   GameFeed `numberOfTurns` + 1 — every tool reports this as `turn` (`currentTurn()`); the

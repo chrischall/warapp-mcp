@@ -3,6 +3,7 @@
 // estimates. A leaf module: planner.ts and every phase under src/analysis/plan/ import from it, and it
 // imports no phase and not planner.ts, so the import graph has no cycle. planner.ts re-exports all of it.
 import type { BoardState, TerritoryState } from '../../board.js';
+import { commerceRules } from '../../commerce.js';
 import type { MyOrders, OpponentTrack } from '../opponents.js';
 import type { GameSettings } from '../../normalize.js';
 import { bonusTerritories } from '../bonuses.js';
@@ -197,6 +198,12 @@ export interface PlannerSettings {
   idleTransfers?: boolean;
   /** One army of income per this many territories held (0 or absent: off). */
   bonusArmyPer?: number;
+  /**
+   * #332, a commerce game's army cost multiplier (absent: not a commerce game, or one gold per army): an opponent's
+   * gold income read off the board buys `armiesForGold` armies (src/commerce.ts). Set only when it is above 0, so
+   * every other game's plan is unchanged.
+   */
+  armyCostMultiplier?: number;
   /** Every player's base income (the game's MinimumArmyBonus; default {@link DEFAULT_BASE_INCOME}). */
   baseIncome?: number;
   /** Local Deployment: a held bonus's armies are deployed only inside that bonus. Default `false`. */
@@ -1055,6 +1062,8 @@ export interface EnemyDeployEstimate {
    * and a warning says so. Absent with no Sanctions on it.
    */
   sanctioned?: { percentages: number[]; untilTurn: number; before: number; applied: boolean };
+  /** #332: a figure read off the board in a commerce game with a rising army price: the gold it earns, and the price. */
+  armyPrice?: { gold: number; multiplier: number };
 }
 
 /**
@@ -2448,9 +2457,22 @@ export function incomeFor(g: MapGraph, board: BoardState, me: number, settings?:
  */
 export function visibleIncomeFor(g: MapGraph, board: BoardState, player: number, settings?: GameSettings): number {
   const held = new Set<number>();
+  let cities = 0;
   for (const t of board.territories)
-    if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === player) held.add(t.territoryId);
-  return boardIncome(g, held, incomeRules(settings)).total;
+    if (g.territoryById.has(t.territoryId) && t.owner.kind === 'player' && t.owner.playerId === player) {
+      held.add(t.territoryId);
+      cities += t.cities ?? 0;
+    }
+  return boardIncome(g, held, incomeRules(settings)).total + cityGold(cities, settings);
+}
+
+/**
+ * #332: the gold a commerce game's cities pay each turn (CityIncome each), part of the income like a bonus (the client's
+ * income function adds it after base and bonuses, before the army cap). 0 outside a commerce game with city income.
+ */
+export function cityGold(cities: number, settings?: GameSettings): number {
+  const per = commerceRules(settings)?.cityIncome ?? 0;
+  return cities > 0 && per > 0 ? cities * per : 0;
 }
 
 /**
@@ -2469,13 +2491,15 @@ export function incomeDetail(
   const held = new Set<number>();
   let armies = 0;
   let unread = false;
+  let cities = 0;
   for (const t of board.territories) {
     if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player' || t.owner.playerId !== me) continue;
     held.add(t.territoryId);
+    cities += t.cities ?? 0;
     if (t.armies === null) unread = true;
     else armies += t.armies;
   }
-  const income = boardIncome(g, held, incomeRules(settings)).total;
+  const income = boardIncome(g, held, incomeRules(settings)).total + cityGold(cities, settings);
   if (settings?.armyCap === undefined || settings.armyCap === null || !(settings.armyCap > 0)) return { income };
   if (unread) return { income, capUnknown: true };
   const cap = armyCapIncome(income, settings.armyCap, armies)!;

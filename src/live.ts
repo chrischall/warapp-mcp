@@ -77,6 +77,12 @@ export interface LiveTerritory {
   armies: number | null;
   /** Special units (commanders, bosses) on the territory; absent when there are none or it is fogged. */
   specialUnits?: LiveSpecialUnit[];
+  /**
+   * #332, commerce games: the cities on it — the territory standing's structures dict (structure type, a string, →
+   * count; `"1"` is a City, `StructureType2`, client 6.08.0.2). Absent when it has none, so every plain game's board
+   * is unchanged.
+   */
+  cities?: number;
 }
 
 /** Reads a registered class from the reply (a loaded `WarappBundle`). */
@@ -134,6 +140,20 @@ function specialUnitOf(u: unknown): LiveSpecialUnit {
   return kind === 'unknown' ? { kind, type: u.$type, id, owner } : { kind, id, owner };
 }
 
+/** The structure type of a City in a territory standing's structures dict (`StructureType2`, client 6.08.0.2). */
+export const CITY_STRUCTURE = '1';
+
+/** The cities a territory standing's structures dict (its only dict keyed by strings) holds; 0 without one. */
+function citiesOf(values: readonly unknown[]): number {
+  for (const v of values) {
+    const list = entries(v);
+    if (!list?.length || !list.every((e) => typeof e.key === 'string' && typeof e.value === 'number')) continue;
+    const city = list.find((e) => e.key === CITY_STRUCTURE);
+    return typeof city?.value === 'number' && city.value > 0 ? city.value : 0;
+  }
+  return 0;
+}
+
 function territoryOf(key: unknown, ts: Obj): LiveTerritory {
   const values = fields(ts);
   const ints = values.filter((v): v is number => typeof v === 'number');
@@ -176,6 +196,8 @@ function territoryOf(key: unknown, ts: Obj): LiveTerritory {
   };
   const units = armyFields.find((v): v is unknown[] => Array.isArray(v));
   if (!armiesHidden && units?.length) out.specialUnits = units.map(specialUnitOf);
+  const cities = citiesOf(values);
+  if (cities > 0) out.cities = cities;
   return out;
 }
 
@@ -228,6 +250,33 @@ export function currentStanding(info: unknown): Obj | undefined {
     return isType(v, GAME_STANDING) ? v : undefined;
   }
   return fields(info).find((v): v is Obj => isType(v, GAME_STANDING));
+}
+
+/** The resource type of gold (`ResourceType.Gold`, client 6.08.0.2). */
+export const GOLD_RESOURCE = 1;
+
+/**
+ * #332, commerce games: the gold `inGameId` holds at the start of this turn, from the current standing's Resources —
+ * its one field shaped player → (resource type → amount) (GameStanding's 7th field, client 6.08.0.2; VERIFIED live
+ * 2026-11-17: 25 and 8 in two games, each the turn's income with nothing carried). Under fog it lists only my own
+ * entry, so another player's gold is never read. `undefined` when there is no standing, no such field, two of them
+ * (never guessed), or no gold entry for that player.
+ */
+export function standingGold(info: unknown, inGameId: number): number | undefined {
+  const standing = currentStanding(info);
+  if (!standing) return undefined;
+  const isPair = (x: unknown) => Array.isArray(x) && x.length === 2 && typeof x[0] === 'number' && typeof x[1] === 'number';
+  const resources = fields(standing).filter((v) => {
+    const list = entries(v);
+    return (
+      !!list?.length &&
+      list.every((e) => typeof e.key === 'number' && Array.isArray(e.value) && (e.value as unknown[]).every(isPair))
+    );
+  });
+  if (resources.length !== 1) return undefined;
+  const mine = entries(resources[0])!.find((e) => e.key === inGameId);
+  const gold = (mine?.value as Array<[number, number]> | undefined)?.find(([type]) => type === GOLD_RESOURCE);
+  return gold ? gold[1] : undefined;
 }
 
 /** The territories of a decoded LatestGameInfo; `null` when it carries no standing. */
@@ -328,6 +377,7 @@ export function toBoardState(territories: readonly LiveTerritory[], players: rea
           playerId: byInGame.get(u.owner)?.id ?? u.owner,
         }));
       }
+      if (t.cities) out.cities = t.cities;
       return out;
     }),
   };

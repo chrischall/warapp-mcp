@@ -62,6 +62,14 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<number, string>> = {
   254: 'Sorry, your slot was assigned to someone else by the game creator. Please ask the game creator to open up your slot.',
   473: "You don't have enough coins to join this game. Please deposit some coins and try again.",
   750: 'Sorry, the slot you joined is no longer available. Please try again with a different slot.',
+  // #332, commerce games: the client names these but shows no wording; these are ours.
+  593: 'war.app worked out a different gold cost for these orders than the client did (ExpectedCostInaccurate).',
+  596: 'In a commerce game every deploy must be paid for in gold (DeploymentsCannotBeFree).',
+  597: 'You do not have enough gold for these orders (InsufficientGold): deploy fewer armies or buy fewer cities.',
+  599: 'Only one purchase order may be sent in a turn (CannotSendDuplicatePurchaseOrders).',
+  600: 'A city can only be built on a territory you hold (CannotBuildCityOnAnotherPlayersTerritory).',
+  601: 'The number of cities to build cannot be negative (CannotBuildNegativeCitites).',
+  602: 'This game does not allow cities (CannotBuildCities).',
 };
 
 /** The longest slice of an unmapped server message shown to the caller. */

@@ -200,6 +200,11 @@ describe('WarappRpc server errors', () => {
     [254, 'your slot was assigned to someone else by the game creator'],
     [750, 'the slot you joined is no longer available'],
     [473, "You don't have enough coins to join this game."],
+    [597, 'You do not have enough gold for these orders (InsufficientGold)'],
+    [596, 'every deploy must be paid for in gold'],
+    [593, 'different gold cost'],
+    [600, 'only be built on a territory you hold'],
+    [602, 'does not allow cities'],
   ];
 
   it.each(cases)('maps server error %i to the client wording', async (code, wording) => {

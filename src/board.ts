@@ -29,6 +29,8 @@ export interface TerritoryState {
   fogLevel?: string;
   /** Special units standing here (live board only); absent when there are none. */
   specialUnits?: BoardSpecialUnit[];
+  /** #332, commerce games: the cities here (live board only); absent when there are none. */
+  cities?: number;
 }
 
 /** A special unit on a territory: a commander, a boss or a custom unit. */

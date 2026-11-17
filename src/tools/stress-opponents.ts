@@ -11,6 +11,7 @@ import type { Game, GameMap, Player } from '../normalize.js';
 import { carriesTeam } from '../teams.js';
 import { opponentReinforcement } from './card-advice.js';
 import { boardCardsInEffect } from './card-effects.js';
+import { commerceDeployOf } from './commerce-deploy.js';
 
 export interface StressOpponentsInput {
   graph: MapGraph;
@@ -49,7 +50,9 @@ export function stressOpponents(input: StressOpponentsInput) {
       : undefined;
   // #253: what the army cap leaves me and what I earn before the cut.
   const incomeOnBoard = incomeDetail(graph, board, me.id, game.settings);
-  const income = incomeOnBoard.income;
+  // #332: in a commerce game, the armies my gold buys (as warapp_plan_turn and warapp_submit_turn have it).
+  const commerce = commerceDeployOf(game, me, info, incomeOnBoard.income);
+  const income = commerce ? commerce.armies : incomeOnBoard.income;
   const earnedIncome = incomeOnBoard.cap ? incomeOnBoard.cap.uncapped : income;
   // PLAN-TEAMS D3: the cards in effect the decoder is sure of.
   const effect = boardCardsInEffect(game, me, turn, info);
@@ -108,5 +111,5 @@ export function stressOpponents(input: StressOpponentsInput) {
   // (two at least; enemy_deploy is a what-if, not the game's standing).
   const rivals = opponents.filter((o) => inView.has(o.id));
   const leader = teams.size === 0 && rivals.length >= 2 && rivals.every((o) => earnedIncome > estimateOf(o.id));
-  return { board, seats, tracks, incomeOnBoard, income, earnedIncome, effect, estimates, estimateOf, friend, opponents, teams, inView, leader };
+  return { board, seats, tracks, incomeOnBoard, income, earnedIncome, effect, estimates, estimateOf, friend, opponents, teams, inView, leader, commerce };
 }

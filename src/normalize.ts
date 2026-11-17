@@ -254,10 +254,23 @@ export interface GameSettings {
   wastelands?: { count: number; size: number };
   /**
    * #167: a commerce game (gold, cities). `false` for the `{}` every plain game sends, `true` when the
-   * feed's `Commerce` object carries settings (UNVERIFIED: no commerce game seen yet), absent when the
+   * feed's `Commerce` object carries settings (VERIFIED 2026-11-17 on two commerce games), absent when the
    * key is missing.
    */
   commerce?: boolean;
+  /**
+   * #332: the `Commerce` object's settings (VERIFIED 2026-11-17: `{ ArmyCostMultiplier: 0 }` on a game without
+   * cities; `ArmyCostMultiplier`, `CityBaseCost`, `TerritoryCityCostIncrease`, `GlobalCityCostIncrease`,
+   * `CityIncome` on one with them). Each only when sent as an integer; read through `commerceRules`
+   * (src/commerce.ts).
+   */
+  commerceRules?: {
+    armyCostMultiplier?: number;
+    cityBaseCost?: number;
+    territoryCityCostIncrease?: number;
+    globalCityCostIncrease?: number;
+    cityIncome?: number;
+  };
   /** Every setting as the feed sent it. */
   raw: Rec;
 }
@@ -319,6 +332,22 @@ export function normalizeSettings(raw: unknown): GameSettings {
     if (count !== undefined && size !== undefined) s.wastelands = { count, size };
   }
   if (r.Commerce !== undefined && r.Commerce !== null) s.commerce = isRec(r.Commerce) ? Object.keys(r.Commerce).length > 0 : true;
+  if (isRec(r.Commerce) && Object.keys(r.Commerce).length > 0) {
+    const c = r.Commerce;
+    const rules: NonNullable<GameSettings['commerceRules']> = {};
+    const pairs = [
+      ['armyCostMultiplier', c.ArmyCostMultiplier],
+      ['cityBaseCost', c.CityBaseCost],
+      ['territoryCityCostIncrease', c.TerritoryCityCostIncrease],
+      ['globalCityCostIncrease', c.GlobalCityCostIncrease],
+      ['cityIncome', c.CityIncome],
+    ] as const;
+    for (const [k, v] of pairs) {
+      const n = asInt(v);
+      if (n !== undefined) rules[k] = n;
+    }
+    s.commerceRules = rules;
+  }
   if (r.Mods !== undefined && r.Mods !== null) {
     const empty = r.Mods === '' || (isRec(r.Mods) && Object.keys(r.Mods).length === 0);
     s.mods = Array.isArray(r.Mods) ? r.Mods.length : empty ? 0 : -1;

@@ -346,7 +346,11 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             : teams.size === 0 && (r.state === 'active' || r.state === 'notice') && (r.endsTurn === undefined || turn === null || turn < r.endsTurn)),
       );
       // D3: the deploy total is checked against my income under the Sanctions on me.
-      const sanction = sanctionMyIncome(income, effect, { localDeployments: settings.localDeployments === true });
+      // #332: a commerce game's gold, read from the standing, already carries any Sanctions (war.app pays it).
+      const sanction =
+        so.commerce?.source === 'standing'
+          ? { income, warnings: [] as string[], applied: false }
+          : sanctionMyIncome(income, effect, { localDeployments: settings.localDeployments === true });
 
       const report = stressPlan({
         graph,
@@ -623,7 +627,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...effect.unsure,
         ...[claimedCardWarning(claimedCardUses(uses, claimed))].filter((w): w is string => w !== undefined),
         ...unsimulatedCards,
-        ...(deployed !== sanction.income
+        // #332: in a commerce game a smaller deploy saves gold, so only a larger one is worth a line.
+        ...(deployed !== sanction.income && !(so.commerce && deployed < sanction.income)
           ? [
               `The orders deploy ${deployed} and your income is ${sanction.income}: the test used the orders as given (a Reinforcement card adds to the income; otherwise war.app refuses a wrong total).`,
             ]
