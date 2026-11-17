@@ -1198,6 +1198,13 @@
 //     the leftover stays on that centre ("no front to go to: it stays central …"; rule 6 moves
 //     the armies already there, never the leftover) — else the
 //     border with the most fogged neighbours, else my biggest stack.
+//     #303 (plan/leftover.ts `flatSave`): when my income is flat (`PlanInput.incomeHistory` → `PlanCtx.incomeTrend`,
+//     #312's rule: the last FLAT_TURNS + 1 turns consecutive and within FLAT_TOLERANCE of the first) and the step
+//     the leftover would save toward is in a positive bonus whose every member not mine is a visible neutral or
+//     held by an opponent earning less than I do, the leftover saves toward it before any comfort margin: the
+//     holds keep their exact armies, and the idle stacks stage toward the step rather than the front (rule 6).
+//     Only where the leftover can land on the step's source (Local Deployment); otherwise unchanged. The plan
+//     reports `incomeTrend` (the last five turns, a least-squares slope, `flat`).
 //  5b. A neutral the leftover pays for (#218; live: a capture ruled out because its source "stays
 //     to hold its border", then the leftover put 8 on that source as its comfortable margin, and
 //     nothing took the 1-army neutral beside it). After the leftover, the strike stack's orders and
@@ -2966,6 +2973,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
   // #218: the main front's forecast at my whole income, for the game outlook to share.
   if (ps.front) plan.front = ps.front;
+  // #303: my income over the last turns, as rule 5's flat-income saving (plan/leftover.ts) read it.
+  if (pc.incomeTrend) plan.incomeTrend = pc.incomeTrend;
   // PLAN-TEAMS C3.3: the bonuses I share with a teammate (plan/team.ts).
   const team = teamReport(pc, { ps, threats, hd, deploys: plan.deploys });
   if (team) plan.team = team;

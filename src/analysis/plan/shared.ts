@@ -2,6 +2,7 @@
 // output types of `planTurn`, combat sizing (`captureCost`), fog (`visibleState`) and the enemy deploy
 // estimates. A leaf module: planner.ts and every phase under src/analysis/plan/ import from it, and it
 // imports no phase and not planner.ts, so the import graph has no cycle. planner.ts re-exports all of it.
+import type { IncomePoint, IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
 import { commerceRules } from '../../commerce.js';
 import type { MyOrders, OpponentTrack } from '../opponents.js';
@@ -453,6 +454,11 @@ export interface PlanInput {
    */
   turn?: number;
   /**
+   * #303: my board income (card armies out, after the army cap) on earlier turns, from the cached
+   * boards: with `turn`, the plan reports {@link TurnPlan.incomeTrend} and rule 0p.4 reads it.
+   */
+  incomeHistory?: readonly IncomePoint[];
+  /**
    * Opponent tracks over my board history ({@link trackOpponents}, ending on `board`): an
    * opponent observed over at least {@link TRACKED_MIN_TURNS} turns gets its tracked income in
    * place of the single-turn observed figure.
@@ -720,6 +726,11 @@ export interface TurnPlan {
    * warapp_plan_turn feeds it for the turn being played. Present only when the front outlook ran.
    */
   front?: FrontView;
+  /**
+   * #303: my income over the last turns (at most five, this one last), its least-squares slope per turn
+   * and whether it is flat (#312's rule). Present only with `PlanInput.incomeHistory` and the turn known.
+   */
+  incomeTrend?: IncomeTrend;
   /** B2: each truce given in the input, as the plan treated it. Absent without relations. */
   relations?: PlanRelationView[];
   /** B2 (T7): advice about the agreements (give notice). Absent when there is none. */

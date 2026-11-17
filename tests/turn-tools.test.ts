@@ -773,7 +773,10 @@ describe('warapp_plan_turn — threat trend', () => {
     });
     const third = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(third.trendSource).toBe('cache');
-    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);
+    expect(h.calls.some((c) => c.url.includes('GetHistory=true'))).toBe(false);    // #303: my income on the cached boards of turns 3 and 4 and this one, as the trend (compact: one line).
+    const trend = (third as unknown as { incomeTrend?: unknown }).incomeTrend;
+    expect(typeof trend === 'string' ? trend : JSON.stringify(trend)).toMatch(typeof trend === 'string' ? /^(\d+) → \1 → \1 over turns 3–5: \+0\/turn$/ : /"turn":3.*"turn":5/);
+    expect((first as unknown as { incomeTrend?: unknown }).incomeTrend).toBeUndefined();
   });
 
   it('(h) reports the outlook once 3 turns of boards agree, and logs it name-free per game (#178)', async () => {

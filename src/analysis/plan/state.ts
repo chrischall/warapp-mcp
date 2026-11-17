@@ -6,6 +6,8 @@
 // `PlanState` is what the phases share and change: the warnings and rationale, and the orders the
 // plan has made so far. A phase moved out of planner.ts takes `(ctx, state)` explicitly instead of
 // closing over planPass's locals; planPass still names each field as the local it was.
+
+import type { IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
 import type { CombatSettings } from '../combat.js';
 import type { MapGraph } from '../graph.js';
@@ -72,6 +74,8 @@ export interface OpponentsCtx {
   balanced: boolean;
   /** Rule 0p.3: behind — size attacks at the minimum (no pressure margin). */
   minimal: boolean;
+  /** #303: my income trend ({@link TurnPlan.incomeTrend}); absent without history. */
+  incomeTrend?: IncomeTrend;
   pressureFactor: number;
   /** The pressure margin over an estimated deploy: none when sizing at the minimum. */
   marginFor: (d: number) => number;

@@ -470,6 +470,29 @@ export function leftoverDeploy(
     };
     const fogged = [...mine].filter((x) => open(x) && notSoftening(x)).sort((a, b) => foggedNext(b) - foggedNext(a) || a - b).find((id) => foggedNext(id) > 0);
     const saving = stepSource(open, notSoftening);
+    /**
+     * #303: my income flat (#312's rule) and the step saved toward is in a positive bonus whose every
+     * member not mine is a visible neutral or held by an opponent earning less than I do: no comfort
+     * margin above the exact holds goes ahead of that completion — the leftover saves toward it.
+     */
+    const flatSave = ((): string | null => {
+      const tr = pc.incomeTrend;
+      if (!tr?.flat || !saving) return null;
+      const value = g.map.bonuses.find((b) => b.id === saving.bonusId)?.value ?? 0;
+      if (value <= 0) return null;
+      const every = tr.turns[tr.turns.length - 1]!.income;
+      const missing = bonusTerritories(g, saving.bonusId).filter((x) => !mineSet.has(x));
+      const weak = (x: number) => {
+        const o = state.get(x)?.owner;
+        if (o?.kind === 'neutral') return true;
+        return o?.kind === 'player' && pc.foe(o.playerId) && pc.incomeOfPlayer(o.playerId) < every;
+      };
+      if (!missing.length || !missing.every(weak)) return null;
+      const first = tr.turns[0]!;
+      return `my income is flat (${tr.turns.map((t) => t.income).join(', ')} over turns ${first.turn}–${tr.turns[tr.turns.length - 1]!.turn}, slope ${tr.slope}/turn), so no comfort margin above the exact holds goes ahead of completing bonus ${bonusName(saving.bonusId)} (+${value}) from ${
+        missing.some((x) => state.get(x)?.owner.kind === 'player') ? 'neutrals and weaker opponents' : 'neutrals'
+      } (#303)`;
+    })();
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
     const takenBack = reviving ? holdAfterAll() : undefined;
@@ -608,6 +631,14 @@ export function leftoverDeploy(
       concentrating = true;
       where = stack.id;
       why = `one strike stack on the border facing player ${stack.player}, the strongest opponent (~${stack.income} income, ${stack.source}), not spread`;
+    } else if (short[0] && flatSave && saving && open(saving.from) && roomAt(saving.from) > 0) {
+      // (Under Local Deployment the leftover may not land there: then the margins stand.)
+      // #303: the holds already have their exact armies; the margin over them waits behind the completion.
+      where = saving.from;
+      why = `save toward ${label(saving.t)} (${saving.cost} to take), the next step of bonus ${bonusName(saving.bonusId)}, ${cannotAfford(saving)}: ${flatSave}`;
+      defends = true;
+      lock = true;
+      concentrating = true;
     } else if (short[0]) {
       defends = true;
       // #218: the source of the step the leftover would save toward, when it is an open border:
