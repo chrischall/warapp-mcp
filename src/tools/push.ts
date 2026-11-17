@@ -330,7 +330,8 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           'through your signed-in war.app tab (ContextMint Bridge) — and re-checks a game whenever war.app says it ' +
           'changed, and every game after the push socket reconnects. It also returns (status `surrender_pending`) when ' +
           'another player\'s surrender waits for you to accept it (each game\'s `surrenderPending`, read from the game ' +
-          'details, unverified live: null when unreadable, never "none"; after one failed read it stops asking for the ' +
+          'details, unverified live: null when unreadable, never "none"; empty without a read for a lobby, a finished ' +
+          'game or one you no longer play in; after one failed read it stops asking for the ' +
           'rest of the wait and says why in `surrenderUnread`), unless `ignore_surrenders`. ' +
           'Pass the game ids to watch (1–20), or omit them to watch every game ' +
           'of yours being played or picked (the first 20, as warapp_my_games lists them). Reports progress while it ' +

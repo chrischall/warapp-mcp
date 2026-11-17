@@ -336,7 +336,7 @@ describe('warapp_my_games: pending surrenders (#317)', () => {
     return refreshed;
   }
 
-  it('reports each game being played: one owed first and counted, a quiet one empty, the rest null', async () => {
+  it('reports each game being played: one owed first and counted, a quiet one empty, and a lobby or a game I am out of empty too, unread (#327)', async () => {
     const refreshed = await surrenderHarness();
     const p = payload(await h!.call('warapp_my_games'));
     const games = p.games as Array<Record<string, unknown>>;
@@ -353,11 +353,14 @@ describe('warapp_my_games: pending surrenders (#317)', () => {
     ]);
     expect(games[0]!.surrenderPending).toEqual([{ inGameId: 765432, player: null, owedByMe: true, name: untrustedText('Bob') }]);
     expect(games[1]!.surrenderPending).toEqual([]);
-    expect(games[2]!.surrenderPending).toBeNull();
-    expect(games[3]!.surrenderPending).toBeNull();
+    // #327: nothing failed to read there — a lobby has no surrender, and a game I am out of owes none from me.
+    expect(games[2]!.surrenderPending).toEqual([]);
+    expect(games[3]!.surrenderPending).toEqual([]);
     expect(p.surrenderPending).toBe(1);
     expect(p.waitingOnYou).toBe(0);
     expect(String(p.surrenderNote)).toMatch(/UNVERIFIED live.*null means they could not be read/);
+    expect(String(p.surrenderNote)).toMatch(/lobby/);
+    expect(String(p.surrenderNote)).not.toMatch(/could not be read\./);
   });
 
   it('a failed read is null (unknown) and counted in the note, never an empty list', async () => {

@@ -15,7 +15,8 @@ import type { LiveContext } from './live-context.js';
 /** Where the read comes from, for a result's note. */
 export const SURRENDER_PENDING_NOTE =
   "Read from the game details (the web client's GameRefresh), UNVERIFIED live: a list is what the details showed " +
-  '(empty: no surrender pending); null means they could not be read, not that none is pending. owedByMe true: the ' +
+  '(empty: no surrender pending); null means they could not be read, not that none is pending. A lobby, a finished ' +
+  'game and a game you no longer play in are empty without a read (#327): no surrender there can wait on you. owedByMe true: the ' +
   'player is waiting for you to accept its surrender. Accepting is the owner\'s decision (it hands that player\'s land ' +
   'on and can end the game).';
 
@@ -24,7 +25,8 @@ const IN_PLAY: ReadonlySet<string> = new Set(['Playing', 'DistributingTerritorie
 
 /**
  * Whether a pending surrender can matter to me in a game: it is being played or picked and my seat is
- * still playing. Elsewhere no read is made (and the answer is `null`).
+ * still playing. Elsewhere no read is made, and the answer is an empty list (#327: a lobby or a finished
+ * game has no surrender pending, and a game I am out of owes none from me — nothing failed to read).
  */
 export function surrenderMayBePending(state: string, mySeatState: string | undefined): boolean {
   return IN_PLAY.has(state) && mySeatState === 'Playing';
@@ -58,8 +60,9 @@ export interface PendingSurrenderView extends PendingSurrender {
 
 /**
  * The surrenders pending in a GameFeed game (`me`: my GameFeed seat), each with the player's GameFeed id
- * and name; `null` when the details could not be read, or when no surrender can matter to me there (the
- * game not being played or picked, or my seat out).
+ * and name; `null` when the details could not be read or my seat is unknown, and an empty list, read from
+ * nothing, when no surrender can matter to me there (the game not being played or picked, or my seat out:
+ * {@link surrenderMayBePending}, #327).
  */
 export async function readPendingSurrenders(
   ctx: Pick<LiveContext, 'rpc' | 'bundle'>,
@@ -67,7 +70,8 @@ export async function readPendingSurrenders(
   me: Pick<Player, 'id' | 'feedId' | 'state'> | undefined,
   read: (gameId: number) => ReturnType<typeof readDetailsSeats> = (id) => readDetailsSeats(ctx, id),
 ): Promise<PendingSurrenderView[] | null> {
-  if (!me || !surrenderMayBePending(game.state, me.state)) return null;
+  if (!me) return null;
+  if (!surrenderMayBePending(game.state, me.state)) return [];
   const seats = await read(game.id);
   if (!seats) return null;
   const byInGame = new Map<number, Player>();
