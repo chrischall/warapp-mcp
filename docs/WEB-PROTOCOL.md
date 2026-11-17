@@ -4,7 +4,8 @@ The official API (`/API/GameFeed`) returns **no board for an in-progress game** 
 standings, not the pick-phase map — and has no way to submit orders. The web client
 talks to its server over a private binary RPC protocol instead. This document records
 that protocol as read from the client bundle (`warappcdn.com/js/Release/ujs.js`,
-client `v6.07.0.1`, protocol version 242) and checked against captured traffic.
+client `v6.07.0.1`, protocol version 242) and checked against captured traffic. How war.app releases new clients, and how to move
+this document and the decoder to one, is in [CLIENT-RELEASES.md](CLIENT-RELEASES.md).
 
 **Status (2026-11-12):** request framing fully decoded — 7/7 captured requests rebuilt
 byte-identical from decoded fields; reply payloads decode generically (every byte consumed on

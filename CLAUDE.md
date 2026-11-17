@@ -25,8 +25,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`Auth failed`, `…ServerGameKeyNotFound`, `GameID must be an integer`). Never decide
   success from the status alone.
 - **The decoder is pinned to client v6.07 / protocol 242 (`KNOWN_GOOD_BUNDLE`, `src/protocol/bundle.ts`).** The
-  built-in reader names (`DEFAULT_DIALECT`) and every hand-written encoder are that release's. war.app's CDN still
-  serves it by version, byte for byte, and war.app still answers a 242 request in 242's layout, so when the current
+  built-in reader names (`DEFAULT_DIALECT`) and every hand-written encoder are that release's. war.app's CDN serves
+  it only while Cloudflare still caches its exact URL (the origin ignores `?v=` and returns the current build:
+  `docs/CLIENT-RELEASES.md`), and war.app still answers a 242 request in 242's layout, so when the current
   client is refused at load (2026-11-17: 639304451701341657 renamed every reader and moved to protocol 243) the
   pinned one stands in, only with its pinned SHA-256, kept on disk beside the refused copy and re-looked-up hourly;
   `report().standInFor` and `warapp_session_status` say so. Moving to 243 means new names AND new layouts, not a rename.
@@ -42,6 +43,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   warnings with `standInLine`. While one stands in, a reply that does not decode with it (bytes left over, a frame or layout
   error) or comes in another protocol version (`ProtocolVersionError`) is `StandInClosedError` (war.app no longer answers the
   old build; #340), never a board. Hosted, `MCP_DATA_DIR` holds both files like the cache.
+  How and when war.app ships clients, which protocols it still accepts (223–242 on 2026-11-17; older get error 48
+  `ClientOutOfDate`) and the checklist for moving to a new client are in `docs/CLIENT-RELEASES.md`.
 - **The healthcheck probes a game that does not exist** (`GameID=2147483647`): war.app
   checks credentials first, so `ServerGameKeyNotFound` proves the token works without
   loading a real game, and `Auth failed` is a rejected credential.
