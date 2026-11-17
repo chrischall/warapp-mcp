@@ -270,6 +270,64 @@ describe('registerAllTools hosted with a captured token', () => {
     expect(JSON.stringify(res)).not.toContain(HOST_TOKEN);
   });
 
+  // the API token can be fine while the session the live tools ride is signed out; the
+  // healthcheck used to say ok then. It now asks war.app about the session itself.
+  const NOT_FOUND = { termsOfUse: 'x', error: 'Loading the game produced an error: ServerGameKeyNotFound' };
+  const SIGNED_OUT_PROBE = { status: 200, body: '', url: 'https://war.app/LogIn?AuthNeeded=true&ReturnURL=%2FInviteToken' };
+
+  it('the healthcheck fails as session_expired when war.app shows the session signed out (Sign in, no token)', async () => {
+    const directFetch = vi.fn<DirectFetch>(async () => SIGNED_OUT_PROBE);
+    h = await liveHarness({ env: hostedEnv(), directFetch, feed: [NOT_FOUND] });
+    const res = await h.call('warapp_healthcheck');
+    const p = payload<Record<string, any>>(res);
+    expect(p.ok).toBe(false);
+    expect(p.error?.kind).toBe('session_expired');
+    expect(p.credential.detail.sessionCheck).toBe('signed-out');
+    expect(String(p.hint)).toMatch(/Sign in/);
+    expect(JSON.stringify(res)).not.toContain(HOST_TOKEN);
+    expect(JSON.stringify(res)).not.toContain(LINK);
+    // The probe was one GET of the invite-token page carrying the session.
+    expect(directFetch.mock.calls.map(([u, i]) => [i.method, u])).toEqual([['GET', 'https://war.app/InviteToken']]);
+  });
+
+  it('off the direct leg, the healthcheck still checks the session: signed out is session_expired', async () => {
+    const directFetch = vi.fn<DirectFetch>(async () => SIGNED_OUT_PROBE);
+    h = await liveHarness({ env: hostedEnv(), directFetch, feed: [NOT_FOUND] });
+    await h.call('warapp_list_open_games');
+    const p = payload<Record<string, any>>(await h.call('warapp_healthcheck'));
+    expect(p.ok).toBe(false);
+    expect(p.error?.kind).toBe('session_expired');
+    expect(p.transport).toMatchObject({ sessionCheck: 'signed-out', wall: { kind: 'session' } });
+    expect(String(p.hint)).toMatch(/Sign in/);
+    expect(JSON.stringify(p)).not.toContain(HOST_TOKEN);
+  });
+
+  it('the healthcheck reports a signed-in session as ok, and a signed-in check lifts a wall at once', async () => {
+    let signedIn = false;
+    const directFetch = vi.fn<DirectFetch>(async (url) =>
+      signedIn ? { status: 200, body: `<p>Your invite token is ${ME.token}</p>`, url } : SIGNED_OUT_PROBE,
+    );
+    h = await liveHarness({ env: hostedEnv(), directFetch, feed: [NOT_FOUND] });
+    // A live read walls the direct leg while signed out; status names the wall and its retry.
+    await h.call('warapp_list_open_games');
+    const status = payload<Record<string, any>>(await h.call('warapp_session_status'));
+    expect(status).toMatchObject({ activeTransport: 'fetchproxy', sessionExpired: true, wall: { kind: 'session' } });
+    expect(typeof status.wall.retryAt).toBe('string');
+    expect(JSON.stringify(status)).not.toContain(HOST_TOKEN);
+
+    signedIn = true;
+    // The router had fallen back, so the bridge arm answers: it checks the session first, lifts
+    // the wall on a signed-in answer, and probes over the direct leg.
+    const p = payload<Record<string, any>>(await h.call('warapp_healthcheck'));
+    expect(p.ok).toBe(true);
+    expect(p.transport).toMatchObject({ transport: 'direct', sessionCheck: 'signed-in' });
+    expect(p.transport).not.toHaveProperty('wall');
+    const after = payload<Record<string, any>>(await h.call('warapp_session_status'));
+    expect(after).toMatchObject({ activeTransport: 'direct' });
+    expect(after).not.toHaveProperty('wall');
+    expect(after).not.toHaveProperty('sessionExpired');
+  });
+
   it('without the variable, hosted status is unchanged (bridge, not linked)', async () => {
     h = await liveHarness({ env: { [marker]: 'x' } });
     const p = payload<Record<string, unknown>>(await h.call('warapp_session_status'));

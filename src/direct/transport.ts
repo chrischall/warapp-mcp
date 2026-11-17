@@ -52,6 +52,7 @@ import {
 } from '@chrischall/mcp-utils/fetchproxy';
 import { fetchPublic, type PublicFetchResponse, type PublicFetchStopped } from '@chrischall/mcp-utils/netguard';
 import { egressDispatcher, type ProxyAgentFactory } from './egress.js';
+import { decodeReplyEnvelope, fromHex } from '../protocol/codec.js';
 import type { WarappBridge } from '../transport-bridge.js';
 import { isHosted } from '../hosted.js';
 import { hostedSession, SESSION_HOST, scrubError, type Session } from './session.js';
@@ -373,8 +374,75 @@ export function looksSignedOut(requestedUrl: string, res: DirectFetchResult): bo
 }
 
 /**
+ * The page that says whether the session is signed in (live 2026-11-17): signed in it
+ * answers 200 "Your invite token is N"; signed out, a 302 to `/LogIn?AuthNeeded=true`.
+ */
+export const SIGNED_IN_PROBE_URL = `${SESSION_ORIGIN}/InviteToken`;
+
+/** war.app's `AuthFailed` server error: its `/Services` answer to a signed-out (or unknown) AuthToken. */
+export const AUTH_FAILED_CODE = 3;
+
+/** What a probe of {@link SIGNED_IN_PROBE_URL} says about the session. */
+export type SignInVerdict = 'signed-in' | 'signed-out' | 'unknown';
+
+const INVITE_TOKEN_TEXT = /Your invite token is\s*\d{5,20}/;
+
+/** Read a reply to {@link SIGNED_IN_PROBE_URL} (pure). Never decides on a reply that says neither. */
+export function signInVerdict(res: DirectFetchResult): SignInVerdict {
+  let path = '';
+  try {
+    path = new URL(res.url).pathname;
+  } catch {
+    path = '';
+  }
+  if (SIGNIN_PATH.test(path)) return 'signed-out';
+  if (res.status !== 200) return 'unknown';
+  if (INVITE_TOKEN_TEXT.test(res.body)) return 'signed-in';
+  if (hasPasswordInput(res.body)) return 'signed-out';
+  return 'unknown';
+}
+
+/**
+ * Whether a `/Services` reply is war.app's own "not signed in" answer: a valid reply frame
+ * carrying server error {@link AUTH_FAILED_CODE} (live 2026-11-17: with no AuthToken, or a
+ * bogus one, war.app answers exactly that — never a non-frame body).
+ */
+export function isAuthFailedReply(body: string): boolean {
+  if (!looksLikeHexFrame(body)) return false;
+  try {
+    return decodeReplyEnvelope(fromHex(body.trim())).error?.code === AUTH_FAILED_CODE;
+  } catch {
+    return false;
+  }
+}
+
+const isServicesUrl = (url: string): boolean => {
+  try {
+    return /\/services\b/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+};
+
+const isProbeUrl = (url: string): boolean => {
+  try {
+    const u = new URL(url);
+    return u.origin === SESSION_ORIGIN && u.pathname === new URL(SIGNED_IN_PROBE_URL).pathname;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * The direct leg: a plain HTTPS request to war.app carrying the linked
  * AuthToken cookie, mapped to the bridge's `.fetch(init)` surface.
+ *
+ * A reply that only SUGGESTS a sign-out (a sign-in redirect or form, a 401/403, a
+ * `/Services` reply that is not a frame, or war.app's AuthFailed frame) is confirmed with one
+ * GET of {@link SIGNED_IN_PROBE_URL} before it is called one: a probe that shows the
+ * session signed in passes the reply through as an ordinary failure, so one odd answer no
+ * longer walls a good session; a probe that shows it signed out, or cannot tell, keeps the
+ * old reading.
  */
 export class DirectBridge {
   constructor(
@@ -383,6 +451,27 @@ export class DirectBridge {
     /** A hosted child signed in by mcp-host: its signed-out errors point at Sign in. */
     private readonly hostSignIn = false,
   ) {}
+
+  /** One GET of {@link SIGNED_IN_PROBE_URL} with the session; `none` when no session is linked. Never throws. */
+  async checkSignedIn(signal?: AbortSignal): Promise<SignInVerdict | 'none'> {
+    const sess = await this.store.read();
+    if (!sess) return 'none';
+    return this.probe(sess.authToken, signal);
+  }
+
+  private async probe(token: string, signal?: AbortSignal): Promise<SignInVerdict> {
+    try {
+      const res = await this.fetchImpl(SIGNED_IN_PROBE_URL, {
+        method: 'GET',
+        headers: { cookie: `AuthToken=${token}` },
+        ...(signal ? { signal } : {}),
+      });
+      return signInVerdict(res);
+    } catch {
+      // Nothing from a failed probe reaches a caller: the token cannot leak through it.
+      return 'unknown';
+    }
+  }
 
   async fetch(init: FetchproxyFetchInit, signal?: AbortSignal): Promise<FetchproxyFetchResult> {
     const sess = await this.store.read();
@@ -417,8 +506,13 @@ export class DirectBridge {
         });
       }
     }
-    if (looksSignedOut(url, res)) {
-      throw new SessionExpiredError({ capturedAt: sess.capturedAt, hostSignIn: this.hostSignIn || sess.origin === 'host' });
+    const suspect = looksSignedOut(url, res) || (answered && isServicesUrl(url) && isAuthFailedReply(res.body));
+    if (suspect) {
+      // A GET of the probe page is its own probe; anything else asks once.
+      const verdict = isProbeUrl(url) && isSafeToReplay(init.method) ? signInVerdict(res) : await this.probe(token, signal);
+      if (verdict !== 'signed-in') {
+        throw new SessionExpiredError({ capturedAt: sess.capturedAt, hostSignIn: this.hostSignIn || sess.origin === 'host' });
+      }
     }
     return { status: res.status, body: res.body, url: res.url };
   }
@@ -447,6 +541,19 @@ export interface WarappDirectBridge {
    * OLD session. An edge-block wall is kept (it is about this client, not the token).
    */
   sessionLinked(): void;
+  /**
+   * Why the router left the direct leg, if it has: the kind (`session`: signed out or none
+   * linked; `edge`: the site's edge refused the direct request), a short reason, when, and —
+   * hosted — when the direct leg is next tried; `retryAt` is `null` locally, where a
+   * relink lifts a session wall and an edge wall stays. Never carries the token.
+   */
+  wall(): WallInfo | null;
+  /**
+   * Ask war.app whether the session is signed in (one GET of the invite-token page with it),
+   * never throwing: `none` with no session (nothing sent). Signed in, any wall is lifted and the
+   * stale flag cleared at once; signed out, the stale flag is set.
+   */
+  checkSession(): Promise<SignInVerdict | 'none'>;
   /**
    * A key for the state that decides which war.app account answers the next
    * call: the active leg, the stale flag and the linked session's capture time.
@@ -480,8 +587,34 @@ interface CreateDirectFirstBridgeOptions {
  */
 export const RELINK_CHECK_MS = 5_000;
 
-/** Why the router left the direct leg: a session problem (lifted by a relink) or an edge block (sticky). */
-type Wall = { kind: 'session'; capturedAt: string | null } | { kind: 'edge' };
+/**
+ * Hosted, the direct leg is tried again this long after the router leaves it: a hosted
+ * child cannot be relinked in-process (its session is the one mcp-host injected at spawn, whose
+ * capture time never changes), so without a retry one odd answer — or a passing edge challenge —
+ * kept it off the direct leg until the process restarted. Each wall in a row doubles the wait,
+ * up to {@link WALL_RETRY_MAX_MS}; a direct success starts it over.
+ */
+export const WALL_RETRY_BASE_MS = 60_000;
+/** The longest wait before a hosted child tries the direct leg again. */
+export const WALL_RETRY_MAX_MS = 30 * 60_000;
+
+/** The non-secret facts about a wall, for status and the healthcheck. */
+export interface WallInfo {
+  kind: 'session' | 'edge';
+  /** Why, in a few words (never the token). */
+  reason: string;
+  /** When the router left the direct leg (ISO-8601). */
+  since: string;
+  /** Hosted: when the direct leg is next tried (ISO-8601); `null` locally. */
+  retryAt: string | null;
+}
+
+/** Why the router left the direct leg: a session problem (lifted by a relink) or an edge block (sticky locally). */
+type Wall = ({ kind: 'session'; capturedAt: string | null } | { kind: 'edge' }) & {
+  reason: string;
+  since: number;
+  retryAt: number | null;
+};
 
 /**
  * Wire the direct leg and the fetchproxy bridge into a direct-first router,
@@ -513,21 +646,27 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
   let wall: Wall | null = null;
   let stale = false;
   let lastRelinkCheck = Number.NEGATIVE_INFINITY;
+  /** Walls in a row since the direct leg last answered 200: the hosted backoff's exponent. */
+  let wallsInARow = 0;
 
   const onFallback = ({ error }: { error: unknown }): void => {
-    const next: Wall =
-      error instanceof SessionExpiredError
-        ? { kind: 'session', capturedAt: error.capturedAt ?? null }
-        : error instanceof SessionNotLinkedError
-          ? { kind: 'session', capturedAt: null }
-          : { kind: 'edge' };
-    wall = next;
     const why =
       error instanceof SessionExpiredError
         ? 'the linked war.app session is signed out'
         : error instanceof SessionNotLinkedError
           ? 'no war.app session is linked'
           : 'the site edge refused the direct request';
+    const since = now();
+    wallsInARow += 1;
+    const retryAt = hosted ? since + Math.min(WALL_RETRY_BASE_MS * 2 ** (wallsInARow - 1), WALL_RETRY_MAX_MS) : null;
+    const timing = { reason: why, since, retryAt };
+    const next: Wall =
+      error instanceof SessionExpiredError
+        ? { kind: 'session', capturedAt: error.capturedAt ?? null, ...timing }
+        : error instanceof SessionNotLinkedError
+          ? { kind: 'session', capturedAt: null, ...timing }
+          : { kind: 'edge', ...timing };
+    wall = next;
     log(
       `[warapp-mcp] Direct transport unavailable (${why}) — switching to the ContextMint Bridge browser bridge. ` +
         `Keep a ${SESSION_HOST} tab open and approve the pairing prompt in the extension if one appears` +
@@ -555,11 +694,17 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
     });
   let legs = build();
 
+  /** Lift any wall: a fresh router, back on the direct leg. */
+  const liftWall = (): void => {
+    if (!wall) return;
+    wall = null;
+    legs = build();
+  };
+
   /** Lift a session-caused wall: a fresh router, back on the direct leg. An edge wall stays. */
   const liftSessionWall = (): void => {
     if (wall?.kind !== 'session') return;
-    wall = null;
-    legs = build();
+    liftWall();
   };
 
   /** Behind a session wall: has a DIFFERENT session been linked since (e.g. by another process)? */
@@ -577,6 +722,9 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
       liftSessionWall();
       stale = false;
     }
+    // Hosted: past the backoff, the direct leg is tried again. A write that reaches
+    // war.app signed out on it is still never re-sent over the bridge (below).
+    if (mode === 'auto' && wall?.retryAt != null && now() >= wall.retryAt) liftWall();
     // A non-GET whose direct attempt reached war.app (it answered signed-out)
     // is never re-sent over the bridge: a write must never be sent twice.
     let reached: SessionExpiredError | undefined;
@@ -585,7 +733,10 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
         try {
           const res = await direct.fetch(init, ctx.signal);
           // Only a 200 proves the session works; a 5xx says nothing about it.
-          if (res.status === 200) stale = false;
+          if (res.status === 200) {
+            stale = false;
+            wallsInARow = 0;
+          }
           return res;
         } catch (err) {
           if (err instanceof SessionExpiredError) {
@@ -608,6 +759,26 @@ export function createDirectFirstBridge(opts: CreateDirectFirstBridgeOptions): W
     bridgeTransport: () => legs.bridgeTransport(),
     stats: () => legs.stats(),
     sessionStale: () => stale,
+    wall: () =>
+      wall
+        ? {
+            kind: wall.kind,
+            reason: wall.reason,
+            since: new Date(wall.since).toISOString(),
+            retryAt: wall.retryAt === null ? null : new Date(wall.retryAt).toISOString(),
+          }
+        : null,
+    checkSession: async () => {
+      const verdict = await direct.checkSignedIn();
+      if (verdict === 'signed-in') {
+        stale = false;
+        wallsInARow = 0;
+        if (mode === 'auto') liftWall();
+      } else if (verdict === 'signed-out') {
+        stale = true;
+      }
+      return verdict;
+    },
     sessionLinked: () => {
       stale = false;
       if (mode === 'auto') liftSessionWall();

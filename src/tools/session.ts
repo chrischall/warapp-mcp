@@ -25,7 +25,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { linkSession, type LinkResult, type LinkSessionOptions } from '../direct/link.js';
 import { hostedTokenState, readSession, SESSION_HOST, type Session } from '../direct/session.js';
-import { HOST_SIGN_IN_ADVICE } from '../direct/transport.js';
+import { HOST_SIGN_IN_ADVICE, type WallInfo } from '../direct/transport.js';
 import { isHosted } from '../hosted.js';
 import type { DecoderReport } from '../protocol/bundle.js';
 import type { PushTransportName } from '../push/socketio.js';
@@ -41,6 +41,8 @@ interface SessionTransportView {
   sessionStale(): boolean;
   /** A new session was linked: clear the stale flag and let `auto` retry the direct leg. */
   sessionLinked(): void;
+  /** Why the router left the direct leg, and (hosted) when it tries again; `null` on it. */
+  wall?(): WallInfo | null;
 }
 
 /** What {@link registerSessionTools} needs. */
@@ -158,11 +160,13 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
     async () => {
       if (hosted && hostToken === 'ok') {
         const pt = deps.pushTransport?.();
+        const wall = deps.transport.wall?.() ?? null;
         const base = {
           hosted: true,
           linked: true,
           linkedBy: 'host' as const,
           activeTransport: deps.transport.activeLeg(),
+          ...(wall ? { wall } : {}),
           ...(pt ? { pushTransport: pt } : {}),
           ...decoderView(),
           hostedNote: NOTE_HOSTED_DIRECT,
@@ -189,7 +193,16 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
       return respond(undefined, ['compact'], () => {
         if (!session) return { linked: false, activeTransport, ...push, hint: HINT_NOT_LINKED };
         const ageSeconds = Math.max(0, Math.round((now() - Date.parse(session.capturedAt)) / 1000));
-        const base = { linked: true, host: session.host, capturedAt: session.capturedAt, ageSeconds, activeTransport, ...push };
+        const wall = deps.transport.wall?.() ?? null;
+        const base = {
+          linked: true,
+          host: session.host,
+          capturedAt: session.capturedAt,
+          ageSeconds,
+          activeTransport,
+          ...(wall ? { wall } : {}),
+          ...push,
+        };
         return deps.transport.sessionStale() ? { ...base, sessionExpired: true, hint: HINT_EXPIRED } : base;
       });
     },
