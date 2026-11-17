@@ -1,9 +1,10 @@
 import { McpToolError } from '@chrischall/mcp-utils';
 import { describe, expect, it } from 'vitest';
 import { WarappConfigError } from '../../src/config.js';
-import { encodeRequest, toHex, Writer, type ExtrasDown } from '../../src/protocol/codec.js';
+import { encodeRequest, PROTOCOL_VERSION, toHex, Writer, type ExtrasDown } from '../../src/protocol/codec.js';
 import { Method, writeGetMapDetailsParams, writeGetTerritoryPicksParams } from '../../src/protocol/methods.js';
 import {
+  ClientOutOfDateError,
   CLIENT_VERSION,
   INITIAL_SERVER_INFO_A,
   INITIAL_SERVER_INFO_B,
@@ -211,6 +212,27 @@ describe('WarappRpc server errors', () => {
     expect((err as Error).message).not.toContain('java.lang');
     expect((err as Error).message).not.toContain(TEST_EMAIL);
     expect(SERVER_ERROR_MESSAGES[code]).toContain(wording);
+  });
+
+  it('reads error 48 (ClientOutOfDate) as war.app retiring this protocol, and points at the update', async () => {
+    const { rpc } = setup(() => ({ error: { code: 48, message: `ClientOutOfDate for ${TEST_EMAIL}\n\tat x.y` } }));
+    const err = await rejection(rpc.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks));
+    expect(err).toBeInstanceOf(ClientOutOfDateError);
+    expect(err).toBeInstanceOf(WarappServerError);
+    expect((err as WarappServerError).code).toBe(48);
+    expect((err as Error).message).toContain('ClientOutOfDate');
+    expect((err as Error).message).toContain(`protocol ${PROTOCOL_VERSION}`);
+    expect((err as McpToolError).hint).toContain('docs/CLIENT-RELEASES.md');
+    expect((err as Error).message).not.toContain(TEST_EMAIL);
+  });
+
+  it('reads error 49 (ClientVersionTooHigh) as a client version war.app does not know yet', async () => {
+    const { rpc } = setup(() => ({ error: { code: 49, message: 'ClientVersionTooHigh' } }));
+    const err = await rejection(rpc.call('GetTerritoryPicks', Method.GetTerritoryPicks, picks));
+    expect(err).toBeInstanceOf(ClientOutOfDateError);
+    expect((err as WarappServerError).code).toBe(49);
+    expect((err as Error).message).toContain('ClientVersionTooHigh');
+    expect((err as Error).message).toContain(CLIENT_VERSION);
   });
 
   it('reports an unknown code with a short, email-free first line of the server message', async () => {
