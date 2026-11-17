@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/chrischall/warapp-mcp/compare/v0.3.1...v0.4.0) (2026-11-17)
+
+
+### Features
+
+* **protocol:** fall back to the last client build that worked when war.app ships one this server can't read ([#344](https://github.com/chrischall/warapp-mcp/issues/344)) ([b7c3199](https://github.com/chrischall/warapp-mcp/commit/b7c3199adf0371ca2345f3d11dae45f9b731a8f2))
+
+
+### Bug Fixes
+
+* **hosted:** confirm a war.app sign-out before dropping the session, and retry it after a backoff ([#342](https://github.com/chrischall/warapp-mcp/issues/342)) ([cd1a1b6](https://github.com/chrischall/warapp-mcp/commit/cd1a1b6c8200f704d63f63a70e518126874ecc80))
+* **protocol:** keep decoding boards when war.app ships a client this server cannot read ([#341](https://github.com/chrischall/warapp-mcp/issues/341)) ([59d0b3f](https://github.com/chrischall/warapp-mcp/commit/59d0b3fb64ab071424bd92a7eaa8fbdd75829d9e))
+
 ## [0.3.1](https://github.com/chrischall/warapp-mcp/compare/v0.3.0...v0.3.1) (2026-11-16)
 
 
