@@ -455,7 +455,8 @@ describe('createDirectFirstBridge router', () => {
     // The NEXT call rides the bridge.
     const res = await (await bridge.ready()).fetch(servicesPost);
     expect(res.body).toBe(BRIDGE_FRAME);
-    expect(stub.calls).toHaveLength(1);
+    // The POST, then the one GET that confirmed the sign-out; nothing more on direct.
+    expect(stub.calls.map((c) => c.method)).toEqual(['POST', 'GET']);
     expect(fp.calls).toHaveLength(1);
   });
 
@@ -489,7 +490,11 @@ describe('createDirectFirstBridge router', () => {
 
       const got = await (await bridge.ready()).fetch(servicesPost).catch((e: unknown) => e);
 
-      expect(stub.calls).toHaveLength(1);
+      // The POST once; a suspected sign-out adds only the confirming GET.
+      expect(stub.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+      expect(stub.calls.filter((c) => c.method !== 'POST').map((c) => c.url)).toEqual(
+        outcome === 'expired' ? ['https://war.app/InviteToken'] : [],
+      );
       expect(fp.calls).toHaveLength(0);
       if (outcome === 'expired') {
         expect(got).toBeInstanceOf(SessionExpiredError);

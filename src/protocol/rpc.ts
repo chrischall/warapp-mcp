@@ -49,6 +49,8 @@ export function methodTakesAuth(methodId: number): boolean {
  * 51 (`MustUseCard`, verified live) has no client wording; this is ours.
  */
 export const SERVER_ERROR_MESSAGES: Readonly<Record<number, string>> = {
+  // AuthFailed (live 2026-11-17): war.app's answer when the request's session is not signed in.
+  3: 'war.app refused the request as not signed in (AuthFailed): the war.app session this server uses is signed out.',
   10: 'war.app refused the order sequence — card plays must come in turn-phase order.',
   11: 'Your orders deploy more or fewer armies than you are receiving this turn. Please verify your orders deploy the correct number.',
   51: 'You hold more cards than this game allows, so war.app requires you to play or discard one this turn.',

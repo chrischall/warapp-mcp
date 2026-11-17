@@ -1536,14 +1536,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `src/direct/transport.ts`, over mcp-utils `createDirectFirstTransport`; the fetchproxy bridge
   itself is `createWarappBridge` in `src/transport-bridge.ts`): the direct leg issues a plain
   server-side HTTPS request carrying the cookie, falling back to the browser bridge when no session
-  is linked or it has expired. Signed out means a sign-in page or redirect, a 401 or 403 from war.app,
-  or a 200 `/Services` reply that is not a frame — a 5xx passes through as an `http` error. A non-GET
+  is linked or it has expired. **A sign-out is suspected, then confirmed:** a sign-in page or
+  redirect, a 401 or 403 from war.app, a 200 `/Services` reply that is not a frame, or **war.app's own
+  signed-out answer — a valid `/Services` frame carrying server error 3, `AuthFailed`** (live 2026-11-17:
+  with no or a bogus AuthToken war.app answers exactly that, never a non-frame body, and a signed-out page
+  such as `/MultiPlayer` is a plain 200 with no sign-in form) — is confirmed with one GET of
+  `/InviteToken` with the cookie (`signInVerdict`: signed in is 200 "Your invite token is N", signed out a
+  302 to `/LogIn?AuthNeeded=true`). Signed in → the reply passes through as an ordinary failure (rpc
+  names error 3 `AuthFailed`), no wall; signed out or cannot tell → expired, as before. A GET of
+  `/InviteToken` is its own probe. A 5xx passes through as an `http` error. A non-GET
   that reached war.app on the direct leg is **never re-sent over the bridge** (a write must not be
   sent twice); later calls use the bridge. The one reply that is re-sent is an edge challenge (a
   CDN/WAF page or `cf-mitigated` header, mcp-utils `detectEdgeBlock`), which never reached war.app —
   and a 200 that is a valid frame is war.app's answer, never a challenge, whatever header sits beside
   it. The direct leg sends the cookie to the exact origin `https://war.app` only: a GET follows
-  redirects within it, a non-GET follows none. A relink (`warapp_link_session`, or a new `capturedAt` on disk) clears the stale flag
+  redirects within it, a non-GET follows none. **Hosted, a wall is retried after a backoff:** a
+  hosted child cannot be relinked in-process (its token's `capturedAt` is the constant
+  `HOST_CAPTURED_AT`), so `WALL_RETRY_BASE_MS` (60 s) after the router leaves the direct leg — doubling for
+  each wall in a row up to `WALL_RETRY_MAX_MS` (30 min), reset by a direct 200 — the next call tries direct
+  again (a write that reaches war.app signed out is still never re-sent); before one odd reply kept a
+  hosted child on the (usually unpaired) bridge until the process restarted. `wall()` (kind, reason, since,
+  `retryAt`, `null` locally) shows in `warapp_session_status` and the healthcheck; `checkSession()` probes
+  the session and, signed in, lifts any wall at once. A relink (`warapp_link_session`, or a new `capturedAt` on disk) clears the stale flag
   and returns `auto` to the direct leg. **Hosted, the direct leg and `warapp_sign_in` go through mcp-host's egress proxy**
   (`src/direct/egress.ts`): with `HTTPS_PROXY` set they send through an undici `ProxyAgent` for it instead of
   netguard's public-only dispatcher (which ignores the proxy, and a direct socket is dropped there), the war.app-only
@@ -1671,7 +1685,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared
   process-wide, so its role alone is not enough; `WARAPP_TRANSPORT=direct` never probes it); either way it reports the active leg and whether a direct session is linked and
-  its age (never the token). The bridge port is `WARAPP_WS_PORT` (default 37149); hosting needs
+  its age (never the token). With a direct session either arm first checks it (`sessionCheck`, plus
+  the router's `wall`): signed out fails as `session_expired` even when the API token is fine (a hosted
+  healthcheck said ok while every live tool failed), and on the bridge arm a signed-in check lifts the wall
+  and probes over the direct leg. The bridge port is `WARAPP_WS_PORT` (default 37149); hosting needs
   `bridge: true` and `bridgePortEnv: WARAPP_WS_PORT` on the registration.
 - **A frozen war.app tab stalls bridged POSTs.** Chrome freezes background tabs; the bridge
   relays `/Services` POSTs through a page tab, so they time out ("did not respond within

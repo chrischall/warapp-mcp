@@ -164,6 +164,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     transport: {
       activeLeg: () => bridge.status().transport,
       sessionStale: () => bridge.sessionStale(),
+      wall: () => bridge.wall(),
       sessionLinked: () => bridge.sessionLinked(),
     },
     pushTransport: () => push.status().transport,
