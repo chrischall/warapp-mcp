@@ -98,7 +98,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     // The cached signed-in account is discarded whenever the account behind the router may have changed.
     identity: () => bridge.identityState(),
   });
-  registerHealthcheckTool(server, fetchproxy, bridge, deps);
+  registerHealthcheckTool(server, fetchproxy, bridge, { ...deps, standIn: () => live.decoderReport()?.standIn });
   // The signed-in account names a finished game's player for its end-of-game pass when no board was cached (#312).
   registerGameTool(server, client, () => dataDir(deps.env), deps.env, () => live.myInviteToken());
   registerMapTool(server, client, live);

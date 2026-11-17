@@ -10,6 +10,7 @@ import { readCredentials, TOKEN_URL, WarappConfigError } from '../config.js';
 import { readSessionSync } from '../direct/session.js';
 import { HOST_SIGN_IN_ADVICE, SessionExpiredError, type WarappDirectBridge } from '../direct/transport.js';
 import type { WarappBridge } from '../transport-bridge.js';
+import type { StandInWindow } from '../protocol/bundle.js';
 
 /**
  * `warapp_healthcheck` — does war.app accept the configured email + token?
@@ -48,7 +49,15 @@ export const BRIDGE_PROBE_PATH = '/';
 type HealthcheckDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep'> & {
   /** Clock for the linked session's age. Defaults to `Date.now`. */
   now?: () => number;
+  /** The stand-in window, while an older client build decodes boards (the owner, 2026-11-17); none: not reported. */
+  standIn?: () => StandInWindow | undefined;
 };
+
+/** `health` with the open stand-in window beside it, when one is open. */
+function withStandIn<T extends object>(health: T, deps: HealthcheckDeps): T & { standIn?: StandInWindow } {
+  const w = deps.standIn?.();
+  return w ? { ...health, standIn: w } : health;
+}
 
 /**
  * The non-secret facts about the linked direct session — never the token. The
@@ -88,7 +97,8 @@ export function registerHealthcheckTool(
     lastCheck = { sessionCheck: verdict, ...(wall ? { wall } : {}) };
     return verdict;
   };
-  const health = (): HealthcheckPath => ({ ...transportHealth(direct.status(), deps.env, now), ...lastCheck });
+  const health = (): HealthcheckPath =>
+    withStandIn({ ...transportHealth(direct.status(), deps.env, now), ...lastCheck }, deps);
   const signedOut = (): SessionExpiredError =>
     new SessionExpiredError({ hostSignIn: readSessionSync(deps.env)?.origin === 'host' });
   const classifySignedOut = (err: unknown) =>
