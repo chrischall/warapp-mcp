@@ -1422,6 +1422,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,
     and against two opponents together when it holds that now; never the strike stack, a saving
     source, a source attacking a player, under No-Split or `complete-bonus`).
+  - **A flat income saves toward a reachable bonus (#303).** `warapp_plan_turn` passes my income on each cached
+    earlier board (`incomeDetail`, as this turn's: after the army cap, cards aside; none in a commerce game) as
+    `PlanInput.incomeHistory`; the plan reports `incomeTrend` (`src/analysis/income-trend.ts`, pure: the last
+    `TREND_POINTS` (5) turns, this one last, a least-squares slope, and `flat` by #312's rule — `FLAT_TURNS` and
+    `FLAT_TOLERANCE` now live there, `game-lessons.ts` re-exports them). When it is flat and rule 5's saving step is
+    in a positive bonus whose every missing member is a visible neutral or an opponent earning less than me, the
+    leftover saves on the step's source before any comfort margin (`flatSave`, `plan/leftover.ts`: the holds keep
+    their exact armies, idle stacks stage toward the step, a "(#303)" clause on the leftover line), only where the
+    leftover can land there. Without a history every plan is byte-identical (the golden corpus has none); with a
+    flat history on every plan of turn ≥ 5 it fired on 25 of 6,253 and changed orders on 7, no capture lost, next
+    income never lower, no concession added. A completion that takes an opponent's member only reaches it where
+    rule 5 already saves toward such a step.
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and

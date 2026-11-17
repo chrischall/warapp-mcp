@@ -1097,12 +1097,6 @@ export function bonusPasses(
   /** The start of rule 4d's rationale line for a stopped `t` (one per attempt that differed). */
   const stoppedLine = (t: number) => `Do not take ${label(t)}: it adds a border facing an enemy without completing a bonus,`;
   /**
-   * Rule 4d's frontier budget, judged with `t` just captured: under a guarded goal, a capture
-   * that adds a border facing an enemy without completing a bonus (and not focused) is stopped
-   * when holding the frontier next turn would then need more than the next income, and more than
-   * it needed at the start of the turn. Returns the rationale line when stopped, else `null`.
-   */
-  /**
    * #297: in a 1v1, the gate budget's veto: a capture of `t` that opens another border facing the opponent (a gate,
    * each sized for its stack plus the whole floating deploy) is stopped when the frontier would then need more next
    * turn than the next income, and more than it needs without that capture. Its rationale line, else `null`. Rule
@@ -1129,6 +1123,12 @@ export function bonusPasses(
       .find((x) => x?.kind === 'player' && pc.foe(x.playerId));
     return o?.kind === 'player' ? ` facing player ${o.playerId}` : '';
   };
+  /**
+   * Rule 4d's frontier budget, judged with `t` just captured: under a guarded goal, a capture
+   * that adds a border facing an enemy without completing a bonus (and not focused) is stopped
+   * when holding the frontier next turn would then need more than the next income, and more than
+   * it needed at the start of the turn (in a 1v1, more than without it: {@link gateStop}, #297). Returns the rationale line when stopped, else `null`.
+   */
   const outgrows = (t: number): string | null => {
     if (!guarded || inFocus(t)) return null;
     const held = heldNow();

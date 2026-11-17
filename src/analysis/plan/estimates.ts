@@ -22,6 +22,7 @@ import {
 } from '../combat.js';
 import { neighborsOf, type MapGraph } from '../graph.js';
 import type { MyOrders, OpponentTrack } from '../opponents.js';
+import { incomeTrend } from '../income-trend.js';
 import { OUTLOOK_TURNS } from '../outlook.js';
 import { boardIncome, DEFAULT_BASE_INCOME, type ArmyCapIncome } from '../player.js';
 import {
@@ -272,6 +273,11 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   const balanced = goal === 'balanced';
   /** Rule 0p.3: behind — size attacks at the minimum (no pressure margin). */
   const minimal = behind;
+  /** #303: my income over the last turns, this one (what I deploy, card armies out) last. */
+  const trendNow =
+    turnNow !== null && input.incomeHistory?.length
+      ? incomeTrend(input.incomeHistory, { turn: turnNow, income: Math.max(0, income - Math.max(0, Math.floor(input.cardArmies ?? 0))) })
+      : undefined;
   /** Rule 0p.3: ahead in a 1v1 — pressure allowed at {@link AHEAD_PRESSURE_FACTOR}. */
   const pressureFactor = auto && profile.format === '1v1' && profile.standing === 'ahead' ? AHEAD_PRESSURE_FACTOR : PRESSURE_FACTOR;
   /** The pressure margin over an estimated deploy: none when sizing at the minimum. */
@@ -371,6 +377,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     goal,
     balanced,
     minimal,
+    ...(trendNow ? { incomeTrend: trendNow } : {}),
     pressureFactor,
     marginFor,
     guarded,

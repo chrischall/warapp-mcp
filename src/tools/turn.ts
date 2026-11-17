@@ -1821,11 +1821,17 @@ export async function livePlanSetup(
     staticSeats: staticSeats(game.players, game.endRules, me.id),
   });
   const untrusted = trip.tripwires.map((w) => ({ player: w.player, deploy: untrustedDeploy(w, boardIncome) }));
+  // #303: my board income on each earlier board (as this turn's: after the army cap, cards aside), for the
+  // plan's income trend. Not in a commerce game, where the income is gold and the deploy what it buys.
+  const incomeHistory = commerceRules(game.settings)
+    ? []
+    : history.boards.map((b) => ({ turn: b.turn, income: incomeDetail(graph, b.board, me.id, game.settings).income }));
   const input: PlanInput = {
     graph,
     board,
     me: me.id,
     income,
+    ...(incomeHistory.length && turn !== null ? { incomeHistory } : {}),
     ...(untrusted.length ? { untrusted } : {}),
     cardArmies: cards.extraArmies,
     ...(incomeCap ? { incomeCap } : {}),
@@ -2134,7 +2140,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           "game's settings: your income, deploys and attacks/transfers by territory name and id (each attack with " +
           '`winChance`, its exact capture probability), the expected captures, completed bonuses and next income ' +
           '(with `nextIncomeIfConcededFall` and `bonusesAtRisk` when the plan concedes borders of a bonus you hold), ' +
-          'the borders given up (`conceded`), the `frontier` budget, in a 1v1 the `gates` (every border facing the opponent against its one floating deploy: what they need, what stands on them, the shortfall), your cards (plays and discards when you must), ' +
+          'the borders given up (`conceded`), the `frontier` budget, `incomeTrend` (my income over the last five turns, its slope per turn and whether it is flat; #303), in a 1v1 the `gates` (every border facing the opponent against its one floating deploy: what they need, what stands on them, the shortfall), your cards (plays and discards when you must), ' +
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
@@ -2717,6 +2723,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                     }: they need ${plan.gates.need} against its one floating deploy, ${plan.gates.onGates} stand on them (${plan.gates.deficit} short across them), next income ${plan.gates.income}${
                       plan.gates.short > 0 ? `: ${plan.gates.short} short` : ': it covers them'
                     }`,
+            }
+          : {}),
+        // #303: my income over the last turns and its slope (compact: one line).
+        ...(plan.incomeTrend
+          ? {
+              incomeTrend:
+                rung === 'full'
+                  ? plan.incomeTrend
+                  : `${plan.incomeTrend.turns.map((t) => t.income).join(' → ')} over turns ${plan.incomeTrend.turns[0]!.turn}–${
+                      plan.incomeTrend.turns[plan.incomeTrend.turns.length - 1]!.turn
+                    }: ${plan.incomeTrend.slope >= 0 ? '+' : ''}${plan.incomeTrend.slope}/turn${plan.incomeTrend.flat ? ', flat' : ''}`,
             }
           : {}),
         // #275 (a): each border's headroom, the weakest first (compact: the first few).

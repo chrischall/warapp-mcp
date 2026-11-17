@@ -94,10 +94,9 @@ export function incomeCurve(turns: readonly { afterTurn: number; players: Readon
     .sort((a, b) => a.afterTurn - b.afterTurn);
 }
 
-/** The turns of no growth that make an income flat (#312: "slope ≈ 0 for 3+ turns"). */
-export const FLAT_TURNS = 3;
-/** What counts as no growth over those turns: at most this share of the income (and at least 1 army). */
-export const FLAT_TOLERANCE = 0.1;
+// #303: one definition of "flat", shared with the planner's income trend.
+import { FLAT_TOLERANCE, FLAT_TURNS } from './income-trend.js';
+export { FLAT_TOLERANCE, FLAT_TURNS };
 
 /**
  * The first board (by completed turns, the opening's board 0 left out) from which my income stayed
