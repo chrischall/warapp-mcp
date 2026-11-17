@@ -217,6 +217,9 @@ describe('warapp_mark_chat_read (#311)', () => {
     const feedOnly = await h.call('warapp_mark_chat_read', { game_id: GAME });
     expect(feedOnly.isError).toBe(true);
     expect(textOf(feedOnly)).toMatch(/GameFeed, which gives no message ids/);
+    // #323: no tab state changes this refusal (seen on the direct transport): no frozen-tab advice.
+    expect(textOf(feedOnly)).not.toMatch(/tab is open|frozen/);
+    expect(textOf(feedOnly)).toMatch(/warapp_get_chat/);
     await h.harness.close();
 
     // #313: the web read answered with no message while GameFeed holds some: no message id to mark, and

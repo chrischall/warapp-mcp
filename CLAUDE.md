@@ -293,7 +293,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   loosely — a non-boolean leaves them unknown, never refuses the list): `read` (`confirmed`) when every marked
   channel's flag is clear, else `unconfirmed` (`stillUnread`); `unknown` when war.app did not answer, never resent.
   Not a chat send (D2). The inbox also lists a finished game whose chat GetMyGames flags unread, or whose flags do not read (`chatGameIds`:
-  a misread must not hide its chat; `finishedUnflagged` counts those read unjudged).
+  a misread must not hide its chat; `finishedUnflagged` counts those read unjudged), and (#322) the `FINISHED_CLEAR_WINDOW` (3)
+  newest finished games by id whose flags read clear (`recentClearFinished`, `finishedClearChecked`): a message GameFeed alone
+  holds — a surrender "gg" — leaves war.app's flag clear, and such a message comes as a game ends; older ones go by the flag,
+  so the extra reads stay bounded. Each inbox entry carries `game: { id, name, state }` as warapp_get_chat does, beside the
+  older top-level `id`/`name`/`state` (#323). warapp_mark_chat_read's GameFeed-only refusal carries no frozen-tab hint (no tab
+  state changes it, #323): it says to read the game with warapp_get_chat and mark once its `source` is `web`.
   `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
   one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
