@@ -30,6 +30,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   client is refused at load (2026-11-17: 639304451701341657 renamed every reader and moved to protocol 243) the
   pinned one stands in, only with its pinned SHA-256, kept on disk beside the refused copy and re-looked-up hourly;
   `report().standInFor` and `warapp_session_status` say so. Moving to 243 means new names AND new layouts, not a rename.
+  **The last build that worked stands in first (the owner, 2026-11-17: fall back gracefully).** A bundle is recorded in
+  `<dataDir>/bundle/known-good.json` (version, digest, `verifiedAt`; newest first, `MAX_KNOWN_GOOD` (3); 0600, atomic,
+  path-locked; a file that does not parse is never overwritten) once a live board decodes with it, every byte read and the
+  standing read (`readLatestBoard` in `src/tools/live-context.ts` → `markDecoded`, once per loaded bundle). A refused current
+  client is stood in for by the recorded builds, newest first, then the pin — each only with its digest, from the cache or
+  downloaded by version; every recorded build's copy is kept on disk. The window is `<dataDir>/bundle/stand-in.json`
+  (`refusedVersion`, `since`: when that client was first refused here; a newer refused client restarts it, a client that loads
+  closes it) and `report().standIn` (`version`, `refusedVersion`, `since`, `reason`): `warapp_session_status` and
+  `warapp_healthcheck` report it, and `warapp_plan_turn`, `warapp_check_plan` and the `warapp_submit_turn` preview lead their
+  warnings with `standInLine`. While one stands in, a reply that does not decode with it (bytes left over, a frame or layout
+  error) or comes in another protocol version (`ProtocolVersionError`) is `StandInClosedError` (war.app no longer answers the
+  old build; #340), never a board. Hosted, `MCP_DATA_DIR` holds both files like the cache.
 - **The healthcheck probes a game that does not exist** (`GameID=2147483647`): war.app
   checks credentials first, so `ServerGameKeyNotFound` proves the token works without
   loading a real game, and `Auth failed` is a rejected credential.

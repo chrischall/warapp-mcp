@@ -10,12 +10,12 @@ import { CONFIRM_INJECTION_RULE, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
-import { readLatestGameInfo, standingFromInfo, type LiveTerritory } from '../live.js';
+import type { LiveTerritory } from '../live.js';
 import type { Game } from '../normalize.js';
-import { Method, writeBeginFirstTurnParams, writeGetLatestGameInfoParams } from '../protocol/methods.js';
+import { Method, writeBeginFirstTurnParams } from '../protocol/methods.js';
 import { gameIdArg, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta } from './hints.js';
-import { requireApprovedAccount, SPEED_FIRST_TURN_MOVE_ORDER, writeAccount, type LiveContext } from './live-context.js';
+import { readLatestBoard, requireApprovedAccount, SPEED_FIRST_TURN_MOVE_ORDER, writeAccount, type LiveContext } from './live-context.js';
 import { defineGatedWrite, mySeat, refuse, requireMe, requirePlaying, sendAndVerify } from './write-kit.js';
 
 const PLAYING = 'Playing';
@@ -66,10 +66,7 @@ function beginnable(game: Game, me: number): void {
 
 /** The live board, or undefined while war.app withholds it. */
 async function liveBoard(ctx: LiveContext, gameId: number): Promise<LiveTerritory[] | undefined> {
-  const env = await ctx.rpc.call('GetLatestGameInfo', Method.GetLatestGameInfo, (w) =>
-    writeGetLatestGameInfoParams(w, gameId),
-  );
-  return standingFromInfo(readLatestGameInfo(await ctx.bundle(), env.body)) ?? undefined;
+  return (await readLatestBoard(ctx, gameId)).territories ?? undefined;
 }
 
 export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void {

@@ -87,6 +87,8 @@ export interface ClassReader {
   fieldsReadAs?(ownerType: string, fieldType: string): string[];
   /** What the decoding rests on: version, stand-in flag, reader-helper check (a loaded bundle has it). */
   report?(): DecoderReport;
+  /** A live board decoded with this bundle, every byte read: record it as a build that works (a loaded bundle has it). */
+  markDecoded?(): Promise<unknown>;
 }
 
 /** On a decoded LatestGameInfo: the name of its CURRENT standing's field, from the bundle's reader. */

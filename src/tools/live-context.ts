@@ -4,16 +4,18 @@
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
-import { inGameId, readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
+import { inGameId, LiveBoardFormatError, readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
 import type { Game } from '../normalize.js';
-import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES, BundleProvider, type DecoderReport } from '../protocol/bundle.js';
+import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES, BundleProvider, type DecoderReport, type StandInWindow } from '../protocol/bundle.js';
+import { ProtocolError } from '../protocol/codec.js';
+import { InterpError } from '../protocol/interp.js';
 import {
   Method,
   readTerritoryPicks,
   writeGetLatestGameInfoParams,
   writeGetTerritoryPicksParams,
 } from '../protocol/methods.js';
-import { WarappRpc } from '../protocol/rpc.js';
+import { ProtocolVersionError, WarappRpc } from '../protocol/rpc.js';
 import type { ReadyFetchBridge } from '../direct/transport.js';
 import { BRIDGE_DOMAINS } from '../transport-bridge.js';
 import { hostedSession } from '../direct/session.js';
@@ -403,14 +405,85 @@ export async function loadLiveTerritories(ctx: LiveContext, game: Game): Promise
   return (await loadLiveGame(ctx, game)).territories;
 }
 
+/** The issue tracking the move to the client war.app now serves (protocol 243), named in the window-closed error. */
+export const PROTOCOL_UPDATE_ISSUE = 'https://github.com/chrischall/warapp-mcp/issues/340';
+
+/**
+ * One line for a tool's warnings while a stand-in decodes: war.app ships a client this server cannot read
+ * yet, so an older build it still answers is decoding, since when. `undefined` without a stand-in.
+ */
+export function standInLine(w: StandInWindow | undefined): string | undefined {
+  if (!w) return undefined;
+  return (
+    `war.app ships a client this server cannot read yet (${w.refusedVersion}), so the client build ${w.version}, ` +
+    `which war.app still answers, stands in and decodes the board (since ${w.since}). Boards still decode exactly; ` +
+    `war.app may stop answering the old build at any time, and this server then needs its update (#340, ${PROTOCOL_UPDATE_ISSUE}).`
+  );
+}
+
+/** The stand-in window of the bundle this process decodes with, if one stands in (never loads one). */
+export function standInOf(ctx: Pick<LiveContext, 'decoderReport'>): StandInWindow | undefined {
+  return ctx.decoderReport()?.standIn;
+}
+
+/**
+ * war.app no longer answers the build that stands in: its reply did not decode with it (bytes left over, an
+ * unknown frame) or came in another protocol version. Nothing was decoded.
+ */
+export class StandInClosedError extends McpToolError {
+  override name = 'StandInClosedError';
+  constructor(
+    readonly window: StandInWindow,
+    cause: unknown,
+  ) {
+    const why = cause instanceof Error ? cause.message : String(cause);
+    super(
+      `war.app no longer answers the client build ${window.version} this server has decoded with since ${window.since} ` +
+        `(standing in for ${window.refusedVersion}, which this server cannot read yet): ${why} Nothing was decoded; ` +
+        'the old client is no longer accepted, so this server needs the protocol update (#340).',
+      {
+        kind: 'unknown',
+        hint: `The old client is no longer accepted: this server needs the protocol update (${PROTOCOL_UPDATE_ISSUE}). Play in the war.app web client until then.`,
+        cause,
+      },
+    );
+  }
+}
+
+/** A failure that says the reply and the decoder disagree on the layout (or the protocol). */
+const isLayoutFailure = (e: unknown): boolean =>
+  e instanceof ProtocolVersionError || e instanceof LiveBoardFormatError || e instanceof ProtocolError || e instanceof InterpError;
+
+/** `e`, or the window-closed error when it is a layout failure while a stand-in decodes. */
+async function windowClosed(ctx: LiveContext, bundle: ClassReader | undefined, e: unknown): Promise<unknown> {
+  if (!isLayoutFailure(e)) return e;
+  const b = bundle ?? (await ctx.bundle().catch(() => undefined));
+  const w = b?.report?.().standIn;
+  return w ? new StandInClosedError(w, e) : e;
+}
+
+/**
+ * GetLatestGameInfo for a game, decoded: the info (`null` when war.app sent none) and its current standing.
+ * A standing that decodes with every byte read records the bundle as a build that works; a layout failure
+ * while a stand-in decodes is the window-closed error.
+ */
+export async function readLatestBoard(ctx: LiveContext, gameId: number): Promise<{ info: unknown; territories: LiveTerritory[] | null }> {
+  let bundle: ClassReader | undefined;
+  try {
+    const env = await ctx.rpc.call('GetLatestGameInfo', Method.GetLatestGameInfo, (w) => writeGetLatestGameInfoParams(w, gameId));
+    bundle = await ctx.bundle();
+    const info = readLatestGameInfo(bundle, env.body);
+    const territories = standingFromInfo(info);
+    if (territories) await bundle.markDecoded?.();
+    return { info, territories };
+  } catch (e) {
+    throw await windowClosed(ctx, bundle, e);
+  }
+}
+
 /** The live board plus the decoded LatestGameInfo (cards live there); throws when war.app has no board. */
 export async function loadLiveGame(ctx: LiveContext, game: Game): Promise<{ territories: LiveTerritory[]; info: unknown }> {
-  const env = await ctx.rpc.call('GetLatestGameInfo', Method.GetLatestGameInfo, (w) =>
-    writeGetLatestGameInfoParams(w, game.id),
-  );
-  const bundle = await ctx.bundle();
-  const info = readLatestGameInfo(bundle, env.body);
-  const territories = standingFromInfo(info);
+  const { info, territories } = await readLatestBoard(ctx, game.id);
   if (!territories) {
     if (awaitsBegin(game)) throw beginFirstError(game);
     throw new McpToolError(`war.app has no board for game ${game.id} yet (game state: ${game.state}).`, {

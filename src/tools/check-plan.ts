@@ -19,7 +19,7 @@ import { assumedWarning, awardView, loadAward, openingThreat } from './award.js'
 import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
-import { loadLiveGame, type LiveContext } from './live-context.js';
+import { loadLiveGame, standInLine, standInOf, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
 import { resolveTerritory } from './resolve.js';
@@ -588,6 +588,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // #275 pattern 3: each border these orders leave below what the default plan leaves there (one plan per call).
       const belowPlan = await bordersBelowPlan(ctx, { game, map, me, turn, territories, info, history, teamsKnown, given: { deploys, moves } });
       const warnings = [
+        // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
+        ...[standInLine(standInOf(ctx))].filter((w): w is string => w !== undefined),
         // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
         ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, (w) => untrustedOf.get(w.player) ?? untrustedDeploy(w, income), (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
         ...(award ? assumedWarning(award) : []),

@@ -10,6 +10,7 @@ import { readCredentials, TOKEN_URL, WarappConfigError } from '../config.js';
 import { readSessionSync } from '../direct/session.js';
 import type { WarappDirectBridge } from '../direct/transport.js';
 import type { WarappBridge } from '../transport-bridge.js';
+import type { StandInWindow } from '../protocol/bundle.js';
 
 /**
  * `warapp_healthcheck` — does war.app accept the configured email + token?
@@ -40,7 +41,15 @@ export const BRIDGE_PROBE_PATH = '/';
 type HealthcheckDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep'> & {
   /** Clock for the linked session's age. Defaults to `Date.now`. */
   now?: () => number;
+  /** The stand-in window, while an older client build decodes boards (the owner, 2026-11-17); none: not reported. */
+  standIn?: () => StandInWindow | undefined;
 };
+
+/** `health` with the open stand-in window beside it, when one is open. */
+function withStandIn<T extends object>(health: T, deps: HealthcheckDeps): T & { standIn?: StandInWindow } {
+  const w = deps.standIn?.();
+  return w ? { ...health, standIn: w } : health;
+}
 
 /**
  * The non-secret facts about the linked direct session — never the token. The
@@ -81,7 +90,7 @@ export function registerHealthcheckTool(
     bridge: {
       probePath: BRIDGE_PROBE_PATH,
       transport: () => bridge.transport(),
-      path: () => transportHealth(direct.status(), deps.env, now),
+      path: () => withStandIn(transportHealth(direct.status(), deps.env, now), deps),
       probeFn: async (path) => {
         const res = await (await bridge.ready()).fetch({ method: 'GET', path });
         if (res.status !== 200) {
@@ -96,7 +105,7 @@ export function registerHealthcheckTool(
     credential: {
       probePath: PROBE_PATH,
       resolveCredential: async () => {
-        const health = transportHealth(direct.status(), deps.env, now);
+        const health = withStandIn(transportHealth(direct.status(), deps.env, now), deps);
         try {
           readCredentials(deps.env);
           return { source: 'env', detail: health };

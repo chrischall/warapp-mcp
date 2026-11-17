@@ -14,8 +14,10 @@ const html = (src: string) => `<html><head><script type="text/javascript" src="$
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 /** The cache file of `version` holding `body`: its digest is part of its name. */
 const cacheName = (version: string, body: string = MINI_BUNDLE) => `${version}.${sha256(body)}.js`;
-/** The files in `<dataDir>/bundle`, sorted (none when it does not exist). */
-const listCache = (dataDir: string) => (existsSync(join(dataDir, 'bundle')) ? readdirSync(join(dataDir, 'bundle')).sort() : []);
+/** The cache files in `<dataDir>/bundle`, sorted (none when it does not exist); the two JSON records are left out. */
+const RECORDS = new Set(['known-good.json', 'stand-in.json']);
+const listCache = (dataDir: string) =>
+  existsSync(join(dataDir, 'bundle')) ? readdirSync(join(dataDir, 'bundle')).filter((n) => !RECORDS.has(n)).sort() : [];
 
 const dirs: string[] = [];
 function tempDir(): string {
@@ -672,5 +674,132 @@ describe('a known-good bundle stands in when the current one is refused (2026-11
       version: '639294131571648437',
       digest: 'dec5cf174f6affb9e4c08802534cf8c6c6496eff977847aaf1497535e3371404',
     });
+  });
+});
+
+// The owner, 2026-11-17: "I want to fallback gracefully in the future". A pinned release is only right
+// until the next client change; the build that last decoded a live board is the better stand-in, and
+// how long a stand-in has been decoding (the window war.app leaves for the old protocol) is shown.
+describe('the last client build that decoded a live board stands in, and the window is visible', () => {
+  const REFUSED = 'var W={};var P={};P.Ya=function(a){return a.MGb()};P.uq=function(a){return a.Og()};' +
+    'function Dx(){}W["t.Dx"]=Dx;Dx.Ha=function(a){var e=new Dx;e.small=P.uq(a);e.big=P.Ya(a);return e};';
+  const PIN_V = '111';
+  const PIN_BODY = MINI_BUNDLE + '// pinned';
+  const pin = { version: PIN_V, digest: sha256(PIN_BODY) };
+  const PIN_URL = `https://warappcdn.com/js/Release/ujs.js?v=${PIN_V}`;
+  const LAST_V = '700';
+  const LAST_BODY = MINI_BUNDLE + '// last good';
+  const LAST_URL = `https://warappcdn.com/js/Release/ujs.js?v=${LAST_V}`;
+  const T0 = Date.UTC(2026, 10, 17, 3, 0, 0);
+  const knownGoodFile = (dataDir: string) => join(dataDir, 'bundle', 'known-good.json');
+  const standInFile = (dataDir: string) => join(dataDir, 'bundle', 'stand-in.json');
+
+  it('records a build once a live board decodes with it: version, digest and when, in a 0600 file', async () => {
+    const dataDir = tempDir();
+    const b = await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 });
+    expect(existsSync(knownGoodFile(dataDir))).toBe(false);
+    expect(await b.markDecoded()).toBe('recorded');
+    const rec = JSON.parse(readFileSync(knownGoodFile(dataDir), 'utf8'));
+    expect(rec.builds).toEqual([{ version: '987', digest: sha256(MINI_BUNDLE), verifiedAt: new Date(T0).toISOString() }]);
+    if (process.platform !== 'win32') expect(statSync(knownGoodFile(dataDir)).mode & 0o777).toBe(0o600);
+    // Once per loaded bundle: later boards add nothing.
+    expect(await b.markDecoded()).toBe('unchanged');
+  });
+
+  it('keeps the newest few builds, newest first, one entry per build', async () => {
+    const { recordKnownGood, readKnownGood, MAX_KNOWN_GOOD } = await import('../../src/protocol/bundle.js');
+    const dataDir = tempDir();
+    for (let i = 0; i < MAX_KNOWN_GOOD + 2; i++) {
+      await recordKnownGood(dataDir, { version: String(100 + i), digest: sha256(String(i)), verifiedAt: new Date(T0 + i).toISOString() });
+    }
+    await recordKnownGood(dataDir, { version: '102', digest: sha256('2'), verifiedAt: new Date(T0 + 99).toISOString() });
+    const builds = await readKnownGood(join(dataDir, 'bundle'));
+    expect(Array.isArray(builds) && builds.map((b) => b.version)).toEqual(['102', '104', '103']);
+    expect(Array.isArray(builds) && builds.length).toBe(MAX_KNOWN_GOOD);
+  });
+
+  it('never overwrites a record it cannot parse', async () => {
+    const { recordKnownGood, readKnownGood } = await import('../../src/protocol/bundle.js');
+    const dataDir = tempDir();
+    mkdirSync(join(dataDir, 'bundle'), { recursive: true });
+    writeFileSync(knownGoodFile(dataDir), '{not json');
+    expect(await recordKnownGood(dataDir, { version: '1', digest: sha256('x'), verifiedAt: new Date(T0).toISOString() })).toBe('unreadable');
+    expect(readFileSync(knownGoodFile(dataDir), 'utf8')).toBe('{not json');
+    expect(await readKnownGood(join(dataDir, 'bundle'))).toBe('unreadable');
+  });
+
+  it('a refused current client is stood in for by the last build that worked, not the pin', async () => {
+    const dataDir = tempDir();
+    const { recordKnownGood } = await import('../../src/protocol/bundle.js');
+    await recordKnownGood(dataDir, { version: LAST_V, digest: sha256(LAST_BODY), verifiedAt: new Date(T0).toISOString() });
+    const f = fakeFetch({ [PAGE]: html(CDN), [CDN]: REFUSED, [LAST_URL]: LAST_BODY, [PIN_URL]: PIN_BODY });
+    const b = await loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 + 1000 });
+    expect(b.version).toBe(LAST_V);
+    expect(f.calls).toEqual([PAGE, CDN, LAST_URL]);
+    expect(b.report().standIn).toEqual({
+      version: LAST_V,
+      refusedVersion: '987',
+      since: new Date(T0 + 1000).toISOString(),
+      reason: expect.stringMatching(/P\.Ya/),
+    });
+    // The recorded build stays on disk beside the refused copy.
+    expect(listCache(dataDir)).toEqual([cacheName('987', REFUSED), cacheName(LAST_V, LAST_BODY)].sort());
+  });
+
+  it('skips a recorded build whose download does not match its digest, and falls back to the pin', async () => {
+    const dataDir = tempDir();
+    const { recordKnownGood } = await import('../../src/protocol/bundle.js');
+    await recordKnownGood(dataDir, { version: LAST_V, digest: sha256(LAST_BODY), verifiedAt: new Date(T0).toISOString() });
+    const f = fakeFetch({ [PAGE]: html(CDN), [CDN]: REFUSED, [LAST_URL]: LAST_BODY + '// changed', [PIN_URL]: PIN_BODY });
+    const b = await loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 });
+    expect(b.version).toBe(PIN_V);
+    expect(b.report().standIn?.version).toBe(PIN_V);
+    expect(listCache(dataDir)).not.toContain(cacheName(LAST_V, LAST_BODY + '// changed'));
+  });
+
+  it('the window opens when the current client is first refused and keeps that time across loads', async () => {
+    const dataDir = tempDir();
+    const pages = { [PAGE]: html(CDN), [CDN]: REFUSED, [PIN_URL]: PIN_BODY };
+    await loadBundle({ dataDir, fetchText: fakeFetch(pages).fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 });
+    const later = await loadBundle({ dataDir, fetchText: fakeFetch(pages).fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 + 3_600_000 });
+    expect(later.report().standIn?.since).toBe(new Date(T0).toISOString());
+    expect(JSON.parse(readFileSync(standInFile(dataDir), 'utf8'))).toMatchObject({ refusedVersion: '987', since: new Date(T0).toISOString() });
+  });
+
+  it('a newer refused client restarts the window; a client that loads closes it', async () => {
+    const dataDir = tempDir();
+    const pages = { [PAGE]: html(CDN), [CDN]: REFUSED, [PIN_URL]: PIN_BODY };
+    await loadBundle({ dataDir, fetchText: fakeFetch(pages).fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 });
+    const CDN2 = 'https://warappcdn.com/js/Release/ujs.js?v=988';
+    const b2 = await loadBundle({
+      dataDir,
+      fetchText: fakeFetch({ [PAGE]: html(CDN2), [CDN2]: REFUSED + '//2', [PIN_URL]: PIN_BODY }).fetchText,
+      pageUrl: PAGE,
+      knownGood: pin,
+      now: () => T0 + 5000,
+    });
+    expect(b2.report().standIn).toMatchObject({ refusedVersion: '988', since: new Date(T0 + 5000).toISOString() });
+    const CDN3 = 'https://warappcdn.com/js/Release/ujs.js?v=989';
+    const ok = await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN3), [CDN3]: MINI_BUNDLE }).fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 + 9000 });
+    expect(ok.report().standIn).toBeUndefined();
+    expect(existsSync(standInFile(dataDir))).toBe(false);
+  });
+
+  it('a stand-in that decodes a live board refreshes its record', async () => {
+    const dataDir = tempDir();
+    const b = await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: REFUSED, [PIN_URL]: PIN_BODY }).fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 });
+    expect(await b.markDecoded()).toBe('recorded');
+    const rec = JSON.parse(readFileSync(knownGoodFile(dataDir), 'utf8'));
+    expect(rec.builds[0]).toMatchObject({ version: PIN_V, digest: pin.digest });
+  });
+
+  it('pruning keeps every recorded build on disk', async () => {
+    const dataDir = tempDir();
+    const { recordKnownGood } = await import('../../src/protocol/bundle.js');
+    mkdirSync(join(dataDir, 'bundle'), { recursive: true });
+    writeFileSync(join(dataDir, 'bundle', cacheName(LAST_V, LAST_BODY)), LAST_BODY);
+    await recordKnownGood(dataDir, { version: LAST_V, digest: sha256(LAST_BODY), verifiedAt: new Date(T0).toISOString() });
+    await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: MINI_BUNDLE }).fetchText, pageUrl: PAGE, knownGood: pin, now: () => T0 });
+    expect(listCache(dataDir)).toContain(cacheName(LAST_V, LAST_BODY));
   });
 });

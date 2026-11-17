@@ -65,6 +65,23 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<number, string>> = {
 /** The longest slice of an unmapped server message shown to the caller. */
 const MAX_SERVER_MESSAGE = 200;
 
+/**
+ * war.app answered in another protocol version than the one every reader here reads: a reply framed for
+ * another version would decode into wrong values, not an error (#131), so it is never decoded.
+ */
+export class ProtocolVersionError extends McpToolError {
+  override name = 'ProtocolVersionError';
+  constructor(
+    methodName: string,
+    readonly answered: number,
+  ) {
+    super(`war.app answered ${methodName} in protocol version ${answered}; this server reads version ${PROTOCOL_VERSION}.`, {
+      kind: 'unknown',
+      hint: 'The war.app client may have changed; this server needs an update to read it.',
+    });
+  }
+}
+
 /** A ServerException reply (envelope kind 5). */
 export class WarappServerError extends McpToolError {
   override name = 'WarappServerError';
@@ -184,10 +201,7 @@ export class WarappRpc {
     if (env.version !== PROTOCOL_VERSION) {
       // Every reader (the bundle's, and methods.ts) reads the layout of PROTOCOL_VERSION: a reply
       // framed for another version would decode into wrong values, not an error (#131).
-      throw new McpToolError(
-        `war.app answered ${methodName} in protocol version ${env.version}; this server reads version ${PROTOCOL_VERSION}.`,
-        { kind: 'unknown', hint: 'The war.app client may have changed; this server needs an update to read it.' },
-      );
+      throw new ProtocolVersionError(methodName, env.version);
     }
     if (env.method !== methodId) {
       throw new McpToolError(`war.app answered ${methodName} (method ${methodId}) with method ${env.method}.`, {

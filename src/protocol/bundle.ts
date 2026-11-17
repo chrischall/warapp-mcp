@@ -24,6 +24,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { withPathLock } from '../path-lock.js';
 import type { Reader } from './codec.js';
 import {
   BundleInterpreter,
@@ -110,7 +111,24 @@ export interface DecoderReport {
    * client was refused: its version, and why it was refused.
    */
   standInFor?: { version: string; reason: string };
+  /**
+   * While a stand-in decodes: the build decoding (`version`), the current client it stands in for
+   * (`refusedVersion`), when that client was first refused here (`since`, ISO-8601: how long war.app has
+   * kept answering the old protocol so far) and why it was refused.
+   */
+  standIn?: StandInWindow;
 }
+
+/** The stand-in window: a build decoding in place of a refused current client, since when. */
+export interface StandInWindow {
+  version: string;
+  refusedVersion: string;
+  since: string;
+  reason: string;
+}
+
+/** What {@link WarappBundle.markDecoded} did with the build's record. */
+export type RecordOutcome = 'recorded' | 'unchanged' | 'unreadable' | 'failed';
 
 /** A loaded bundle: reads wire classes by stable type name. */
 export class WarappBundle {
@@ -121,6 +139,28 @@ export class WarappBundle {
 
   /** Set when this is the pinned known-good client standing in for a refused current one. */
   standInFor: { version: string; reason: string } | undefined;
+
+  /** Set while this build stands in for a refused current client: the window (see {@link StandInWindow}). */
+  standIn: StandInWindow | undefined;
+
+  /** The SHA-256 of this build's bytes (set by {@link loadBundle}); a build without one is never recorded. */
+  digest: string | undefined;
+
+  /** Records this build as one that decoded a live board (set by {@link loadBundle}). */
+  recorder: (() => Promise<RecordOutcome>) | undefined;
+
+  private recorded: Promise<RecordOutcome> | undefined;
+
+  /**
+   * A live board decoded with this build, every byte consumed: record it as a build that works, so a
+   * later client this server cannot read is stood in for by it (the owner, 2026-11-17: fall back
+   * gracefully). Once per loaded bundle; never throws.
+   */
+  markDecoded(): Promise<RecordOutcome> {
+    if (this.recorded) return this.recorded.then((r) => (r === 'recorded' ? 'unchanged' : r));
+    this.recorded = this.recorder ? this.recorder().catch((): RecordOutcome => 'failed') : Promise.resolve('unchanged');
+    return this.recorded;
+  }
 
   constructor(
     src: string,
@@ -164,6 +204,7 @@ export class WarappBundle {
       fallback: this.fallback,
       helpers: { verified: [...verified], unverified: [...unverified], ...(reasons ? { reasons: { ...reasons } } : {}) },
       ...(this.standInFor ? { standInFor: { ...this.standInFor } } : {}),
+      ...(this.standIn ? { standIn: { ...this.standIn } } : {}),
     };
   }
 
@@ -396,17 +437,124 @@ async function cacheBundle(dataDir: string, dir: string, name: string, src: stri
   await writePrivateAtomic(join(dir, name), Buffer.from(src, 'utf8'));
 }
 
+/** The record of client builds that decoded a live board, in `<dataDir>/bundle/`. */
+export const KNOWN_GOOD_FILE = 'known-good.json';
+/** The open stand-in window (the refused client and when it was first refused), in `<dataDir>/bundle/`. */
+export const STAND_IN_FILE = 'stand-in.json';
+/** How many recorded builds are kept, newest first (each keeps its ~16 MB copy on disk). */
+export const MAX_KNOWN_GOOD = 3;
+
+/** A client build that decoded a live board here: its version, the SHA-256 of its bytes, and when. */
+export interface RecordedBundle {
+  version: string;
+  digest: string;
+  verifiedAt: string;
+}
+
+const DIGEST = /^[0-9a-f]{64}$/;
+const isRecorded = (v: unknown): v is RecordedBundle => {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.version === 'string' &&
+    SAFE_VERSION.test(r.version) &&
+    typeof r.digest === 'string' &&
+    DIGEST.test(r.digest) &&
+    typeof r.verifiedAt === 'string'
+  );
+};
+
 /**
- * The pinned known-good client, from the cache or downloaded by version and kept only when its bytes
- * hash to the pinned digest; it stands in for `refused`, whose refusal is rethrown when it cannot.
+ * The recorded builds in the bundle directory `dir`, newest first: `[]` when there is no record,
+ * `'unreadable'` when the file exists but does not parse (never overwritten). Malformed entries are skipped.
  */
-async function loadKnownGood(
+export async function readKnownGood(dir: string): Promise<RecordedBundle[] | 'unreadable'> {
+  let text: string;
+  try {
+    text = await readFile(join(dir, KNOWN_GOOD_FILE), 'utf8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : 'unreadable';
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const builds = (parsed as { builds?: unknown })?.builds;
+    if (!Array.isArray(builds)) return 'unreadable';
+    return builds.filter(isRecorded);
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/**
+ * Record `entry` as a build that decoded a live board: newest first, one entry per version and digest, at
+ * most {@link MAX_KNOWN_GOOD}; written `0600` through a temporary file and a rename, under the in-process
+ * path lock. A record that does not parse is never overwritten (`'unreadable'`).
+ */
+export async function recordKnownGood(dataDir: string, entry: RecordedBundle): Promise<RecordOutcome> {
+  if (!isRecorded(entry)) return 'failed';
+  const dir = join(dataDir, 'bundle');
+  const file = join(dir, KNOWN_GOOD_FILE);
+  return withPathLock(file, async () => {
+    const builds = await readKnownGood(dir);
+    if (builds === 'unreadable') return 'unreadable';
+    const rest = builds.filter((b) => !(b.version === entry.version && b.digest === entry.digest));
+    const next = [entry, ...rest].slice(0, MAX_KNOWN_GOOD);
+    try {
+      await ensurePrivateDir(dataDir);
+      await ensurePrivateDir(dir);
+      await writePrivateAtomic(file, `${JSON.stringify({ builds: next }, null, 2)}\n`);
+      return 'recorded';
+    } catch {
+      return 'failed';
+    }
+  });
+}
+
+/** The open stand-in window on disk, or undefined (none, or not readable). */
+async function readWindow(dir: string): Promise<{ refusedVersion: string; since: string } | undefined> {
+  try {
+    const w = JSON.parse(await readFile(join(dir, STAND_IN_FILE), 'utf8')) as Record<string, unknown>;
+    if (typeof w.refusedVersion === 'string' && typeof w.since === 'string' && !Number.isNaN(Date.parse(w.since))) {
+      return { refusedVersion: w.refusedVersion, since: w.since };
+    }
+  } catch {
+    // None yet.
+  }
+  return undefined;
+}
+
+/**
+ * When `refusedVersion` was first refused here: the time kept on disk for that version, else `now`
+ * (written, so the window survives a restart). Best effort: a write that fails still returns `now`.
+ */
+async function openWindow(dataDir: string, dir: string, refusedVersion: string, reason: string, now: number): Promise<string> {
+  const kept = await readWindow(dir);
+  if (kept?.refusedVersion === refusedVersion) return kept.since;
+  const since = new Date(now).toISOString();
+  try {
+    await ensurePrivateDir(dataDir);
+    await ensurePrivateDir(dir);
+    await writePrivateAtomic(join(dir, STAND_IN_FILE), `${JSON.stringify({ refusedVersion, since, reason }, null, 2)}\n`);
+  } catch {
+    // The window is still reported for this load.
+  }
+  return since;
+}
+
+/** The current client loads: the window is closed. Best effort. */
+async function closeWindow(dir: string): Promise<void> {
+  await rm(join(dir, STAND_IN_FILE), { force: true }).catch(() => undefined);
+}
+
+/**
+ * A build pinned by version and digest, from the cache or downloaded by version and kept only when its bytes
+ * hash to that digest, loaded; `undefined` when it cannot be had or this server refuses it too.
+ */
+async function loadPinned(
   opts: BundleLoaderOptions,
   dir: string,
   kg: KnownGoodBundle,
-  refused: BundleError,
-  refusedVersion: string,
-): Promise<{ bundle: WarappBundle; name: string }> {
+): Promise<{ bundle: WarappBundle; name: string } | undefined> {
   const name = bundleName(kg.version, kg.digest);
   let src = await readVerified(join(dir, name), kg.digest);
   if (src === null) {
@@ -414,20 +562,39 @@ async function loadKnownGood(
     try {
       fetched = await opts.fetchText(bundleUrlOf(kg.version));
     } catch {
-      throw refused;
+      return undefined;
     }
-    if (sha256(Buffer.from(fetched, 'utf8')) !== kg.digest || !looksLikeBundle(fetched)) throw refused;
-    await cacheBundle(opts.dataDir, dir, name, fetched);
+    if (sha256(Buffer.from(fetched, 'utf8')) !== kg.digest || !looksLikeBundle(fetched)) return undefined;
+    try {
+      await cacheBundle(opts.dataDir, dir, name, fetched);
+    } catch {
+      return undefined;
+    }
     src = fetched;
   }
-  let bundle: WarappBundle;
   try {
-    bundle = new WarappBundle(src, kg.version, opts.interp);
+    const bundle = new WarappBundle(src, kg.version, opts.interp);
+    bundle.digest = kg.digest;
+    return { bundle, name };
   } catch {
-    throw refused;
+    return undefined;
   }
-  bundle.standInFor = { version: refusedVersion, reason: refused.message };
-  return { bundle, name };
+}
+
+/** Wire `bundle` to record itself once a live board decodes with it. */
+function withRecorder(opts: BundleLoaderOptions, bundle: WarappBundle): WarappBundle {
+  const now = opts.now ?? Date.now;
+  bundle.recorder = async () => {
+    if (!bundle.digest) return 'unchanged';
+    return recordKnownGood(opts.dataDir, { version: bundle.version, digest: bundle.digest, verifiedAt: new Date(now()).toISOString() });
+  };
+  return bundle;
+}
+
+/** The cache names of every recorded build (they stay on disk: a later refusal may need any of them). */
+async function recordedNames(dir: string): Promise<string[]> {
+  const builds = await readKnownGood(dir);
+  return builds === 'unreadable' ? [] : builds.map((b) => bundleName(b.version, b.digest));
 }
 
 /** Discover, fetch (or reuse the verified cached copy of) and load the current client bundle. */
@@ -435,6 +602,7 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
   const pageUrl = opts.pageUrl ?? DEFAULT_PAGE_URL;
   const dir = join(opts.dataDir, 'bundle');
   const kg = opts.knownGood === undefined ? KNOWN_GOOD_BUNDLE : opts.knownGood;
+  const now = opts.now ?? Date.now;
   let source: BundleSource;
   try {
     source = discoverBundleUrl(await opts.fetchText(pageUrl), pageUrl);
@@ -449,7 +617,8 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
       try {
         const b = new WarappBundle(src, c.version, opts.interp);
         b.fallback = true;
-        return b;
+        b.digest = c.digest;
+        return withRecorder(opts, b);
       } catch (err) {
         if (!isDialectRefusal(err)) throw err;
       }
@@ -472,18 +641,35 @@ export async function loadBundle(opts: BundleLoaderOptions): Promise<WarappBundl
     await cacheBundle(opts.dataDir, dir, name, src);
   }
   const keepKnownGood = kg ? [bundleName(kg.version, kg.digest)] : [];
+  const keepRecorded = await recordedNames(dir);
   let bundle: WarappBundle;
   try {
     bundle = new WarappBundle(src, version, opts.interp);
   } catch (e) {
-    if (!kg || kg.version === version || !isDialectRefusal(e)) throw e;
-    const standIn = await loadKnownGood(opts, dir, kg, e, version);
-    // Both stay: the refused copy so the next lookup does not download it again, the stand-in in use.
-    await pruneBundles(dir, [name, standIn.name]);
-    return standIn.bundle;
+    if (!isDialectRefusal(e)) throw e;
+    // Stand-ins, best first: every build that decoded a live board here (newest first), then the pin.
+    const recorded = await readKnownGood(dir);
+    const candidates: KnownGoodBundle[] = [
+      ...(recorded === 'unreadable' ? [] : recorded.map(({ version: v, digest }) => ({ version: v, digest }))),
+      ...(kg ? [kg] : []),
+    ].filter((c, i, all) => c.version !== version && all.findIndex((o) => o.version === c.version && o.digest === c.digest) === i);
+    for (const c of candidates) {
+      const standIn = await loadPinned(opts, dir, c);
+      if (!standIn) continue;
+      const since = await openWindow(opts.dataDir, dir, version, e.message, now());
+      standIn.bundle.standInFor = { version, reason: e.message };
+      standIn.bundle.standIn = { version: c.version, refusedVersion: version, since, reason: e.message };
+      // All stay: the refused copy so the next lookup does not download it again, the stand-in in use,
+      // and every recorded build.
+      await pruneBundles(dir, [name, standIn.name, ...keepKnownGood, ...keepRecorded]);
+      return withRecorder(opts, standIn.bundle);
+    }
+    throw e;
   }
-  await pruneBundles(dir, [name, ...keepKnownGood]);
-  return bundle;
+  bundle.digest = name.slice(version.length + 1, -'.js'.length);
+  await closeWindow(dir);
+  await pruneBundles(dir, [name, ...keepKnownGood, ...keepRecorded]);
+  return withRecorder(opts, bundle);
 }
 
 /**

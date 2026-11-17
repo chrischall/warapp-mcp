@@ -97,7 +97,7 @@ import {
 import { lookupMeta, mintMeta } from './hints.js';
 import { chatSummary } from './chat.js';
 import { readPendingSurrenders, surrenderOwedLine } from './surrender-pending.js';
-import { failureText, loadLiveGame, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
+import { failureText, loadLiveGame, requireApprovedAccount, standInLine, standInOf, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
 import { guessSalt, peekGuessSalt } from '../guess-salt.js';
@@ -2454,6 +2454,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #317: a surrender waiting on my acceptance is the first thing said, before the commander's line.
       const owedLine = surrenderOwedLine(surrenders);
       if (owedLine) warnings.unshift(owedLine);
+      // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
+      const standInNote = standInLine(standInOf(ctx));
+      if (standInNote) warnings.unshift(standInNote);
       // #312 E3: after turns 4 and 8, my income beside the pace my finished games on this map set
       // (reported only: read after the plan is made, never an input to it).
       const paceRecord = PACE_TURNS.includes(turnsCompleted(game) as (typeof PACE_TURNS)[number])
@@ -3284,6 +3287,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           }),
         );
         if (belowPlan) warnings.push(belowPlan);
+        // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
+        const standInNote = standInLine(standInOf(ctx));
+        if (standInNote) warnings.unshift(standInNote);
         // Deploys first (as the client sends them), merged per territory.
         const merged = new Map<number, { territory: { id: number; name: string }; armies: number }>();
         for (const d of deploys) {
