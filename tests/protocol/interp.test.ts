@@ -114,7 +114,7 @@ describe('BundleInterpreter', () => {
 
   it('accepts a var name and passes the protocol version', () => {
     const r = new Reader(new Writer().int32(4).bytes());
-    expect(interp().readClass('NE', r)).toEqual({ $type: 'warlight.shared.LatestGameInfo', turn: 4, ver: 242 });
+    expect(interp().readClass('NE', r)).toEqual({ $type: 'warlight.shared.LatestGameInfo', turn: 4, ver: 243 });
   });
 
   it('switches on a type tag with fall-through, break and instanceof', () => {

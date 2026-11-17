@@ -318,7 +318,7 @@ describe('encodeRequest golden vectors', () => {
       email: null,
       params: (w) => writeGetMapDetailsParams(w, 39905),
     });
-    const expected = 'f200' + '39f1475a' + '01000000' + '49000000' + EXTRAS_HEX + 'e19b0000';
+    const expected = 'f300' + '39f1475a' + '01000000' + '4b000000' + EXTRAS_HEX + 'e19b0000';
     expect(toHex(bytes)).toBe(expected.toUpperCase());
   });
 
@@ -331,10 +331,10 @@ describe('encodeRequest golden vectors', () => {
       params: (w) => writeGetTerritoryPicksParams(w, 1234, 1000),
     });
     const expected =
-      'f200' +
+      'f300' +
       '39f1475a' +
       '07000000' +
-      '4f000000' +
+      '51000000' +
       EXTRAS_HEX +
       '01' + // auth present
       '04' + // auth tag
@@ -365,7 +365,7 @@ describe('encodeRequest golden vectors', () => {
       version: 243,
     });
     const req = decodeRequest(bytes, { hasAuth: true });
-    expect(req).toMatchObject({ version: 243, reply: false, msgNum: 9, method: 79, extras, email: 'test@example.com' });
+    expect(req).toMatchObject({ version: 243, reply: false, msgNum: 9, method: 81, extras, email: 'test@example.com' });
     expect([req.body.int32(), req.body.int32(), req.body.remaining]).toEqual([5, 6, 0]);
 
     const noAuth = decodeRequest(encodeRequest({ method: 73, msgNum: 1, extras: { ...extras, dict: null }, email: null }), {
@@ -421,9 +421,9 @@ const EXTRAS_DOWN: ExtrasDown = {
 describe('decodeReplyEnvelope', () => {
   it('decodes a hand-built picks reply without extras', () => {
     // header (reply bit set) | 00 no extras | 00 kind | 01 present | list [3, 9]
-    const h = 'f280' + '39f1475a' + '07000000' + '4f000000' + '00' + '00' + '01' + '02000000' + '03000000' + '09000000';
+    const h = 'f380' + '39f1475a' + '07000000' + '51000000' + '00' + '00' + '01' + '02000000' + '03000000' + '09000000';
     const env = decodeReplyEnvelope(fromHex(h));
-    expect(env).toMatchObject({ version: 242, method: Method.GetTerritoryPicks, msgNum: 7 });
+    expect(env).toMatchObject({ version: 243, method: Method.GetTerritoryPicks, msgNum: 7 });
     expect(env.extrasDown).toBeUndefined();
     expect(env.error).toBeUndefined();
     expect(env.body.bool()).toBe(true);
@@ -475,37 +475,37 @@ describe('methods', () => {
   it('names every method id', () => {
     expect(Method).toEqual({
       GetOpenGames: 10,
-      GetGameDetails: 38,
-      GameRefresh: 39,
-      GetLatestGameInfo: 40,
-      SendChat: 42,
-      RegisterChatView: 43,
-      GetGameSettings: 48,
-      GetMyGames: 50,
-      AcceptGame: 60,
-      AcceptOpenSeat: 61,
-      AcceptOpenAutoGame: 62,
-      GetOpenAutoGame: 63,
-      DeclineGame: 64,
-      Surrender: 67,
-      AcceptSurrender: 68,
-      GetMapDetails: 73,
-      SendOrders: 74,
-      SendInProgressOrders: 75,
-      SendTerritoryPicks: 76,
-      SendInProgressPicks: 77,
-      BeginFirstTurn: 78,
-      GetTerritoryPicks: 79,
-      UnCommit: 80,
-      GetTurns: 81,
-      Subscribe: 238,
-      GameUpdated: 241,
-      GetInAppNotifications: 317,
-      DeleteInAppNotification: 318,
-      AcknowledgeInAppNotifications: 319,
+      GetGameDetails: 39,
+      GameRefresh: 40,
+      GetLatestGameInfo: 41,
+      SendChat: 43,
+      RegisterChatView: 44,
+      GetGameSettings: 49,
+      GetMyGames: 51,
+      AcceptGame: 61,
+      AcceptOpenSeat: 62,
+      AcceptOpenAutoGame: 63,
+      GetOpenAutoGame: 64,
+      DeclineGame: 65,
+      Surrender: 68,
+      AcceptSurrender: 69,
+      GetMapDetails: 75,
+      SendOrders: 76,
+      SendInProgressOrders: 77,
+      SendTerritoryPicks: 78,
+      SendInProgressPicks: 79,
+      BeginFirstTurn: 80,
+      GetTerritoryPicks: 81,
+      UnCommit: 82,
+      GetTurns: 83,
+      Subscribe: 242,
+      GameUpdated: 245,
+      GetInAppNotifications: 323,
+      DeleteInAppNotification: 324,
+      AcknowledgeInAppNotifications: 325,
     });
-    expect(methodName(40)).toBe('GetLatestGameInfo');
-    expect(methodName(41)).toBeUndefined();
+    expect(methodName(41)).toBe('GetLatestGameInfo');
+    expect(methodName(42)).toBeUndefined();
   });
 
   it('encodes a Deploy order (unverified)', () => {

@@ -25,12 +25,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withPathLock } from '../path-lock.js';
-import type { Reader } from './codec.js';
+import { PROTOCOL_VERSION, type Reader } from './codec.js';
 import {
   BundleInterpreter,
   parseBundle,
-  READER_HELPERS,
-  REQUIRED_HELPERS,
   type DialectCheck,
   type InterpOptions,
   type ReadBudget,
@@ -47,7 +45,14 @@ export const BUNDLE_FETCH_TIMEOUT_MS = 120_000;
 /** The most bytes the bundle download may carry (the bundle is about 17 MB). */
 export const BUNDLE_MAX_BYTES = 64 * 1024 * 1024;
 
-type BundleErrorKind = 'no-script' | 'bad-url' | 'bad-version' | 'bad-bundle' | 'dialect-mismatch' | 'dialect-unverified';
+type BundleErrorKind =
+  | 'no-script'
+  | 'bad-url'
+  | 'bad-version'
+  | 'bad-bundle'
+  | 'dialect-mismatch'
+  | 'dialect-unverified'
+  | 'protocol-mismatch';
 
 export class BundleError extends Error {
   constructor(
@@ -168,6 +173,20 @@ export class WarappBundle {
     opts: InterpOptions = {},
   ) {
     this.interp = new BundleInterpreter(parseBundle(src), opts);
+    // Every request is framed in this server's protocol, and war.app answers in the protocol a request
+    // declares, so the replies are in PROTOCOL_VERSION's layout: a client whose readers default to another
+    // protocol would read them in its own layout. Such a build (a newer release, or an old stand-in) is
+    // refused here, like a client whose helpers cannot be checked (docs/CLIENT-RELEASES.md).
+    const protocol = this.interp.bundleProtocol;
+    if (opts.version === undefined && protocol !== undefined && protocol !== PROTOCOL_VERSION) {
+      throw new BundleError(
+        'protocol-mismatch',
+        `war.app's client bundle ${version} speaks protocol ${protocol}, and this server speaks ${PROTOCOL_VERSION}; ` +
+          'its readers would read the replies in the wrong layout, so it is not used. ' +
+          (protocol > PROTOCOL_VERSION ? 'The client changed and this server needs an update.' : 'It is an older client.'),
+      );
+    }
+    this.protocol = protocol;
     // The built-in reader helpers are pinned to one client release while the bundle floats:
     // refuse a bundle whose own helpers read differently, rather than decode it wrongly (#131).
     this.dialectCheck = this.interp.verifyDialect();
@@ -180,7 +199,7 @@ export class WarappBundle {
     }
     // The count, flag and byte helpers decode every army count, fog flag and unit count: one this
     // check cannot verify could be a swapped same-width read, which no later check catches (#148).
-    const unverifiedRequired = REQUIRED_HELPERS.map((n) => `${READER_HELPERS}.${n}`).filter((k) =>
+    const unverifiedRequired = this.interp.requiredHelpers.map((n) => `${this.interp.helperClass}.${n}`).filter((k) =>
       this.dialectCheck.unverified.includes(k),
     );
     if (unverifiedRequired.length) {
@@ -195,6 +214,14 @@ export class WarappBundle {
 
   /** The built-in reader helpers checked against this bundle's own definitions at load. */
   readonly dialectCheck: DialectCheck;
+
+  /** The protocol version the bundle's readers default to, when it can be read from the bundle. */
+  readonly protocol: number | undefined;
+
+  /** The reader names were derived from this bundle (false: the built-in v6.07 names). */
+  get derivedDialect(): boolean {
+    return this.interp.derived;
+  }
 
   /** What this bundle's decoding rests on, for the tools to show (#148). */
   report(): DecoderReport {
@@ -256,15 +283,15 @@ export interface KnownGoodBundle {
 }
 
 /**
- * The client release the built-in readers (src/protocol/interp.ts `DEFAULT_DIALECT`) and every
- * hand-written encoder are written for: client v6.07, protocol 242. war.app's CDN still serves it by
- * version, byte for byte, and war.app still answers a protocol-242 request in 242's layout. So when
- * the current client is refused (2026-11-17: 639304451701341657 renamed every reader on protocol
- * 243), this one stands in and decodes those replies exactly. Only bytes with this digest are used.
+ * The pinned known-good client: v6.08.0.2, protocol 243, the release every hand-written encoder and
+ * reader of this server is written for (#340). It stands in for a current client refused at load when
+ * no recorded build does, only with this digest. war.app's CDN ignores `?v=` and serves the current
+ * build, so it can be downloaded by version only while Cloudflare still caches that URL
+ * (docs/CLIENT-RELEASES.md): the copy kept in the data dir is what a stand-in really rests on.
  */
 export const KNOWN_GOOD_BUNDLE: KnownGoodBundle = {
-  version: '639294131571648437',
-  digest: 'dec5cf174f6affb9e4c08802534cf8c6c6496eff977847aaf1497535e3371404',
+  version: '639304508939095333',
+  digest: '3c55e2d08681d05661eb350b3d72d02f25729130bb78dc9c5d3b1febd73febd1',
 };
 
 /** The CDN URL of a client release, by version (the location {@link discoverBundleUrl} pins). */
@@ -428,7 +455,7 @@ async function readVerified(file: string, digest: string): Promise<string | null
 
 /** Whether `e` is the load-time refusal of a client this server cannot read (#131, #148). */
 const isDialectRefusal = (e: unknown): e is BundleError =>
-  e instanceof BundleError && (e.kind === 'dialect-mismatch' || e.kind === 'dialect-unverified');
+  e instanceof BundleError && (e.kind === 'dialect-mismatch' || e.kind === 'dialect-unverified' || e.kind === 'protocol-mismatch');
 
 /** Write `src` into the cache as `name` (`0700` directories, an atomic `0600` file). */
 async function cacheBundle(dataDir: string, dir: string, name: string, src: string): Promise<void> {

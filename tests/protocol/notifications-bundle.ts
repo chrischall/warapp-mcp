@@ -12,7 +12,7 @@ export const NOTIFICATIONS_BUNDLE = [
   REQUIRED_HELPER_DEFS,
   'function Nlr(){}function Nnt(){}',
   'W["warlight.shared.GetInAppNotificationsReturn"]=Nlr;',
-  'Nlr.Ha=function(a,b,d){null==d&&(d=242);return Nlr.rd(a,d)};',
+  'Nlr.Ha=function(a,b,d){null==d&&(d=243);return Nlr.rd(a,d)};',
   'Nlr.rd=function(a,b){var d=new Nlr,e=a.Ua()?P.Sd(a,function(){return a.Ua()?Nnt.Ha(a,d,b):null}):null;' +
     'd.n1=e;d.n2=P.Ya(a);return d};',
   'W["warlight.shared.InAppNotification"]=Nnt;',

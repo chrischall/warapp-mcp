@@ -16,7 +16,7 @@ import { REQUIRED_HELPER_DEFS } from './mini-bundle.js';
  * TeammateOrders, read through a closure as the client reads it), a number.
  */
 export const LATEST_GAME_INFO_READER =
-  'Lg.Ha=function(a,b,d){null==d&&(d=242);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;' +
+  'Lg.Ha=function(a,b,d){null==d&&(d=243);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;' +
   'e.k4=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Tq.Ha(a,e,d):null}):null;' +
   'e.k3=P.Ya(a);return e};';
 

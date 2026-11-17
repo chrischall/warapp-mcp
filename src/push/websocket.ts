@@ -7,8 +7,8 @@
 //   socket     wss://war.app/socket.io/1/websocket/<sid>  (same Cookie header)
 //
 // The server opens with `1::`; a `3:::<hex Subscribe frame>` is acknowledged
-// with a 238 reply; `2::` heartbeats are answered with `2::`; pushes arrive as
-// `3:::<hex>` (241 GameUpdated). The server may close a healthy socket after
+// with a Subscribe (242) reply; `2::` heartbeats are answered with `2::`; pushes arrive as
+// `3:::<hex>` (245 GameUpdated). The server may close a healthy socket after
 // ~60 s — the caller reconnects (new handshake, new sid, re-subscribe), and
 // pushes sent during the gap are lost.
 //

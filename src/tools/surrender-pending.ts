@@ -1,6 +1,6 @@
 // Reading the surrenders pending in a game (#317), for warapp_my_games, warapp_wait_for_turn and
 // warapp_plan_turn. A pending surrender lives only in the game details (src/surrender-pending.ts):
-// one GameRefresh (39) asked for the details and not the chat. UNVERIFIED live.
+// one GameRefresh (40) asked for the details and not the chat. UNVERIFIED live.
 //
 // Never throws: a failed or unreadable read is `null` (unknown), never an empty list — an empty list
 // is a game whose details were read and showed no surrender pending.

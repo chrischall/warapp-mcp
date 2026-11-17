@@ -2,10 +2,10 @@
 // UNVERIFIED live (docs/WEB-PROTOCOL.md, "Accepting a surrender").
 //
 // GameFeed keeps a player who asked to surrender `Playing`, and neither GetMyGames nor
-// LatestGameInfo says anything about it: only the game details do. GameRefresh (39) asked with
+// LatestGameInfo says anything about it: only the game details do. GameRefresh (40) asked with
 // `nonChat` answers `warlight.shared.GameDetailsAndChat`, whose second field is the game
 // (`warlight.shared.GameWL`); the game's eighth field is its players, a dict of in-game id →
-// `warlight.shared.GamePlayer`. Of a player's 36 fields this reads the AI id, "human turned into
+// `warlight.shared.GamePlayer`. Of a player's 37 fields this reads the AI id, "human turned into
 // an AI", the in-game id, who accepted its surrender, its state and the `Surrendered` flag.
 //
 // The client's player reader first sets a link back to the game being read (only when it is read
@@ -27,8 +27,8 @@ export const GAME_PLAYER = 'warlight.shared.GamePlayer';
 /** GameWL: its field count and where the players are, in read order. */
 export const GAME_WL_FIELDS = 14;
 const GW_PLAYERS = 7;
-/** GamePlayer: its field count and the positions read, in read order. */
-export const GAME_PLAYER_FIELDS = 36;
+/** GamePlayer: its field count (protocol 243 added an int32 at 31) and the positions read, in read order. */
+export const GAME_PLAYER_FIELDS = 37;
 const GPL = { aiId: 0, turnedAI: 14, id: 20, accepted: 21, state: 28, surrendered: 29 } as const;
 
 

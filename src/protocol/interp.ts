@@ -86,6 +86,7 @@ import {
   type Statement,
 } from 'acorn';
 import { PROTOCOL_VERSION, ProtocolError, Reader } from './codec.js';
+import { bundleProtocol, deriveDialect, type ReaderRole, type StaticRole } from './dialect.js';
 
 type InterpErrorKind =
   | 'unsupported'
@@ -222,64 +223,120 @@ function list(r: unknown, item: unknown): unknown[] | null {
   return asReader(r).list(() => f());
 }
 
-/** The names used by client v6.07 (protocol 242). */
-export const DEFAULT_DIALECT: Dialect = {
-  readerMethods: {
-    Ua: (r) => r.bool(),
-    Og: (r) => r.int32(),
-    bc: (r) => r.u8(),
-    FJ: (r) => strBody(r),
-    // The client's 8-byte read is a float64 (its two int32 halves reassembled as a double), not an
-    // int64: kill rates, luck and TimeSpans (milliseconds) all arrive through it.
-    E3a: (r) => r.float64(),
-    Om: (r) => r.float32(),
-    NGb: (r) => r.uint16(),
-    S3c: (r) => r.int16(),
-    MGb: (r) => r.u8(),
-    JS: (r, n) => {
-      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) throw new InterpError('bad-value', `bad byte count ${String(n)}`);
-      return r.raw(n);
-    },
-    I3c: (r) => r.varint(),
+/** The built-in natives for each reader-method role (`a.Tg()`). */
+const READER_NATIVES: Record<ReaderRole, (r: Reader, ...args: unknown[]) => unknown> = {
+  bool: (r) => r.bool(),
+  int32: (r) => r.int32(),
+  u8: (r) => r.u8(),
+  string: (r) => strBody(r),
+  // The client's 8-byte read is a float64 (its two int32 halves reassembled as a double), not an
+  // int64: kill rates, luck and TimeSpans (milliseconds) all arrive through it.
+  float64: (r) => r.float64(),
+  float32: (r) => r.float32(),
+  uint16: (r) => r.uint16(),
+  int16: (r) => r.int16(),
+  raw: (r, n) => {
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) throw new InterpError('bad-value', `bad byte count ${String(n)}`);
+    return r.raw(n);
   },
+  varint: (r) => r.varint(),
+};
+
+/** The built-in natives for each static-helper role (`P.Ya(a)`, `E.Za(xs, f)`, …). */
+const STATIC_NATIVES: Record<StaticRole, Native> = {
+  int32: (r) => asReader(r).int32(),
+  string: (r) => asReader(r).string(),
+  bool: (r) => asReader(r).bool(),
+  u8: (r) => asReader(r).u8(),
+  float32: (r) => asReader(r).float32(),
+  float64: (r) => asReader(r).float64(),
+  timespan: (r) => asReader(r).float64(),
+  date: (r) => asReader(r).date(),
+  guid: (r) => asReader(r).guid(),
+  uint16: (r) => asReader(r).uint16(),
+  bytes: (r) => readBytes(asReader(r)),
+  list,
+  dict: (r, k, v) => {
+    const fk = callback(k);
+    const fv = callback(v);
+    return asReader(r).list(() => [fk(), fv()]);
+  },
+  identity: (x) => x,
+  // Enumerable helpers (special-unit lists): Range → Select → ToArray.
+  range,
+  select: (xs, f) => {
+    const fn = callback(f);
+    return asArray(xs).map((x) => fn(x));
+  },
+  toArray: (xs) => [...asArray(xs)],
+};
+
+/** A derived (or built-in) dialect's names → roles, as the natives the interpreter calls. */
+function dialectFrom(names: {
+  readerMethods: Record<string, ReaderRole>;
+  statics: Record<string, Record<string, StaticRole>>;
+  wrappers: string[];
+}): Dialect {
+  const readerMethods: Dialect['readerMethods'] = {};
+  for (const [n, role] of Object.entries(names.readerMethods)) readerMethods[n] = READER_NATIVES[role];
+  const statics: Dialect['statics'] = {};
+  for (const [cls, fns] of Object.entries(names.statics)) {
+    statics[cls] = {};
+    for (const [n, role] of Object.entries(fns)) statics[cls]![n] = STATIC_NATIVES[role];
+  }
+  return { readerMethods, statics, wrappers: [...names.wrappers] };
+}
+
+/**
+ * The names client v6.07.0.1 (protocol 242) used, by role: the fallback when a bundle's own names
+ * cannot be derived (`deriveDialect`), and the dialect of the test mini-bundles.
+ */
+const V607_NAMES = {
+  readerMethods: {
+    Ua: 'bool',
+    Og: 'int32',
+    bc: 'u8',
+    FJ: 'string',
+    E3a: 'float64',
+    Om: 'float32',
+    NGb: 'uint16',
+    S3c: 'int16',
+    MGb: 'u8',
+    JS: 'raw',
+    I3c: 'varint',
+  } satisfies Record<string, ReaderRole>,
   statics: {
     P: {
-      Ya: (r) => asReader(r).int32(),
-      wc: (r) => asReader(r).string(),
-      Yc: (r) => asReader(r).bool(),
-      uq: (r) => asReader(r).u8(),
-      Ao: (r) => asReader(r).float32(),
-      ak: (r) => asReader(r).float64(),
-      uy: (r) => asReader(r).float64(),
-      Td: (r) => asReader(r).date(),
-      tL: (r) => asReader(r).guid(),
-      Z5: (r) => asReader(r).uint16(),
-      sL: (r) => readBytes(asReader(r)),
-      Sd: list,
-      ms: list,
-      uL: list,
-      ef: (r, k, v) => {
-        const fk = callback(k);
-        const fv = callback(v);
-        return asReader(r).list(() => [fk(), fv()]);
-      },
+      Ya: 'int32',
+      wc: 'string',
+      Yc: 'bool',
+      uq: 'u8',
+      Ao: 'float32',
+      ak: 'float64',
+      uy: 'timespan',
+      Td: 'date',
+      tL: 'guid',
+      Z5: 'uint16',
+      sL: 'bytes',
+      Sd: 'list',
+      ms: 'list',
+      uL: 'list',
+      ef: 'dict',
     },
-    O: { fA: (x) => x, Fy: (x) => x, rc: (x) => x },
-    za: { rc: (x) => x },
-    // Enumerable helpers (special-unit lists): Range → Select → ToArray.
-    E: {
-      Range: range,
-      Za: (xs, f) => {
-        const fn = callback(f);
-        return asArray(xs).map((x) => fn(x));
-      },
-      Sa: (xs) => [...asArray(xs)],
-    },
-  },
+    O: { fA: 'identity', Fy: 'identity', rc: 'identity' },
+    za: { rc: 'identity' },
+    E: { Range: 'range', Za: 'select', Sa: 'toArray' },
+  } satisfies Record<string, Record<string, StaticRole>>,
   wrappers: ['Z', 'Yb', 'uc', 'dc', 'oc', 'ec', 'fc'],
 };
 
-/** The class whose statics are the reader helpers (`P.Ya(a)`), checked by `verifyDialect`. */
+/** The names used by client v6.07 (protocol 242): the fallback when a bundle's own names cannot be derived. */
+export const DEFAULT_DIALECT: Dialect = dialectFrom(V607_NAMES);
+
+/** The Serializer roles every board count, flag and unit count is read through (see {@link REQUIRED_HELPERS}). */
+const REQUIRED_ROLES: readonly StaticRole[] = ['int32', 'bool', 'u8'];
+
+/** The class whose statics are the reader helpers (`P.Ya(a)`) in the built-in dialect, checked by `verifyDialect`. */
 export const READER_HELPERS = 'P';
 
 /** What `verifyDialect` found: built-in helpers by `Class.name`. */
@@ -300,9 +357,10 @@ export interface DialectCheck {
 }
 
 /**
- * The helpers every board count, flag and unit count is read through (int32, bool, byte). A bundle
- * whose own definition of one of these cannot be verified is refused at load: an unverified one could
- * be a swapped same-width read, which decodes a wrong board without an error (#148).
+ * The helpers every board count, flag and unit count is read through (int32, bool, byte), in the
+ * built-in dialect. A bundle whose own definition of one of these cannot be verified is refused at
+ * load: an unverified one could be a swapped same-width read, which decodes a wrong board without an
+ * error (#148). A derived dialect names its own (`BundleInterpreter.requiredHelpers`), by role.
  */
 export const REQUIRED_HELPERS: readonly string[] = ['Ya', 'Yc', 'uq'];
 
@@ -638,6 +696,14 @@ function leadingFunction(node: AnyNode): FunctionExpression | null {
 export class BundleInterpreter {
   readonly version: number;
   private readonly dialect: Dialect;
+  /** The class whose statics are the reader helpers `verifyDialect` checks (the Serializer). */
+  readonly helperClass: string;
+  /** The reader helpers that must verify for the bundle to load (int32, bool and byte, by role). */
+  readonly requiredHelpers: readonly string[];
+  /** The dialect was derived from this bundle (false: the built-in v6.07 names). */
+  readonly derived: boolean;
+  /** The protocol version the bundle's readers default to, when clear (`null==d&&(d=243)`). */
+  readonly bundleProtocol: number | undefined;
   private readonly wrappers: Set<string>;
   /** Resolved functions by `Cls.fn` / `new Cls`: a hit, `null` (no constructor) or the cached failure. */
   private readonly fnCache = new Map<string, ResolvedFn | InterpError | null>();
@@ -670,12 +736,29 @@ export class BundleInterpreter {
     this.maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH;
     this.maxMillis = opts.maxMillis ?? DEFAULT_MAX_MILLIS;
     this.now = opts.now ?? (() => performance.now());
-    const d = opts.dialect ?? {};
-    this.dialect = {
-      readerMethods: { ...DEFAULT_DIALECT.readerMethods, ...d.readerMethods },
-      statics: { ...DEFAULT_DIALECT.statics, ...d.statics },
-      wrappers: d.wrappers ?? DEFAULT_DIALECT.wrappers,
-    };
+    // The bundle's own names, derived from its structure (every build renames them: #340); the
+    // built-in v6.07 names when they cannot be, or when the caller gives a dialect (the tests' mini-bundles).
+    const derived = opts.dialect ? null : deriveDialect(bundle);
+    if (derived) {
+      this.dialect = dialectFrom(derived);
+      this.helperClass = derived.serializer;
+      const helpers = derived.statics[derived.serializer] ?? {};
+      this.requiredHelpers = Object.keys(helpers)
+        .filter((n) => REQUIRED_ROLES.includes(helpers[n]!))
+        .sort();
+      this.derived = true;
+    } else {
+      const d = opts.dialect ?? {};
+      this.dialect = {
+        readerMethods: { ...DEFAULT_DIALECT.readerMethods, ...d.readerMethods },
+        statics: { ...DEFAULT_DIALECT.statics, ...d.statics },
+        wrappers: d.wrappers ?? DEFAULT_DIALECT.wrappers,
+      };
+      this.helperClass = READER_HELPERS;
+      this.requiredHelpers = REQUIRED_HELPERS;
+      this.derived = false;
+    }
+    this.bundleProtocol = derived ? derived.protocol : bundleProtocol(bundle.src);
     this.wrappers = new Set(this.dialect.wrappers);
   }
 
@@ -740,18 +823,18 @@ export class BundleInterpreter {
   verifyDialect(): DialectCheck {
     const out: DialectCheck = { verified: [], unverified: [], mismatched: [] };
     const reasons: Record<string, string> = {};
-    const natives = Object.hasOwn(this.dialect.statics, READER_HELPERS) ? this.dialect.statics[READER_HELPERS]! : {};
+    const natives = Object.hasOwn(this.dialect.statics, this.helperClass) ? this.dialect.statics[this.helperClass]! : {};
     // The bundle's definitions run like any interpreted code: contained, and under one step budget
     // shared by the whole check, so a hostile bundle cannot spend more than one read's worth here.
     // Past the budget, a probe is unevaluable (the helper unverified), never a mismatch.
     const budget: ReadBudget = { spent: 0 };
-    const forms = this.helperForms(READER_HELPERS, Object.keys(natives), budget);
+    const forms = this.helperForms(this.helperClass, Object.keys(natives), budget);
     // The required helpers are probed first: a runaway definition of another cannot spend the budget
     // they need. Object literals assigned to P are parsed under a bound of their own (see helperForms).
-    const order = [...forms.keys()].sort((a, b) => Number(REQUIRED_HELPERS.includes(b)) - Number(REQUIRED_HELPERS.includes(a)) || (a < b ? -1 : 1));
+    const order = [...forms.keys()].sort((a, b) => Number(this.requiredHelpers.includes(b)) - Number(this.requiredHelpers.includes(a)) || (a < b ? -1 : 1));
     for (const name of order) {
       const native = natives[name]!;
-      const key = `${READER_HELPERS}.${name}`;
+      const key = `${this.helperClass}.${name}`;
       let mismatch = false;
       let why: string | undefined;
       for (const form of forms.get(name)!) {
@@ -791,12 +874,12 @@ export class BundleInterpreter {
     // and the built-in would decode every read through it unchecked. Absent from the check is not
     // verified (#148).
     const src = this.bundle.src;
-    const esc = READER_HELPERS.replace(/\$/g, '\\$');
-    for (const name of REQUIRED_HELPERS) {
+    const esc = this.helperClass.replace(/\$/g, '\\$');
+    for (const name of this.requiredHelpers) {
       if (forms.has(name) || !Object.hasOwn(natives, name)) continue;
       const ref = new RegExp(`(?<![\\w$.])${esc}\\s*(?:\\.\\s*${name}(?![\\w$])|\\[\\s*(["'\`])${name}\\1\\s*\\])`);
       if (!ref.test(src)) continue;
-      const key = `${READER_HELPERS}.${name}`;
+      const key = `${this.helperClass}.${name}`;
       out.unverified.push(key);
       reasons[key] = 'the bundle reads through it, but no definition was found in a form this check can follow';
     }

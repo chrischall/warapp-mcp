@@ -20,7 +20,7 @@
 // (5 → a server error {code, message} follows) and the method's result.
 
 export const PREAMBLE = 1514664249;
-export const PROTOCOL_VERSION = 242;
+export const PROTOCOL_VERSION = 243;
 const REPLY_FLAG = 0x8000;
 
 /** Milliseconds from the Unix epoch to 2000-01-01T00:00:00Z, the protocol's date epoch. */
@@ -452,7 +452,7 @@ export function readHeader(r: Reader): FrameHeader {
 export interface ExtrasUp {
   /** Optional int → string map (minified `my`); the browser sends it present and empty. */
   dict: ReadonlyMap<number, string> | null;
-  /** Client version string, e.g. "v6.07.0.1". */
+  /** Client version string, e.g. "v6.08.0.2". */
   client: string | null;
   /** Echoed from the last reply's ServerInfoForClient (minified `ZR`). */
   serverInfoVersionA: number;

@@ -43,10 +43,10 @@ const raw = (over: Partial<RawNotification> = {}): RawNotification => ({
 
 describe('notification method ids and encoders (#311, UNVERIFIED live)', () => {
   it('names the methods by their bundle ids', () => {
-    expect(Method.GetInAppNotifications).toBe(317);
-    expect(Method.DeleteInAppNotification).toBe(318);
-    expect(Method.AcknowledgeInAppNotifications).toBe(319);
-    expect(methodName(319)).toBe('AcknowledgeInAppNotifications');
+    expect(Method.GetInAppNotifications).toBe(323);
+    expect(Method.DeleteInAppNotification).toBe(324);
+    expect(Method.AcknowledgeInAppNotifications).toBe(325);
+    expect(methodName(325)).toBe('AcknowledgeInAppNotifications');
   });
 
   it('GetInAppNotifications is the start index then the page size (the client sends 30)', () => {
@@ -68,7 +68,7 @@ describe('notification method ids and encoders (#311, UNVERIFIED live)', () => {
     expect(hex((w) => writeDeleteInAppNotificationParams(w, '9001'))).toBe('01' + '04' + '39303031');
     expect(() => writeDeleteInAppNotificationParams(new Writer(), '12a')).toThrow();
     expect(() => writeDeleteInAppNotificationParams(new Writer(), '')).toThrow();
-    expect(methodName(318)).toBe('DeleteInAppNotification');
+    expect(methodName(324)).toBe('DeleteInAppNotification');
   });
 
   it('refuses an id that is not decimal text', () => {

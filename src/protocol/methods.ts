@@ -1,5 +1,7 @@
 // war.app web-client method ids (the int32 in every frame header) and the
-// parameter writers this server uses. The name is also the `m=` query value of
+// parameter writers this server uses. The ids are protocol 243's: 243 inserted six methods
+// (ChangeCommitConfirmation 26, TeamSurrender 70, TournamentGroup 94, UploadSharedImage 129,
+// ChatRoomReactionsChanged 247, SetReaction 285) and renumbered everything after each. The name is also the `m=` query value of
 // https://war.app/Services?m=<name>&js=1.
 
 import type { Reader, Writer } from './codec.js';
@@ -7,34 +9,34 @@ import type { Reader, Writer } from './codec.js';
 export const Method = {
   /** Exists in the client's method table, but the web client never calls it (open games come from a page). */
   GetOpenGames: 10,
-  GetGameDetails: 38,
-  GameRefresh: 39,
-  GetLatestGameInfo: 40,
-  SendChat: 42,
-  RegisterChatView: 43,
-  GetGameSettings: 48,
-  GetMyGames: 50,
-  AcceptGame: 60,
-  AcceptOpenSeat: 61,
-  AcceptOpenAutoGame: 62,
-  GetOpenAutoGame: 63,
-  DeclineGame: 64,
-  Surrender: 67,
-  AcceptSurrender: 68,
-  GetMapDetails: 73,
-  SendOrders: 74,
-  SendInProgressOrders: 75,
-  SendTerritoryPicks: 76,
-  SendInProgressPicks: 77,
-  BeginFirstTurn: 78,
-  GetTerritoryPicks: 79,
-  UnCommit: 80,
-  GetTurns: 81,
-  Subscribe: 238,
-  GameUpdated: 241,
-  GetInAppNotifications: 317,
-  DeleteInAppNotification: 318,
-  AcknowledgeInAppNotifications: 319,
+  GetGameDetails: 39,
+  GameRefresh: 40,
+  GetLatestGameInfo: 41,
+  SendChat: 43,
+  RegisterChatView: 44,
+  GetGameSettings: 49,
+  GetMyGames: 51,
+  AcceptGame: 61,
+  AcceptOpenSeat: 62,
+  AcceptOpenAutoGame: 63,
+  GetOpenAutoGame: 64,
+  DeclineGame: 65,
+  Surrender: 68,
+  AcceptSurrender: 69,
+  GetMapDetails: 75,
+  SendOrders: 76,
+  SendInProgressOrders: 77,
+  SendTerritoryPicks: 78,
+  SendInProgressPicks: 79,
+  BeginFirstTurn: 80,
+  GetTerritoryPicks: 81,
+  UnCommit: 82,
+  GetTurns: 83,
+  Subscribe: 242,
+  GameUpdated: 245,
+  GetInAppNotifications: 323,
+  DeleteInAppNotification: 324,
+  AcknowledgeInAppNotifications: 325,
 } as const;
 
 type MethodName = keyof typeof Method;
@@ -364,6 +366,8 @@ export function writeGameRefreshParams(w: Writer, p: GameRefreshParams): void {
     .string(NO_CHAT_MARKER)
     .bool(p.lobby)
     .bool(false)
+    .bool(false)
+    // Protocol 243 added a last, optional value (a nullable number the client sends as text): absent.
     .bool(false);
 }
 
@@ -436,6 +440,8 @@ export function writeSendChatParams(w: Writer, p: SendChatParams): void {
     .string(null)
     .string(null)
     .bool(false)
+    .bool(false)
+    // Protocol 243 added a last, optional list of strings (the shared images a message carries): absent.
     .bool(false);
 }
 

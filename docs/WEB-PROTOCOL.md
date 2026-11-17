@@ -3,8 +3,9 @@
 The official API (`/API/GameFeed`) returns **no board for an in-progress game** — not
 standings, not the pick-phase map — and has no way to submit orders. The web client
 talks to its server over a private binary RPC protocol instead. This document records
-that protocol as read from the client bundle (`warappcdn.com/js/Release/ujs.js`,
-client `v6.07.0.1`, protocol version 242) and checked against captured traffic. How war.app releases new clients, and how to move
+that protocol as read from the client bundle (`warappcdn.com/js/Release/ujs.js`), first from
+client `v6.07.0.1` / protocol 242 and checked against captured traffic, and since #340 for client
+`v6.08.0.2` / **protocol 243** (what changed is in [Protocol 243](#protocol-243-client-608)). How war.app releases new clients, and how to move
 this document and the decoder to one, is in [CLIENT-RELEASES.md](CLIENT-RELEASES.md).
 
 **Status (2026-11-12):** request framing fully decoded — 7/7 captured requests rebuilt
@@ -48,7 +49,7 @@ is a captured value; no captures are committed.
 ## Frame
 
 ```
-int16   version | flags     242 (0xF2); bit 15 set = reply  →  F2 00 request, F2 80 reply
+int16   version | flags     243 (0xF3); bit 15 set = reply  →  F3 00 request, F3 80 reply
 int32   preamble            1514664249  (39 F1 47 5A) — anything else is rejected
 int32   messageNumber       per-session counter; a reply echoes the request's
 int32   methodId            see table
@@ -58,14 +59,15 @@ MessageExtrasUp             (below)
 params                      per method
 ```
 
-Every reader (the bundle's and `methods.ts`) reads protocol 242's layout, so `WarappRpc` refuses a
-reply whose header names another version rather than decode it into wrong values (#131).
+Every reader (the bundle's and `methods.ts`) reads protocol 243's layout, so `WarappRpc` refuses a
+reply whose header names another version rather than decode it into wrong values (#131). war.app
+answers in the protocol a request declares, and the method ids are that protocol's (see below).
 
 ### MessageExtrasUp (`warlight.shared.MessageExtrasUp`)
 
 ```
 dict<int,string>  (present, here empty)
-string   clientVersion        "v6.07.0.1"
+string   clientVersion        "v6.08.0.2"
 int32    serverInfoVersionA   echoed from the last reply (348 observed)
 int32    serverInfoVersionB   echoed from the last reply (88732 observed)
 datetime fDb                  "no date" observed
@@ -84,37 +86,43 @@ byte   tag 04
 string email                  the signed-in account's email
 ```
 
-## Methods (from `H4.ic`)
+## Methods (from `warlight.shared.messages.MessageType`)
+
+Ids are protocol 243's; the 242 id each had is in brackets. 243 inserted six methods
+(ChangeCommitConfirmation 26, TeamSurrender 70, TournamentGroup 94, UploadSharedImage 129,
+ChatRoomReactionsChanged 247, SetReaction 285) and renumbered everything after each, so a method id is
+only meaningful with its protocol: a 242 id sent as 243 asks for another method. Method numbers given
+elsewhere in this document beside a method's name are protocol 242's unless marked.
 
 | Id | Name | Notes |
 |---|---|---|
-| 10 | GetOpenGames | exists, but the web client never calls it — the open games list comes from a page payload (see [Open games](#open-games)); do not use |
-| 38 | GetGameDetails | |
-| 39 | **GameRefresh** | params: int32 gameId, bool chat, bool nonChat, string "-1", string "-1", bool lobby, optional dict, optional dict; reply `GameDetailsAndChat` — see [Chat](#chat) (the chat-only read of public messages VERIFIED live 2026-11-14; the rest UNVERIFIED) |
-| 40 | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
-| 43 | **RegisterChatView** | params: int32 gameId, string public mark, string team mark, optional dict private counterpart → mark, optional dict game group → mark; no result — marks a game's chat read, see [Notifications and read marks](#notifications-and-read-marks) (VERIFIED live 2026-11-16, direct transport) |
-| 48 | GetGameSettings | |
-| 60 | AcceptGame | accept an invitation (not used) |
-| 61 | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
-| 62 | AcceptOpenAutoGame | not used |
-| 63 | GetOpenAutoGame | not used |
-| 64 | **DeclineGame** | params: int32 gameId, bool modHook — read from the bundle, **verified live 2026-11-14** (open-seat lobby); see [DeclineGame](#declinegame-leaving-a-lobby) |
-| 67 | **Surrender** | params: int32 gameId, bool surrender, bool false — see [Surrender](#surrender) |
-| 68 | **AcceptSurrender** | params: int32 gameId, int32 in-game player id, bool accept, bool modHook — read from the bundle, UNVERIFIED live; sent by `warapp_accept_surrender` (accept only); see [Accepting a surrender](#accepting-a-surrender) |
-| 73 | GetMapDetails | no auth; params: int32 mapId — read by `warapp_get_map`'s full view for the distribution modes' territories, and by `warapp_locate_opponents` for the start candidates of a game dealt automatically from a map mode, see [Map details](#map-details-distribution-modes) |
-| 74 | **SendOrders** | the turn commit — not yet captured |
-| 75 | SendInProgressOrders | draft save of orders |
-| 76 | SendTerritoryPicks | params: int32 gameId, bool present, int list territoryIds (priority order), bool, bool |
-| 77 | SendInProgressPicks | as 76 without the two trailing bools (draft save) |
-| 78 | **BeginFirstTurn** | params: int32 gameId — read from the bundle, not verified live; see [Begin first turn](#begin-first-turn) |
-| 79 | GetTerritoryPicks | params: int32 gameId, int32 in-game player id; verified for my own id. `warapp_get_team` also asks it with a teammate's id while picking (UNVERIFIED, V6); a refusal reads as unknown |
-| 80 | **UnCommit** | params: int32 gameId — see [UnCommit](#uncommit) |
-| 81 | GetTurns | |
-| 317 | **GetInAppNotifications** | params: int32 start index, int32 page size (the client sends 30); reply `GetInAppNotificationsReturn` — see [Notifications and read marks](#notifications-and-read-marks) (VERIFIED live 2026-11-16, direct transport) |
-| 318 | **DeleteInAppNotification** | params: string notification id (decimal text); no result (VERIFIED live 2026-11-16, direct transport) |
-| 319 | **AcknowledgeInAppNotifications** | params: optional list of string notification ids (decimal text); no result — marks them read (VERIFIED live 2026-11-16, direct transport) |
-| 238 | Subscribe | push channel only, **no auth**; params: bool true, list of topic strings, string null; reply dict topic→int32 error |
-| 241 | GameUpdated | server push, **no auth**; msgNum `0x80000000`, 61 bytes: the game id, then bools `chat` and `nonChat` (named by the client's own log line; UNVERIFIED live) and an optional dict — re-read GameFeed |
+| 10 [10] | GetOpenGames | exists, but the web client never calls it — the open games list comes from a page payload (see [Open games](#open-games)); do not use |
+| 39 [38] | GetGameDetails | |
+| 40 [39] | **GameRefresh** | params: int32 gameId, bool chat, bool nonChat, string "-1", string "-1", bool lobby, optional dict, optional dict, and since 243 an optional last value (a nullable number written as text; sent absent); reply `GameDetailsAndChat` — see [Chat](#chat) (the chat-only read of public messages VERIFIED live 2026-11-14; the rest UNVERIFIED) |
+| 41 [40] | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
+| 44 [43] | **RegisterChatView** | params: int32 gameId, string public mark, string team mark, optional dict private counterpart → mark, optional dict game group → mark; no result — marks a game's chat read, see [Notifications and read marks](#notifications-and-read-marks) (VERIFIED live 2026-11-16, direct transport) |
+| 49 [48] | GetGameSettings | |
+| 61 [60] | AcceptGame | accept an invitation (not used) |
+| 62 [61] | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
+| 63 [62] | AcceptOpenAutoGame | not used |
+| 64 [63] | GetOpenAutoGame | not used |
+| 65 [64] | **DeclineGame** | params: int32 gameId, bool modHook — read from the bundle, **verified live 2026-11-14** (open-seat lobby); see [DeclineGame](#declinegame-leaving-a-lobby) |
+| 68 [67] | **Surrender** | params: int32 gameId, bool surrender, bool false — see [Surrender](#surrender) |
+| 69 [68] | **AcceptSurrender** | params: int32 gameId, int32 in-game player id, bool accept, bool modHook — read from the bundle, UNVERIFIED live; sent by `warapp_accept_surrender` (accept only); see [Accepting a surrender](#accepting-a-surrender) |
+| 75 [73] | GetMapDetails | no auth; params: int32 mapId — read by `warapp_get_map`'s full view for the distribution modes' territories, and by `warapp_locate_opponents` for the start candidates of a game dealt automatically from a map mode, see [Map details](#map-details-distribution-modes) |
+| 76 [74] | **SendOrders** | the turn commit — not yet captured |
+| 77 [75] | SendInProgressOrders | draft save of orders |
+| 78 [76] | SendTerritoryPicks | params: int32 gameId, bool present, int list territoryIds (priority order), bool, bool |
+| 79 [77] | SendInProgressPicks | as 76 without the two trailing bools (draft save) |
+| 80 [78] | **BeginFirstTurn** | params: int32 gameId — read from the bundle, not verified live; see [Begin first turn](#begin-first-turn) |
+| 81 [79] | GetTerritoryPicks | params: int32 gameId, int32 in-game player id; verified for my own id. `warapp_get_team` also asks it with a teammate's id while picking (UNVERIFIED, V6); a refusal reads as unknown |
+| 82 [80] | **UnCommit** | params: int32 gameId — see [UnCommit](#uncommit) |
+| 83 [81] | GetTurns | |
+| 323 [317] | **GetInAppNotifications** | params: int32 start index, int32 page size (the client sends 30); reply `GetInAppNotificationsReturn` — see [Notifications and read marks](#notifications-and-read-marks) (VERIFIED live 2026-11-16, direct transport) |
+| 324 [318] | **DeleteInAppNotification** | params: string notification id (decimal text); no result (VERIFIED live 2026-11-16, direct transport) |
+| 325 [319] | **AcknowledgeInAppNotifications** | params: optional list of string notification ids (decimal text); no result — marks them read (VERIFIED live 2026-11-16, direct transport) |
+| 242 [238] | Subscribe | push channel only, **no auth**; params: bool true, list of topic strings, string null; reply dict topic→int32 error |
+| 245 [241] | GameUpdated | server push, **no auth**; msgNum `0x80000000`, 61 bytes: the game id, then bools `chat` and `nonChat` (named by the client's own log line; UNVERIFIED live) and an optional dict — re-read GameFeed |
 
 Server error codes seen in the client: 11 = deployed armies ≠ income, 208 = game already
 advanced to the next turn, 88 = game deleted, 483 = game started without you.
@@ -601,7 +609,7 @@ private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `wara
 - **Other chat methods** (not used): 44 RetrieveChat (gameId and the two
   markers), 45 RetrievePrivateMessageHistory, 46 RetrieveGameGroupMessageHistory. Push 242
   `ChatRoomNewMessage` is the site's chat rooms, not a game's chat.
-- **Push:** `GameUpdated` (241) carries, after the game id, two bools the client's handler logs as
+- **Push:** `GameUpdated` (245 in 243, 241 in 242) carries, after the game id, two bools the client's handler logs as
   `chat=` and `nonChat=`. `src/push/socketio.ts` reads the first when present: a push with it set is
   chat activity (`warapp_wait_for_turn` reports `chatActivity: true` for the game, no text), and
   the game is re-read as for any push.
@@ -1055,6 +1063,34 @@ reconnect a consumer must re-read GameFeed — `warapp_wait_for_turn` re-checks 
 The client treats a close, an error or a missed heartbeat (the handshake's heartbeat timeout) as a
 disconnect. If the handshake or upgrade fails (no session linked, signed out, `websocket` not
 offered) it falls back to xhr-polling over the bridge.
+
+## Protocol 243 (client 6.08)
+
+Read from client `v6.08.0.2` (bundle 639304508939095333) against `v6.07.0.1` (protocol 242) on
+2026-11-17 (#340): every class's reader and writer compared after renaming every minified name to its order of
+appearance, so only real layout changes show.
+
+- **Header:** version 243 (`F3 00` / `F3 80`). `MessageExtrasUp` and `MessageExtrasDown` are unchanged; the
+  client string is `v6.08.0.2`.
+- **Method ids:** renumbered (the [Methods](#methods-from-warlightsharedmessagesmessagetype) table).
+- **Requests:** `GameRefresh` gained a last optional value (a nullable number written as text) and `SendChat`
+  a last optional list of strings (the shared images a message carries); this server sends both absent.
+  Every other request this server sends (orders and every card play, picks, RegisterChatView, the
+  notification calls, join and leave, surrender and accept, begin, uncommit, GetMyGames' filters, Subscribe)
+  is written exactly as in 242.
+- **Replies:** `GameMessage` has 12 fields: date, sender, game group, an optional int, the id, **the shared
+  images (optional list of strings)**, the text, **the reactions (optional list of `MessageReaction`: an
+  id, a reaction name, a nested value)**, the channel, the private counterpart, an optional int, the turn.
+  `GameDetailsAndChat` gained a string after the game and a dict of reactions after its list;
+  `GamePlayer` has 37 fields (an int32 inserted at 31; the fields read for surrenders, 0, 14, 20, 21, 28
+  and 29, did not move). The board (`LatestGameInfo`, `GameStanding`, territories, armies, special units,
+  cards), `GameInfo`/`GameInfoPlayer`, `InAppNotification`, `MapDetails` and `GameWL` read as in 242.
+- **Pushes:** `GameUpdated` is 245 and reads as in 242; Subscribe is 242.
+- **Live, read-only (2026-11-17, direct transport):** boards decoded on 243 matched the 242 decode of the same
+  turn territory for territory (131 and 2,770 territories); my games, the game details' surrender read, the
+  notifications and the chat inbox read; the push socket connected and subscribed. Not seen live on 243: a
+  web chat message (none of the games read had one on the channels GameRefresh returns), a push, and every
+  write.
 
 ## Data handling
 
