@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
-import { attackSizes, commerceWarning, hopelessAttackWarning, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
+import { attackSizes, cityPurchaseOf, commerceWarning, hopelessAttackWarning, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { untrustedText } from '../src/tools/common.js';
 import type { MoveMode } from '../src/tools/order-options.js';
 import { normalizeMap } from '../src/normalize.js';
@@ -2918,6 +2918,29 @@ describe('Local Deployment in the turn tools (G2, issue #29)', () => {
       expect(at(7)).toEqual({ warnings: [] });
       expect(at(5).warnings).toEqual([expect.stringMatching(/deploy 5 of the 7 armies your 7 gold buys: 2 gold is saved/)]);
       expect(() => at(8)).toThrow(/deploy 8 armies, which cost 8 gold, but you have 7 gold \(buying 7 armies\)/);
+    });
+
+    it('#332, cities: priced by the game formula, paid from the gold, only on my territories, only where the game allows', () => {
+      const mineId = live.find((t) => t.owner === ANN.inGame)!.territoryId;
+      const notMine = live.find((t) => t.owner !== ANN.inGame)!.territoryId;
+      const game = (commerceRules?: Record<string, number>) =>
+        ({ settings: { cards: [], raw: {}, commerce: true, ...(commerceRules ? { commerceRules } : {}) } }) as unknown as Parameters<typeof cityPurchaseOf>[0];
+      const lunar = game({ armyCostMultiplier: 0, cityBaseCost: 5, territoryCityCostIncrease: 1, globalCityCostIncrease: 0, cityIncome: 1 });
+      const gold = (g: number) => ({ source: 'standing' as const, gold: g, armies: g, cost: g, left: 0, armyCostMultiplier: 0 });
+      expect(cityPurchaseOf(lunar, [], map, live, ANN.inGame, gold(9))).toBeUndefined();
+      // Two on one territory (asked as 1 + 1, merged): 5 + 6 = 11 of 20 gold.
+      const p = cityPurchaseOf(lunar, [{ territory: mineId, count: 1 }, { territory: mineId, count: 1 }], map, live, ANN.inGame, gold(20))!;
+      expect(p.cost).toBe(11);
+      expect(p.cities).toEqual([{ territory: T(mineId), count: 2 }]);
+      expect(p.note).toMatch(/2 cities for 11 gold .*leaving 9 gold for the deploys.*UNVERIFIED live/);
+      expect(() => cityPurchaseOf(lunar, [{ territory: mineId, count: 2 }], map, live, ANN.inGame, gold(10))).toThrow(/cost 11 gold, but you have 10.*InsufficientGold/);
+      // Gold from the income model leaves out saved gold (#353 review): warned, never refused.
+      const modelGold = { ...gold(10), source: 'model' as const };
+      const warned = cityPurchaseOf(lunar, [{ territory: mineId, count: 2 }], map, live, ANN.inGame, modelGold)!;
+      expect(warned.cost).toBe(11);
+      expect(warned.note).toMatch(/against the income model's 10 gold.*saved gold is not in it, so war.app may refuse the purchase: error 597/);
+      expect(() => cityPurchaseOf(lunar, [{ territory: notMine, count: 1 }], map, live, ANN.inGame, gold(20))).toThrow(/not yours.*territory you hold/);
+      expect(() => cityPurchaseOf(game({ armyCostMultiplier: 0 }), [{ territory: mineId, count: 1 }], map, live, ANN.inGame, gold(20))).toThrow(/does not allow cities/);
     });
 
     it('refuses a pooled-income deploy that spends bonus armies outside the bonus, naming it and the overspend', () => {

@@ -557,8 +557,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `incomeDetail` / `visibleIncomeFor`). With multiplier > 0 an opponent's estimate read off the board (`visible`,
   `exact`) is converted to the armies its gold buys (`applyArmyPrice`, after Sanctions; `PlannerSettings.
   armyCostMultiplier`, set only above 0); observed, tracked and prior figures are already armies. Every plain game is
-  byte-identical (golden corpus). Still not modelled, and said by `commerceWarning` only when it applies: unread gold, a
-  rising price in the plan's own values and payback (priced one gold per army), and buying cities.
+  byte-identical (golden corpus). **Cities:** `warapp_submit_turn` takes `cities` (`cityPurchaseOf`: a game that
+  allows them (602), my territories (600), merged per territory, priced by `cityPurchaseCost` — the client's formula,
+  the global increase counting every city I own — and paid from the same gold before the deploys: refused (597)
+  only on gold read from the board, a warning on the income model's, as the deploys are); it sends
+  `GameOrderPurchase` (tag 24, phase 0, `writePurchaseOrder`, golden-pinned from the bundle writer, UNVERIFIED live:
+  the preview says so). `warapp_plan_turn`'s `commerce.cityAdvice` (`cityAdvice`, advice only, never an order) names
+  my cheapest territory with no neighbour I do not hold, its cost and `paysBackInTurns` (`worthIt` within
+  `PAYBACK_TURNS`). Still not modelled, and said by `commerceWarning` only when it applies: unread gold, a rising
+  price in the plan's own values and payback (priced one gold per army), and cities in the plan's own orders.
 - **Turn submission (`warapp_submit_turn`) sends `SendOrders`** (card plays, then deploys, then moves;
   encoders in `src/protocol/methods.ts` are golden-pinned to a live commit), turn number =
   GameFeed `numberOfTurns` + 1 — every tool reports this as `turn` (`currentTurn()`); the

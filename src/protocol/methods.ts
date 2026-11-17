@@ -481,6 +481,24 @@ export function writeDeployOrder(w: Writer, o: DeployOrder): void {
   writeOrderBase(w, o.playerId);
 }
 
+const ORDER_TAG_PURCHASE = 24;
+
+/** #332: a purchase order — cities to build on my territories (one order per turn; war.app refuses a second, 599). */
+interface PurchaseOrder {
+  playerId: number;
+  cities: ReadonlyArray<{ territoryId: number; count: number }>;
+}
+
+/**
+ * Encode a Purchase order (`GameOrderPurchase`, client 6.08.0.2's writer; UNVERIFIED live): tag 24, a present bool,
+ * an int32 count of territory → cities entries, each two int32s, then the order base.
+ */
+export function writePurchaseOrder(w: Writer, o: PurchaseOrder): void {
+  w.u8(ORDER_TAG_PURCHASE).bool(true).int32(o.cities.length);
+  for (const c of o.cities) w.int32(c.territoryId).int32(c.count);
+  writeOrderBase(w, o.playerId);
+}
+
 /** A commander an order takes along: its GUID and its owner's in-game id, as the live board reads them. */
 export interface OrderCommander {
   /** The unit's GUID (32 hex digits; dashes allowed). */
@@ -699,7 +717,9 @@ export type TurnOrder =
        */
       beforeMove?: number;
     })
-  | { kind: 'discard'; cardId: string };
+  | { kind: 'discard'; cardId: string }
+  /** #332: cities to build (a commerce game that allows them). */
+  | { kind: 'purchase'; cities: ReadonlyArray<{ territoryId: number; count: number }> };
 
 /**
  * The `warlight.shared.TurnPhase` each order runs in. war.app refuses a turn
@@ -711,6 +731,8 @@ export type TurnOrder =
  * from the bundle's `GameOrderDiscard.Vd`).
  */
 export const TurnPhase = {
+  /** #332, bundle (`GameOrderPurchase`), UNVERIFIED live: a commerce game's purchase, before every other order. */
+  Purchases: 0,
   Discards: 10,
   OrderPriorityCards: 12,
   /** Spy, Reconnaissance and Surveillance (bundle, UNVERIFIED live). */
@@ -754,6 +776,7 @@ export function turnPhaseOf(o: TurnOrder): number {
   if (o.kind === 'deploy') return TurnPhase.Deploys;
   if (o.kind === 'move') return TurnPhase.Attacks;
   if (o.kind === 'discard') return TurnPhase.Discards;
+  if (o.kind === 'purchase') return TurnPhase.Purchases;
   return CARD_PHASE[o.card];
 }
 
@@ -830,6 +853,8 @@ export function writeSendOrdersParams(
       writeCardPlayOrder(w, { playerId, ...play });
     } else if (o.kind === 'discard') {
       writeDiscardOrder(w, { playerId, cardId: o.cardId });
+    } else if (o.kind === 'purchase') {
+      writePurchaseOrder(w, { playerId, cities: o.cities });
     } else if (o.kind === 'deploy') {
       writeDeployOrder(w, { playerId, territoryId: o.territoryId, armies: o.armies });
     } else {

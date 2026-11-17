@@ -37,6 +37,7 @@ import {
   deployCheckUncertainties,
   overrideUncertainties,
   neighborsOf,
+  PAYBACK_TURNS,
   planTurn,
   planEnemyEstimates,
   repulsedAttacks,
@@ -64,7 +65,7 @@ import { guardOffExposure } from '../analysis/guard-off.js';
 import { holdsBelowPlan, type HoldOrders, type HoldShortfall } from '../analysis/hold-diff.js';
 import { guardCase } from '../analysis/profile.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
-import { armiesForGold, commerceRules, goldForArmies, type CommerceDeploy } from '../commerce.js';
+import { armiesForGold, cityAdvice, cityPurchaseCost, commerceDeploy, commerceRules, goldForArmies, type CommerceDeploy } from '../commerce.js';
 import { commerceDeployOf, submitCommerceCheck } from './commerce-deploy.js';
 import { checkMoveOptions, MOVE_MODES, type MoveMode } from './order-options.js';
 import type { Game, GameMap, GameSettings, Player } from '../normalize.js';
@@ -190,6 +191,8 @@ const TEAM_CARDS_NOTE =
   "a team's hand is unverified too (V8).";
 
 const territoryRef = z.union([z.string(), z.number()]);
+/** #332: the most cities one purchase order may name (a sanity bound, not a game rule). */
+const MAX_CITIES_PER_ORDER = 50;
 const playerRef = z.union([z.string().min(1).max(100), z.number()]);
 const armiesArg = z.coerce.number().int().min(1);
 
@@ -358,7 +361,9 @@ const UNREADABLE_HAND =
   'wrong: check the hand in the game — war.app refuses a commit while you hold more cards than the limit (error 51).';
 
 interface NamedOrder {
-  kind: 'deploy' | 'move' | 'card' | 'discard';
+  kind: 'deploy' | 'move' | 'card' | 'discard' | 'purchase';
+  /** #332: a purchase's cities, by territory. */
+  cities?: Array<{ territory: { id: number; name: string }; count: number }>;
   card?: { id: string; name: string; armies?: number };
   target?: { id: number; name: string };
   /** A targeted card's player(s) (Spy, Sanctions, Gift; Diplomacy): GameFeed id and name. */
@@ -390,6 +395,7 @@ function shownOrder(o: NamedOrder): NamedOrder {
     if (place) out[k] = shownPlace(place);
   }
   if (o.players) out.players = o.players.map(shownPlace);
+  if (o.cities) out.cities = o.cities.map((c) => ({ ...c, territory: shownPlace(c.territory) }));
   return out;
 }
 
@@ -509,9 +515,13 @@ export function modsWarning(s: GameSettings | undefined): string[] {
 }
 
 /**
- * #167: a commerce game pays gold and lets players buy armies and cities; the planner plans income as
- * armies only. Said whenever the feed's `Commerce` object carries settings (the shape a commerce
- * game sends is unverified: a plain game sends `{}`).
+ * #167, #332: what the plan still does not model in a commerce game, said only when it applies. The plan deploys what
+ * my gold buys at the game's army price (`commerceDeployOf`), so with the `Commerce` settings read (their shape VERIFIED
+ * live 2026-11-17; a plain game sends `{}`) it names: gold that could not be read from the board (the deploy then rests
+ * on the income model, which leaves out saved gold), an army price that rises within a turn (the plan's own values and
+ * payback are priced at one gold per army), and cities (the plan's orders buy none; `commerce.cityAdvice` and
+ * `warapp_submit_turn`'s `cities` do). A commerce game whose settings did not read gets the old unmodelled warning;
+ * every other game, nothing.
  */
 export function commerceWarning(s: GameSettings | undefined, deploy?: CommerceDeploy): string[] {
   if (!s?.commerce) return [];
@@ -534,8 +544,88 @@ export function commerceWarning(s: GameSettings | undefined, deploy?: CommerceDe
         'the plan values income, bonuses and payback at one army per gold.',
     );
   if (rules.cityBaseCost !== null)
-    out.push('Commerce: this game allows cities; the plan does not buy any (a city pays more gold on later turns).');
+    out.push(
+      'Commerce: this game allows cities; the plan does not buy any (a city pays more gold on later turns) — ' +
+        '`commerce.cityAdvice` says where one would pay, and warapp_submit_turn takes `cities`.',
+    );
   return out;
+}
+
+/**
+ * #332, advice only: where a city would pay this turn (`cityAdvice`, src/commerce.ts) — my cheapest territory with no
+ * neighbour I do not hold, repaid within PAYBACK_TURNS or not — as `{ cityAdvice }`, else `{}`.
+ */
+function cityAdviceOf(settings: GameSettings | undefined, graph: MapGraph, board: BoardState, me: number, gold: number) {
+  const rules = commerceRules(settings);
+  if (!rules) return {};
+  const mine = new Set(
+    board.territories.filter((t) => t.owner.kind === 'player' && t.owner.playerId === me).map((t) => t.territoryId),
+  );
+  const sites = board.territories
+    .filter((t) => mine.has(t.territoryId))
+    .map((t) => ({
+      territoryId: t.territoryId,
+      interior: neighborsOf(graph, t.territoryId).every((n) => mine.has(n)),
+      cities: t.cities ?? 0,
+    }));
+  const advice = cityAdvice(rules, sites, gold, PAYBACK_TURNS);
+  return advice ? { cityAdvice: advice } : {};
+}
+
+/**
+ * #332: a turn's city purchase, checked as the client checks it — a commerce game that allows cities (602), my own
+ * territories (600), whole positive counts (601), merged per territory, priced by the game's formula
+ * (`cityPurchaseCost`) and paid for from my gold (597). `undefined` when none is asked for.
+ */
+export function cityPurchaseOf(
+  game: Game,
+  asked: ReadonlyArray<{ territory: string | number; count: number }>,
+  map: GameMap,
+  board: readonly LiveTerritory[],
+  myInGameId: number,
+  gold: CommerceDeploy | undefined,
+): { cities: Array<{ territory: { id: number; name: string }; count: number }>; cost: number; note: string } | undefined {
+  if (!asked.length) return undefined;
+  const rules = commerceRules(game.settings);
+  if (!rules || rules.cityBaseCost === null || !gold) {
+    throw new McpToolError(`${SERVER_ERROR_MESSAGES[602]} Nothing was sent.`, {
+      hint: rules ? 'Drop `cities`.' : 'Cities exist only in commerce games that allow them; drop `cities`.',
+    });
+  }
+  const merged = new Map<number, { territory: { id: number; name: string }; count: number }>();
+  for (const a of asked) {
+    const t = resolveTerritory(map, a.territory);
+    const held = board.find((x) => x.territoryId === t.id);
+    if (!held || held.owner !== myInGameId) {
+      throw new McpToolError(`${untrustedText(t.name)} (${t.id}) is not yours on the live board. ${SERVER_ERROR_MESSAGES[600]}`, {
+        hint: 'Build cities only on territories you hold at the start of the turn.',
+      });
+    }
+    const m = merged.get(t.id);
+    if (m) m.count += a.count;
+    else merged.set(t.id, { territory: { id: t.id, name: t.name }, count: a.count });
+  }
+  const cities = [...merged.values()];
+  const existing = new Map(board.flatMap((x) => (x.cities ? [[x.territoryId, x.cities] as const] : [])));
+  const mine = board.reduce((n, x) => n + (x.owner === myInGameId ? (x.cities ?? 0) : 0), 0);
+  const cost = cityPurchaseCost(rules, cities.map((c) => ({ territoryId: c.territory.id, count: c.count })), existing, mine)!;
+  const count = cities.reduce((n, c) => n + c.count, 0);
+  // Only gold read from the board is enforced (#353 review): the model's leaves out gold saved on earlier turns.
+  if (cost > gold.gold && gold.source === 'standing') {
+    throw new McpToolError(
+      `${count} cit${count === 1 ? 'y' : 'ies'} cost ${cost} gold, but you have ${gold.gold}. ${SERVER_ERROR_MESSAGES[597]}`,
+      { hint: 'Buy fewer cities; nothing was sent.' },
+    );
+  }
+  const left = gold.gold - cost;
+  const note =
+    `Commerce: ${count} cit${count === 1 ? 'y' : 'ies'} for ${cost} gold (each pays ${rules.cityIncome} gold a turn), ` +
+    (gold.source === 'standing'
+      ? `leaving ${left} gold for the deploys. `
+      : `against the income model's ${gold.gold} gold (your gold could not be read from the board, and saved gold is not in ` +
+        `it${left < 0 ? ', so war.app may refuse the purchase: error 597' : ''}). `) +
+    "The purchase order's encoding is read from the client and UNVERIFIED live: check the cities on the board once the turn resolves.";
+  return { cities, cost, note };
 }
 
 /**
@@ -2565,7 +2655,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #253: the army cap's arithmetic (min(income, round(cap × income) − my armies on the board)), when the game has one.
         ...(setup.incomeCap ? { incomeCapped: setup.incomeCap } : {}),
         // #332: a commerce game's gold and what it buys (the deploy total is `armies`, card armies on top).
-        ...(setup.commerce ? { commerce: setup.commerce } : {}),
+        ...(setup.commerce ? { commerce: { ...setup.commerce, ...cityAdviceOf(game.settings, setup.graph, setup.seen, me.id, setup.commerce.gold) } } : {}),
         enemyDeploy: plan.enemyDeploy,
         // #127: who moves first this turn and how it is known; null when unknown.
         firstMover: mover.view,
@@ -2875,6 +2965,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'says so and names the armies that would hold): true submits them anyway, and the result records the risk ' +
           'taken (`commanderRiskAccepted`). Losing the commander loses the game: ask the owner first.',
       ),
+
+    cities: z
+      .array(
+        z.object({
+          territory: territoryRef.describe('Your territory to build on: id or name.'),
+          count: z.coerce.number().int().min(1).max(MAX_CITIES_PER_ORDER).describe('Cities to build there.'),
+        }),
+      )
+      .max(MAX_CITIES_PER_ORDER)
+      .optional()
+      .describe(
+        'Commerce games that allow cities only (#332): cities to buy this turn with your gold, on your own territories — ' +
+          "e.g. `commerce.cityAdvice` from warapp_plan_turn. Their cost (the game's formula) comes out of the same gold as " +
+          'the deploys, so deploy that much less. One purchase per turn. The purchase encoding is read from the client, ' +
+          'UNVERIFIED live: the preview says so.',
+      ),
   });
 
   defineGatedWrite(
@@ -2936,7 +3042,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         openWorld: true,
       }),
       inputSchema: submitSchema,
-      async plan({ game_id, player, orders, income: givenIncome, break_agreement, accept_commander_risk }) {
+      async plan({ game_id, player, orders, income: givenIncome, break_agreement, accept_commander_risk, cities }) {
         const feed = await ctx.client.getGame(parseGameId(game_id), { settings: true });
         requireTurnPhase(feed);
         // The bridge always acts as the signed-in account: an explicit `player` naming anyone
@@ -3084,7 +3190,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #253: the army cap's cut included (min(income, round(cap × income) − my armies on the board)).
         const incomeOnBoard = incomeDetail(graphOf(map), board, me.id, game.settings);
         // #332: in a commerce game the deploy is what my gold buys, as warapp_plan_turn has it.
-        const commerce = commerceDeployOf(game, me, info, incomeOnBoard.income);
+        const commerceGold = commerceDeployOf(game, me, info, incomeOnBoard.income);
+        // #332: cities bought this turn come out of the same gold, before the deploys (purchases run in phase 0).
+        const purchase = cityPurchaseOf(game, cities ?? [], map, territories, playerId, commerceGold);
+        // What is left for the deploys keeps the gold's source: only gold read from the board is enforced (#353 review).
+        const commerce =
+          commerceGold && purchase
+            ? commerceDeploy(
+                commerceRules(game.settings)!,
+                commerceGold.source === 'standing' ? commerceGold.gold - purchase.cost : undefined,
+                commerceGold.gold - purchase.cost,
+              )
+            : commerceGold;
         const commerceCheck = submitCommerceCheck(commerce);
         const modelled = commerce ? commerce.armies : incomeOnBoard.income;
         const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
@@ -3345,6 +3462,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           }),
         );
         if (belowPlan) warnings.push(belowPlan);
+        if (purchase) warnings.push(purchase.note);
         // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
         const standInNote = standInLine(standInOf(ctx));
         if (standInNote) warnings.unshift(standInNote);
@@ -3356,6 +3474,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           else merged.set(d.territory.id, { ...d });
         }
         const send: TurnOrder[] = [
+          ...(purchase ? [{ kind: 'purchase' as const, cities: purchase.cities.map((c) => ({ territoryId: c.territory.id, count: c.count })) }] : []),
           ...discards.map((c) => ({ kind: 'discard' as const, cardId: c.id })),
           ...plays.map((p) => ({
             kind: 'card' as const,
@@ -3381,6 +3500,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           }),
         ];
         const named: NamedOrder[] = [
+          ...(purchase ? [{ kind: 'purchase' as const, cities: purchase.cities }] : []),
           ...discards.map((c) => ({ kind: 'discard' as const, card: cardView(c) })),
           ...plays.map((p) => ({
             kind: 'card' as const,

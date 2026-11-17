@@ -11,6 +11,7 @@ import {
   methodName,
   writeAttackTransferOrder,
   writeDeployOrder,
+  writePurchaseOrder,
   writeCardPlayOrder,
   writeDiscardOrder,
   turnPhaseOf,
@@ -167,6 +168,21 @@ describe('order encoders match the live-verified layout', () => {
     expect(hex((w) => writeDeployOrder(w, { playerId: 777, territoryId: 9, armies: 5 }))).toBe(
       '02090000000005000000090300000000',
     );
+  });
+  it('Purchase (#332): tag 24, a present dict territory → cities, then the base — from the bundle writer, UNVERIFIED live', () => {
+    expect(hex((w) => writePurchaseOrder(w, { playerId: 777, cities: [{ territoryId: 7, count: 2 }, { territoryId: 9, count: 1 }] }))).toBe(
+      '18' + '01' + '02000000' + '07000000' + '02000000' + '09000000' + '01000000' + '09030000' + '00' + '00',
+    );
+  });
+  it('a purchase runs in phase 0, before every other order (bundle: GameOrderPurchase)', () => {
+    const plain = hex((w) => writeSendOrdersParams(w, 1, 777, [{ kind: 'deploy', territoryId: 9, armies: 5 }], 3));
+    const both = hex((w) =>
+      writeSendOrdersParams(w, 1, 777, [{ kind: 'deploy', territoryId: 9, armies: 5 }, { kind: 'purchase', cities: [{ territoryId: 7, count: 1 }] }], 3),
+    );
+    // game id, present list, 2 orders, then the purchase first, then the deploy.
+    expect(both.startsWith('01000000' + '01' + '02000000' + '01' + '18')).toBe(true);
+    expect(both).toContain('01' + '02090000000005000000090300000000');
+    expect(plain).toContain('02090000000005000000090300000000');
   });
   it('AttackTransfer (attack)', () => {
     expect(hex((w) => writeAttackTransferOrder(w, { playerId: 777, from: 9, to: 10, armies: 3 }))).toBe(
