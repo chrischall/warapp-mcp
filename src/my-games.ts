@@ -32,7 +32,7 @@ export const gameStateName = (code: number): string => GAME_STATE_NAMES[code] ??
 const GAME_WAITING = 2;
 const GAME_PLAYING = 3;
 const GAME_DISTRIBUTING = 5;
-const GAME_FINISHED = 4;
+export const GAME_FINISHED = 4;
 
 const PLAYER_PLAYING = 2;
 

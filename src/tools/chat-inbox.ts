@@ -6,7 +6,9 @@
 // The games are `game_ids` when given (exactly those, #260), else every game GetMyGames lists (lobbies,
 // games being picked or played, and a finished game when war.app flags its chat unread or when its flags do not
 // read — they are UNVERIFIED live, and a misread must not hide a finished game's chat, so those are read unjudged
-// and counted in `finishedUnflagged` (#311); the whole list, `fetchMyGames`), in ascending id
+// and counted in `finishedUnflagged` (#311) — and the `FINISHED_CLEAR_WINDOW` newest finished games whose flags read
+// clear, counted in `finishedClearChecked` (#322: a GameFeed-only message leaves the flag clear); the whole list,
+// `fetchMyGames`), in ascending id
 // order; the answer says which (`gamesFrom`) and, from the list, whether it may be partial; each is read as warapp_get_chat reads it (GameFeed with its chat, then
 // GameRefresh while the account is known, else GameFeed's list; a web read shorter than GameFeed's list is
 // filled from it, #313), one game at a time — never in
@@ -16,7 +18,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { CHAT_CHANNELS, type ChatChannel } from '../chat.js';
-import { chatGameIds, unflaggedFinished } from '../my-games.js';
+import { chatGameIds, GAME_FINISHED, unflaggedFinished, type RawMyGame } from '../my-games.js';
 import { playersByInGameId } from '../live.js';
 import { CHAT_SOURCE_NOTES, chatMe, chatUnread, feedFillFields, markChatSeen, readChat, shown, type ChatSource } from './chat.js';
 import { parseGameId } from '../client.js';
@@ -25,6 +27,25 @@ import { mintMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
 import { fetchMyGames } from './my-games.js';
+
+/**
+ * #322: a finished game whose chat flags read clear is still read when it is among this many newest finished games
+ * (by id) in the list. A message GameFeed alone holds (a surrender "gg" sent as the game ended) leaves war.app's unread
+ * flag clear, and such a message comes as a game ends, so the newest finished games are where it hides; older ones stay
+ * judged by the flag. A bound, not a scan: at most this many extra reads over a whole sweep.
+ */
+export const FINISHED_CLEAR_WINDOW = 3;
+
+/** The newest `FINISHED_CLEAR_WINDOW` finished games (by id) whose flags read clear, which `chatGameIds` leaves out. */
+export function recentClearFinished(games: readonly RawMyGame[]): number[] {
+  const listed = new Set(chatGameIds(games));
+  return games
+    .filter((g) => g.stateCode === GAME_FINISHED && !listed.has(g.id))
+    .map((g) => g.id)
+    .sort((a, b) => b - a)
+    .slice(0, FINISHED_CLEAR_WINDOW)
+    .sort((a, b) => a - b);
+}
 
 /** Games read per call, at most (each costs a GameFeed read and a GameRefresh). */
 export const MAX_INBOX_GAMES = 10;
@@ -106,7 +127,10 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
       const list = given ? undefined : await fetchMyGames(ctx);
       const me = await chatMe(ctx);
       const after = cursor === undefined ? undefined : Number(cursor);
-      const ids = (given ?? chatGameIds(list!.games)).filter((id) => after === undefined || id > after);
+      const clearFinished = list ? recentClearFinished(list.games) : [];
+      const ids = (given ?? [...chatGameIds(list!.games), ...clearFinished].sort((a, b) => a - b)).filter(
+        (id) => after === undefined || id > after,
+      );
       const batch = ids.slice(0, max_games ?? MAX_INBOX_GAMES);
       const n = limit ?? DEFAULT_INBOX_LIMIT;
       const channels: ChatChannel[] = [...CHAT_CHANNELS];
@@ -134,9 +158,12 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
           }
           sources.add(read.source);
           const messages = fresh_.slice(-n).map((l) => shown(l, true, game.players, byInGame, me));
+          const name = game.name === undefined ? null : untrustedText(game.name);
           withNew.push({
+            // #322/#323: the game as warapp_get_chat nests it; the top-level keys stay for existing callers.
+            game: { id: game.id, name, state: game.state },
             id: game.id,
-            name: game.name === undefined ? null : untrustedText(game.name),
+            name,
             state: game.state,
             source: read.source,
             ...feedFillFields(read),
@@ -178,6 +205,15 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
               finishedNote:
                 `${unflagged} finished game(s) in your list carry unread-chat flags this server could not read, so they ` +
                 'are read like the rest rather than left out (the flags are not yet verified against war.app).',
+            }
+          : {}),
+        ...(clearFinished.length
+          ? {
+              finishedClearChecked: clearFinished.length,
+              finishedClearNote:
+                `${clearFinished.length} recent finished game(s) are read although war.app's unread flag for their chat ` +
+                'is clear: a message GameFeed alone holds (a surrender line, say) leaves that flag clear (#322). Only the ' +
+                `${FINISHED_CLEAR_WINDOW} newest finished games are read so; older ones go by the flag.`,
             }
           : {}),
         ...(sources.size ? { sourceNotes: Object.fromEntries([...sources].map((s) => [s, CHAT_SOURCE_NOTES[s]])) } : {}),

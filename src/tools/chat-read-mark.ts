@@ -97,7 +97,9 @@ export function registerMarkChatReadTool(server: McpServer, ctx: LiveContext): v
         if (!read || read.source === 'gamefeed') {
           refuse(
             `The chat of game ${game.id} could be read only from GameFeed, which gives no message ids, so nothing was sent.`,
-            'Make sure your war.app tab is open and signed in (reload or focus it if it is frozen), then retry.',
+            'A message read from GameFeed carries no id, so war.app has nothing to mark for it. Read the game with ' +
+              'warapp_get_chat: if its `source` is `web`, those messages can be marked; if it stays `gamefeed`, the web ' +
+              'read failed or the signed-in account could not be read, and marking waits until it reads.',
           );
         }
         // #313: the web read answered with no message at all while GameFeed holds some (a finished game's chat,

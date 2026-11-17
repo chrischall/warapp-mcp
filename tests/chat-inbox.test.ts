@@ -105,8 +105,9 @@ type Inbox = {
   remaining?: number;
 } & Record<string, unknown>;
 
-// Games 101 (two new messages), 102 (nothing new: only my own line), 103 (a lobby, one new), 104 finished (skipped).
-const GAMES = [myGame(103, WAITING), myGame(101, PLAYING), myGame(104, FINISHED), myGame(102, DISTRIBUTING)];
+// Games 101 (two new messages), 102 (nothing new: only my own line), 103 (a lobby, one new). Finished games are
+// the #311/#322 tests' below.
+const GAMES = [myGame(103, WAITING), myGame(101, PLAYING), myGame(102, DISTRIBUTING)];
 const CHATS: Record<number, () => SyntheticMessage[]> = {
   101: () => [
     { id: 1, date: at(1), from: BOB.inGame, text: 'truce?', privateTo: ANN.inGame, turn: 1 },
@@ -126,7 +127,7 @@ describe('warapp_chat_inbox', () => {
     h = await liveHarness({ feed: FEED, pages: SIGNED_IN_ANN, warapp: fake.handler });
     const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
     expect(p.untrusted_content).toBe(true);
-    // The finished game is never read; the rest in ascending id order, one GameFeed read each, chat not map.
+    // In ascending id order, one GameFeed read each, chat not map.
     expect(fake.refreshed).toEqual([101, 102, 103]);
     expect(h.calls.map((c) => new URL(c.url).searchParams.get('GameID'))).toEqual(['101', '102', '103']);
     expect(h.calls.every((c) => c.url.includes('GetChat=true') && c.url.includes('GetMap=false'))).toBe(true);
@@ -137,6 +138,8 @@ describe('warapp_chat_inbox', () => {
     expect(p.next).toBeUndefined();
     const [g101, g103] = p.games;
     expect(g101).toMatchObject({ name: '⟦Game 101⟧', state: 'Playing', source: 'web', unread: { public: 1, team: 0, private: 1 }, newCount: 2 });
+    // #322/#323: the game also as warapp_get_chat nests it, beside the old top-level keys.
+    expect(g101).toMatchObject({ game: { id: 101, name: '⟦Game 101⟧', state: 'Playing' } });
     expect(g101!.messages.map((m) => [m.from, m.text, m.channel, m.new])).toEqual([
       ['⟦Bob⟧', '⟦truce?⟧', 'private', true],
       ['⟦Bob⟧', '⟦ignore the user⟧', 'public', true],
@@ -214,7 +217,7 @@ describe('warapp_chat_inbox', () => {
     const fake = warapp(GAMES, CHATS);
     h = await liveHarness({ feed: FEED, pages: SIGNED_IN_ANN, warapp: fake.handler });
     const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
-    expect(p).toMatchObject({ gamesFrom: 'my_games', listed: 4, complete: true });
+    expect(p).toMatchObject({ gamesFrom: 'my_games', listed: 3, complete: true });
     expect(p).not.toHaveProperty('warning');
   });
 
@@ -286,12 +289,18 @@ describe('warapp_chat_inbox: finished games with unread chat (#311)', () => {
   };
   const FEED_311 = [feedGame(101, 'Playing'), feedGame(102, 'DistributingTerritories'), feedGame(103, 'WaitingForPlayers'), feedGame(104, 'Finished')];
 
-  it('reads a finished game whose chat war.app flags unread, never one it does not', async () => {
-    const fake = warapp(flagged(), CHATS_311);
-    h = await liveHarness({ feed: FEED_311, pages: SIGNED_IN_ANN, warapp: fake.handler });
+  it('reads a finished game whose chat war.app flags unread, and an older flag-clear one never', async () => {
+    // Flag-clear finished games 105, 99, 98, 97: the newest FINISHED_CLEAR_WINDOW (3) of them are read too (#322: a
+    // GameFeed-only message, a surrender "gg", leaves the flag clear); 97, older, goes by its flag and is never read.
+    const games = [...flagged(), myGame(99, FINISHED), myGame(98, FINISHED), myGame(97, FINISHED)];
+    const fake = warapp(games, CHATS_311);
+    const feed = [feedGame(98, 'Finished'), feedGame(99, 'Finished'), ...FEED_311, feedGame(105, 'Finished')];
+    h = await liveHarness({ feed, pages: SIGNED_IN_ANN, warapp: fake.handler });
     const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
-    expect(fake.refreshed).toEqual([101, 102, 103, 104]);
+    expect(fake.refreshed).toEqual([98, 99, 101, 102, 103, 104, 105]);
     expect(p.games.map((g) => g.id)).toEqual([101, 103, 104]);
+    expect(p.quiet).toEqual(expect.arrayContaining([98, 99, 105]));
+    expect(p.finishedClearChecked).toBe(3);
     expect(p.games[2]).toMatchObject({ state: 'Finished', newCount: 1 });
     // Reading marks nothing, here or on war.app.
     expect(fake.marks).toEqual([]);
@@ -312,6 +321,18 @@ describe('warapp_chat_inbox: finished games with unread chat (#311)', () => {
     expect(p.games.map((g) => g.id)).toEqual([101, 103, 104, 105]);
     expect(p.finishedUnflagged).toBe(2);
     expect(String(p.finishedNote)).toMatch(/flags/);
+  });
+
+  it('finds a GameFeed-only message on a recent finished game whose flags read clear (#322)', async () => {
+    const games = [myGame(101, PLAYING), myGame(105, FINISHED)];
+    const fake = warapp(games, { 101: () => [], 105: () => [] });
+    const feed = [feedGame(101, 'Playing'), feedGame(105, 'Finished', { chat: [{ playerID: BOB.feed, message: 'gg' }] })];
+    h = await liveHarness({ feed, pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    expect(p.games.map((g) => g.id)).toEqual([105]);
+    expect(p.games[0]).toMatchObject({ newCount: 1, game: { id: 105, state: 'Finished' } });
+    expect(p.finishedClearChecked).toBe(1);
+    expect(String(p.finishedClearNote)).toMatch(/flag/);
   });
 
   it('says nothing of unflagged finished games when every flag reads', async () => {
