@@ -1,6 +1,6 @@
 // warapp_get_notifications, warapp_dismiss_notification and warapp_delete_notification (#311): war.app's
-// in-app notifications (the client's "In App Notifications" screen), read with GetInAppNotifications (317),
-// marked read with AcknowledgeInAppNotifications (319) and deleted with DeleteInAppNotification (318, the
+// in-app notifications (the client's "In App Notifications" screen), read with GetInAppNotifications (323),
+// marked read with AcknowledgeInAppNotifications (325) and deleted with DeleteInAppNotification (324, the
 // client's Delete button). All read from the client bundle, UNVERIFIED live (docs/WEB-PROTOCOL.md,
 // Notifications and read marks).
 //

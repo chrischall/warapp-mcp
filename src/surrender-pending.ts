@@ -2,7 +2,7 @@
 // UNVERIFIED live (docs/WEB-PROTOCOL.md, "Accepting a surrender").
 //
 // GameFeed keeps a player who asked to surrender `Playing`, and neither GetMyGames nor
-// LatestGameInfo says anything about it: only the game details do. GameRefresh (39) asked with
+// LatestGameInfo says anything about it: only the game details do. GameRefresh (40) asked with
 // `nonChat` answers `warlight.shared.GameDetailsAndChat`, whose second field is the game
 // (`warlight.shared.GameWL`); the game's eighth field is its players, a dict of in-game id →
 // `warlight.shared.GamePlayer`. Of a player's 37 fields this reads the AI id, "human turned into
