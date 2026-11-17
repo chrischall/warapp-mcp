@@ -103,7 +103,9 @@ const SURRENDER_READ_BATCH = 4;
 
 /**
  * #317: each game's pending surrenders, by game id: read for a game being played or picked where my seat
- * still plays (at most {@link MAX_SURRENDER_READS}, war.app's order), `null` elsewhere or when unreadable.
+ * still plays (at most {@link MAX_SURRENDER_READS}, war.app's order; `null` when unreadable, and absent —
+ * so `null` — past the bound); every other game is an empty list, read from nothing (#327: a lobby or a
+ * finished game has none, and a game I am out of owes none from me).
  * GetMyGames carries no GameFeed id, so `player` is `null`; the name is the list's, untrusted.
  */
 export async function myGamesSurrenders(
@@ -116,6 +118,7 @@ export async function myGamesSurrenders(
     const mine = g.players.find((p) => p.id === me);
     return surrenderMayBePending(gameStateName(g.stateCode), mine ? playerStateName(mine.stateCode) : undefined);
   });
+  for (const g of games) if (!eligible.includes(g)) byGame.set(g.id, []);
   const read = eligible.slice(0, MAX_SURRENDER_READS);
   for (let i = 0; i < read.length; i += SURRENDER_READ_BATCH) {
     const batch = read.slice(i, i + SURRENDER_READ_BATCH);
@@ -161,7 +164,8 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
           'they have committed this turn) and waitingOnYou — true when the game is being played or distributing ' +
           'territories, you are still playing, and you have not committed — and surrenderPending: the surrenders other ' +
           'players asked for that are still pending, each with owedByMe (true: waiting for you to accept it), read from ' +
-          'the game details (unverified live; null when not read or unreadable, never "none"); the top-level ' +
+          'the game details (unverified live; null when not read or unreadable, never "none"; empty without a read ' +
+          'for a lobby, a finished game or a game you no longer play in, where none can wait on you); the top-level ' +
           'surrenderPending counts the games where one waits on you, and those games come first too. ' +
           'Finished games are left out unless ' +
           '`include_finished` (`finishedLeftOut` counts them). `listed` is how many games war.app returned and ' +
@@ -199,7 +203,8 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
       const summary = summarizeMyGames(kept, me);
       if (view === 'brief') return briefResult(summary, partial ? raw.length : undefined);
       const finishedLeftOut = raw.length - kept.length;
-      // #317: the surrenders pending in each game (the game details; null: not read or unreadable, never "none").
+      // #317: the surrenders pending in each game (the game details; null: not read or unreadable, never "none";
+      // #327: [] without a read where none can wait on me).
       const { byGame, skipped } = await myGamesSurrenders(ctx, kept, me);
       const withSurrenders = summary.map((g) => ({ ...g, surrenderPending: byGame.get(g.id) ?? null }));
       // A game waiting on my acceptance waits on me too: it goes first with the turns waiting on me.

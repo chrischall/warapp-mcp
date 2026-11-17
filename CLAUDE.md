@@ -478,7 +478,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `pendingSurrenders` gives `{ inGameId, player (GameFeed id or null), owedByMe }`, owed by the client's own
   test (their seat `Playing` + `Surrendered`, mine `Playing`, not AI or turned AI, my id not in their
   `PlayersAcceptedMySurrender`); my own surrender is left out. `src/tools/surrender-pending.ts` reads it only
-  for a game being played or picked with my seat playing; unreadable or not read is `null`, never `[]`.
+  for a game being played or picked with my seat playing; unreadable, not read (past the bound) or my seat unknown
+  is `null`, never `[]`; every other game (a lobby, a finished game, a game my seat is out of) is `[]` without a
+  read (#327: none can wait on me there, and nothing failed to read).
   Reported by `warapp_my_games` (per game, `player` null — the list has no GameFeed ids — and a top-level count;
   at most `MAX_SURRENDER_READS` games, brief reads none), `warapp_wait_for_turn` (status `surrender_pending`
   unless `ignore_surrenders`; after one failed details read — a frozen tab stalls each until the bridge times
