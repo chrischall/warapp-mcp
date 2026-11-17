@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0](https://github.com/chrischall/warapp-mcp/compare/v0.4.0...v0.5.0) (2026-11-17)
+
+
+### Features
+
+* **protocol:** speak war.app's current client protocol (243) and read every client build's renamed internals ([#347](https://github.com/chrischall/warapp-mcp/issues/347)) ([4414516](https://github.com/chrischall/warapp-mcp/commit/4414516a6e5b653c70c2eabcdc9e5b3f65c52616))
+
+
+### Bug Fixes
+
+* **chat:** the inbox reads recently finished games whose only chat is GameFeed's, and its entries name the game as warapp_get_chat does ([#352](https://github.com/chrischall/warapp-mcp/issues/352)) ([69d0d20](https://github.com/chrischall/warapp-mcp/commit/69d0d200b762578888c36b2e688a4ad967ab2166))
+* **my-games:** stop reporting lobbies and games you are out of as unreadable pending surrenders ([#350](https://github.com/chrischall/warapp-mcp/issues/350)) ([0a4c3d8](https://github.com/chrischall/warapp-mcp/commit/0a4c3d86599d786a0294bebd3f771246714c03b6))
+* **protocol:** say plainly when war.app retires the protocol this server speaks (error 48) ([#349](https://github.com/chrischall/warapp-mcp/issues/349)) ([e7a2f8e](https://github.com/chrischall/warapp-mcp/commit/e7a2f8e826e778b85c9a996e0db6e70a682eb0fa))
+
+
+### Documentation
+
+* how war.app ships new clients, how long it accepts old ones, and how to update ([#345](https://github.com/chrischall/warapp-mcp/issues/345)) ([cff04d8](https://github.com/chrischall/warapp-mcp/commit/cff04d8bbad91d1a9d0875f8150d0418f8ea0bc0))
+
 ## [0.4.0](https://github.com/chrischall/warapp-mcp/compare/v0.3.1...v0.4.0) (2026-11-17)
 
 
