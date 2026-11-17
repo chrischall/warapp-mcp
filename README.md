@@ -289,6 +289,10 @@ games' histories and replays the opening on today's planner, aggregates only: a 
 (`<data dir>/finished/`): it reads no history itself, so it has nothing to score until the end-of-game pass has
 run on finished games.
 
+War.app ships a new web client every few weeks. How releases ship, what each kind breaks here, how long
+war.app keeps answering an older protocol, and the checklist for updating are in
+[docs/CLIENT-RELEASES.md](docs/CLIENT-RELEASES.md).
+
 ## License
 
 MIT
