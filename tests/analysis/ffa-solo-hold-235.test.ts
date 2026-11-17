@@ -133,7 +133,17 @@ describe('#235: a border whose loss cuts my holdings in two protects what it cut
   });
 
   it('with another link (T4–T8), nothing is cut off: conceded as before', () => {
-    const p = run(false);
+    // #291: T1 would still be the only way in to everything behind it; a hidden territory beside T8 is a second
+    // way in, so this case stays about the cut alone.
+    const p = planTurn({
+      graph: buildGraph(makeMap([1, 2, 4, 5, 6, 7, 8, 9], [...edges, [4, 8], [8, 9]], [[901, 2, [4]]])),
+      board: board([mine(1, 5), enemy(2, 9, 20), mine(4, 60), neutral(5, 80), mine(6, 1), mine(7, 1), mine(8, 1), { territoryId: 9, owner: { kind: 'unknown' }, armies: null }]),
+      me: ME,
+      income: 7,
+      settings: STD,
+      game: { players: [{ id: ME }, { id: 20 }], turn: 8 },
+      options: { goal: 'balanced', enemyDeploy: 5 },
+    });
     expect(p.conceded).toContain(1);
     expect(p.rationale.join('\n')).not.toMatch(/links my holdings/);
   });

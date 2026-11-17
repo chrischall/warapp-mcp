@@ -8,7 +8,8 @@ import { breachBehind, type Breach } from '../breach.js';
 import { neighborsOf } from '../graph.js';
 import { chargeDeploys, deployPools } from '../local-deploy.js';
 import { territoryIncome } from '../player.js';
-import { BREACH_WEIGHT, WASTELAND_FACTOR, type PlannedMove } from './shared.js';
+import { opensBehind, type Opened } from '../opens.js';
+import { BREACH_WEIGHT, OPENS_WEIGHT, WASTELAND_FACTOR, type PlannedMove } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
 import { secondLineOf } from './guard-off.js';
@@ -256,11 +257,31 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
     return out;
   };
   const breachCache = new Map<number, (Breach & { worth: number }) | null>();
+  /** #291: an enemy's territory or a hidden one: where a route into my land can start. */
+  const source = (x: number) => {
+    const o = state.get(x)?.owner;
+    return o === undefined || o.kind === 'unknown' || (o.kind === 'player' && foe(o.playerId));
+  };
+  /**
+   * #291: what losing my `t` opens to the enemy ({@link opensBehind}): the held bonuses every route from an enemy
+   * or the fog reaches only through it, less what its cut (#235) and its breach (#275) already count, with
+   * `worth` = {@link OPENS_WEIGHT} of their income. `null` when it opens nothing that earns.
+   */
+  const opensAt = (t: number): (Opened & { worth: number }) | null => {
+    if (opensCache.has(t)) return opensCache.get(t)!;
+    const skip = new Set([...(cutOff(t)?.ids ?? []), ...(breachAt(t)?.ids ?? [])]);
+    const o = opensBehind(g, ps.holdings, source, t, skip);
+    const out = o.income > 0 ? { ...o, worth: Math.round(OPENS_WEIGHT * o.income * 10) / 10 } : null;
+    opensCache.set(t, out);
+    return out;
+  };
+  const opensCache = new Map<number, (Opened & { worth: number }) | null>();
   const protectedValue = (t: number): number => {
     // Each bonus is visited once, so it counts once however many of its borders are threatened.
     // #235: plus the income of what losing it cuts off from the rest of my holdings.
     // #275: plus, with the guard off, BREACH_WEIGHT × what a breach of it opens behind it.
-    let v = (cutOff(t)?.income ?? 0) + (breachAt(t)?.worth ?? 0);
+    // #291: plus OPENS_WEIGHT × what its loss opens to the enemy (a gate cuts nothing off yet shields it all).
+    let v = (cutOff(t)?.income ?? 0) + (breachAt(t)?.worth ?? 0) + (opensAt(t)?.worth ?? 0);
     const mineWithout = (x: number) => x !== t && ps.holdings.has(x);
     for (const b of g.map.bonuses) {
       const ts = bonusTerritories(g, b.id);
@@ -331,6 +352,8 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
     cutCache,
     breachAt,
     breachCache,
+    opensAt,
+    opensCache,
     stakeAt,
   };
 }

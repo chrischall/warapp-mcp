@@ -320,7 +320,8 @@ describe('held bonuses are defended before speculative expansion (#51)', () => {
       // withdrawn from — but Reef's pool still defends it, on its threatened border.
       expect(deployedTo(p, 1)).toBe(5);
       expect(deploySum(p)).toBe(9);
-      expect(p.warnings).toContain('T1 (#1) cannot be held with the 5 armies left to deploy (needs 8, protects +5): conceded');
+      // #291: T1 is also the only way in to Isle (+4) behind it, so it protects +5 + half of +4.
+      expect(p.warnings).toContain('T1 (#1) cannot be held with the 5 armies left to deploy (needs 8, protects +7): conceded');
     });
 
     it('a room one or two short of the hold is a near miss (#59): all of it goes to the border', () => {

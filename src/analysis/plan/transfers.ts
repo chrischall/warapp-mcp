@@ -53,7 +53,11 @@ export function transfers(
    * it may fail, #172's two-step hold, an exit's cover (#179), the leftover kept central (#218) and a
    * truce's hold (B2).
    */
-  const keepOf = (t: number) => {
+  /**
+   * `t`'s keeps. `through`: a conceded border `t` is about to make hold (#257) — a two-step reach through it is cut
+   * by that very move (#291: else the gate behind a conceded border would keep its armies from the border itself).
+   */
+  const keepOf = (t: number, through?: number) => {
     // #128: interior only if this turn's attacks on players beside it land. Until they do, it
     // keeps what holds against the threat there as if they failed (its neighbours' owners'
     // stacks and deploy as they stand): a +12 bonus was left on 1 beside a capture.
@@ -62,7 +66,7 @@ export function transfers(
     const keep128 = ifFail ? Math.max(0, holdArmies(ifFail.threat) - unitsAt(t)) : 0;
     // #172: or it is interior now, but a stack two steps away can take the territory in between
     // this turn and attack it next. The larger hold binds (never the two added together).
-    const far = twoStepHold(t);
+    const far = twoStepHold(t, through !== undefined ? (n) => n === through : undefined);
     const twoStep = far !== null && far.stay > keep128 ? far : null;
     const truceHold = truceKeep(pc, threats, t);
     const keep = Math.max(
@@ -120,7 +124,7 @@ export function transfers(
         .filter((t) => !neighborsOf(g, t).some((x) => isEnemy(x)))
         .map((t) => {
           const n = avail.get(t)!;
-          const part = Math.min(n, Math.max(0, stayAt(t) - keepOf(t).keep), capStepRoom(pc, ps, t, id));
+          const part = Math.min(n, Math.max(0, stayAt(t) - keepOf(t, id).keep), capStepRoom(pc, ps, t, id));
           return { t, n, part: noSplit && part < n ? 0 : part };
         })
         .filter((x) => x.part >= c.k)

@@ -159,7 +159,8 @@ describe('the planner prices a border by its breach with the guard off (#275 pat
   it('changes nothing with the guard on', () => {
     const p = plan(ON, 1);
     expect(p.rationale.some((r) => /alone shields/.test(r))).toBe(false);
-    expect(p.conceded).toContain(2);
+    // #291 (guard on or off): T2 is the only way in to what stands behind it, and is credited for that instead.
+    expect(p.rationale.some((r) => /T2 \(#2\) is the only way in to .*\(#291\)/.test(r))).toBe(true);
   });
 });
 
