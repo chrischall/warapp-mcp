@@ -24,6 +24,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Errors are HTTP 200.** GameFeed answers failures as 200 JSON `{ termsOfUse, error }`
   (`Auth failed`, `…ServerGameKeyNotFound`, `GameID must be an integer`). Never decide
   success from the status alone.
+- **The decoder is pinned to client v6.07 / protocol 242 (`KNOWN_GOOD_BUNDLE`, `src/protocol/bundle.ts`).** The
+  built-in reader names (`DEFAULT_DIALECT`) and every hand-written encoder are that release's. war.app's CDN still
+  serves it by version, byte for byte, and war.app still answers a 242 request in 242's layout, so when the current
+  client is refused at load (2026-11-17: 639304451701341657 renamed every reader and moved to protocol 243) the
+  pinned one stands in, only with its pinned SHA-256, kept on disk beside the refused copy and re-looked-up hourly;
+  `report().standInFor` and `warapp_session_status` say so. Moving to 243 means new names AND new layouts, not a rename.
 - **The healthcheck probes a game that does not exist** (`GameID=2147483647`): war.app
   checks credentials first, so `ServerGameKeyNotFound` proves the token works without
   loading a real game, and `Auth failed` is a rejected credential.

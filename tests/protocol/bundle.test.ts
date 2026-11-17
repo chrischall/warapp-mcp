@@ -288,7 +288,7 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
     const swapped = 'var W={};var P={};P.Ya=function(a){return a.MGb()};P.uq=function(a){return a.Og()};' + READER;
     let now = 1_000_000;
     const { calls, fetchText } = fakeFetch({ [PAGE]: html(CDN), [CDN]: swapped });
-    const p = new BundleProvider({ dataDir: tempDir(), fetchText, pageUrl: PAGE, now: () => now });
+    const p = new BundleProvider({ dataDir: tempDir(), fetchText, pageUrl: PAGE, now: () => now, knownGood: null });
     await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-mismatch' });
     await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-mismatch' });
     expect(calls).toEqual([PAGE, CDN]);
@@ -300,7 +300,7 @@ describe('the built-in reader helpers are checked against the bundle at load (#1
   it('the provider remembers an unverifiable bundle the same way (#148)', async () => {
     const opaque = 'var W={};var P={};P.Ya=function(a){return O.N3c(a)};' + READER;
     const { calls, fetchText } = fakeFetch({ [PAGE]: html(CDN), [CDN]: opaque });
-    const p = new BundleProvider({ dataDir: tempDir(), fetchText, pageUrl: PAGE, now: () => 1 });
+    const p = new BundleProvider({ dataDir: tempDir(), fetchText, pageUrl: PAGE, now: () => 1, knownGood: null });
     await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-unverified' });
     await expect(p.get()).rejects.toMatchObject({ kind: 'dialect-unverified' });
     expect(calls).toEqual([PAGE, CDN]);
@@ -581,5 +581,96 @@ describe('the bundle cache is pruned and survives a failed version lookup (#131)
     now += 5 * 60_000;
     expect((await p.get()).version).toBe('987');
     expect(calls).toEqual([PAGE, PAGE, CDN]);
+  });
+});
+
+// 2026-11-17: war.app shipped client 639304451701341657, a new minification (every reader name
+// renamed) on protocol 243. This server still speaks 242 and war.app still answers 242 in 242's
+// layout, so the client of that protocol (v6.07, still served by version from the CDN) decodes it
+// exactly: when the current bundle is refused, the pinned known-good one stands in.
+describe('a known-good bundle stands in when the current one is refused (2026-11-17)', () => {
+  const REFUSED = 'var W={};var P={};P.Ya=function(a){return a.MGb()};P.uq=function(a){return a.Og()};' +
+    'function Dx(){}W["t.Dx"]=Dx;Dx.Ha=function(a){var e=new Dx;e.small=P.uq(a);e.big=P.Ya(a);return e};';
+  const GOOD_V = '555';
+  const GOOD_URL = `https://warappcdn.com/js/Release/ujs.js?v=${GOOD_V}`;
+  const knownGood = { version: GOOD_V, digest: sha256(MINI_BUNDLE) };
+
+  it('downloads the known-good version, checks its digest, caches it and decodes with it', async () => {
+    const dataDir = tempDir();
+    const f = fakeFetch({ [PAGE]: html(CDN), [CDN]: REFUSED, [GOOD_URL]: MINI_BUNDLE });
+    const b = await loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE, knownGood });
+    expect(b.version).toBe(GOOD_V);
+    expect(b.standInFor?.version).toBe('987');
+    expect(b.standInFor?.reason).toMatch(/P\.Ya/);
+    expect(b.report().standInFor?.version).toBe('987');
+    expect(f.calls).toEqual([PAGE, CDN, GOOD_URL]);
+    // Both kept: the refused one is not downloaded again on the next lookup, the stand-in not either.
+    expect(listCache(dataDir)).toEqual([cacheName('987', REFUSED), cacheName(GOOD_V)].sort());
+    const again = fakeFetch({ [PAGE]: html(CDN) });
+    const b2 = await loadBundle({ dataDir, fetchText: again.fetchText, pageUrl: PAGE, knownGood });
+    expect(b2.version).toBe(GOOD_V);
+    expect(again.calls).toEqual([PAGE]);
+  });
+
+  it('refuses a known-good download whose digest is not the pinned one, and keeps nothing of it', async () => {
+    const dataDir = tempDir();
+    const f = fakeFetch({ [PAGE]: html(CDN), [CDN]: REFUSED, [GOOD_URL]: MINI_BUNDLE + '// tampered' });
+    await expect(loadBundle({ dataDir, fetchText: f.fetchText, pageUrl: PAGE, knownGood })).rejects.toMatchObject({
+      kind: 'dialect-mismatch',
+    });
+    expect(listCache(dataDir)).toEqual([cacheName('987', REFUSED)]);
+  });
+
+  it('without a known-good pin the refusal stands, as before', async () => {
+    const f = fakeFetch({ [PAGE]: html(CDN), [CDN]: REFUSED });
+    await expect(loadBundle({ dataDir: tempDir(), fetchText: f.fetchText, pageUrl: PAGE, knownGood: null })).rejects.toMatchObject({
+      kind: 'dialect-mismatch',
+    });
+  });
+
+  it('a current bundle that loads keeps the known-good copy on disk, and is the one used', async () => {
+    const dataDir = tempDir();
+    mkdirSync(join(dataDir, 'bundle'), { recursive: true });
+    writeFileSync(join(dataDir, 'bundle', cacheName(GOOD_V)), MINI_BUNDLE);
+    const other = MINI_BUNDLE + '// current';
+    const b = await loadBundle({ dataDir, fetchText: fakeFetch({ [PAGE]: html(CDN), [CDN]: other }).fetchText, pageUrl: PAGE, knownGood });
+    expect(b.version).toBe('987');
+    expect(b.standInFor).toBeUndefined();
+    expect(listCache(dataDir)).toEqual([cacheName('987', other), cacheName(GOOD_V)].sort());
+  });
+
+  it('when the version cannot be looked up, a refused cached copy is skipped for one that loads', async () => {
+    const dataDir = tempDir();
+    mkdirSync(join(dataDir, 'bundle'), { recursive: true });
+    writeFileSync(join(dataDir, 'bundle', cacheName('987', REFUSED)), REFUSED);
+    writeFileSync(join(dataDir, 'bundle', cacheName(GOOD_V)), MINI_BUNDLE);
+    utimesSync(join(dataDir, 'bundle', cacheName(GOOD_V)), 1_600_000_000, 1_600_000_000);
+    const fetchText = async () => {
+      throw new Error('offline');
+    };
+    const b = await loadBundle({ dataDir, fetchText, pageUrl: PAGE, knownGood });
+    expect(b.version).toBe(GOOD_V);
+    expect(b.fallback).toBe(true);
+  });
+
+  it('the provider keeps a stand-in for an hour before looking the version up again', async () => {
+    let now = 1_000_000;
+    const f = fakeFetch({ [PAGE]: html(CDN), [CDN]: REFUSED, [GOOD_URL]: MINI_BUNDLE });
+    const p = new BundleProvider({ dataDir: tempDir(), fetchText: f.fetchText, pageUrl: PAGE, now: () => now, knownGood });
+    expect((await p.get()).version).toBe(GOOD_V);
+    now += 30 * 60_000;
+    expect((await p.get()).version).toBe(GOOD_V);
+    expect(f.calls).toEqual([PAGE, CDN, GOOD_URL]);
+    now += 31 * 60_000;
+    expect((await p.get()).version).toBe(GOOD_V);
+    expect(f.calls).toEqual([PAGE, CDN, GOOD_URL, PAGE]);
+  });
+
+  it('pins the client release the built-in readers are written for (v6.07, protocol 242)', async () => {
+    const { KNOWN_GOOD_BUNDLE } = await import('../../src/protocol/bundle.js');
+    expect(KNOWN_GOOD_BUNDLE).toEqual({
+      version: '639294131571648437',
+      digest: 'dec5cf174f6affb9e4c08802534cf8c6c6496eff977847aaf1497535e3371404',
+    });
   });
 });
