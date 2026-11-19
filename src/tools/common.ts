@@ -18,6 +18,26 @@ export const readAnnotations = (title: string) =>
   toolAnnotations({ title, readOnly: true, idempotent: true, openWorld: true });
 
 /** A game id: the number after `GameID=` in a game URL. Validated by `parseGameId`. */
+/**
+ * #368: per-player incomes the caller knows (warapp_plan_turn's and warapp_check_plan's `known_income`):
+ * each replaces that opponent's estimate.
+ */
+export const knownIncomeArg = z
+  .array(
+    z.object({
+      player: z.coerce.number().int().describe('The player\'s GameFeed id (as warapp_get_game lists it).'),
+      income: z.coerce.number().int().min(0).max(10_000).describe('The income it earns per turn, card armies aside.'),
+    }),
+  )
+  .max(50)
+  .optional()
+  .describe(
+    'Per-player incomes you know (what a player said in diplomacy chat, say), by GameFeed id: each replaces that ' +
+      "opponent's estimate (a Reinforcement card the card clock adds stays on top), and the plan's warning says it was " +
+      'supplied. Taken as given, never checked against the board, and kept for this call only. `enemy_deploy`, a what-if ' +
+      'for every opponent, wins over it; a player with none of its territories in view is named as unused.',
+  );
+
 export const gameIdArg = z
   .union([z.number(), z.string()])
   .describe('The war.app game id — the number after GameID= in the game URL (war.app/MultiPlayer?GameID=<n>).');

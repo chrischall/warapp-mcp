@@ -172,7 +172,7 @@ notification in `warapp_get_notifications`. Let those run, then run the harness.
   #235's blend) and the plan's estimate (`planEnemyEstimates`, as `warapp_plan_turn` calls it: my income,
   the previous cached board and my orders on it, the tracks), each ÷ its true income (`turnIncomes`), by
   format and coverage band (#294). Printed per band: `n`, mean, geometric mean, sd, and the shares under
-  0.5 and over 1.5. These are the numbers `LOW_COVERAGE_FACTOR` (1.5), `PRIOR_EVIDENCE_TURNS` (4) and
+  0.5 and over 1.5. These are the numbers `LOW_COVERAGE` (0.5; #368's thin-evidence midpoint replaced #294's 1.5 floor), `PRIOR_EVIDENCE_TURNS` (4) and
   `HIDDEN_INCOME_FACTOR` (2) are judged on; changing one goes through the owner.
 - **(b) Opening benchmark.** My real start (history board 0) replayed for 8 turns on today's planner,
   my deploys and moves resolved with `simulateTurn`, and after each turn the opponents put back where

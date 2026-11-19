@@ -36,8 +36,9 @@ function feedGame(
   opts: { ffa?: boolean; cidState?: string } = {},
 ): Record<string, unknown> {
   const f = lobbyFixture();
-  // With `ffa`, a free-for-all: Ann, Bob and Cid playing, and Dan out (eliminated), so no fog prior
-  // lifts Bob's and Cid's estimates to my income (#235): I lead, 7 against base 5 each.
+  // With `ffa`, a free-for-all: Ann, Bob and Cid playing, and Dan out (eliminated), on a custom scenario
+  // (DistributionMode -3), so no fog prior lifts Bob's and Cid's estimates to my income (#235; since #368
+  // a player out no longer turns the prior off): I lead, 7 against base 5 each.
   const all = (f.players as Array<Record<string, string>>).map((p, i) =>
     i === 0
       ? { ...p, id: ANN.feed, name: 'Ann' }
@@ -50,7 +51,7 @@ function feedGame(
             : p,
   );
   const players = opts.ffa ? all.slice(0, 4) : all;
-  return { ...f, state: 'Playing', numberOfTurns: '2', players, settings: { ...(f.settings as Record<string, unknown>), SanctionsCard: 'none', ...settings }, ...extra };
+  return { ...f, state: 'Playing', numberOfTurns: '2', players, settings: { ...(f.settings as Record<string, unknown>), SanctionsCard: 'none', ...(opts.ffa ? { DistributionMode: '-3' } : {}), ...settings }, ...extra };
 }
 
 let h: Harness | undefined;

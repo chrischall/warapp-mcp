@@ -881,6 +881,10 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
         warnings.push(
           `No fog prior for the opponents beside the fog (${fogged.length === 1 ? 'player' : 'players'} ${fogged.join(', ')}) in this free-for-all: ${incomePriorSkipped}; their estimates rest on what the board shows, each a lower bound under fog.`,
         );
+      // #368: a known income given for a player with no estimate (none of its territories in view).
+      for (const k of input.knownIncome ?? [])
+        if (!estimates.has(k.player) && foe(k.player))
+          warnings.push(`known_income for player ${k.player} is not used: none of its territories is in view, so the plan has no border it threatens.`);
       for (const p of [...estimated].sort(byNum)) {
         const e = estimates.get(p)!;
         const visible = `base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}`;
@@ -982,13 +986,6 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
             `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog${e.coverage ? `, read from ${coverageText(e.coverage)}` : ''}; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
           );
         }
-        // #294: a tracked figure read from little of its frontier keeps a floor above it.
-        if (e.coverageFloor) {
-          const f = e.coverageFloor;
-          warnings.push(
-            `Player ${p}'s tracked ~${f.tracked} was read from ${coverageText({ ...e.coverage!, hiddenBonuses: 0 }).replace(/\)$/, `, under ${Math.round(LOW_COVERAGE * 100)}%)`)}: the estimate is at least ~${f.tracked} × ${f.factor} = ${f.figure} (the factor is unmeasured), since the fog hid most of where it deploys.`,
-          );
-        }
         // #164: a Reinforcement card the clock says it may hold, on top of its income.
         if (e.card)
           warnings.push(
@@ -1027,6 +1024,38 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               e.source === 'tracked' ? 'tracked' : e.source === 'prior' ? 'the fog prior' : 'its visible base + bonuses'
             }) because a stack walking in is not income (#123). To test the higher figure, pass enemy_deploy ${cut.reading} to warapp_check_plan.`,
           );
+        // #368: an income the user supplied replaces the estimate.
+        if (e.known) {
+          warnings.push(
+            `Enemy deploy estimate for player ${p}: ~${income} (the known income you supplied (known_income), in place of the estimate ~${e.known.was})${withCard}; a figure supplied is taken as it is, not checked against the board.`,
+          );
+          continue;
+        }
+        // #368: thin evidence sizes it between its lower bound and its upper (owner decision of
+        // 2026-11-19: the middle until we learn otherwise).
+        if (e.thinEvidence) {
+          const t = e.thinEvidence;
+          const thin = t.coverage !== null && t.coverage < LOW_COVERAGE;
+          const why = [
+            ...(thin
+              ? [`its tracked income was read from ${e.coverage ? coverageText(e.coverage) : `${Math.round(t.coverage! * 100)}% of its frontier`}, under ${Math.round(LOW_COVERAGE * 100)}%`]
+              : []),
+            ...(t.rising ? [`its tracked income rose two turns running (${t.rising.join(', ')})`] : []),
+          ];
+          const lowerIs =
+            t.trend !== null && t.lower === t.trend && t.trend > t.tracked
+              ? `the trend's next step ~${t.lower} (the tracked ~${t.tracked})`
+              : t.lower === t.tracked
+                ? `~${t.lower} (the tracked figure)`
+                : `~${t.lower} (its visible income; the tracked ~${t.tracked})`;
+          const sized = thin
+            ? `it is sized between the lower bound ${lowerIs} and the upper bound ~${t.upper} (${
+                t.prior !== null && t.upper === Math.min(e.couldEarn, t.prior) ? 'the fog prior, not shrunk toward the track' : 'the most it could earn'
+              }): the midpoint ~${t.midpoint}, moved toward what the evidence gives, ~${t.toward}, as more of its frontier is read (${Math.round(t.weight * 100)}% of the way from that to the midpoint)`
+            : `its lower bound is ${lowerIs.startsWith('~') ? lowerIs.slice(1) : lowerIs}, read from enough of its frontier to plan on it`;
+          warnings.push(`Enemy deploy estimate for player ${p}: ~${income} (thin evidence: ${why.join(' and ')}, so ${sized})${withCard}; it could deploy more.`);
+          continue;
+        }
         if (e.source === 'exact') {
           warnings.push(
             `Enemy deploy estimate for player ${p}: ~${income} (exact: under ${ctx.fog} every territory's owner shows, so its income is ${visible}${e.observed !== null && e.observed > income ? `; the +${e.observed} observed above it is a card or armies the board misread, not income` : ''}); only the army cap, Sanctions and a Reinforcement card are unknown.`,
@@ -1038,7 +1067,13 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
             `Enemy deploy estimate for player ${p}: ~${income} (a prior, not an observation: ${
               (incomePrior!.opening?.get(p) ?? -1) > incomePrior!.myIncome
                 ? `its opening simulated from the starts the award of picks proved earns ${incomePrior!.opening!.get(p)} this turn`
-                : `in ${incomePrior!.format === 'ffa' ? 'a free-for-all that started even (no teams, every player still in)' : 'a 1v1 that started even'}, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
+                : `in ${
+                    incomePrior!.format === 'ffa'
+                      ? incomePrior!.out?.length
+                        ? `a free-for-all that started even (no teams; ${incomePrior!.out.map((o) => `player ${o.id} is out (${o.state})`).join(', ')}, ${incomePrior!.out.length === 1 ? 'its' : 'their'} share of what the board hides split among the ${incomePrior!.opponents} ${incomePrior!.opponents === 1 ? 'opponent' : 'opponents'} still playing)`
+                        : 'a free-for-all that started even (no teams, every player still in)'
+                      : 'a 1v1 that started even'
+                  }, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
             }, ${
               e.priorCap !== null
                 ? `capped at an even share (1 of ${incomePrior!.opponents} opponents) of what the board hides, ${e.priorCap} (all of it would be ${e.couldEarn})`

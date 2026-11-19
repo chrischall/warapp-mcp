@@ -6,7 +6,7 @@
 //      in the planner and the tracker alike;
 //  (3) outside per-territory income a border faces at most the free income plus the pools it could
 //      hold there; with per-territory income the estimate beyond every pool still counts as free;
-//  (4) the tracker's "the planner keeps at least 1.5 × it" only when the planner would use the track.
+//  (4) the tracker's "the planner sizes it toward the midpoint" (#368; was #294's 1.5 floor) only when the planner would use the track.
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
@@ -188,11 +188,11 @@ describe('(4) the coverage note names the planner\'s floor only when the planner
     expect(t!.turns).toHaveLength(1);
     const note = t!.notes.join('\n');
     expect(note).toMatch(/Income read from 1 of ~4 frontier territories/);
-    expect(note).not.toMatch(/the planner keeps at least/);
+    expect(note).not.toMatch(/the planner sizes it toward the midpoint/);
   });
 
-  it('two observed turns: the floor is named (unchanged)', () => {
+  it('two observed turns: the midpoint is named (#368, in place of #294\'s floor)', () => {
     const [t] = trackOpponents(low, [10, 25, 40].map((a5, i) => ({ turn: i + 1, board: at(a5) })), ME, S);
-    expect(t!.notes.join('\n')).toMatch(/the planner keeps at least 1\.5 × it/);
+    expect(t!.notes.join('\n')).toMatch(/the planner sizes it toward the midpoint between it and the most it could have \(#368\)/);
   });
 });

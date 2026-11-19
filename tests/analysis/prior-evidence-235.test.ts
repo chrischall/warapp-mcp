@@ -134,17 +134,19 @@ describe('(1) which starts are even: every distribution but a custom scenario', 
     expect(p.warnings.join('\n')).not.toMatch(/a prior, not an observation/);
   });
 
-  it('in an FFA, a prior not applied says why: a player out', () => {
+  it('#368: a player out no longer turns the prior off, so there is no "No fog prior" line for it', () => {
     const out = [...players, { id: 50, state: 'Eliminated' }];
     const p = planTurn(ffa({ game: { players: out, turn: 12, symmetricStart: true } }));
-    expect(p.warnings.join('\n')).toMatch(/No fog prior for the opponents beside the fog \(players 20, 30\) in this free-for-all: player 50 is out \(Eliminated\)/);
+    expect(p.warnings.join('\n')).not.toMatch(/No fog prior/);
+    expect(p.warnings.join('\n')).toMatch(/player 50 is out \(Eliminated\), its share of what the board hides split among the 3 opponents still playing/);
   });
 
-  it('a player out is never listed among the opponents beside the fog', () => {
-    // Player B (30) still holds T6 beside the fog but was booted: out, not an opponent the prior skips.
+  it('#368: a player out with no AI on its seat gets no prior itself: its land reads as neutral (#270)', () => {
+    // Player B (30) still holds T6 beside the fog but was booted: out, not an opponent the prior covers.
     const out = players.map((p) => (p.id === B ? { ...p, state: 'Booted' } : p));
     const p = planTurn(ffa({ game: { players: out, turn: 12, symmetricStart: true } }));
-    expect(p.warnings.join('\n')).toMatch(/No fog prior for the opponents beside the fog \(player 20\) in this free-for-all: player 30 is out \(Booted\)/);
+    expect(p.warnings.join('\n')).not.toMatch(/No fog prior|Enemy deploy estimate for player 30/);
+    expect(p.warnings.join('\n')).toMatch(/player 30 is out \(Booted\), its share of what the board hides split among the 2 opponents still playing/);
   });
 
   it('no such line in a team game, a 1v1, or when no opponent borders the fog', () => {

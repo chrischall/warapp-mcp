@@ -4,7 +4,8 @@
 //      in view with a neighbour not its own, plus every territory beside them whose owner is hidden;
 //  (2) the warning says "read from N of ~M frontier territories";
 //  (3) #235's prior shrink is scaled by the coverage of the observed turns, not the newest board's edge;
-//  (4) while coverage is low the estimate never falls below tracked × LOW_COVERAGE_FACTOR;
+//  (4) while coverage is low (#368, owner decision of 2026-11-19, in place of #294's floor of tracked × 1.5)
+//      the estimate is the midpoint of its range, moved toward the track as the coverage nears LOW_COVERAGE;
 //  (5) one line splits each grown stack: a move from a neighbour in view, out of the fog, or only deploy.
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
@@ -15,7 +16,6 @@ import {
   enemyDeployEstimates,
   frontierCoverage,
   LOW_COVERAGE,
-  LOW_COVERAGE_FACTOR,
   observeDeploy,
   planTurn,
   trackCoverage,
@@ -105,33 +105,35 @@ describe('(1) frontier coverage, per observed turn', () => {
   });
 });
 
-describe('(4) while coverage is low, never below tracked × LOW_COVERAGE_FACTOR', () => {
+describe('(4) while coverage is low, the midpoint of its range (#368, in place of the 1.5 floor)', () => {
   const tracks = trackOpponents(low, lowBoards, ME, STD);
 
-  it('the constants are named', () => {
+  it('the constant is named', () => {
     expect(LOW_COVERAGE).toBe(0.5);
-    expect(LOW_COVERAGE_FACTOR).toBe(1.5);
   });
 
-  it('tracked 15 read from a quarter of its frontier: at least 23', () => {
+  it('tracked 15 read from a quarter of its frontier: halfway from it to the midpoint toward the 40 it could earn', () => {
     const [e] = enemyDeployEstimates(low, lowAt(55), ME, STD, lowAt(40), tracks, undefined, { turn: 4 });
-    expect(e).toMatchObject({ tracked: 15, estimate: 23, source: 'tracked' });
+    // Midpoint 15 + ceil(25 / 2) = 28; weight 1 − 0.25 / 0.5 = 0.5: 15 + ceil(6.5) = 22.
+    expect(e).toMatchObject({ tracked: 15, estimate: 22, source: 'tracked' });
     expect(e!.coverage).toMatchObject({ inView: { min: 1, max: 1 }, frontier: { min: 4, max: 4 }, share: 0.25 });
-    expect(e!.coverageFloor).toEqual({ tracked: 15, share: 0.25, factor: 1.5, figure: 23 });
+    expect(e!.thinEvidence).toMatchObject({ lower: 15, upper: 40, midpoint: 28, toward: 15, weight: 0.5, figure: 22 });
   });
 
-  it('a tracked figure no higher than its visible base + bonuses says nothing the board does not: no floor', () => {
-    // A still stack: nothing observed beyond its base 10.
+  it('a tracked figure no higher than its visible base + bonuses: still the midpoint of its range', () => {
+    // A still stack: nothing observed beyond its base 10, read from a quarter of its frontier.
     const still = trackOpponents(low, [10, 10, 10, 10].map((a5, i) => ({ turn: i + 1, board: lowAt(a5) })), ME, STD);
     const [e] = enemyDeployEstimates(low, lowAt(10), ME, STD, lowAt(10), still, undefined, { turn: 4 });
-    expect(e).toMatchObject({ tracked: 10, estimate: 10, coverageFloor: null });
+    // Midpoint 10 + ceil(30 / 2) = 25; weight 0.5: 10 + ceil(7.5) = 18.
+    expect(e).toMatchObject({ tracked: 10, estimate: 18 });
+    expect(e!.thinEvidence).toMatchObject({ lower: 10, upper: 40, midpoint: 25, figure: 18 });
     expect(e!.coverage).toMatchObject({ share: 0.25 });
   });
 
   it('the tracker notes what its income was read from', () => {
     const [t] = tracks;
     expect(t!.notes.join('\n')).toMatch(
-      /Income read from 1 of ~4 frontier territories \(25%\), 1 bonus it could hold out of view: the rest of where it can deploy was out of view, so the figure is a lower bound, and the planner keeps at least 1\.5 × it\./,
+      /Income read from 1 of ~4 frontier territories \(25%\), 1 bonus it could hold out of view: the rest of where it can deploy was out of view, so the figure is a lower bound, and the planner sizes it toward the midpoint between it and the most it could have \(#368\)\./,
     );
   });
 
@@ -151,7 +153,7 @@ describe('(4) while coverage is low, never below tracked × LOW_COVERAGE_FACTOR'
     const { coverage: _c, ...bare } = t[0]!;
     for (const track of [t[0]!, bare as OpponentTrack]) {
       const [e] = enemyDeployEstimates(low, lowAt(55), ME, STD, lowAt(40), [track], undefined, { turn: 4 });
-      expect(e).toMatchObject({ tracked: 15, estimate: 15, coverageFloor: null });
+      expect(e).toMatchObject({ tracked: 15, estimate: 15 });
     }
   });
 
@@ -161,7 +163,7 @@ describe('(4) while coverage is low, never below tracked × LOW_COVERAGE_FACTOR'
       return { ...rest, turns: x.turns.map(({ coverage: _d, ...y }) => y) };
     });
     const [e] = enemyDeployEstimates(low, lowAt(55), ME, STD, lowAt(40), t, undefined, { turn: 4 });
-    expect(e).toMatchObject({ tracked: 15, estimate: 15, coverage: null, coverageFloor: null });
+    expect(e).toMatchObject({ tracked: 15, estimate: 15, coverage: null });
   });
 });
 
@@ -173,7 +175,9 @@ describe('(3) the prior shrinks by the coverage of the observed turns', () => {
     // The prior: my income 40, capped at the 40 it could earn. Three turns at 25% coverage: 0.75.
     expect(e!.priorBlend).toMatchObject({ prior: 40, toward: 15, turns: 3, share: 0.25 });
     expect(e!.priorBlend!.weight).toBeCloseTo(4 / 4.75, 9);
-    expect(e).toMatchObject({ estimate: 15 + Math.ceil((4 / 4.75) * 25), source: 'prior' });
+    // #368: but read from under 50% of its frontier the evidence is thin: the blend, 15 + ceil(4 / 4.75 × 25)
+    // = 37, moves halfway to the midpoint 15 + ceil(25 / 2) = 28 of the track and the prior: 37 + ceil(−4.5) = 33.
+    expect(e).toMatchObject({ estimate: 33, source: 'prior', thinEvidence: { coverage: 0.25, prior: 40, toward: 37, midpoint: 28, figure: 33 } });
   });
 
   it('more coverage, more shrink', () => {
@@ -204,14 +208,12 @@ describe('(2) and (5) the plan says it', () => {
       options: { adapt: true },
     });
 
-  it('the tracked figure names its coverage, and the floor its factor', () => {
+  it('the thin-evidence warning names its coverage and the midpoint (#368, in place of the floor)', () => {
     const w = plan().warnings.join('\n');
     expect(w).toMatch(
-      /Enemy deploy estimate for player 20: ~23 \(tracked over 3 observed turns, read from 1 of ~4 frontier territories \(25%\), 1 bonus it could hold out of view; more than base 10/,
+      /Enemy deploy estimate for player 20: ~22 \(thin evidence: its tracked income was read from 1 of ~4 frontier territories \(25%\), 1 bonus it could hold out of view, under 50%, so it is sized between the lower bound ~15 \(the tracked figure\) and the upper bound ~40 \(the most it could earn\): the midpoint ~28/,
     );
-    expect(w).toMatch(
-      /Player 20's tracked ~15 was read from 1 of ~4 frontier territories \(25%, under 50%\): the estimate is at least ~15 × 1\.5 = 23 \(the factor is unmeasured\)/,
-    );
+    expect(w).not.toMatch(/× 1\.5/);
   });
 
   it('no coverage words without fog', () => {
@@ -219,7 +221,7 @@ describe('(2) and (5) the plan says it', () => {
     const t = trackOpponents(low, [10, 25, 40, 55].map((a, i) => ({ turn: i + 1, board: clear(a) })), ME, STD);
     expect(t[0]!.coverage).toMatchObject({ share: 1 });
     const [e] = enemyDeployEstimates(low, clear(55), ME, STD, clear(40), t, undefined, { turn: 4 });
-    expect(e).toMatchObject({ coverageFloor: null });
+    expect(e).toMatchObject({ thinEvidence: null });
   });
 
   // T5 grew +12 beside the fog; T7 grew +4 with no hidden neighbour. T6 in view shrank 5, a move into

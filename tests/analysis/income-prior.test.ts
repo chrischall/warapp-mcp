@@ -97,7 +97,7 @@ describe('the fog prior (#119): a symmetric-start 1v1 opponent bordering the fog
     expect(p.warnings.join('\n')).not.toMatch(/a prior/);
   });
 
-  it('not without a symmetric start, nor in an FFA down to two players (#226: an even FFA gets it)', () => {
+  it('not without a symmetric start; an even FFA gets it (#226), even down to two players (#368)', () => {
     expect(planTurn(input({ game: { players, turn: 12 } })).enemyDeploy).toBe(5);
     expect(planTurn(input({ game: { players, turn: 12, symmetricStart: false } })).enemyDeploy).toBe(5);
     // #226: an even-start free-for-all with every player still in gets the prior too.
@@ -105,12 +105,13 @@ describe('the fog prior (#119): a symmetric-start 1v1 opponent bordering the fog
     // #235: capped at an even share of what the board hides: base 5 + half the fogged +40.
     expect(ffa.enemyDeploy).toBe(25);
     expect(ffa.warnings.join('\n')).toMatch(/in a free-for-all that started even/);
-    // An FFA down to two is no even start: either survivor may have absorbed the eliminated player.
+    // #368: an FFA down to two keeps the prior: the eliminated player's share goes to the one survivor,
+    // so it is my income, capped at all it could earn (5 + the fogged +40).
     const left = planTurn(
       input({ game: { players: [...players, { id: OTHER, state: 'Eliminated' }], turn: 12, symmetricStart: true } }),
     );
-    expect(left.enemyDeploy).toBe(5);
-    expect(left.warnings.join('\n')).not.toMatch(/a prior/);
+    expect(left.enemyDeploy).toBe(45);
+    expect(left.warnings.join('\n')).toMatch(/player 30 is out \(Eliminated\), its share of what the board hides split among the 1 opponent still playing/);
   });
 
   it('not once every territory it holds is in view, with no fog beside it', () => {

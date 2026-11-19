@@ -87,6 +87,7 @@ import {
   currentTurn,
   turnsCompleted,
   gameIdArg,
+  knownIncomeArg,
   graphOf,
   namer,
   readAnnotations,
@@ -1655,6 +1656,8 @@ export interface LivePlanArgs {
   enemyDeploy?: number;
   minWinChance?: number;
   firstMover?: 'me' | 'opponent';
+  /** #368: per-player incomes the caller knows (`known_income`): each replaces that opponent's estimate. */
+  knownIncome?: readonly { player: number; income: number }[];
 }
 
 /**
@@ -1833,6 +1836,9 @@ export async function livePlanSetup(
     income,
     ...(incomeHistory.length && turn !== null ? { incomeHistory } : {}),
     ...(untrusted.length ? { untrusted } : {}),
+    // #368: incomes the caller knows. Not in the estimates above, which the tripwire keeps: those stay the
+    // board's own (a figure supplied is no observation).
+    ...(a.args?.knownIncome?.length ? { knownIncome: a.args.knownIncome } : {}),
     cardArmies: cards.extraArmies,
     ...(incomeCap ? { incomeCap } : {}),
     ...(truces?.relations.length ? { relations: truces.relations } : {}),
@@ -2144,7 +2150,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
-          'armies + 3 × income held over 3 turns of boards, with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; thresholds unmeasured, so advice, not a verdict; ' +
+          'armies + 3 × income held over 3 turns of boards, with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; `leaning: behind` when even for 3 turns while a bonus of yours fell on each; thresholds unmeasured, so advice, not a verdict; ' +
           'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
           'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
@@ -2277,6 +2283,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               'captures a bonus still needs reach it together. Attacks sized for a worst case (finishing a player off, ' +
               'fog pressure, commander strikes) stay certain.',
           ),
+        known_income: knownIncomeArg,
         first_mover: z
           .enum(['me', 'opponent'])
           .optional()
@@ -2296,7 +2303,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, enemy_deploy, min_win_chance, first_mover, view }) => {
+    async ({ game_id, player, goal, focus, reserve, enemy_deploy, known_income, min_win_chance, first_mover, view }) => {
       // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
       const feed = await ctx.client.getGame(game_id, { settings: true, chat: true });
       requireTurnPhase(feed);
@@ -2330,6 +2337,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
           ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
+          ...(known_income?.length ? { knownIncome: known_income } : {}),
         },
       });
       const { graph, seen, award, board, mover, rules, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards, income, trend, tracks } = setup;
@@ -2640,7 +2648,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         outlook:
           rung === 'full'
             ? outlook
-            : { state: outlook.state, basis: outlook.basis, ...(outlook.evidence ? { evidence: outlook.evidence } : {}) },
+            : {
+                state: outlook.state,
+                basis: outlook.basis,
+                ...(outlook.evidence ? { evidence: outlook.evidence } : {}),
+                // #368: even while bonuses kept falling.
+                ...(outlook.leaning ? { leaning: outlook.leaning } : {}),
+              },
         // Part D: the opponent reads (reported only, never planned on); absent when none is at the bar.
         ...(reads?.length
           ? {

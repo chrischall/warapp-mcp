@@ -16,7 +16,7 @@ import { claimedCardUses, claimedCardWarning, teamCardClaims, teamHandLeft, uncl
 import { boardStateFromLive } from '../live.js';
 import { withTeammateOrders } from '../team-orders.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
-import { gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
+import { gameIdArg, graphOf, knownIncomeArg, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
 import { loadLiveGame, standInLine, standInOf, type LiveContext } from './live-context.js';
@@ -154,6 +154,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
               'observation has made its estimate untrusted, the larger of what it implied and your own income). ' +
               'Income in the fog is unseen, so raise it to test a stronger opponent.',
           ),
+        known_income: knownIncomeArg,
         first_mover: z
           .enum(['me', 'opponent'])
           .optional()
@@ -168,7 +169,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ),
       }),
     },
-    async ({ game_id, player, orders, enemy_deploy, first_mover, view }) => {
+    async ({ game_id, player, orders, enemy_deploy, known_income, first_mover, view }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(feed);
       const map = mapOf(feed);
@@ -322,7 +323,13 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         staticSeats: staticSeats(game.players, game.endRules, me.id),
       });
       const untrustedOf = new Map(trip.tripwires.map((w) => [w.player, untrustedDeploy(w, income)]));
+      // #368: an income the caller knows replaces the estimate (a Reinforcement card the clock adds on top),
+      // before an untrusted mark; enemy_deploy, a what-if for everyone, wins over both. The commander check
+      // below keeps the submit's sizing, so it never calls safe what warapp_submit_turn refuses.
+      const knownOf = new Map((enemy_deploy === undefined ? (known_income ?? []) : []).map((k) => [k.player, k.income]));
       const opponents = so.opponents.map((o) => {
+        const known = knownOf.get(o.id);
+        if (known !== undefined) return { ...o, deploy: known + (o.card ?? 0) };
         const untrusted = untrustedOf.get(o.id);
         return enemy_deploy !== undefined || untrusted === undefined ? o : { ...o, deploy: Math.max(untrusted, o.deploy) };
       });
@@ -671,7 +678,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           .map((o) => ({
             player: { id: o.id, name: playerName.get(o.id) ?? String(o.id) },
             deploy: o.deploy,
-            source: enemy_deploy !== undefined ? 'enemy_deploy' : untrustedOf.has(o.id) ? 'untrusted' : 'estimate',
+            source: enemy_deploy !== undefined ? 'enemy_deploy' : knownOf.has(o.id) ? 'known_income' : untrustedOf.has(o.id) ? 'untrusted' : 'estimate',
           })),
         // #180: in a free-for-all, whether you lead (any two opponents are then tried together).
         leader,

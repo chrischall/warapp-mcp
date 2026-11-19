@@ -61,37 +61,41 @@ import { commanderPlace } from './commander.js';
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
- * symmetric (`symmetricStart`), with no teams, and every seated player still playing — a 1v1 (one
- * opponent), or (#226) a free-for-all, where every opponent beside the fog gets the same prior. A
- * game with a player out (eliminated, booted, surrendered) gets none: a survivor may have absorbed
- * its territories, or I may have, so the start no longer says who earns what. Without a player list,
- * only one opponent in sight counts (a 1v1 as far as the board tells). #235: in a free-for-all with
- * no teams (two or more opponents seated) that gets none, `skipped` says why.
+ * symmetric (`symmetricStart`), with no teams — a 1v1 (one opponent), or (#226) a free-for-all, where
+ * every opponent beside the fog gets the same prior. #368: a player out (eliminated, booted,
+ * surrendered) whose seat no AI plays (`seats`, #270) no longer turns it off: its share of what the
+ * board hides goes to the opponents still playing (`opponents` counts them, `out` names it), so the
+ * prior is still at least my income, capped at an even share among the survivors. A seat an AI plays
+ * is an opponent like any other. Without a player list, only one opponent in sight counts (a 1v1 as
+ * far as the board tells). #235: in a free-for-all with no teams (two or more opponents seated) that
+ * gets none, `skipped` says why.
  */
 function fogPrior(
   board: BoardState,
   me: number,
   ctx: PlanGameContext,
   myIncome: number,
+  seats: ReadonlyMap<number, string> = new Map(),
 ): { prior: EnemyIncomePrior | undefined; skipped?: string } {
   const players = (ctx.players ?? []).filter((p) => holdsSeat(p.state));
   if (isTeamGame(players)) return { prior: undefined };
   const ffa = players.filter((p) => p.id !== me).length > 1;
   const why = (reason: string) => ({ prior: undefined, ...(ffa ? { skipped: reason } : {}) });
   if (ctx.symmetricStart !== true) return why(ctx.unevenStart ?? 'the game does not say every player started even');
-  const out = players.filter((p) => (p.state ?? 'Playing') !== 'Playing' && p.id !== me).sort((a, b) => a.id - b.id);
-  if (out.length)
-    return why(
-      `${out.map((p) => `player ${p.id} is out (${p.state})`).join(', ')}, and a survivor may have absorbed its territories, so the start no longer says who earns what`,
-    );
+  // #368: the players out whose seats stand still; their share is split among the rest.
+  const out = players
+    .filter((p) => p.id !== me && seats.has(p.id))
+    .sort((a, b) => a.id - b.id)
+    .map((p) => ({ id: p.id, state: p.state ?? 'Playing' }));
   const opponents = players.length
-    ? players.filter((p) => p.id !== me).length
+    ? players.filter((p) => p.id !== me && !seats.has(p.id)).length
     : new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' && t.owner.playerId !== me ? [t.owner.playerId] : []))).size;
   if (opponents < 1 || (!players.length && opponents !== 1)) return { prior: undefined };
   return {
     prior: {
       myIncome: Math.max(0, myIncome),
-      ...(opponents > 1 ? { format: 'ffa' as const, opponents } : {}),
+      ...(opponents > 1 || out.length ? { format: 'ffa' as const, opponents } : {}),
+      ...(out.length ? { out } : {}),
       ...(ctx.opening ? { opening: ctx.opening } : {}),
     },
   };
@@ -129,6 +133,8 @@ export function planEnemyEstimates(input: {
   turn?: number | null;
   /** G2: the Sanctions on other players the decoder is sure of ({@link applySanctions}). */
   sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
+  /** #368: per-player incomes the user knows ({@link applyKnown}): each replaces that player's estimate. */
+  known?: readonly { player: number; income: number }[];
 }): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
   const ctx = input.game ?? {};
   // #270: a static seat (out, no AI on it) deploys nothing: its territories read as neutrals.
@@ -137,7 +143,7 @@ export function planEnemyEstimates(input: {
   const previousBoard = input.previousBoard ? neutralizeSeats(input.previousBoard, seats) : undefined;
   const tracks = input.tracks?.filter((t) => !seats.has(t.playerId));
   const capCut = input.incomeCap ? Math.max(0, Math.floor(input.incomeCap.uncapped - input.incomeCap.received)) : 0;
-  const { prior, skipped } = fogPrior(board, input.me, ctx, input.income + capCut);
+  const { prior, skipped } = fogPrior(board, input.me, ctx, input.income + capCut, seats);
   const turn = input.turn ?? ctx.turn ?? null;
   const estimates = enemyDeployEstimates(input.graph, board, input.me, input.settings ?? {}, previousBoard, tracks, prior, {
     turn,
@@ -145,8 +151,27 @@ export function planEnemyEstimates(input: {
     reinforcement: ctx.reinforcement,
     ...(previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
-  const priced = applyArmyPrice(applySanctions(estimates, input.sanctions ?? []), input.settings?.armyCostMultiplier ?? 0);
+  const priced = applyKnown(
+    applyArmyPrice(applySanctions(estimates, input.sanctions ?? []), input.settings?.armyCostMultiplier ?? 0),
+    input.known ?? [],
+  );
   return { estimates: priced, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
+}
+
+/**
+ * #368: each estimate whose player the user gave a known income for (what it said in chat, say): that
+ * income replaces the estimate's, whatever its source; a Reinforcement card the clock adds stays on top.
+ * `known` keeps the income given and the one it replaced (`was`, card left out). Unchanged without.
+ */
+export function applyKnown(estimates: EnemyDeployEstimate[], known: readonly { player: number; income: number }[]): EnemyDeployEstimate[] {
+  if (!known.length) return estimates;
+  const by = new Map(known.map((k) => [k.player, Math.max(0, Math.floor(k.income))]));
+  return estimates.map((e) => {
+    const income = by.get(e.playerId);
+    if (income === undefined) return e;
+    const card = e.card?.armies ?? 0;
+    return { ...e, estimate: income + card, known: { income, was: e.estimate - card } };
+  });
 }
 
 /**
@@ -221,6 +246,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     game: ctx,
     turn: turnNow,
     ...(input.sanctions?.length ? { sanctions: input.sanctions } : {}),
+    // #368: a what-if enemyDeploy sizes every opponent itself, so a known income is left out under it.
+    ...(input.knownIncome?.length && opts.enemyDeploy === undefined ? { known: input.knownIncome } : {}),
   });
   const estimateList = allEstimates.filter((e) => notAlly(e.playerId));
   /** An opponent's income: its deploy estimate less the Reinforcement card the clock adds (#164). */

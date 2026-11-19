@@ -210,6 +210,11 @@ export interface OutlookTurn {
    * compared and how much of each opponent's frontier its income was read from (#294's coverage).
    */
   evidence?: OutlookEvidence;
+  /**
+   * #368: the positive bonuses my side held in full on the board before this turn's and no longer holds
+   * in full on it, by id; absent without the board before or with none lost.
+   */
+  bonusesLost?: number[];
   state: OutlookState;
 }
 
@@ -256,6 +261,13 @@ export interface GameOutlook {
   basis: string;
   /** #304: the latest turn's {@link OutlookEvidence}; absent with no turn judged. */
   evidence?: OutlookEvidence;
+  /**
+   * #368: every turn judged ({@link OUTLOOK_TURNS} running) read `even` while my side lost a bonus on each
+   * (`lost`: per turn, the value of the bonuses lost): the ratio lags a slide the board already shows, so
+   * the game leans behind. Reported beside the state, which it never changes (the thresholds stay; the
+   * profile's standing is #287's). Absent otherwise.
+   */
+  leaning?: { toward: 'behind'; turns: number; lost: { turn: number; value: number }[] };
 }
 
 interface OutlookInput {
@@ -724,6 +736,27 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       opponents: evidenceRows,
       thin: evidenceRows.some((r) => r.thin),
     };
+    // #368: the bonuses my side held in full on the board before and does not now.
+    const bonusesLost = prev
+      ? (() => {
+          const side = new Set([me, ...mates]);
+          const sideHeld = (b: BoardState) => {
+            const ts = new Set<number>();
+            for (const x of b.territories)
+              if (g.territoryById.has(x.territoryId) && x.owner.kind === 'player' && side.has(x.owner.playerId)) ts.add(x.territoryId);
+            return ts;
+          };
+          const before = sideHeld(prev);
+          const now = sideHeld(board);
+          const lost: number[] = [];
+          for (const bonus of [...g.bonusById.values()].sort((a, b) => a.id - b.id)) {
+            if (bonus.value <= 0) continue;
+            const ts = bonusTerritories(g, bonus.id);
+            if (ts.length && ts.every((t) => before.has(t)) && !ts.every((t) => now.has(t))) lost.push(bonus.id);
+          }
+          return lost;
+        })()
+      : [];
     const state: OutlookState =
       bound || estimated
         ? 'winning'
@@ -746,6 +779,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       ...(estimated || lostOnEstimate ? { estimated: true as const } : {}),
       ...(lowLikely ? { lowLikely: { myIncome: myNow, mostTracked: mostTracked(), groundDown, losing: lostOnEstimate } } : {}),
       evidence,
+      ...(bonusesLost.length ? { bonusesLost } : {}),
     };
   });
 
@@ -753,6 +787,18 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
   let heldTurns = 0;
   for (let i = turns.length - 1; i >= 0 && turns[i]!.state === last?.state; i--) heldTurns++;
   const state = last && heldTurns >= OUTLOOK_TURNS ? last.state : null;
+  // #368: even for OUTLOOK_TURNS turns running while a bonus of mine fell on each: leaning behind.
+  const leaning: GameOutlook['leaning'] =
+    state === 'even' && turns.length >= OUTLOOK_TURNS && turns.every((t) => t.bonusesLost?.length)
+      ? {
+          toward: 'behind',
+          turns: turns.length,
+          lost: turns.map((t) => ({
+            turn: t.turn,
+            value: t.bonusesLost!.reduce((n, id) => n + Math.max(0, input.graph.bonusById.get(id)?.value ?? 0), 0),
+          })),
+        }
+      : undefined;
   const measure = teamGame
     ? `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). By team: my team's strength (mine and my teammates' still playing) against the strongest enemy team's, each the sum of its players'; summed, a teammate's transfers stay inside its team's high.`
     : `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.`;
@@ -822,6 +868,8 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         ? ` Losing on the estimate: ${share}, corroborated by ${[low.groundDown ? 'the main front grinding me down on the incomes read off my boards' : '', behind ? incomeText : ''].filter(Boolean).join(' and ')}.`
         : ` ${share[0]!.toUpperCase()}${share.slice(1)}, but that alone is no loss: the likely high counts every army an opponent could have received at ${LIKELY_INCOME_MARGIN}× its pace and none it lost, so it reads every fogged opponent strong. Losing on it needs the main front grinding me down on the incomes read off my boards (not the plan's, so the plan acts on the state shown) or my income at most ${BEHIND_RATIO}× the most an opponent is tracked earning${low.mostTracked > 0 ? ` (mine ${low.myIncome}, the most tracked ${low.mostTracked})` : ' (none is tracked)'}.`;
     }
+    if (leaning)
+      reading += ` Leaning behind: even for ${leaning.turns} turns running while I lost bonuses on each (${leaning.lost.map((x) => `turn ${x.turn} +${x.value}`).join(', ')}): the strength ratio lags a slide the board already shows, so read "even" as falling behind.`;
     // #228: the plan's profile standing is a different measure (incomes, then the armies in view).
     const standing = input.standing;
     if ((last.state === 'even' || last.state === 'stalemate') && (standing === 'ahead' || standing === 'behind'))
@@ -852,5 +900,6 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     threshold: OUTLOOK_RATIO,
     basis: `${reading} ${measure} ${thresholdsText}`,
     ...(last?.evidence ? { evidence: last.evidence } : {}),
+    ...(leaning ? { leaning } : {}),
   };
 }
