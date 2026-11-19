@@ -2150,7 +2150,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
-          'armies + 3 × income held over 3 turns of boards, with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; thresholds unmeasured, so advice, not a verdict; ' +
+          'armies + 3 × income held over 3 turns of boards, with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; `leaning: behind` when even for 3 turns while a bonus of yours fell on each; thresholds unmeasured, so advice, not a verdict; ' +
           'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
           'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +

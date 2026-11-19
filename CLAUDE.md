@@ -813,8 +813,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   beside the fog). The
   estimate is max(visible-bonus figure, observed)
   and the warning names the source ("observed +N/turn" vs "base + visible bonuses"). **The fog
-  prior (#119):** in a 1v1 or (#226) a free-for-all that started even (no teams, every seated
-  player still playing — not once a player is out; `PlanGameContext.symmetricStart`, set by
+  prior (#119):** in a 1v1 or (#226) a free-for-all that started even (no teams; #368: a player out
+  whose seat no AI plays no longer turns it off — its share of what the board hides is split among the
+  opponents still playing, `EnemyIncomePrior.out`, and the warning names it; `PlanGameContext.symmetricStart`, set by
   `warapp_plan_turn` from `symmetricStart(settings)`: any distribution but a custom scenario —
   DistributionMode -3 or a `CustomScenario` setting; #235: a map's "scenario" distribution only says
   where each player starts, and the client gives every player the same count at the same armies),
@@ -842,14 +843,26 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (0.5) and the tracked figure beats its visible base + bonuses, the estimate never falls below tracked ×
   `LOW_COVERAGE_FACTOR` (1.5), at most what it could earn (`coverageFloor`, its own warning); both
   constants are unmeasured (the play session's long fogged games tracked a half to a quarter of the
-  income later seen). A tracked figure no higher than its visible income gets no floor. Each observed
+  income later seen). A tracked figure no higher than its visible income gets no floor. **Thin evidence
+  (#368, `thinEvidence`):** with a usable track, while its coverage is under `LOW_COVERAGE` or its tracked
+  figure rose two turns running (`risingTracked`: the most it earned over a turn and the two before it, as
+  of each of its last three consecutive observed turns), the estimate is at least the highest of the
+  tracked figure, the fog prior whole (not `priorBlend`'s shrink) and the trend's next step (the newest
+  figure plus the mean rise of the two steps), at most what it could earn; its own warning names each, and
+  the source reads `prior` when the prior set it, else `tracked`. **A known income (#368,
+  `PlanInput.knownIncome`, warapp_plan_turn's and warapp_check_plan's `known_income`, by GameFeed id)**
+  replaces that opponent's estimate (`applyKnown`, after Sanctions and the army price; a Reinforcement card
+  the clock adds stays on top; `EnemyDeployEstimate.known`), with a warning; `enemy_deploy` wins over it,
+  one for a player with nothing in view is named unused, the tripwire keeps the board's own estimates, and
+  the commander check (plan block, check_plan's `commander`, the submit) keeps its sizing; check_plan's
+  stress test tries it (`enemyDeploy` source `known_income`) before an untrusted mark. Each observed
   deploy also carries `stacks` (`DeployObservation`): every stack of the opponent held in view on both
   boards that grew, its growth split into what a neighbour in view of its own visibly sent (each shrink
   claimed once, first by the stacks with no hidden neighbour, whose rest can only be deploy, then by those
   beside the fog, each in id order), then what could have come out of the fog (beside a hidden territory) or can
   only be deploy; the plan's rationale has one "growth by stack" line per opponent. A
-  free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`, or a player
-  out; a player out is never listed among the opponents beside the fog). The newest observed turn
+  free-for-all with no teams that gets no prior says why (`PlanGameContext.unevenStart`; a player out is
+  never listed among the opponents beside the fog). The newest observed turn
   never lifts a usable track (#235 1c): a stack walking in beside the fog is not income (#123 lesson
   5). When the track ends on this board and #123's bound (twice what it carried before that turn,
   `ObservedTurn.expected`; never the prior) cut armies beside the fog on its newest turn, a warning
@@ -1755,6 +1768,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   …", "Frontier read …", and "Thin evidence: … so "even" is not a safe reading"); plan_turn's compact
   outlook, the outlook log (per turn and `latest`, without the coverage's words) and the surrender preview
   carry it. Reporting only: it never changes the state, a ratio or any plan.
+  **Leaning behind (#368).** Each outlook turn names the positive bonuses my side held in full on the board
+  before and no longer does (`bonusesLost`); when the state is `even` for `OUTLOOK_TURNS` running and every
+  turn of the run lost one, `GameOutlook.leaning` is `{ toward: 'behind', turns, lost }` and the basis says
+  "Leaning behind: …"; plan_turn's compact outlook carries it. Reporting only: the state, its thresholds and
+  the profile's standing (#287) are unchanged.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

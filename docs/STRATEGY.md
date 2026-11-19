@@ -707,7 +707,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `reading-unseen-opponent` — under fog that hides owners (not Light or Dense fog), assume an
   opponent out of sight earns about what you earn, and read its first big stack as saved income. **Advice only** (the planner's estimate is
   base + visible bonuses, or what it observed), derived; from the lost games of 2026-11-12/13,
-  where the estimate ran 2–3× low. Source: Good 1v1 strategies.
+  where the estimate ran 2–3× low. The planner's fog prior (at least my income for an opponent beside the
+  fog, in an even-start 1v1 or free-for-all) stays on after a player is out of a free-for-all, that
+  player's share of the hidden board split among the rest (#368). Source: Good 1v1 strategies.
 - `reading-who-moves-first` — whose deployment or order runs first shows the first mover; under
   a cyclic (not random) order it alternates, and whoever was awarded first moves second on turn 1;
   under fog, the parity of your own deployments (or moves) before its first visible one of the same
@@ -747,7 +749,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   neighbour in view could have moved in, what came out of the fog, and what can only be deploy; only
   the last is income, and while most of its frontier is hidden a low estimate is a floor (fog,
   contact and after). **Advice only** (the planner does not state that split yet, #294), derived;
-  from the lost 1v1s of #300. Source: Good 1v1 strategies.
+  from the lost 1v1s of #300. On thin evidence (under half its frontier read, or its tracked income rising
+  two turns running) the planner sizes an opponent for the highest of its tracked figure, the fog prior and
+  the trend's next step (#368), and takes an income you know from `known_income`. Source: Good 1v1 strategies.
 - `reading-stack-arrival` — When a stack you saw goes out of view, count the turns it needs to
   walk to each of your borders and expect it from that turn on. Do not advance toward where it
   must be unless you are sure to move first; and when a deployment drops with no fight to
