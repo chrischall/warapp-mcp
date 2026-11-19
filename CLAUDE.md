@@ -1008,6 +1008,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   Measured on the golden corpus against the planner without it (916 guard-off boards): plans changed on 59,
   orders on 7, no capture lost, next income never lower, 5 fewer concessions, never more warnings; no
   guard-on plan changes.
+- **A hold that survives by a handful (#314, `finishPlan` in `src/analysis/plan/report.ts`, report only).** For each
+  held border with a stack beside it and at least my income standing there, the plan carries out its threat (the
+  stacks plus the owner's deploy, one luck-free attack); when that fails but the survivors of it alone take what is
+  left of mine next turn, a warning names both figures ("holds by a handful … leaves N of mine against M"). No
+  order changes; the golden hashes changed for the warning only. Sizing the hold for next turn is not done yet.
 - **Opponent tracking (`src/analysis/opponents.ts`, `warapp_track_opponents`) reads that board
   history** with the same rules, consecutive turns only: per opponent the observed deploy each
   turn, income = the most of the last three observed turns (or its stock and flow when more),
