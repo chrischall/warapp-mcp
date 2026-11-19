@@ -429,16 +429,18 @@ interface SendChatParams {
  * SendChat(auth, …) per docs/WEB-PROTOCOL.md (read from the client's
  * serializer; the owner verifies it live): game id, text, channel, optional
  * private recipient, optional game-group id (absent), two marker strings
- * (absent), two optional "last seen" dicts (absent). An optional int32 is a
+ * (`-1`: seen nothing), two optional "last seen" dicts (absent). An optional int32 is a
  * present flag then the value.
  */
 export function writeSendChatParams(w: Writer, p: SendChatParams): void {
   w.int32(p.gameId).string(p.text).int32(p.channel ?? CHAT_CHANNEL_PUBLIC);
   if (p.recipient === undefined) w.bool(false);
   else w.bool(true).int32(p.recipient);
+  // The two chat markers are the last message seen on each channel: war.app parses them as numbers
+  // (ParseLongSafe), so a null one is refused (server error 1); a client that has seen nothing sends `-1`.
   w.bool(false) // game-group id
-    .string(null)
-    .string(null)
+    .string(NO_CHAT_MARKER)
+    .string(NO_CHAT_MARKER)
     .bool(false)
     .bool(false)
     // Protocol 243 added a last, optional list of strings (the shared images a message carries): absent.
