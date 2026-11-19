@@ -1053,7 +1053,7 @@ describe('warapp_send_chat', () => {
     expect(p).toMatchObject({ status: 'sent', game: GAME, to: 'everyone in the game' });
     expect(p.outcome).toBe('accepted');
     expect(s.sent).toEqual([
-      { gameId: GAME, text: 'gl hf', channel: -1, recipient: null, group: false, m1: null, m2: null, d1: false, d2: false, images: false, left: 0 },
+      { gameId: GAME, text: 'gl hf', channel: -1, recipient: null, group: false, m1: '-1', m2: '-1', d1: false, d2: false, images: false, left: 0 },
     ]);
   });
 
@@ -1100,7 +1100,7 @@ describe('warapp_send_chat', () => {
     const p = payload(await confirmed('warapp_send_chat', { game_id: GAME, message: 'push north', channel: 'team' }));
     expect(p).toMatchObject({ status: 'sent', channel: 'team', to: 'your team (team 1)' });
     expect(s.sent).toEqual([
-      { gameId: GAME, text: 'push north', channel: 1, recipient: null, group: false, m1: null, m2: null, d1: false, d2: false, images: false, left: 0 },
+      { gameId: GAME, text: 'push north', channel: 1, recipient: null, group: false, m1: '-1', m2: '-1', d1: false, d2: false, images: false, left: 0 },
     ]);
   });
 

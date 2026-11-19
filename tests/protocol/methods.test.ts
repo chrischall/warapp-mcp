@@ -76,22 +76,22 @@ describe('SendChat params', () => {
     return toHex(w.bytes());
   };
 
-  it('public: game id, text, channel -1, no recipient, no group, empty markers, no last-seen dicts, no images', () => {
+  it('public: game id, text, channel -1, no recipient, no group, markers "-1" (seen nothing; war.app parses them as numbers), no last-seen dicts, no images', () => {
     expect(CHAT_CHANNEL_PUBLIC).toBe(-1);
     expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'gg' }))).toBe(
-      '05000000' + str('gg') + 'FFFFFFFF' + '00' + '00' + '00' + '00' + '00' + '00' + '00', // 243: no image list
+      '05000000' + str('gg') + 'FFFFFFFF' + '00' + '00' + str('-1') + str('-1') + '00' + '00' + '00', // 243: no image list
     );
   });
 
   it('team: the channel is the team number', () => {
     expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'go', channel: 2 }))).toBe(
-      '05000000' + str('go') + '02000000' + '00' + '00' + '00' + '00' + '00' + '00' + '00',
+      '05000000' + str('go') + '02000000' + '00' + '00' + str('-1') + str('-1') + '00' + '00' + '00',
     );
   });
 
   it('private: the recipient is a present int32', () => {
     expect(hex((w) => writeSendChatParams(w, { gameId: 5, text: 'hi', recipient: 1234567 }))).toBe(
-      '05000000' + str('hi') + 'FFFFFFFF' + '01' + '87D61200' + '00' + '00' + '00' + '00' + '00' + '00',
+      '05000000' + str('hi') + 'FFFFFFFF' + '01' + '87D61200' + '00' + str('-1') + str('-1') + '00' + '00' + '00',
     );
   });
 });
