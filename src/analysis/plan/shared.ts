@@ -1136,6 +1136,12 @@ export interface EnemyIncomePrior {
    * ceiling shares the map, not all of it for every one.
    */
   opponents?: number;
+  /**
+   * #368: the players out of a free-for-all whose seats no AI plays (#270), by id with the state that
+   * put each out: their share of what the board hides is split among the `opponents` still playing,
+   * so a player out no longer turns the prior off. Absent with none.
+   */
+  out?: readonly { id: number; state: string }[];
 }
 
 /**

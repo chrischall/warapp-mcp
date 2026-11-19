@@ -1038,7 +1038,13 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
             `Enemy deploy estimate for player ${p}: ~${income} (a prior, not an observation: ${
               (incomePrior!.opening?.get(p) ?? -1) > incomePrior!.myIncome
                 ? `its opening simulated from the starts the award of picks proved earns ${incomePrior!.opening!.get(p)} this turn`
-                : `in ${incomePrior!.format === 'ffa' ? 'a free-for-all that started even (no teams, every player still in)' : 'a 1v1 that started even'}, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
+                : `in ${
+                    incomePrior!.format === 'ffa'
+                      ? incomePrior!.out?.length
+                        ? `a free-for-all that started even (no teams; ${incomePrior!.out.map((o) => `player ${o.id} is out (${o.state})`).join(', ')}, ${incomePrior!.out.length === 1 ? 'its' : 'their'} share of what the board hides split among the ${incomePrior!.opponents} ${incomePrior!.opponents === 1 ? 'opponent' : 'opponents'} still playing)`
+                        : 'a free-for-all that started even (no teams, every player still in)'
+                      : 'a 1v1 that started even'
+                  }, an opponent bordering the fog is assumed to earn at least my own income ${incomePrior!.myIncome}`
             }, ${
               e.priorCap !== null
                 ? `capped at an even share (1 of ${incomePrior!.opponents} opponents) of what the board hides, ${e.priorCap} (all of it would be ${e.couldEarn})`

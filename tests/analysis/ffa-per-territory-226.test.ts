@@ -116,7 +116,7 @@ describe('(b) the fog prior in an even-start free-for-all with no teams', () => 
     expect(planTurn(ffaInput({ income: 22, cardArmies: 10 })).enemyDeploy).toBe(12);
   });
 
-  it('not with teams, not once a player is out, not without an even start', () => {
+  it('not with teams, not without an even start; still once a player is out (#368)', () => {
     const teams = [
       { id: ME, team: 0 },
       { id: A, team: 1 },
@@ -124,7 +124,8 @@ describe('(b) the fog prior in an even-start free-for-all with no teams', () => 
     ];
     expect(planTurn(ffaInput({ game: { players: teams, turn: 6, symmetricStart: true } })).warnings.join('\n')).not.toMatch(/a prior/);
     const out = [...players, { id: 40, state: 'Eliminated' }];
-    expect(planTurn(ffaInput({ game: { players: out, turn: 6, symmetricStart: true } })).warnings.join('\n')).not.toMatch(/a prior/);
+    // #368: a player out no longer turns it off: its share goes to the two opponents still playing.
+    expect(planTurn(ffaInput({ game: { players: out, turn: 6, symmetricStart: true } })).warnings.join('\n')).toMatch(/a prior.*player 40 is out \(Eliminated\)/);
     expect(planTurn(ffaInput({ game: { players, turn: 6, symmetricStart: false } })).warnings.join('\n')).not.toMatch(/a prior/);
   });
 
