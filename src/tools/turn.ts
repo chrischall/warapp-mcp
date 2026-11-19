@@ -2648,7 +2648,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         outlook:
           rung === 'full'
             ? outlook
-            : { state: outlook.state, basis: outlook.basis, ...(outlook.evidence ? { evidence: outlook.evidence } : {}) },
+            : {
+                state: outlook.state,
+                basis: outlook.basis,
+                ...(outlook.evidence ? { evidence: outlook.evidence } : {}),
+                // #368: even while bonuses kept falling.
+                ...(outlook.leaning ? { leaning: outlook.leaning } : {}),
+              },
         // Part D: the opponent reads (reported only, never planned on); absent when none is at the bar.
         ...(reads?.length
           ? {

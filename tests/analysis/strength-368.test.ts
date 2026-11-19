@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
+import { gameOutlook } from '../../src/analysis/outlook.js';
 import type { ObservedTurn, OpponentTrack } from '../../src/analysis/opponents.js';
 import {
   enemyDeployEstimates,
@@ -266,5 +267,41 @@ describe('(3) a known per-player income overrides the estimate', () => {
   it('enemyDeploy, a what-if for every opponent, wins over it', () => {
     const p = planTurn(ffa({ knownIncome: [{ player: A, income: 40 }], options: { adapt: true, enemyDeploy: 12 } }));
     expect(p.enemyDeploy).toBe(12);
+  });
+});
+
+describe('(4) the outlook leans behind when it reads even while bonuses keep falling', () => {
+  // A line of ten territories, each its own +1 bonus; no fog. I hold 1–k at 30 armies each, the foe the
+  // rest at 10: every turn I lose one territory (and its bonus), and strength stays within the even band.
+  const ten: GameMap = {
+    id: 2,
+    name: 'Line',
+    territories: Array.from({ length: 10 }, (_, i) => ({
+      id: i + 1,
+      name: `L${i + 1}`,
+      connectedTo: [i, i + 2].filter((x) => x >= 1 && x <= 10),
+    })),
+    bonuses: Array.from({ length: 10 }, (_, i) => ({ id: 500 + i + 1, name: `P${i + 1}`, value: 1, territoryIds: [i + 1], bonusIds: [] })),
+    distributionModes: [],
+  };
+  const lg = buildGraph(ten);
+  const held = (k: number) => board(Array.from({ length: 10 }, (_, i) => (i < k ? mine(i + 1, 30) : enemy(i + 1, 10))));
+  const game = { players: [{ id: ME }, { id: A }] };
+  const run = (ks: number[]) => gameOutlook({ graph: lg, me: ME, boards: ks.map((k, i) => ({ turn: 3 + i, board: held(k) })), game });
+
+  it('even for OUTLOOK_TURNS turns running, a bonus of mine lost on each: leaning behind, with the bonuses lost', () => {
+    const o = run([5, 4, 3, 2]);
+    expect(o.turns.map((t) => t.state)).toEqual(['even', 'even', 'even']);
+    expect(o.state).toBe('even');
+    expect(o.turns.map((t) => t.bonusesLost)).toEqual([[505], [504], [503]]);
+    expect(o.leaning).toEqual({ toward: 'behind', turns: 3, lost: [{ turn: 4, value: 1 }, { turn: 5, value: 1 }, { turn: 6, value: 1 }] });
+    expect(o.basis).toMatch(
+      /Leaning behind: even for 3 turns running while I lost bonuses on each \(turn 4 \+1, turn 5 \+1, turn 6 \+1\): the strength ratio lags a slide/,
+    );
+  });
+
+  it('no lean when a turn of the run lost no bonus, or the state is not even', () => {
+    expect(run([5, 4, 4, 3]).leaning).toBeUndefined();
+    expect(run([5, 5, 5, 5]).leaning).toBeUndefined();
   });
 });
