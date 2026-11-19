@@ -441,7 +441,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (my commander, then income, territories, armies); it changes no order. `warapp_check_plan` reads the same
   truces (`truceRelations`, `src/tools/turn.ts`), keeps every partner among the opponents (`safe` is safe
   against a break), marks a reply that attacks a covered territory `breaksTruce`, and adds `safeIfTruceHolds`
-  over the rest (`stressPlan`'s `truces`; a mixed all-attack is dropped whole). **`warapp_submit_turn` refuses
+  over the rest (`stressPlan`'s `truces`; a mixed all-attack is dropped whole). #376: such replies rank after every
+  reply that keeps the truces (so `worst` is a real threat), and an `exposedNextTurn` entry whose partner reaches it
+  through a covered territory (or takes a covered one) is `breaksTruce` too, listed last and counted apart in the summary. **`warapp_submit_turn` refuses
   an order that attacks a territory an active or in-notice agreement covers** (`truceBreaksIn`, the ledger and
   the live board only) unless `break_agreement: true`; then the preview names the agreement, and once the
   outcome is `confirmed` the ledger records `broken-by-me` and the player record updates
