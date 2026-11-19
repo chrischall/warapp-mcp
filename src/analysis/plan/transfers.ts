@@ -14,6 +14,8 @@
 // and never from a stack beside a visible enemy at the start of the turn (interior only once a
 // strike lands).
 // When those steps together make the border hold, it is held after all, never left reported conceded.
+// #367: heading for an enemy front, a step must also bring the stack strictly nearer it measured through
+// the conceded borders, so a stack behind one waits where the front will be instead of walking away and back.
 import { bfsDistances, neighborsOf } from '../graph.js';
 import type { Captures } from './captures.js';
 import type { Holds } from './holds.js';
@@ -188,6 +190,25 @@ export function transfers(
     const withdrawn = new Set(moves.filter((m) => m.kind === 'transfer' && conceded.has(m.from)).map((m) => m.from));
     const viaOk = (id: number) => !conceded.has(id) || (!withdrawn.has(id) && attacksFrom(id).length > 0);
     const distEnemyVia = bfsDistances(g, enemyFront, { passable: (id) => held.has(id) && viaOk(id) });
+    // #367: the enemy front measured through every territory held, conceded borders included. A border the
+    // plan concedes falls to the stack beside it, and the front is then right where it stood; measured only
+    // around it (distEnemy), the front jumped to a farther one and an idle stack behind it walked away, to
+    // walk straight back the next turn once the border had fallen (live: 649 armies, twice). So a step toward
+    // an enemy front must also bring the stack strictly nearer it measured this way: one board, no memory.
+    const distEnemyThrough = bfsDistances(g, enemyFront, { passable: (id) => held.has(id) });
+    /** The conceded border on the way from `t` to the enemy front nearest it through conceded borders, and that front. */
+    const pastConceded = (t: number): { border: number; front: number } | undefined => {
+      let at = t;
+      let border: number | undefined;
+      while ((distEnemyThrough.get(at) ?? 0) > 0) {
+        const d = distEnemyThrough.get(at)!;
+        at = neighborsOf(g, at)
+          .filter((x) => distEnemyThrough.get(x) === d - 1)
+          .sort((a, b) => Number(conceded.has(b)) - Number(conceded.has(a)) || a - b)[0]!;
+        if (border === undefined && conceded.has(at)) border = at;
+      }
+      return border === undefined ? undefined : { border, front: at };
+    };
     // #125: staging. Idle armies on a territory facing no visible enemy — a border beside neutrals
     // included — walk one step toward the source of the capture the leftover saved toward, when
     // it is no farther than the enemy front; once there they help take it.
@@ -266,7 +287,7 @@ export function transfers(
       // Only into a territory held at the start of the turn: a planned capture is
       // not mine yet, and a "transfer" into it would execute as an attack.
       // B2 (T5): never onto a truce's capped border past its cap, nor back along a transfer.
-      const step = neighborsOf(g, t)
+      const steps = neighborsOf(g, t)
         .filter(
           (x) =>
             mineSet.has(x) &&
@@ -274,8 +295,24 @@ export function transfers(
             (dist.get(x) ?? Infinity) < d &&
             capStepRoom(pc, ps, t, x) > 0,
         )
-        .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b)[0];
-      if (step === undefined) continue;
+        .sort((a, b) => dist.get(a)! - dist.get(b)! || a - b);
+      // #367: heading for an enemy front, never a step that does not bring the stack strictly nearer it
+      // through the conceded borders (a #260 via step already goes through one, and a neutral edge is
+      // another target: both as before).
+      const through = !via && dist === distEnemy ? distEnemyThrough.get(t) : undefined;
+      const step = steps.find((x) => through === undefined || (distEnemyThrough.get(x) ?? Infinity) < through);
+      if (step === undefined) {
+        const past = steps.length ? pastConceded(t) : undefined;
+        if (past) {
+          rationale.push(
+            `Keep the ${n} idle armies on ${label(t)}: the enemy front nearest them, ${label(past.front)}, lies past ${label(past.border)}, a border the plan concedes (#367); once it falls the front is here, so they do not walk away toward a farther front only to walk back.`,
+          );
+          // #291: what a stack two steps away needs them to hold here, said as when the keep alone stops them.
+          const { twoStep } = keepOf(t);
+          if (twoStep) rationale.push(twoStepCite(t, twoStep, (c) => `Keep the ${n} idle armies on ${label(t)}: ${c}.`, `Keep the ${n} idle armies on ${label(t)}.`));
+        }
+        continue;
+      }
       const { pending, ifFail, twoStep, truceHold, keep } = keepOf(t);
       // No-Split (#124): a transfer sends the whole stack, so one that must keep some sends none.
       const room = capStepRoom(pc, ps, t, step);

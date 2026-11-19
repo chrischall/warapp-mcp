@@ -1250,7 +1250,14 @@
 //     into it from Y, Z make it hold together …"), never left reported conceded. Only a stack
 //     no enemy can be reached from heads for the nearest territory
 //     not mine (neutral or fog; never a teammate's, PLAN-TEAMS C3) instead (#121: idle armies walked toward a worthless neutral
-//     while the enemy front was short, and a stack beside one never moved). This turn's
+//     while the enemy front was short, and a stack beside one never moved). Heading for an enemy
+//     front (not by a #260 step, not to a neutral edge), a step must also bring the stack strictly
+//     nearer the enemy front measured through every territory held, conceded borders included (#367):
+//     a conceded border falls to the stack beside it and the front is then right there, so a stack
+//     behind one waits ("Keep the N idle armies on X: the enemy front nearest them, Y, lies past Z, a
+//     border the plan concedes (#367) …"). Measured only around it, the front jumped to a farther
+//     one; live, a 649 stack walked away from a conceded border and straight back the next turn, once
+//     it had fallen. Judged on the one board, no memory of last turn. This turn's
 //     captures count as mine only when they land for sure — a neutral, or an attack on a player
 //     sized for its owner's whole deploy (rule 1e, 1s, or rule 3's #120 sizing): an exact-sized attack on a player fails
 //     if the owner reinforces, and the garrison beside it is not idle. Even a sure one may fail
