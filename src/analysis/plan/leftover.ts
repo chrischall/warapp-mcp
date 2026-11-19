@@ -615,6 +615,51 @@ export function leftoverDeploy(
       }
       return got;
     };
+    /**
+     * #290 (owner decision 2026-11-19): before the even spread, a border whose enemy stack beside it grew
+     * this turn (as the two boards show it) is topped up to hold against that stack plus its owner's whole
+     * observed deploy — the estimate, the observed figure before its cap, this turn's high reading (growth
+     * beside the fog read as deploy), or the reading #123's bound cut on the track (`newestCut`): a jump
+     * kept as a lower bound counts in full — highest protected value first, as far as the leftover goes.
+     * The spread itself is unchanged.
+     */
+    const fundGrown = () => {
+      const whole = (b: Border) => {
+        const e = pc.estimates.get(b.player);
+        return Math.max(b.deploy, grewBy(b), e?.observedRaw ?? 0, e?.observation?.high ?? 0, e?.newestCut?.reading ?? 0);
+      };
+      /** The most any stack of the border's opponent beside it grew since the previous board, as the boards show it. */
+      const grewBy = (b: Border) =>
+        Math.max(
+          0,
+          ...neighborsOf(g, b.id).map((n) => {
+            const st = state.get(n);
+            const was = threats.previousBoard?.territories.find((t) => t.territoryId === n);
+            const same = (t: typeof st) => t?.owner.kind === 'player' && t.owner.playerId === b.player && typeof t.armies === 'number';
+            return same(st) && same(was) ? st!.armies! - was!.armies! : 0;
+          }),
+        );
+      const grown = [...borders.values()]
+        .filter((b) => grewBy(b) > 0 && open(b.id) && !orderOf(b.id) && !moves.some((m) => m.from === b.id && m.kind === 'attack'))
+        .sort((a, b) => valueOf(b.id) - valueOf(a.id) || a.id - b.id);
+      for (const b of grown) {
+        const bar = b.movable + whole(b);
+        let d = 0;
+        const room = roomAt(b.id);
+        while (d < room && d < ps.budget) {
+          const take = toTake(stays(b.id) + d + unitsAt(b.id));
+          if (take === null || take > bar) break;
+          d++;
+        }
+        if (d <= 0) continue;
+        deploy(b.id, d);
+        locked.add(b.id);
+        keepFromMargin(b.id);
+        rationale.push(
+          `Deploy ${d} of the leftover to ${label(b.id)} before the spread (#290): player ${b.player}'s stack beside it grew this turn (+${grewBy(b)}), so it is topped up toward its ${b.movable} movable armies plus its whole observed deploy (~${whole(b)}) (protects +${valueOf(b.id)}).`,
+        );
+      }
+    };
     /** #268: the rest spread by {@link headroomSpread}, already deployed: nothing is left for `where`. */
     let spreadRest: Map<number, number> | undefined;
     let where: number;
@@ -681,6 +726,7 @@ export function leftoverDeploy(
         }${spread ? ', once every short border has its comfortable margin' : ''}`;
       } else {
         where = short[0].id;
+        fundGrown();
         spreadRest = headroomSpread(short[0], !spread);
         why = spread
           ? `the rest, once every short border has its comfortable margin, to the one with the most at stake (protects +${valueOf(where)})`

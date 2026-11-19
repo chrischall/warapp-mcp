@@ -114,6 +114,8 @@ export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput) {
   return {
     ...seen,
     growthOf,
+    /** #290: the previous board as given (the leftover reads which enemy stacks grew since). */
+    previousBoard: input.previousBoard,
     deployReaching,
     reinforcementAt,
     holdArmies,

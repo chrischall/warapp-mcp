@@ -1449,6 +1449,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     two others to fall at ~1.5× the estimate). One such border, my commander's, or an attack's source
     keeps the old rule; the pools of Local Deployment are respected. Its "~D" is the threat arithmetic on
     the deploys before any move, not #275's `headroom` (the whole turn carried out), and its line says so.
+    #290 (owner decision 2026-11-19, `fundGrown`): before that spread, each open border (no attack out) beside a
+    stack of its opponent that grew since the previous board (the two boards, `Threats.previousBoard`) is topped up,
+    highest protected value first and as far as the leftover goes, to hold against that stack's movable armies plus
+    the opponent's whole observed deploy: the largest of its estimate, `observedRaw`, this turn's high reading
+    (`observation.high`, growth beside the fog read as deploy) and the track's cut reading (`newestCut`) — a jump
+    kept as a lower bound counts in full. A "(#290)" line names each; the spread itself is unchanged.
     #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
     reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
     sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,
