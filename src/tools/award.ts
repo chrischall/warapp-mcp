@@ -6,7 +6,7 @@ import { openingIncome, PICK_HORIZON } from '../analysis/picks.js';
 import type { BoardState, TerritoryState } from '../board.js';
 import { FOG_LEVEL_NAMES, FOG_LEVEL_OWNER_ONLY, FOG_LEVEL_VISIBLE } from '../live.js';
 import type { Game, Player } from '../normalize.js';
-import { readFirstMover, resolveFirstMover, verifiedFirstMover, writeFirstMover, type FirstMover, type FirstMoverSource } from '../move-order.js';
+import { readFirstMover, resolveFirstMover, verifiedFirstMover, writeFirstMover, type FirstMover, type FirstMoverSeen, type FirstMoverSource } from '../move-order.js';
 import { readPickRecord, writeAward } from '../pick-list.js';
 import { pickSettings } from './picks.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
@@ -237,7 +237,15 @@ interface FirstMoverView {
   /** `explicit`: `first_mover` given; `award`: the award of picks; `remembered`: alternated from the turn in `from`. */
   source: FirstMoverSource | 'remembered';
   from?: { turn: number; source: FirstMoverSource };
+  /** #299: the plan's one line on it, e.g. "You move first on turn 7 (…)". */
+  line: string;
 }
+
+const FROM_SAID: Record<FirstMoverSource, string> = {
+  explicit: 'first_mover given',
+  award: 'the award of picks',
+  inferred: 'inferred from my first order there, not verified',
+};
 
 /**
  * Who moves first on `turn` (#127): `first_mover` when given, else what this server knows — a
@@ -251,7 +259,7 @@ export async function firstMoverFor(
   turn: number | null,
   explicit: FirstMover | undefined,
   award: AwardContext | undefined,
-  o: { write?: boolean } = {},
+  o: { write?: boolean; inferred?: FirstMoverSeen } = {},
 ): Promise<{ firstMover?: FirstMover; verified?: boolean; view: FirstMoverView | null; warnings: string[] }> {
   const cyclicDuel = game.players.length === 2 && isCyclicMoveOrder(game.settings?.moveOrder);
   const remembered = dataDir && cyclicDuel ? await readFirstMover(dataDir, game.id, me.id) : undefined;
@@ -260,6 +268,7 @@ export async function firstMoverFor(
     cyclicDuel,
     ...(explicit ? { explicit } : {}),
     award: award?.firstMover ?? null,
+    ...(o.inferred ? { inferred: o.inferred } : {}),
     ...(remembered ? { remembered } : {}),
   });
   if (dataDir && record && o.write !== false) await writeFirstMover(dataDir, game.id, me.id, record);
@@ -268,7 +277,16 @@ export async function firstMoverFor(
     firstMover: resolved.firstMover,
     // #215 review: only a first mover the user gave is verified; the award's is the wiki's rule.
     verified: verifiedFirstMover(resolved),
-    view: { who: resolved.firstMover === 'me' ? 'you' : 'opponent', source: resolved.source, ...(resolved.from ? { from: resolved.from } : {}) },
+    view: {
+      who: resolved.firstMover === 'me' ? 'you' : 'opponent',
+      source: resolved.source,
+      ...(resolved.from ? { from: resolved.from } : {}),
+      line:
+        `${resolved.firstMover === 'me' ? 'You move' : 'The opponent moves'} first` +
+        `${turn === null ? ' this turn' : ` on turn ${turn}`} (` +
+        (resolved.from ? `alternated from turn ${resolved.from.turn}: ${FROM_SAID[resolved.from.source]}` : FROM_SAID[resolved.source as FirstMoverSource]) +
+        ').',
+    },
     warnings,
   };
 }

@@ -8,6 +8,7 @@
 // the expected outcome and the offence report after Order Priority for a strike, the plan last,
 // after the move order (plan/move-order.ts).
 import { bonusTerritories } from '../bonuses.js';
+import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from '../combat.js';
 import { classifyExchange, type ExchangeCase } from '../exchange.js';
 import { neighborsOf } from '../graph.js';
 import {
@@ -754,6 +755,28 @@ export function finishPlan(
         })
         .join('; ')}.`,
     );
+
+  // ---- #314: a hold that survives by a handful ----
+  // What stays on a held border against its threat (the stack beside it plus its owner's deploy, one
+  // attack), luck-free: when that attack fails but leaves so little of mine that its own survivors
+  // take it next turn with nothing more deployed, the border is lost anyway. Only a contested big stack
+  // (mine at least a turn's income, facing a stack): a small border is re-sized every turn. Report only.
+  for (const b of [...borders.values()].sort((a, c) => a.id - c.id)) {
+    if (conceded.has(b.id) || b.movable <= 0) continue;
+    const have = stayAt(b.id) + unitsAt(b.id);
+    if (have < income) continue;
+    const take = toTake(have);
+    if (take === null || take <= b.threat) continue;
+    const mineAfter = Math.max(0, have - straightKills(b.threat, rates.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE));
+    const hisAfter = Math.max(0, b.threat - straightKills(have, rates.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE));
+    const next = toTake(mineAfter);
+    if (next === null || next > hisAfter) continue;
+    warnings.push(
+      `${label(b.id)} holds by a handful (#314): an attack of ${b.threat} (its stacks beside it plus player ${b.player}'s deploy) ` +
+        `leaves ${mineAfter} of mine against ${hisAfter} of player ${b.player}'s, which take it next turn with nothing more there: ` +
+        'it holds this turn only, so add to it or plan for losing the stack.',
+    );
+  }
 
   // ---- #179: turns to eliminate each visible opponent ----
   const eliminateEta: Record<number, EliminateEta> = {};

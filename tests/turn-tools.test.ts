@@ -1913,13 +1913,13 @@ describe('cards in the turn tools', () => {
     await h.harness.close();
     h = await harness('3');
     const later = payload<CardsPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(later.firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(later.firstMover).toMatchObject({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
     expect(later.cardAdvice).toBeNull();
     // Turn 3 alternates: the opponent moves first, and the card is advised again.
     await h.harness.close();
     h = await harness('2');
     const odd = payload<CardsPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(odd.firstMover).toEqual({ who: 'opponent', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(odd.firstMover).toMatchObject({ who: 'opponent', source: 'remembered', from: { turn: 2, source: 'explicit' } });
     expect(odd.cardAdvice).toBe('order-priority');
   });
 
@@ -2850,6 +2850,16 @@ describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)'
       }),
     );
     expect(check.warnings.join('\n')).toMatch(/which you asked to avoid/);
+  });
+
+  it('#277: warapp_check_plan reports the income Sanctions on me leave, as warapp_plan_turn does', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([san(3)]) }) });
+    const p = payload<{ income: number; deployed: number; warnings: string[] }>(
+      await h.call('warapp_check_plan', { game_id: GAME, orders: [{ kind: 'deploy', territory: 161, armies: 2 }] }),
+    );
+    expect(p.income).toBe(2);
+    expect(p.deployed).toBe(2);
+    expect(p.warnings.join('\n')).not.toMatch(/your income is/);
   });
 });
 
@@ -3885,7 +3895,7 @@ describe('warapp_plan_turn finishing a player off (#179): the move order, the ca
     await writeFirstMover(dir, GAME, me, { turn: 2, firstMover: 'opponent', source: 'explicit' });
     h = await liveHarness({ feed: [duel()], warapp, dataDir: dir });
     const first = await plan();
-    expect((first as unknown as { firstMover: unknown }).firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect((first as unknown as { firstMover: unknown }).firstMover).toMatchObject({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
     expect(first.rationale.join('\n')).toMatch(FINISHED);
     expect(first.rationale.join('\n')).not.toMatch(COVER);
     expect(first.cardAdvice).toBeNull();
