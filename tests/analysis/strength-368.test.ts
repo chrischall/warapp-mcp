@@ -187,3 +187,54 @@ describe('(1) a player out keeps the FFA fog prior: its share goes to the oppone
     expect(r.priorSkipped).toBe('a custom scenario');
   });
 });
+
+describe('(2) thin evidence: the estimate is the highest of the tracked figure, the fog prior and the trend', () => {
+  // A 1v1 for the estimates below: one opponent (A) beside the fog; B's T6 is left out by using A only.
+  const one = board([mine(1, 40), mine(2, 3), mine(3, 3), mine(4, 40), enemy(5, 30), neutral(6, 2), neutral(30, 2), ...fog]);
+  const at = (t: OpponentTrack, prior?: { myIncome: number }) =>
+    enemyDeployEstimates(g, one, ME, STD, undefined, [t], prior).find((e) => e.playerId === A)!;
+
+  it(`read from under ${LOW_COVERAGE * 100}% of its frontier: the fog prior stands whole, not shrunk toward the track`, () => {
+    // Six turns of a track at 26, each turn reading 30% of its frontier; my income 91.
+    const thin = at(track(A, 26, [26, 26, 26, 26, 26, 26], { share: 0.3 }), { myIncome: 91 });
+    expect(thin).toMatchObject({ estimate: 91, source: 'prior' });
+    expect(thin.thinEvidence).toMatchObject({ coverage: 0.3, rising: null, tracked: 26, prior: 91, trend: null, figure: 91 });
+    // The same evidence read from 80% of its frontier is no thin evidence: the prior shrinks as before (#235).
+    const thick = at(track(A, 26, [26, 26, 26, 26, 26, 26], { share: 0.8 }), { myIncome: 91 });
+    expect(thick.thinEvidence).toBeNull();
+    expect(thick.estimate).toBeLessThan(91);
+  });
+
+  it('tracked income rising two turns running: the trend projects one more step', () => {
+    // Its readings 10, 20, 40, 60: the tracked figure (the most of a turn and the two before it) as of
+    // each of the last three turns read 20, 40, 60 — rising twice; one more step of the mean rise
+    // ((60 − 20) / 2 = 20) gives 80.
+    const e = at(track(A, 60, [10, 20, 40, 60], { share: 0.8 }));
+    expect(e.thinEvidence).toMatchObject({ coverage: 0.8, rising: [20, 40, 60], tracked: 60, prior: null, trend: 80, figure: 80 });
+    expect(e).toMatchObject({ estimate: 80, source: 'tracked' });
+  });
+
+  it('not rising when one of the last two steps is flat', () => {
+    const e = at(track(A, 40, [10, 40, 40, 40], { share: 0.8 }));
+    expect(e.thinEvidence).toBeNull();
+    expect(e.estimate).toBe(40);
+  });
+
+  it('the trend and the prior: the higher wins, capped at what it could earn', () => {
+    const e = at(track(A, 60, [10, 20, 40, 60], { share: 0.3 }), { myIncome: 91 });
+    expect(e.thinEvidence).toMatchObject({ trend: 80, prior: 91, figure: 91 });
+    const huge = at(track(A, 600, [100, 200, 400, 600], { share: 0.3 }));
+    // 600 + 200 = 800 projected, at most its base 10 + the fogged 800 = 810; the low-coverage floor
+    // (600 × 1.5 = 900, capped at 810) is higher still and keeps its own label.
+    expect(huge.estimate).toBe(810);
+  });
+
+  it('the plan warns what the estimate rests on', () => {
+    const p = planTurn(
+      ffa({ board: one, game: { players: [{ id: ME }, { id: A }], turn: 12, symmetricStart: false }, tracks: [track(A, 60, [10, 20, 40, 60], { share: 0.8 })] }),
+    );
+    expect(p.warnings.join('\n')).toMatch(
+      /Enemy deploy estimate for player 20: ~80 \(thin evidence: its tracked income rose two turns running \(20, 40, 60\), so it is sized for the highest of the tracked ~60 and the trend's next step ~80, not the lower bound\)/,
+    );
+  });
+});

@@ -1027,6 +1027,26 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               e.source === 'tracked' ? 'tracked' : e.source === 'prior' ? 'the fog prior' : 'its visible base + bonuses'
             }) because a stack walking in is not income (#123). To test the higher figure, pass enemy_deploy ${cut.reading} to warapp_check_plan.`,
           );
+        // #368: thin evidence sizes it for the highest of the tracked figure, the prior and the trend.
+        if (e.thinEvidence) {
+          const t = e.thinEvidence;
+          const why = [
+            ...(t.coverage !== null && t.coverage < LOW_COVERAGE
+              ? [`its tracked income was read from ${Math.round(t.coverage * 100)}% of its frontier, under ${Math.round(LOW_COVERAGE * 100)}%`]
+              : []),
+            ...(t.rising ? [`its tracked income rose two turns running (${t.rising.join(', ')})`] : []),
+          ];
+          const figures = [
+            `the tracked ~${t.tracked}`,
+            ...(t.prior !== null ? [`the fog prior ~${t.prior} (not shrunk toward the track)`] : []),
+            ...(t.trend !== null ? [`the trend's next step ~${t.trend}`] : []),
+          ];
+          const list = figures.length > 1 ? `${figures.slice(0, -1).join(', ')} and ${figures.at(-1)}` : figures[0]!;
+          warnings.push(
+            `Enemy deploy estimate for player ${p}: ~${income} (thin evidence: ${why.join(' and ')}, so it is sized for the highest of ${list}, not the lower bound${t.figure === e.couldEarn ? `, capped at the most it could earn, ${e.couldEarn}` : ''})${withCard}; it could deploy more.`,
+          );
+          continue;
+        }
         if (e.source === 'exact') {
           warnings.push(
             `Enemy deploy estimate for player ${p}: ~${income} (exact: under ${ctx.fog} every territory's owner shows, so its income is ${visible}${e.observed !== null && e.observed > income ? `; the +${e.observed} observed above it is a card or armies the board misread, not income` : ''}); only the army cap, Sanctions and a Reinforcement card are unknown.`,

@@ -5,7 +5,7 @@
 import type { IncomePoint, IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
 import { commerceRules } from '../../commerce.js';
-import type { MyOrders, OpponentTrack } from '../opponents.js';
+import type { MyOrders, ObservedTurn, OpponentTrack } from '../opponents.js';
 import type { GameSettings } from '../../normalize.js';
 import { bonusTerritories } from '../bonuses.js';
 import {
@@ -1066,6 +1066,22 @@ export interface EnemyDeployEstimate {
    * says nothing the board does not, and the fog prior, where asked for, covers the rest).
    */
   coverageFloor: { tracked: number; share: number; factor: number; figure: number } | null;
+  /**
+   * #368: the evidence behind its tracked figure was thin — read from under {@link LOW_COVERAGE} of its
+   * frontier (`coverage`), or its tracked figure rose two turns running (`rising`: as of each of its last
+   * three consecutive observed turns, {@link risingTracked}) — and the highest of `tracked`, the fog prior
+   * (`prior`, whole: never shrunk toward the track) and the trend's next step (`trend`: the newest figure
+   * plus the mean rise of the last two turns) was above the estimate otherwise: it is `figure` (at most
+   * `couldEarn`). `null` otherwise, with an exact income, and without a usable track.
+   */
+  thinEvidence?: {
+    coverage: number | null;
+    rising: number[] | null;
+    tracked: number;
+    prior: number | null;
+    trend: number | null;
+    figure: number;
+  } | null;
   /**
    * #235: in a free-for-all (`EnemyIncomePrior.opponents`), the cap on the prior: its visible
    * territories and bonuses plus an even share of the territories the board hides and of the bonuses
@@ -2187,6 +2203,20 @@ export function openingArmies(
  * the same count, with no previous board and `when.turn` unknown or the first) every
  * opponent gets the floor.
  */
+/**
+ * #368: an opponent's tracked figure as of each of its last three consecutive observed turns — the most
+ * it was seen to earn (`earned`) over that turn and the two before it, the tracker's max-observed window —
+ * when it rose on both steps; else `null` (fewer than three consecutive turns, or a step not a rise).
+ */
+export function risingTracked(turns: readonly Pick<ObservedTurn, 'from' | 'earned'>[]): number[] | null {
+  const n = turns.length;
+  if (n < 3) return null;
+  for (let i = n - 2; i < n; i++) if (turns[i]!.from !== turns[i - 1]!.from + 1) return null;
+  const asOf = (i: number) => Math.max(...turns.slice(Math.max(0, i - 2), i + 1).map((x) => x.earned));
+  const series = [asOf(n - 3), asOf(n - 2), asOf(n - 1)];
+  return series[0]! < series[1]! && series[1]! < series[2]! ? series : null;
+}
+
 export function enemyDeployEstimates(
   g: MapGraph,
   board: BoardState,
@@ -2385,7 +2415,28 @@ export function enemyDeployEstimates(
         : null;
     const coverageFloor: EnemyDeployEstimate['coverageFloor'] =
       lowFloor !== null && lowFloor > chosen ? { tracked: tracked!, share: coverage!.share, factor: LOW_COVERAGE_FACTOR, figure: lowFloor } : null;
-    const income = coverageFloor ? coverageFloor.figure : chosen;
+    const floored = coverageFloor ? coverageFloor.figure : chosen;
+    // #368: thin evidence — its tracked figure read from under LOW_COVERAGE of its frontier, or rising two
+    // turns running — sizes it for the highest of the tracked figure, the fog prior (whole, not shrunk
+    // toward the track) and the trend's next step, never the lower bound alone.
+    let thinEvidence: EnemyDeployEstimate['thinEvidence'] = null;
+    if (source !== 'exact' && usable && tracked !== null) {
+      const rising = risingTracked(usable.turns);
+      const thinCoverage = coverage !== null && coverage.share < LOW_COVERAGE;
+      if (thinCoverage || rising) {
+        const trend = rising ? Math.min(couldEarn, rising[2]! + Math.ceil((rising[2]! - rising[0]!) / 2 - 1e-9)) : null;
+        const figure = Math.min(couldEarn, Math.max(tracked, priorFigure ?? 0, trend ?? 0));
+        if (figure > floored)
+          thinEvidence = { coverage: coverage ? coverage.share : null, rising, tracked, prior: priorFigure, trend, figure };
+      }
+    }
+    const income = thinEvidence ? thinEvidence.figure : floored;
+    // #368: the figure thin evidence chose names its source: the prior when it is the prior, else the track.
+    const finalSource: EnemyDeployEstimate['source'] = thinEvidence
+      ? thinEvidence.prior !== null && thinEvidence.figure === Math.min(couldEarn, thinEvidence.prior) && thinEvidence.prior > tracked!
+        ? 'prior'
+        : 'tracked'
+      : source;
     // #164: a Reinforcement card, from the turn the clock says one can be in hand, until a deployment
     // above its income is seen; the next card is due a card's capturing turns after the last one
     // (pieces carry over while a card is held), never before the turn after the play.
@@ -2444,7 +2495,8 @@ export function enemyDeployEstimates(
       coverageFloor,
       priorCap,
       fogBeside,
-      source,
+      source: finalSource,
+      thinEvidence,
       exact,
       card,
       cardPlayed,

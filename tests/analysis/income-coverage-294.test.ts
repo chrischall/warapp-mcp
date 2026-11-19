@@ -173,7 +173,8 @@ describe('(3) the prior shrinks by the coverage of the observed turns', () => {
     // The prior: my income 40, capped at the 40 it could earn. Three turns at 25% coverage: 0.75.
     expect(e!.priorBlend).toMatchObject({ prior: 40, toward: 15, turns: 3, share: 0.25 });
     expect(e!.priorBlend!.weight).toBeCloseTo(4 / 4.75, 9);
-    expect(e).toMatchObject({ estimate: 15 + Math.ceil((4 / 4.75) * 25), source: 'prior' });
+    // #368: but read from under 50% of its frontier the evidence is thin, so the estimate is the prior whole.
+    expect(e).toMatchObject({ estimate: 40, source: 'prior', thinEvidence: { coverage: 0.25, prior: 40, figure: 40 } });
   });
 
   it('more coverage, more shrink', () => {
