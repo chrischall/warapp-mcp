@@ -158,7 +158,7 @@ import { HEADROOM_COMPACT, headroomView, headroomWarnings, keepTripwires, readTr
 import type { Tripwire } from '../analysis/tripwire.js';
 
 const VIEWS = ['compact', 'full'] as const;
-const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend'] as const satisfies readonly PlanGoal[];
+const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend', 'siege'] as const satisfies readonly PlanGoal[];
 /** The only GameFeed state in which turns are played. */
 const TURN_PHASE_STATE = 'Playing';
 const MAX_ORDERS = 500;
@@ -1663,6 +1663,8 @@ export interface LivePlanArgs {
   knownIncome?: readonly { player: number; income: number }[];
   /** #375: territories and players no pass attacks (`avoid_territories`, `avoid_players`). */
   avoid?: { territories: readonly number[]; players: readonly number[] };
+  /** #382: under `goal: 'siege'`, the player besieged (`siege_target`, a GameFeed id). */
+  siegeTarget?: number;
 }
 
 /**
@@ -1888,6 +1890,7 @@ export async function livePlanSetup(
       ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
       ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
       ...(a.args?.avoid ? { avoid: a.args.avoid } : {}),
+      ...(a.args?.siegeTarget !== undefined ? { siegeTarget: a.args.siegeTarget } : {}),
       // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
       ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
       // #215 review: from the award (unverified), the schedule and card advice use it, holds do not.
@@ -2181,7 +2184,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
           'across holds, bonuses and breaking enemy bonuses, at least 30% on expansion; "expand" — neutrals only; ' +
           '"complete-bonus" — also attacks players to finish bonuses; "defend" — threatened borders worth holding ' +
-          'first. An opponent next to the fog may be pressured: each of its visible territories attacked, sized for ' +
+          'first; "siege" — one opponent (`siege_target`): its cheapest bonus breaks first and one strike stack facing it, ' +
+          'the main assault held until it is weakened (`siege` reports the trigger). An opponent next to the fog may be pressured: each of its visible territories attacked, sized for ' +
           `its full deploy plus a margin, at most ${PRESSURE_FACTOR}× a typical neutral capture each — one visible ` +
           'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent: ' +
           'base income plus its visible bonuses, or its observed deploy when larger — its tracked income, carried across turns, once ' +
@@ -2265,7 +2269,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           .describe(
             'Omit to let the game profile pick (defend when behind on income outside a 1v1, else balanced, tuned to the format). ' +
               'balanced (default): best income per army across holds, bonuses and breaking enemy bonuses; expand: take ' +
-              'neutrals only; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first. ' +
+              'neutrals only; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first; ' +
+              "siege: against one opponent (siege_target), fund its cheapest bonus breaks first and build one strike stack " +
+              "facing it, holding the main assault until its income falls to 0.6× its tracked baseline, mine reaches 1.8× " +
+              "its, or a stack of mine can take a member of its held bonus against its whole deploy (reported as `siege`). " +
               'A goal given here overrides the profile.',
           ),
         focus: z
@@ -2305,6 +2312,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               'captures a bonus still needs reach it together. Attacks sized for a worst case (finishing a player off, ' +
               'fog pressure, commander strikes) stay certain.',
           ),
+        siege_target: z.coerce
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "With goal siege: the player to besiege (GameFeed player id). Default: the strongest opponent bordering my territories.",
+          ),
         known_income: knownIncomeArg,
         avoid_territories: avoidTerritoriesArg,
         avoid_players: avoidPlayersArg,
@@ -2327,7 +2341,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, enemy_deploy, known_income, avoid_territories, avoid_players, min_win_chance, first_mover, view }) => {
+    async ({ game_id, player, goal, siege_target, focus, reserve, enemy_deploy, known_income, avoid_territories, avoid_players, min_win_chance, first_mover, view }) => {
       // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
       const feed = await ctx.client.getGame(game_id, { settings: true, chat: true });
       requireTurnPhase(feed);
@@ -2356,6 +2370,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         game, map, me, turn, territories, info, history, teamsKnown,
         args: {
           ...(goal !== undefined ? { goal } : {}),
+          ...(goal === 'siege' && siege_target !== undefined ? { siegeTarget: siege_target } : {}),
           focusBonusIds,
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
@@ -2653,6 +2668,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         surrenderPending: surrenders,
         goal: plan.goal,
         goalSource: goal !== undefined ? 'explicit' : 'profile',
+        // #382: the siege's state (goal siege only).
+        ...(plan.siege ? { siege: plan.siege } : {}),
         // #276: the guard case first, on or off, with what it means for interior defence.
         profile:
           rung === 'full'

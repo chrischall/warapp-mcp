@@ -7,6 +7,7 @@
 // (#167) and the turns to eliminate each opponent (#179). planPass runs them where they ran before:
 // the expected outcome and the offence report after Order Priority for a strike, the plan last,
 // after the move order (plan/move-order.ts).
+import { siegeLines, siegeReport } from './siege.js';
 import { bonusTerritories } from '../bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from '../combat.js';
 import { classifyExchange, type ExchangeCase } from '../exchange.js';
@@ -543,6 +544,7 @@ export function reportOffence(
       const p = (st.owner as { playerId: number }).playerId;
       if (uncounted(n)) return `it holds ${uncountedKind(n)}, whose strength the board does not carry`;
       if (pc.truce.avoided(n)) return 'the plan was told to avoid it (#375)';
+      if (pc.truce.siegeHeld?.(n)) return `the siege holds the assault on player ${p} until its trigger fires: only its bonus members are attacked (#382)`;
       // B2 (T1): the truce covers it.
       if (pc.truce.noTarget(n)) return `my truce with player ${p} covers it (T1)`;
       if (unitsAt(n) > 0) return `an enemy commander stands there: only a commander strike (rule 1s) attacks it, sized for its owner's whole deploy`;
@@ -804,8 +806,12 @@ export function finishPlan(
     }
   }
 
+  // #382: the siege's state and rationale, first.
+  if (pc.siegeWarning) warnings.push(pc.siegeWarning);
+  if (pc.siege) rationale.unshift(...siegeLines(pc.siege, label, pc.bonusName));
   return {
-    goal,
+    goal: pc.opts.goal === 'siege' ? 'siege' : goal,
+    ...(pc.siege ? { siege: siegeReport(pc.siege, g, captured) } : {}),
     profile,
     // Deploys interleave like moves, and the order they land in shows the opponent my income and
     // the move order: next to a visible enemy first, in the back after (ascending id within each).

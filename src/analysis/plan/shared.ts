@@ -32,6 +32,7 @@ import { armyCapIncome, boardIncome, DEFAULT_BASE_INCOME, incomeRules, territory
 import type { GameProfile, ProfilePlayer } from '../profile.js';
 import { byNum } from './util.js';
 import type { TeamView } from './team.js';
+import type { SiegeReport } from './siege.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -175,7 +176,12 @@ export const DEFENSE_DISCOUNT = 1;
  */
 export const NEUTRAL_BORDER_COST = 0.25;
 
-export type PlanGoal = 'balanced' | 'expand' | 'complete-bonus' | 'defend';
+/**
+ * #382: `siege` plans as `balanced` against every player but one (plan/siege.ts): the target's
+ * cheapest bonus breaks first, its other territories left alone and a strike stack built facing it
+ * until the assault trigger fires.
+ */
+export type PlanGoal = 'balanced' | 'expand' | 'complete-bonus' | 'defend' | 'siege';
 
 /** Move orders under which the award order carries into the turns (GameFeed's `MoveOrder`). */
 const CYCLIC_ORDERS = new Set(['Cycle', 'NoLuckCycle']);
@@ -256,6 +262,8 @@ export function bombPossibleOn(settings: PlannerSettings, turn: number | null | 
 export interface PlanOptions {
   /** Default `balanced`. */
   goal?: PlanGoal;
+  /** #382: under `goal: 'siege'`, the player besieged (GameFeed id); default the strongest opponent in contact. */
+  siegeTarget?: number;
   /**
    * #375: territories (any owner, a neutral included) and players (GameFeed ids) no pass of the plan
    * attacks — a deal outside any recorded truce. Each is treated like a truce's covered territory (T1).
@@ -634,6 +642,8 @@ export type CardAdvice = 'order-priority';
 export interface TurnPlan {
   /** The goal planned for: the explicit one, else (adapting) the profile's, else `balanced`. */
   goal: PlanGoal;
+  /** #382: under `goal: 'siege'` with a target found, the siege's state this turn (plan/siege.ts). */
+  siege?: SiegeReport;
   /** The game profile (rule 0p), computed on every plan. */
   profile: GameProfile;
   /** Sorted by territory id; sums to the income whenever I own a territory. */

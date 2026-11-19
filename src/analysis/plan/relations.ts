@@ -81,6 +81,8 @@ export interface Truce {
   noTarget: (t: number) => boolean;
   /** #375: a territory the plan was told to avoid (`PlanOptions.avoid`); `noTarget` includes it. */
   avoided: (t: number) => boolean;
+  /** #382: a territory of the siege target the siege holds back until its trigger fires; `noTarget` includes it. */
+  siegeHeld?: (t: number) => boolean;
   /** T4 for rule 6: a covered territory of a partner a truce binds the planner to (free-for-all only). */
   noFront: (t: number) => boolean;
   /** The format the truces were read in (for the ignored warning). */
