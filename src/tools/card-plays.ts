@@ -2,8 +2,8 @@
 // Surveillance, Airlift, Gift, Diplomacy and Sanctions, and the combat cards Bomb and Emergency Blockade. Each card's fields come from the client
 // bundle's `GameOrderPlayCard<X>` writer and its refusals mirror the bundle's `GameValidateOrders`
 // (the error code each check stands in for is named), so a target war.app would refuse is refused
-// here before anything is sent. The encodings are golden-pinned but UNVERIFIED live (V9,
-// docs/WEB-PROTOCOL.md "Targeted card plays"). Third-party names reach errors only through
+// here before anything is sent. The encodings are golden-pinned; Airlift's (#296) and Diplomacy's (#369) are
+// verified live, the rest UNVERIFIED live (V9, docs/WEB-PROTOCOL.md "Targeted card plays"). Third-party names reach errors only through
 // `untrustedText`.
 
 import { McpToolError } from '@chrischall/mcp-utils';

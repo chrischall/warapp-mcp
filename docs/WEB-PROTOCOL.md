@@ -214,7 +214,7 @@ AttackTransfer  byte 01, bool attackTeammates, byte mode (1 Attack, 2 Transfer,
                 Armies { bool fogged, int32 count, byte specialUnitCount, units… },
                 int32 to, base
 PlayCard*       byte <card tag> (5 Reinforcement, 10 Order Priority, 11 Order Delay,
-                18 Blockade, 12 Airlift; UNVERIFIED live: 6 Spy, 13 Gift, 14 Diplomacy,
+                18 Blockade, 12 Airlift, 14 Diplomacy; UNVERIFIED live: 6 Spy, 13 Gift,
                 15 Sanctions, 16 Reconnaissance, 17 Surveillance, 20 Bomb,
                 8 Emergency Blockade), card fields,
                 GUID cardInstanceId, base
@@ -267,7 +267,7 @@ advanced).
 | Spy, Reconnaissance, Surveillance | 6, 16, 17 | 15 — bundle, **UNVERIFIED live** |
 | Airlift | 12 | 43 — bundle, verified live 2026-11-16 (card by name, `from`, `to`, `armies`): the source lost the armies, the target gained them, the card left the hand |
 | Gift | 13 | 47 — bundle, **UNVERIFIED live** |
-| Diplomacy | 14 | 75 — bundle, **UNVERIFIED live** |
+| Diplomacy | 14 | 75 — bundle, verified live 2026-11-18 (card by name, `players`): played through `warapp_submit_turn`, it was in force on the later boards (the planner's cards in effect read it) until the turn expected |
 | Sanctions | 15 | 80 — bundle, **UNVERIFIED live** |
 
 Within one phase the encoder writes card plays after the other orders (an Order Delay after
@@ -306,14 +306,16 @@ so a player can raise an Order Delay among the moves but never above the deploys
 to be accepted — consistent with the 2026-11-12 refusal, which put the card in phase 12 ahead of
 the deploys — but no such commit has been sent, so the position stays unverified on the wire.
 
-**Targeted card plays (PLAN-TEAMS part D) — from the client bundle; the Airlift play verified live 2026-11-16, the rest UNVERIFIED live (V9).** Each
+**Targeted card plays (PLAN-TEAMS part D) — from the client bundle; the Airlift play verified live 2026-11-16 and the Diplomacy play 2026-11-18, the rest UNVERIFIED live (V9).** Each
 layout is read from its `warlight.shared.GameOrderPlayCard<X>` class: the writer puts the tag, the
 card's own fields, then the base play-card part (the card GUID, then the order base); the class's
 phase method gives the phase. Golden tests pin the bytes. An Airlift (card by name, `from`, `to`,
 `armies`) was committed live 2026-11-16 and resolved as the layout says: on the next board the source
-had lost the armies, the target had gained them, and the card had left the hand. No commit carrying any
-other card in this table (Spy, Reconnaissance, Surveillance, Gift, Diplomacy, Sanctions, Bomb,
-Emergency Blockade) has been sent: those stay UNVERIFIED live.
+had lost the armies, the target had gained them, and the card had left the hand. A Diplomacy (card by name,
+`players`) was committed live 2026-11-18 and was in force on the later boards — the planner's cards in effect
+read it — until the turn expected (#369). A Sanctions was committed once (2026-11-18) but its effect is not
+yet checked, so it stays unverified. No commit carrying any other card in this table (Spy, Reconnaissance,
+Surveillance, Gift, Bomb, Emergency Blockade) has been sent: those, and Sanctions, stay UNVERIFIED live.
 
 | Card (class) | Tag | Fields after the tag, in write order | Phase |
 |---|---|---|---|
@@ -353,7 +355,8 @@ the moves, so a move from the gifted territory does not run (a preview warning);
 the encoding is unverified, and the result carries `cardPlayCheck`: after the first live commit of each,
 read back that the card left the hand and did what it should, then mark it verified here and drop it from
 the code's list of unverified plays, `UNVERIFIED_CARD_PLAYS` in `src/protocol/methods.ts` (the targeted plays
-are `TARGETED_CARD_PLAYS`). Airlift has left that list (#296): its preview carries no encoding warning.
+are `TARGETED_CARD_PLAYS`). Airlift (#296) and Diplomacy (#369) have left that list: their previews carry no
+encoding warning.
 
 **The hold limit (#20).** A play or discard is required only when the hand holds **more** whole
 cards than `MaxCardsHold`: live, a commit with no card was accepted at 4/4 and refused with error
@@ -374,8 +377,9 @@ Sanctions: the int32 target; then the base's card GUID and player). ExpiresAfter
 duration + the turn number processed + 1, and an `EndOfTurn` card (Diplomacy, Sanctions) is removed at
 the end of the turn that reaches it, so a card in the current standing binds the whole turn being
 ordered. `readActiveCards` (`src/cards.ts`) reads them; `src/analysis/cards-in-effect.ts` decides which
-the planner may rely on (docs/WARAPP-API.md). No live board with an active card has been decoded yet:
-once one has, compare `cardsInEffect` in `warapp_plan_turn` with the game and mark this verified.
+the planner may rely on (docs/WARAPP-API.md). A Diplomacy played live 2026-11-18 was read in effect on the
+later boards until the turn expected (#369), so the Diplomacy entry has been seen decoding; the decoder as a
+whole (Sanctions and the rest) is still marked unverified in `cardsInEffect` until each is checked against the game.
 
 **Teammates' entered orders and picks (C1) — from the client bundle, UNVERIFIED live (V5).** After the
 standings, `LatestGameInfo` carries a dict in-game player id → `warlight.shared.TeammateOrders`

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../../src/analysis/card-threats.js';
+import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral, tinyMap } from './helpers.js';
 
 // tinyMap: 1 ─ 2 ─ 3 triangle (bonus A +3), 3 ─ 4 ─ 5 ─ 6 ─ 7 (bonus B +2: 4, 5).
@@ -134,6 +135,7 @@ describe('wallOffer (#163)', () => {
       player: ENEMY,
       reach: 34,
       kills: 21,
+      protects: { territories: [], bonuses: [], income: 0, commander: false },
     });
   });
 
@@ -146,5 +148,69 @@ describe('wallOffer (#163)', () => {
     expect(wallOffer(cb([neutral(3, 2), myCommander(mine(4, 10)), enemy(5, 30), neutral(6, 2)]), 3, [4])).toBeUndefined();
     expect(wallOffer(cb([mine(1, 2), mine(2, 2), mine(3, 10), enemy(4, 30), neutral(5, 2)]), 3, [3])).toBeUndefined();
     expect(wallOffer(cb([neutral(3, 2), mine(4, 10), enemy(5, 30), neutral(6, 2)]), 1, [4])).toBeUndefined();
+  });
+});
+
+// #369: a wall map. The enemy stack on 1 reaches my 2; behind 2 lies my 3 (bonus X +3 with my 4).
+//   1 ─ 2 ─ 3 ─ 4        with `around`: 1 ─ 5 ─ 3 (a way past 2 in the same two steps)
+function wallMap(around = false): GameMap {
+  const edges: [number, number][] = [[1, 2], [2, 3], [3, 4], ...(around ? ([[1, 5], [5, 3]] as [number, number][]) : [])];
+  const ids = around ? [1, 2, 3, 4, 5] : [1, 2, 3, 4];
+  return {
+    id: 2,
+    name: 'Wall',
+    territories: ids.map((id) => ({
+      id,
+      name: `T${id}`,
+      connectedTo: edges.filter(([a, b]) => a === id || b === id).map(([a, b]) => (a === id ? b : a)),
+    })),
+    bonuses: [{ id: 201, name: 'X', value: 3, territoryIds: [3, 4], bonusIds: [] }],
+    distributionModes: [],
+  };
+}
+const wallBoard = (territories: TerritoryState[], around = false): CardBoard => ({
+  graph: buildGraph(wallMap(around)),
+  board: board(territories),
+  me: ME,
+  deploys: [],
+  moves: [],
+  enemyDeploy: 5,
+});
+
+describe('wallOffer: what the wall protects (#369)', () => {
+  // T2's 6 × 1.5 = a wall of 9 (15 to take); T1's 10 + 5 deploy reach 14: it takes 6 (10 needed), not the wall.
+  // The wall kills 6 (9 × 70%) of the 14: no more than the 6 given up, so kills alone never pay here.
+  const behind = [enemy(1, 10), mine(2, 6), mine(3, 2), mine(4, 2)];
+
+  it('pays when the wall blocks the stack from a bonus I hold behind it, priced by its income', () => {
+    expect(wallOffer(wallBoard(behind), 1.5, [2])).toEqual({
+      territory: 2,
+      givesUp: 6,
+      wall: 9,
+      player: ENEMY,
+      reach: 14,
+      kills: 6,
+      protects: { territories: [3], bonuses: [{ bonus: 201, value: 3 }], income: 3, commander: false },
+    });
+  });
+
+  it('is not offered when the opponent can go around the wall in the same two steps', () => {
+    expect(wallOffer(wallBoard([...behind, neutral(5, 2)], true), 1.5, [2])).toBeUndefined();
+    // Even where kills alone would pay (× 3: a wall of 18 kills 13 of the 14), a wall it walks past is never attacked.
+    expect(wallOffer(wallBoard([...behind, neutral(5, 2)], true), 3, [2])).toBeUndefined();
+  });
+
+  it('pays when it shields my commander behind it', () => {
+    const offer = wallOffer(wallBoard([enemy(1, 10), mine(2, 6), myCommander(mine(3, 2)), neutral(4, 2)]), 1.5, [2]);
+    expect(offer?.protects).toEqual({ territories: [3], bonuses: [], income: 0, commander: true });
+  });
+
+  it('is not offered when nothing behind pays for it and the kills do not', () => {
+    expect(wallOffer(wallBoard([enemy(1, 10), mine(2, 6), mine(3, 2), neutral(4, 2)]), 1.5, [2])).toBeUndefined();
+  });
+
+  it('protects nothing when the stack can take the wall, so only the kills price it', () => {
+    // T1's 40 + 5 reach 44: the wall of 9 falls and the stack goes on into X.
+    expect(wallOffer(wallBoard([enemy(1, 40), mine(2, 6), mine(3, 2), mine(4, 2)]), 1.5, [2])).toBeUndefined();
   });
 });

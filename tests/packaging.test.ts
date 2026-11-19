@@ -702,7 +702,10 @@ describe('card plays verified live (#296)', () => {
     expect(row('Airlift')).toMatch(/verified live 2026-11-16/);
     expect(row('Airlift')).not.toMatch(/UNVERIFIED/);
     expect(row('Blockade')).toMatch(/verified live 2026-11-16/);
-    for (const card of ['Spy, Reconnaissance, Surveillance', 'Gift', 'Diplomacy', 'Sanctions']) {
+    // #369: Diplomacy played live 2026-11-18 and read in force on later boards.
+    expect(row('Diplomacy')).toMatch(/verified live 2026-11-18/);
+    expect(row('Diplomacy')).not.toMatch(/UNVERIFIED/);
+    for (const card of ['Spy, Reconnaissance, Surveillance', 'Gift', 'Sanctions']) {
       expect(row(card), card).toMatch(/UNVERIFIED live/);
     }
     const layout = protocol.slice(protocol.indexOf('PlayCard*'), protocol.indexOf('Discard         byte 09'));
@@ -720,6 +723,9 @@ describe('card plays verified live (#296)', () => {
     expect(claude).toMatch(/Order Priority[^.]*ran first[^.]*unverified/i);
     const v9 = teams.split('\n').find((l) => l.startsWith('| V9 |')) ?? '';
     expect(v9).toMatch(/Airlift[^|]*verified live 2026-11-16/);
+    expect(claude).toMatch(/Diplomacy[^.]*verified live 2026-11-18/);
+    expect(v9).toMatch(/Diplomacy[^|]*verified live 2026-11-18/);
+    expect(v9).toMatch(/Sanctions[^|]*not yet checked/);
   });
 });
 

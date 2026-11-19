@@ -1,6 +1,7 @@
 // PLAN-TEAMS D2: where to play my Diplomacy, Sanctions, Airlift and Gift cards this turn, read against the
 // plan (src/analysis/card-support.ts). Advice only, never auto-played: each carries the `order` to pass to
-// warapp_submit_turn as is, whose encodings are UNVERIFIED live (V9). Players and territories by id only.
+// warapp_submit_turn as is, whose encodings are UNVERIFIED live (V9) save Airlift's and Diplomacy's (verified
+// live, #296 and #369). Players and territories by id only.
 
 import { airliftAdvice, diplomacyAdvice, giftAdvice, intelAdvice, sanctionsAdvice, type IntelCard, type Strength, type TruceCover } from '../analysis/card-support.js';
 import type { CardBoard } from '../analysis/card-threats.js';
