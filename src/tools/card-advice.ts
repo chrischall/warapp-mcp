@@ -7,6 +7,7 @@
 
 import { adviseOrderDelay, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
+import { bonusTerritories } from '../analysis/bonuses.js';
 import { supportAdvice, type SupportView } from './card-support-advice.js';
 import type { TruceCover } from '../analysis/card-support.js';
 import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
@@ -102,6 +103,8 @@ interface CardAdviceView extends SupportView {
     player: number;
     reach: number;
     kills: number;
+    /** #369: what the wall keeps the stack from next turn (my territories behind it, their bonuses, my commander). */
+    protects: { territories: number[]; bonuses: { bonus: number; value: number }[]; income: number; commander: boolean };
     order: { kind: 'card'; card: string; target: number };
   };
   active?: Array<{ card: string; players?: number[]; target?: number; playedBy?: number; expiresAfterTurn?: number; untilTurn?: number }>;
@@ -228,10 +231,20 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
       const offer = ebMultiplier !== undefined ? wallOffer(cb, ebMultiplier, plan.conceded) : undefined;
       if (offer) {
         view.emergencyBlockade = { ...offer, order: { kind: 'card', card: wallCard.id, target: offer.territory } };
+        const bonusName = (id: number) => input.graph.map.bonuses.find((b) => b.id === id)?.name ?? `${id}`;
+        const p = offer.protects;
+        const shields = p.territories.length
+          ? ` It shields ${p.territories
+              .map((t) => {
+                const of = p.bonuses.filter((b) => bonusTerritories(input.graph, b.bonus).includes(t));
+                return `${label(t)}${of.length ? ` (${of.map((b) => `bonus ${bonusName(b.bonus)}, +${b.value} a turn`).join('; ')})` : ''}`;
+              })
+              .join(', ')}${p.commander ? ', where your commander stands,' : ''} from player ${offer.player}'s ~${offer.reach}, which can reach ${p.territories.length === 1 ? 'it' : 'them'} next turn only through the wall.`
+          : '';
         warnings.push(
           `Consider an Emergency Blockade on ${label(offer.territory)}: the plan concedes it, and its ${offer.givesUp} armies × ${ebMultiplier} make a ` +
-            `wall of ${offer.wall} that player ${offer.player}'s ~${offer.reach} would lose ~${offer.kills} attacking — if it attacks; if not, ` +
-            'the territory and its armies are given away. Advice only, not in the orders: pass `cards.advice.emergencyBlockade.order` ' +
+            `wall of ${offer.wall} that player ${offer.player}'s ~${offer.reach} would lose ~${offer.kills} attacking — if it attacks.${shields} ` +
+            `It gives up ${label(offer.territory)} and its ${offer.givesUp} armies for good (it turns neutral). Advice only, not in the orders: pass \`cards.advice.emergencyBlockade.order\` ` +
             'to warapp_submit_turn to play it (the encoding is read from the client, not yet verified live).',
         );
       } else if (ebMultiplier === undefined) {

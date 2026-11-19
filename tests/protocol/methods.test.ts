@@ -952,12 +952,12 @@ describe('targeted card play orders (bundle writers, UNVERIFIED live)', () => {
 });
 
 describe('targeted and unverified card plays (#296)', () => {
-  it('Airlift is a targeted card whose encoding is verified live; every other targeted card stays unverified', () => {
+  it('Airlift (#296) and Diplomacy (#369) are targeted cards whose encodings are verified live; every other targeted card stays unverified', () => {
     expect([...TARGETED_CARD_PLAYS].sort()).toEqual(
       ['Airlift', 'Bomb', 'Diplomacy', 'EmergencyBlockade', 'Gift', 'Reconnaissance', 'Sanctions', 'Spy', 'Surveillance'].sort(),
     );
     expect([...UNVERIFIED_CARD_PLAYS].sort()).toEqual(
-      ['Bomb', 'Diplomacy', 'EmergencyBlockade', 'Gift', 'Reconnaissance', 'Sanctions', 'Spy', 'Surveillance'].sort(),
+      ['Bomb', 'EmergencyBlockade', 'Gift', 'Reconnaissance', 'Sanctions', 'Spy', 'Surveillance'].sort(),
     );
     for (const kind of UNVERIFIED_CARD_PLAYS) expect(TARGETED_CARD_PLAYS.has(kind), kind).toBe(true);
   });

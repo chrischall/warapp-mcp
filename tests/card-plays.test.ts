@@ -529,14 +529,16 @@ describe('submit_turn plays Bomb and Emergency Blockade (UNVERIFIED live)', () =
       info: null,
       hand,
       choice: { required: false, plays: [], discards: [], extraArmies: 0, warnings: [] },
+      // #369: the advice board strikes from 135, not 159: Bob's 158 borders 159, so a wall on 161 with 159
+      // behind it would be walked around and never advised.
       plan: {
-        deploys: [{ territoryId: 159, armies: 5 }],
-        moves: [{ from: 159, to: 158, armies: 10, kind: 'attack', reason: '' }],
+        deploys: [{ territoryId: 135, armies: 5 }],
+        moves: [{ from: 135, to: 158, armies: 10, kind: 'attack', reason: '' }],
         moveSlots: ['last'],
         enemyDeploy: 5,
         conceded: [161],
       },
-      board: boardOf([mineState(159, 6, ann.id), mineState(161, 3, ann.id), foe(157, 2, cat), foe(158, 7, bob)]),
+      board: boardOf([mineState(135, 6, ann.id), mineState(161, 3, ann.id), foe(157, 2, cat), foe(158, 7, bob)]),
       graph: buildGraph(fixtureMap()),
       settings: { offensiveKillRate: 60, defensiveKillRate: 70 },
       label: (id) => `T${id}`,

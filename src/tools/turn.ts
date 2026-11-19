@@ -416,7 +416,7 @@ interface TurnState {
   incomeGiven?: boolean;
   /** How to read back an Order Delay placed among the moves (#186, unverified live), when one was. */
   orderDelayCheck?: string;
-  /** How to read back a targeted card play still unverified live (PLAN-TEAMS part D, V9; Airlift verified, #296), when one was sent. */
+  /** How to read back a targeted card play still unverified live (PLAN-TEAMS part D, V9; Airlift and Diplomacy verified, #296, #369), when one was sent. */
   cardPlayCheck?: string;
   /** B2: the agreements these orders break (`break_agreement: true`), recorded broken-by-me once committed. */
   breaks?: string[];
@@ -1186,7 +1186,7 @@ const PLAYABLE: Readonly<Record<number, CardPlayKind>> = {
   [CARD_ORDER_PRIORITY]: 'OrderPriority',
   [CARD_ORDER_DELAY]: 'OrderDelay',
   [CARD_BLOCKADE]: 'Blockade',
-  // PLAN-TEAMS part D: encoded from the bundle's writers, UNVERIFIED live (V9).
+  // PLAN-TEAMS part D: encoded from the bundle's writers, UNVERIFIED live (V9) save Airlift (#296) and Diplomacy (#369).
   2: 'Spy',
   6: 'Airlift',
   7: 'Gift',
@@ -2166,7 +2166,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'withdrawal worth a card, a commander strike) or it is the card that must go (over the hold limit the cards worth ' +
           'least in this game leave first; the timing cards are kept longest); never Blockade, Order Delay, Bomb or Emergency ' +
           'Blockade — `cards.advice` says where those pay (Order Delay above the calm orders, a Bomb target or hold it, an ' +
-          "Emergency Blockade wall; Diplomacy on the opponent pressing you hardest when two or more do, Sanctions on the leader, an Airlift onto a " +
+          "Emergency Blockade wall on a conceded border that shields a bonus or your commander behind it, or kills more than it gives up, never where the stack can go around; Diplomacy on the opponent pressing you hardest when two or more do, Sanctions on the leader, an Airlift onto a " +
           "border of yours or a teammate's that falls without it, a Gift that completes a teammate's bonus, Spy, Reconnaissance or Surveillance " +
           'where the fog hides what the plan needs (never with fog off) — each with an `order` to pass to ' +
           "warapp_submit_turn, never added to the orders), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
@@ -3030,7 +3030,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         '(`target`), Surveillance (`bonus`), Airlift (`from` yours, `to` yours or a teammate\'s, `armies`, optional ' +
         '`commander`), Gift (`target` yours, `player`), Diplomacy (`players`: two), Sanctions (`player`), Bomb (`target` ' +
         "next to yours, not yours or a teammate's) and Emergency Blockade (`target` yours, never your commander's), encoded " +
-        'as the client does (the Airlift verified live; the others not yet), each refused where war.app would refuse it (a commander is never ' +
+        'as the client does (the Airlift and Diplomacy verified live; the others not yet), each refused where war.app would refuse it (a commander is never ' +
         'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
         'when your hand is over the hold limit and the orders do not play or discard enough cards; in a team game warns ' +

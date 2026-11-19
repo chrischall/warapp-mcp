@@ -1,7 +1,8 @@
 // Cards the planner does not play, read against its plan (#163): my Bomb (where halving a stack
 // changes a hold, a capture or a commander kill, else hold it), an opponent's Bomb (borders that
 // hold only while unbombed), an opponent's Emergency Blockade (attacks that would die against the
-// wall) and my own (a conceded border where the wall kills more than I give up). Pure and
+// wall) and my own (a conceded border where the wall pays: what it kills plus the bonuses and
+// commander behind it the stack could reach only through it, against what I give up; #369). Pure and
 // deterministic (ties on ascending territory id); no I/O.
 //
 // Rules (the wiki's Bomb_Card, Turn_phases, Emergency Blockade; docs/STRATEGY.md): a Bomb hits a
@@ -73,6 +74,20 @@ interface WallOffer {
   player: number;
   reach: number;
   kills: number;
+  /**
+   * #369: what the wall keeps that stack from next turn — my territories next to the wall it could
+   * reach only through it (empty when it can take the wall), the bonuses I hold that they are in
+   * (with `income`, their total a turn) and whether my commander is among them.
+   */
+  protects: WallProtects;
+}
+
+/** What an Emergency Blockade's wall shields behind it (#369). */
+interface WallProtects {
+  territories: number[];
+  bonuses: { bonus: number; value: number }[];
+  income: number;
+  commander: boolean;
 }
 
 /** The common reads over the board and the plan (shared with card-support.ts). */
@@ -253,35 +268,85 @@ export function wallThreats(cb: CardBoard, multiplier: number): WallThreat[] {
 }
 
 /**
- * Where my Emergency Blockade pays: a border the plan concedes, where the wall of my armies there
- * (this turn's deploy included) times the multiplier kills more of the stack that can reach it
- * than the armies I give up — never on my commander's territory (it would be lost with it),
- * never on one the plan moves armies out of (they would be lost with it: the wall comes before the
- * moves) and never on a member of a bonus I hold whole at the start of the turn (I need it). The best by
- * kills over armies given up, then ascending id; `undefined` when none pays.
+ * Where my Emergency Blockade pays (#163, #369): a border the plan concedes (it cannot hold it),
+ * walled with my armies there (this turn's deploy included) times the multiplier. Priced by the board:
+ * it gives up the territory and its armies, against what the wall kills of the stack that can reach
+ * it (if it attacks) plus what it protects — the income of the bonuses I hold behind it that the stack
+ * could reach next turn only through it (one turn of it), and my commander behind it, which always pays.
+ * Never when the opponent can go around: something of mine lies behind the wall but the stack reaches
+ * all of it as fast another way, so it need never attack the wall. Never on my commander's territory (it
+ * would be lost with it), never on one the plan moves armies out of (they would be lost with it: the
+ * wall comes before the moves) and never on a member of a bonus I hold whole at the start of the turn
+ * (the wall breaks it). The best shields my commander, then by kills plus income over armies given up,
+ * then ascending id; `undefined` when none pays.
  */
 export function wallOffer(cb: CardBoard, multiplier: number, conceded: readonly number[]): WallOffer | undefined {
   const r = reader(cb);
   const defence = cb.settings?.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE;
-  const held = (id: number) =>
-    cb.graph.map.bonuses.some((bonus) => {
+  const heldBonuses = (id: number) =>
+    cb.graph.map.bonuses.filter((bonus) => {
       if (bonus.value <= 0) return false;
       const members = bonusTerritories(cb.graph, bonus.id);
       return members.includes(id) && members.every(r.isMine);
     });
+  const worth = (o: WallOffer) => o.kills + o.protects.income - o.givesUp;
   let best: WallOffer | undefined;
   for (const c of [...conceded].sort((a, b) => a - b)) {
     // A border the plan withdraws from is skipped: the wall turns it neutral before the moves, so
     // the armies the plan moves out of it would be lost with it.
-    if (!r.isMine(c) || r.commanderOf(c, (q) => q === cb.me) || held(c) || r.outOf(c) > 0) continue;
+    if (!r.isMine(c) || r.commanderOf(c, (q) => q === cb.me) || heldBonuses(c).length || r.outOf(c) > 0) continue;
     const reach = r.reachOf(c);
     if (!reach) continue;
     const givesUp = r.armiesOf(c) + r.deployAt(c);
     const wall = wallOf(givesUp, multiplier);
     const kills = Math.min(reach.reach, straightKills(wall, defence));
-    if (kills <= givesUp) continue;
-    const offer: WallOffer = { territory: c, givesUp, wall, player: reach.player, reach: reach.reach, kills };
-    if (!best || kills - givesUp > best.kills - best.givesUp) best = offer;
+    const shield = wallShield(cb, r, c, reach.player);
+    if (shield.goesAround) continue;
+    // A wall the stack can take blocks nothing: it walks through and on.
+    const blocks = r.toTake(wall) > reach.reach;
+    const protects = blocks ? shield.protects : { territories: [], bonuses: [], income: 0, commander: false };
+    const offer: WallOffer = { territory: c, givesUp, wall, player: reach.player, reach: reach.reach, kills, protects };
+    if (!protects.commander && worth(offer) <= 0) continue;
+    if (
+      !best ||
+      (protects.commander && !best.protects.commander) ||
+      (protects.commander === best.protects.commander && worth(offer) > worth(best))
+    )
+      best = offer;
   }
   return best;
+}
+
+/**
+ * Behind the wall on `c` (#369): my territories next to `c` that `player`'s stacks beside `c` can reach
+ * next turn only through it. One is reachable another way when the player already borders it, or a
+ * territory other than `c` borders both it and one of those stacks (two steps either way).
+ * `goesAround`: something of mine lies next to `c`, and every piece of it is reachable another way.
+ */
+function wallShield(cb: CardBoard, r: ReturnType<typeof reader>, c: number, player: number): { protects: WallProtects; goesAround: boolean } {
+  const stacks = neighborsOf(cb.graph, c).filter((n) => r.ownerOf(n) === player);
+  const behind = neighborsOf(cb.graph, c)
+    .filter((n) => n !== c && r.isMine(n))
+    .sort((a, b) => a - b);
+  const around = (y: number) =>
+    neighborsOf(cb.graph, y).some(
+      (x) => r.ownerOf(x) === player || (x !== c && stacks.some((s) => neighborsOf(cb.graph, s).includes(x))),
+    );
+  const territories = behind.filter((y) => !around(y));
+  const bonuses = new Map<number, number>();
+  for (const bonus of cb.graph.map.bonuses) {
+    if (bonus.value <= 0) continue;
+    const members = bonusTerritories(cb.graph, bonus.id);
+    if (members.every(r.isMine) && territories.some((y) => members.includes(y))) bonuses.set(bonus.id, bonus.value);
+  }
+  const list = [...bonuses].sort((a, b) => a[0] - b[0]).map(([bonus, value]) => ({ bonus, value }));
+  return {
+    protects: {
+      territories,
+      bonuses: list,
+      income: list.reduce((a, b) => a + b.value, 0),
+      commander: territories.some((y) => r.commanderOf(y, (q) => q === cb.me)),
+    },
+    goesAround: behind.length > 0 && territories.length === 0,
+  };
 }

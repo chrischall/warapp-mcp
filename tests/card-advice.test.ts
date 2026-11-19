@@ -74,6 +74,25 @@ describe('adviseCards (#163)', () => {
     expect(warnings.join('\n')).toMatch(/pass `cards.advice.emergencyBlockade.order` to warapp_submit_turn/);
   });
 
+  it('says what my Emergency Blockade shields behind it, and what it gives up (#369)', () => {
+    const eb: Card = { id: 'e'.repeat(32), type: 3, name: 'Emergency Blockade' };
+    const plan = { deploys: [], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [4] };
+    // T3 holds bonus A (+3) with T1 and T2; T5's stack reaches T3 next turn only through T4.
+    const territories = [me(1, 2), me(2, 2), me(3, 2), me(4, 6), foe(5, 10), neutral(6, 2)];
+    const { view, warnings } = adviseCards(input({ territories, plan, hand: [eb] }));
+    expect(view.emergencyBlockade).toMatchObject({
+      territory: 4,
+      givesUp: 6,
+      wall: 18,
+      protects: { territories: [3], bonuses: [{ bonus: 101, value: 3 }], income: 3, commander: false },
+      order: { kind: 'card', card: eb.id, target: 4 },
+    });
+    const text = warnings.join('\n');
+    expect(text).toMatch(/Consider an Emergency Blockade on T4/);
+    expect(text).toMatch(/shields T3 \(bonus A, \+3 a turn\) from player 7176543229's ~14/);
+    expect(text).toMatch(/gives up T4 and its 6 armies/);
+  });
+
   it('advises my Bomb with the order to play it, and no order when it says to hold the card', () => {
     const bomb: Card = { id: 'b'.repeat(32), type: 13, name: 'Bomb' };
     const plan = { deploys: [], moves: [{ from: 4, to: 5, armies: 15, kind: 'attack' as const, reason: '' }], moveSlots: ['last' as const], enemyDeploy: 5, conceded: [] };

@@ -9,7 +9,8 @@
 // players from the turn after it is played; Sanctions cut the target's income from its next turn (a
 // negative percentage raises it); an Airlift lands after the deploys and before every attack, and armies
 // landing on a teammate's territory become the teammate's; a Gift moves a territory and its armies after
-// the airlifts and before the attacks. The card plays' encodings are UNVERIFIED live (V9).
+// the airlifts and before the attacks. The card plays' encodings are UNVERIFIED live (V9) save Airlift's (#296)
+// and Diplomacy's (#369: played live 2026-11-18 and read in force on later boards).
 
 import { bonusTerritories } from './bonuses.js';
 import { COMMANDER_STRENGTH } from './combat.js';
