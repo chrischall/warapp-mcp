@@ -669,7 +669,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         // #166: what the award of picks showed, the move order it implies included (absent with no pick list kept).
         ...(award ? { award: awardView(award, game, turn, name) } : {}),
         orderPriority,
-        income,
+        // #277: what I may deploy this turn, after any Sanctions on me (as warapp_plan_turn reports it).
+        income: sanction.income,
         deployed,
         warnings,
         // Only an opponent with a stack in view can be given a reply; the others are named apart.
