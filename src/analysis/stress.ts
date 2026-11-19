@@ -245,6 +245,8 @@ export interface StressExposure {
   /** Bonuses I would hold after my plan that go with it. */
   bonusesLost: { id: number; value: number }[];
   incomeLost: number;
+  /** #376, only with `truces`: it falls only if a truce partner breaks the truce (listed after the rest). */
+  breaksTruce?: true;
 }
 
 interface StressReport {
@@ -738,6 +740,8 @@ export function stressPlan(input: StressInput): StressReport {
     .map((r, i) => ({ r, i }))
     .sort(
       (a, b) =>
+        // #376: a reply a truce rules out comes after every reply that keeps the truces, so `worst` is a real threat.
+        Number(a.r.breaksTruce === true) - Number(b.r.breaksTruce === true) ||
         Number(b.r.commanderLost) - Number(a.r.commanderLost) ||
         b.r.eliminationsFailed.length - a.r.eliminationsFailed.length ||
         // A negative bonus lost is no reason to rank a reply below one that takes nothing.
@@ -784,13 +788,17 @@ export function stressPlan(input: StressInput): StressReport {
         needs: r.needs,
         bonusesLost,
         incomeLost: bonusesLost.reduce((n, b) => n + b.value, 0),
+        // #376: the partner of a truce covering the territory or the step to it breaks the truce to take it.
+        ...(covers.get(r.opponent)?.has(r.territory) || covers.get(r.opponent)?.has(r.via) ? { breaksTruce: true as const } : {}),
       };
       const known = exposed.get(r.territory);
       if (!known || found.attackers > known.attackers) exposed.set(r.territory, found);
     }
   }
   const exposedNextTurn = [...exposed.values()].sort(
-    (a, b) => Math.max(0, b.incomeLost) - Math.max(0, a.incomeLost) || b.needs - b.armies - (a.needs - a.armies) || a.territory - b.territory,
+    (a, b) =>
+      Number(a.breaksTruce === true) - Number(b.breaksTruce === true) ||
+      Math.max(0, b.incomeLost) - Math.max(0, a.incomeLost) || b.needs - b.armies - (a.needs - a.armies) || a.territory - b.territory,
   );
   return {
     exact: baseline.exact,

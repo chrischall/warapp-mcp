@@ -536,6 +536,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         opponent: who(e.opponent),
         bonusesLost: e.bonusesLost.map((b) => bonusOf(b.id)),
         incomeLost: e.incomeLost,
+        ...(e.breaksTruce ? { breaksTruce: true } : {}),
       });
       const orderView = (e: SimEvent) => ({
         order: e.index + 1,
@@ -555,9 +556,15 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ? ` ${report.blindBorders.length} of your territories border the fog and were not tested.`
         : '';
       const inexact = report.exact ? '' : ' Battles are not exact in this game (luck or weighted rounding): each was resolved at its expectation.';
-      const ahead = report.exposedNextTurn.length
-        ? ` Next turn: ${report.exposedNextTurn.length} ${plural(report.exposedNextTurn.length, 'territory is', 'territories are')} within reach of a stack two steps away if you add nothing (see exposedNextTurn). First: ${exposure(report.exposedNextTurn[0]!)}`
-        : '';
+      // #376: an exposure only a truce break reaches is counted apart, after the real ones.
+      const reachable = report.exposedNextTurn.filter((x) => !x.breaksTruce);
+      const ifBroken = report.exposedNextTurn.length - reachable.length;
+      const brokenLine = ifBroken ? ` ${ifBroken} more only if a truce breaks.` : '';
+      const ahead = reachable.length
+        ? ` Next turn: ${reachable.length} ${plural(reachable.length, 'territory is', 'territories are')} within reach of a stack two steps away if you add nothing (see exposedNextTurn). First: ${exposure(reachable[0]!)}${brokenLine}`
+        : ifBroken
+          ? ` Next turn: ${ifBroken} ${plural(ifBroken, 'territory is', 'territories are')} within reach of a stack two steps away only if a truce breaks (see exposedNextTurn).`
+          : '';
       // #180: stacks you attack that can step out of the way first.
       const escapes = report.dodges.filter((d) => d.took && d.escaped > 0);
       const escapingStacks = new Set(escapes.map((d) => d.stack)).size;

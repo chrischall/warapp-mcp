@@ -367,6 +367,22 @@ describe('stressPlan with truces (B2 T6)', () => {
     expect(r.worst!.breaksTruce).toBeUndefined();
   });
 
+  it('#376: the worst reply and the first exposure are ones a truce does not rule out', () => {
+    // FOE (truce covering T2) can take T2 and break bonus 100; OTHER, with no truce, can take T5.
+    const map = makeMap(6, [[1, 2], [2, 3], [3, 4], [5, 6]], [[100, 4, [1, 2]]]);
+    const r = stress(map, [mine(1, 20), mine(2, 1), foe(3, 3), foe(4, 1), mine(5, 1), foe(6, 3, OTHER)], {
+      opponents: [{ id: FOE, deploy: 5 }, { id: OTHER, deploy: 5 }],
+      truces: [{ player: FOE, covered: [2] }],
+    });
+    expect(r.worst).toMatchObject({ opponent: OTHER, to: 5 });
+    expect(r.worst!.breaksTruce).toBeUndefined();
+    // Two steps out: FOE's stack reaches T1 only through the covered T2.
+    const ahead = stress(LINE4, [mine(1, 1), mine(2, 1), foe(3, 20), foe(4, 1)], { truces: [{ player: FOE, covered: [1, 2] }] });
+    expect(ahead.exposedNextTurn.length).toBeGreaterThan(0);
+    expect(ahead.exposedNextTurn.every((e) => e.breaksTruce === true)).toBe(true);
+    expect(stress(LINE4, [mine(1, 1), mine(2, 1), foe(3, 20), foe(4, 1)]).exposedNextTurn.some((e) => 'breaksTruce' in e)).toBe(false);
+  });
+
   it('a truce with another player changes nothing for this one', () => {
     const r = stress(LINE4, entries, { truces: [{ player: OTHER, covered: [1, 2] }] });
     expect(r.safeIfTruceHolds).toBe(false);
