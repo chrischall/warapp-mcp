@@ -986,13 +986,6 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
             `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog${e.coverage ? `, read from ${coverageText(e.coverage)}` : ''}; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
           );
         }
-        // #294: a tracked figure read from little of its frontier keeps a floor above it.
-        if (e.coverageFloor) {
-          const f = e.coverageFloor;
-          warnings.push(
-            `Player ${p}'s tracked ~${f.tracked} was read from ${coverageText({ ...e.coverage!, hiddenBonuses: 0 }).replace(/\)$/, `, under ${Math.round(LOW_COVERAGE * 100)}%)`)}: the estimate is at least ~${f.tracked} × ${f.factor} = ${f.figure} (the factor is unmeasured), since the fog hid most of where it deploys.`,
-          );
-        }
         // #164: a Reinforcement card the clock says it may hold, on top of its income.
         if (e.card)
           warnings.push(
@@ -1038,24 +1031,29 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           );
           continue;
         }
-        // #368: thin evidence sizes it for the highest of the tracked figure, the prior and the trend.
+        // #368: thin evidence sizes it between its lower bound and its upper (owner decision of
+        // 2026-11-19: the middle until we learn otherwise).
         if (e.thinEvidence) {
           const t = e.thinEvidence;
+          const thin = t.coverage !== null && t.coverage < LOW_COVERAGE;
           const why = [
-            ...(t.coverage !== null && t.coverage < LOW_COVERAGE
-              ? [`its tracked income was read from ${Math.round(t.coverage * 100)}% of its frontier, under ${Math.round(LOW_COVERAGE * 100)}%`]
+            ...(thin
+              ? [`its tracked income was read from ${e.coverage ? coverageText(e.coverage) : `${Math.round(t.coverage! * 100)}% of its frontier`}, under ${Math.round(LOW_COVERAGE * 100)}%`]
               : []),
             ...(t.rising ? [`its tracked income rose two turns running (${t.rising.join(', ')})`] : []),
           ];
-          const figures = [
-            `the tracked ~${t.tracked}`,
-            ...(t.prior !== null ? [`the fog prior ~${t.prior} (not shrunk toward the track)`] : []),
-            ...(t.trend !== null ? [`the trend's next step ~${t.trend}`] : []),
-          ];
-          const list = figures.length > 1 ? `${figures.slice(0, -1).join(', ')} and ${figures.at(-1)}` : figures[0]!;
-          warnings.push(
-            `Enemy deploy estimate for player ${p}: ~${income} (thin evidence: ${why.join(' and ')}, so it is sized for the highest of ${list}, not the lower bound${t.figure === e.couldEarn ? `, capped at the most it could earn, ${e.couldEarn}` : ''})${withCard}; it could deploy more.`,
-          );
+          const lowerIs =
+            t.trend !== null && t.lower === t.trend && t.trend > t.tracked
+              ? `the trend's next step ~${t.lower} (the tracked ~${t.tracked})`
+              : t.lower === t.tracked
+                ? `~${t.lower} (the tracked figure)`
+                : `~${t.lower} (its visible income; the tracked ~${t.tracked})`;
+          const sized = thin
+            ? `it is sized between the lower bound ${lowerIs} and the upper bound ~${t.upper} (${
+                t.prior !== null && t.upper === Math.min(e.couldEarn, t.prior) ? 'the fog prior, not shrunk toward the track' : 'the most it could earn'
+              }): the midpoint ~${t.midpoint}, moved toward what the evidence gives, ~${t.toward}, as more of its frontier is read (${Math.round(t.weight * 100)}% of the way from that to the midpoint)`
+            : `its lower bound is ${lowerIs.startsWith('~') ? lowerIs.slice(1) : lowerIs}, read from enough of its frontier to plan on it`;
+          warnings.push(`Enemy deploy estimate for player ${p}: ~${income} (thin evidence: ${why.join(' and ')}, so ${sized})${withCard}; it could deploy more.`);
           continue;
         }
         if (e.source === 'exact') {

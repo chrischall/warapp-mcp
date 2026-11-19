@@ -839,17 +839,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   when in view with armies on both boards, and the positive bonuses it could hold with a hidden member;
   the track (`OpponentTrack.coverage`, `trackCoverage` over the income window: Σ read ÷ Σ frontier) and
   the estimate (`EnemyDeployEstimate.coverage`) carry it, warapp_track_opponents shows it, and the tracked
-  warning says "read from N of ~M frontier territories (P%)". While that share is under `LOW_COVERAGE`
-  (0.5) and the tracked figure beats its visible base + bonuses, the estimate never falls below tracked ×
-  `LOW_COVERAGE_FACTOR` (1.5), at most what it could earn (`coverageFloor`, its own warning); both
-  constants are unmeasured (the play session's long fogged games tracked a half to a quarter of the
-  income later seen). A tracked figure no higher than its visible income gets no floor. **Thin evidence
-  (#368, `thinEvidence`):** with a usable track, while its coverage is under `LOW_COVERAGE` or its tracked
-  figure rose two turns running (`risingTracked`: the most it earned over a turn and the two before it, as
-  of each of its last three consecutive observed turns), the estimate is at least the highest of the
-  tracked figure, the fog prior whole (not `priorBlend`'s shrink) and the trend's next step (the newest
-  figure plus the mean rise of the two steps), at most what it could earn; its own warning names each, and
-  the source reads `prior` when the prior set it, else `tracked`. **A known income (#368,
+  warning says "read from N of ~M frontier territories (P%)". **Thin evidence (#368, `thinEvidence`; owner
+  decision of 2026-11-19: on a hidden opponent choose the middle until we learn otherwise — it replaced
+  #294's floor of tracked × 1.5):** with a usable track, while its
+  coverage is under `LOW_COVERAGE` (0.5, unmeasured) the estimate is sized between a lower bound (the most of
+  its visible income, the tracked figure and — when its tracked figure rose two turns running,
+  `risingTracked`: the most it earned over a turn and the two before it, as of each of its last three
+  consecutive observed turns — the trend's next step, the newest figure plus the mean rise of the two
+  steps) and an upper bound (the fog prior whole, not `priorBlend`'s shrink, else the most it could earn):
+  the midpoint (rounded up) with none of its frontier read, moving to what the evidence gives without thin
+  evidence (`toward`: the track, or `priorBlend`) as the coverage nears `LOW_COVERAGE` — `toward` + (1 −
+  coverage ÷ 0.5) × (midpoint − `toward`) — so it never jumps at 0.5; up or down, never the maximum. A
+  rising track read from more of its frontier only raises the estimate to the lower bound. Its own warning
+  names both bounds, the midpoint and `toward`; the source reads `prior` when a prior is in the range and
+  the figure lies above the lower bound, else `tracked`; the tracker's coverage note says the planner sizes
+  it toward the midpoint. **A known income (#368,
   `PlanInput.knownIncome`, warapp_plan_turn's and warapp_check_plan's `known_income`, by GameFeed id)**
   replaces that opponent's estimate (`applyKnown`, after Sanctions and the army price; a Reinforcement card
   the clock adds stays on top; `EnemyDeployEstimate.known`), with a warning; `enemy_deploy` wins over it,

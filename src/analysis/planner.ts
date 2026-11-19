@@ -336,9 +336,11 @@
 //     + the sum of each turn's frontier coverage (#294, `frontierCoverage`) over its consecutive observed
 //     turns up to the newest board, none when the run stopped earlier) of its lead over the larger of
 //     its tracked income and its visible income (`priorBlend`), and the warning names both.
-//     #294: while the tracked figure, above its visible income, was read from under LOW_COVERAGE (0.5)
-//     of its frontier, the estimate is at least tracked × LOW_COVERAGE_FACTOR (1.5), at most what it
-//     could earn (`coverageFloor`); the warning says what it was read from. Both unmeasured.
+//     #368 (owner decision of 2026-11-19, replacing #294's floor of tracked × 1.5): while the tracked
+//     figure was read from under LOW_COVERAGE (0.5) of its frontier, the estimate is the midpoint between
+//     its lower bound (visible, tracked, a rising trend's next step) and its upper bound (the fog prior,
+//     else what it could earn), moved toward the lower bound as the coverage nears LOW_COVERAGE
+//     (`thinEvidence`); the warning names both bounds. Unmeasured.
 //     In a 1v1 too, so it trades #119's prior back toward tracked figures #119 found 2-3x low:
 //     PRIOR_EVIDENCE_TURNS (4) is unmeasured against a finished 1v1.
 //     #164, exact income: under a fog setting that shows every owner (`OWNERS_SHOWN_FOG`: No, Light

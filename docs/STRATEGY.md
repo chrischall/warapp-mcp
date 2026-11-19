@@ -749,9 +749,11 @@ delays the orders listed after it; under No-Split the whole stack moves).
   neighbour in view could have moved in, what came out of the fog, and what can only be deploy; only
   the last is income, and while most of its frontier is hidden a low estimate is a floor (fog,
   contact and after). **Advice only** (the planner does not state that split yet, #294), derived;
-  from the lost 1v1s of #300. On thin evidence (under half its frontier read, or its tracked income rising
-  two turns running) the planner sizes an opponent for the highest of its tracked figure, the fog prior and
-  the trend's next step (#368), and takes an income you know from `known_income`. Source: Good 1v1 strategies.
+  from the lost 1v1s of #300. On thin evidence (under half its frontier read) the planner sizes an opponent at
+  the midpoint between what it has seen (its tracked figure, raised to the trend's next step while that
+  rises) and the most it could have (the fog prior, else what it could earn), moving toward what it has seen
+  as more of the frontier comes into view (#368, the owner's call: choose the middle until we learn
+  otherwise), and takes an income you know from `known_income`. Source: Good 1v1 strategies.
 - `reading-stack-arrival` — When a stack you saw goes out of view, count the turns it needs to
   walk to each of your borders and expect it from that turn on. Do not advance toward where it
   must be unless you are sure to move first; and when a deployment drops with no fight to

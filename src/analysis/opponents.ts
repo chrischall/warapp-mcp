@@ -111,7 +111,6 @@ import {
   repelledFloor,
   coverageText,
   LOW_COVERAGE,
-  LOW_COVERAGE_FACTOR,
   TRACKED_MIN_TURNS,
   trackCoverage,
   visibleState,
@@ -1849,7 +1848,7 @@ export function trackOpponents(
     const covered = estimate ? trackCoverage(incomeWindow) : null;
     if (covered && covered.share < 1)
       notes.push(
-        `Income read from ${coverageText(covered)}: the rest of where it can deploy was out of view, so the figure is a lower bound${covered.share < LOW_COVERAGE && income! > visibleIncome && observed.length >= TRACKED_MIN_TURNS ? `, and the planner keeps at least ${LOW_COVERAGE_FACTOR} × it` : ''}.`,
+        `Income read from ${coverageText(covered)}: the rest of where it can deploy was out of view, so the figure is a lower bound${covered.share < LOW_COVERAGE && observed.length >= TRACKED_MIN_TURNS ? `, and the planner sizes it toward the midpoint between it and the most it could have (#368)` : ''}.`,
       );
     notes.push(...warnings);
     return {

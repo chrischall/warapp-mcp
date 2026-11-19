@@ -78,16 +78,12 @@ export const TRACKED_MIN_TURNS = 2;
 export const PRIOR_EVIDENCE_TURNS = 4;
 /**
  * #294: an opponent's tracked income was read from less than this share of its frontier
- * ({@link frontierCoverage}, over its income window): it is read as low, and the estimate never
- * falls below the tracked figure × {@link LOW_COVERAGE_FACTOR}. Unmeasured.
+ * ({@link frontierCoverage}, over its income window): the evidence is thin. #368 (owner decision of
+ * 2026-11-19): the estimate is then the midpoint of its range, moved toward the tracked figure as the
+ * coverage nears this share ({@link EnemyDeployEstimate.thinEvidence}); it replaced #294's floor of the
+ * tracked figure × 1.5. Unmeasured.
  */
 export const LOW_COVERAGE = 0.5;
-/**
- * #294: while coverage is under {@link LOW_COVERAGE}, the estimate is at least the tracked figure ×
- * this (at most what it could earn). Unmeasured: the play session's long fogged games tracked a half
- * to a quarter of the income later seen, so 1.5 is a cautious floor, not a correction.
- */
-export const LOW_COVERAGE_FACTOR = 1.5;
 
 /** Fog reveals named in the observed-deploy rationale before "and N more". */
 export const MAX_NAMED_REVEALS = 6;
@@ -1066,20 +1062,20 @@ export interface EnemyDeployEstimate {
    */
   coverage: TrackCoverage | null;
   /**
-   * #294: the coverage was under {@link LOW_COVERAGE}, its tracked income read more than its visible
-   * base + bonuses (a figure read from its deploys, not the board), and its estimate would have fallen
-   * below `tracked` × {@link LOW_COVERAGE_FACTOR}: it is `figure` (that product rounded up, at most
-   * `couldEarn`). `null` otherwise, and with an exact income (a track no higher than its visible income
-   * says nothing the board does not, and the fog prior, where asked for, covers the rest).
-   */
-  coverageFloor: { tracked: number; share: number; factor: number; figure: number } | null;
-  /**
-   * #368: the evidence behind its tracked figure was thin — read from under {@link LOW_COVERAGE} of its
-   * frontier (`coverage`), or its tracked figure rose two turns running (`rising`: as of each of its last
-   * three consecutive observed turns, {@link risingTracked}) — and the highest of `tracked`, the fog prior
-   * (`prior`, whole: never shrunk toward the track) and the trend's next step (`trend`: the newest figure
-   * plus the mean rise of the last two turns) was above the estimate otherwise: it is `figure` (at most
-   * `couldEarn`). `null` otherwise, with an exact income, and without a usable track.
+   * #368 (owner decision of 2026-11-19: choose the middle until we learn otherwise): the evidence behind
+   * its tracked figure was thin — read from under {@link LOW_COVERAGE} of its frontier (`coverage`), or its
+   * tracked figure rose two turns running (`rising`: as of each of its last three consecutive observed
+   * turns, {@link risingTracked}). `lower` is the most of its visible income, `tracked` and the trend's
+   * next step (`trend`: the newest figure plus the mean rise of the last two turns); `upper` the fog prior
+   * (`prior`, whole: never shrunk toward the track), else `couldEarn`, never below `lower`; `midpoint` the
+   * middle of the two (rounded up); `toward` what the evidence gives without thin evidence (`tracked`, or
+   * #235's prior shrunk toward it, `priorBlend`), never below `lower`. Under {@link LOW_COVERAGE} the
+   * estimate is `figure` = `toward` + `weight` × (`midpoint` − `toward`), `weight` = 1 − coverage ÷
+   * LOW_COVERAGE: the midpoint with none of its frontier read, moving to `toward` as the coverage nears
+   * LOW_COVERAGE (so it does not jump there), whether that raises or lowers it (it replaced #294's floor of
+   * `tracked` × 1.5). A rising track read from more of its frontier has `weight` 0 and sets `figure` =
+   * `toward` only when above the estimate otherwise. All at most `couldEarn`. `null` otherwise, with an
+   * exact income, and without a usable track. A known income (`known`) replaces it.
    */
   thinEvidence?: {
     coverage: number | null;
@@ -1087,6 +1083,11 @@ export interface EnemyDeployEstimate {
     tracked: number;
     prior: number | null;
     trend: number | null;
+    lower: number;
+    upper: number;
+    midpoint: number;
+    toward: number;
+    weight: number;
     figure: number;
   } | null;
   /**
@@ -2414,35 +2415,40 @@ export function enemyDeployEstimates(
     const exact = ownersAll && !opening ? Math.max(0, base + bonusIncome) : null;
     const source: EnemyDeployEstimate['source'] =
       exact !== null ? 'exact' : priorUsed !== null && priorUsed > seen ? 'prior' : seenSource;
-    // #294: what its tracked figure was read from; while that is little, the estimate never falls below
-    // the tracked figure × LOW_COVERAGE_FACTOR (the fog hid most of where it deploys).
+    // #294: what its tracked figure was read from (#368: while that is little, thin evidence below).
     const coverage = usable ? trackCoverage(usable.turns.filter((x) => usable.incomeTurns.includes(x.from))) : null;
     const chosen = source === 'exact' ? exact! : source === 'prior' ? priorUsed! : seen;
-    const lowFloor =
-      source !== 'exact' && tracked !== null && tracked > visible && coverage !== null && coverage.share < LOW_COVERAGE
-        ? Math.min(couldEarn, Math.ceil(tracked * LOW_COVERAGE_FACTOR - 1e-9))
-        : null;
-    const coverageFloor: EnemyDeployEstimate['coverageFloor'] =
-      lowFloor !== null && lowFloor > chosen ? { tracked: tracked!, share: coverage!.share, factor: LOW_COVERAGE_FACTOR, figure: lowFloor } : null;
-    const floored = coverageFloor ? coverageFloor.figure : chosen;
-    // #368: thin evidence — its tracked figure read from under LOW_COVERAGE of its frontier, or rising two
-    // turns running — sizes it for the highest of the tracked figure, the fog prior (whole, not shrunk
-    // toward the track) and the trend's next step, never the lower bound alone.
+    // #368 (owner decision of 2026-11-19: on a hidden opponent, choose the middle until we learn
+    // otherwise): thin evidence — its tracked figure read from under LOW_COVERAGE of its frontier —
+    // sizes it for the midpoint between the lower bound (what is in view or tracked, raised to the
+    // trend's next step when its tracked figure rose two turns running) and the upper bound (the fog
+    // prior whole, else the most it could earn), moved toward what the evidence gives as the coverage
+    // nears LOW_COVERAGE. A rising track read from more of its frontier only raises the estimate to that
+    // lower bound. Never the maximum.
     let thinEvidence: EnemyDeployEstimate['thinEvidence'] = null;
     if (source !== 'exact' && usable && tracked !== null) {
       const rising = risingTracked(usable.turns);
       const thinCoverage = coverage !== null && coverage.share < LOW_COVERAGE;
       if (thinCoverage || rising) {
         const trend = rising ? Math.min(couldEarn, rising[2]! + Math.ceil((rising[2]! - rising[0]!) / 2 - 1e-9)) : null;
-        const figure = Math.min(couldEarn, Math.max(tracked, priorFigure ?? 0, trend ?? 0));
-        if (figure > floored)
-          thinEvidence = { coverage: coverage ? coverage.share : null, rising, tracked, prior: priorFigure, trend, figure };
+        const lower = Math.min(couldEarn, Math.max(visible, tracked, trend ?? 0));
+        const upper = Math.max(lower, Math.min(couldEarn, priorFigure ?? couldEarn));
+        const midpoint = lower + Math.ceil((upper - lower) / 2 - 1e-9);
+        // What the evidence gives without thin evidence (the track, or #235's prior shrunk toward it),
+        // never below the lower bound: the figure meets it at LOW_COVERAGE, so it does not jump there.
+        const toward = Math.min(couldEarn, Math.max(lower, chosen));
+        const weight = thinCoverage ? Math.max(0, 1 - coverage!.share / LOW_COVERAGE) : 0;
+        const figure = toward + Math.ceil(weight * (midpoint - toward) - 1e-9);
+        // Thin coverage: the figure replaces the estimate, up or down. A rising track alone: a raise only.
+        if (thinCoverage || figure > chosen)
+          thinEvidence = { coverage: coverage ? coverage.share : null, rising, tracked, prior: priorFigure, trend, lower, upper, midpoint, toward, weight, figure };
       }
     }
-    const income = thinEvidence ? thinEvidence.figure : floored;
-    // #368: the figure thin evidence chose names its source: the prior when it is the prior, else the track.
+    const income = thinEvidence ? thinEvidence.figure : chosen;
+    // #368: the figure thin evidence chose names its source: the prior when there is one and the figure
+    // lies above the lower bound, else the track.
     const finalSource: EnemyDeployEstimate['source'] = thinEvidence
-      ? thinEvidence.prior !== null && thinEvidence.figure === Math.min(couldEarn, thinEvidence.prior) && thinEvidence.prior > tracked!
+      ? thinEvidence.prior !== null && thinEvidence.figure > thinEvidence.lower
         ? 'prior'
         : 'tracked'
       : source;
@@ -2501,7 +2507,6 @@ export function enemyDeployEstimates(
       prior: priorFigure,
       priorBlend,
       coverage,
-      coverageFloor,
       priorCap,
       fogBeside,
       source: finalSource,

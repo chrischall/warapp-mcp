@@ -2,9 +2,12 @@
 // is made up.
 //  (1) a player out (booted, eliminated, surrendered) no longer turns the FFA fog prior off: its share
 //      of what the board hides is split among the opponents still playing;
-//  (2) when the evidence is thin (income read from under LOW_COVERAGE of its frontier, or its tracked
-//      income rising two turns running) the estimate is the highest of its tracked figure, the fog
-//      prior (not shrunk toward the track) and the trend's projection;
+//  (2) when the evidence is thin (income read from under LOW_COVERAGE of its frontier) the estimate is
+//      the midpoint between the lower bound (its tracked figure, raised by a rising trend) and the upper
+//      bound (the fog prior, else the most it could earn), moving toward what the evidence gives (the
+//      track, or #235's prior shrunk toward it) as the coverage approaches LOW_COVERAGE (owner decision
+//      of 2026-11-19); a tracked income rising two turns running raises the lower bound to the trend's
+//      projection;
 //  (3) a per-player known income (`knownIncome`) overrides the estimate;
 //  (4) the outlook leans behind when it read even for OUTLOOK_TURNS turns running while I lost a bonus
 //      on each of them.
@@ -189,29 +192,50 @@ describe('(1) a player out keeps the FFA fog prior: its share goes to the oppone
   });
 });
 
-describe('(2) thin evidence: the estimate is the highest of the tracked figure, the fog prior and the trend', () => {
+describe('(2) thin evidence: the midpoint between the lower bound and the upper, toward the lower as evidence arrives', () => {
   // A 1v1 for the estimates below: one opponent (A) beside the fog; B's T6 is left out by using A only.
   const one = board([mine(1, 40), mine(2, 3), mine(3, 3), mine(4, 40), enemy(5, 30), neutral(6, 2), neutral(30, 2), ...fog]);
   const at = (t: OpponentTrack, prior?: { myIncome: number }) =>
     enemyDeployEstimates(g, one, ME, STD, undefined, [t], prior).find((e) => e.playerId === A)!;
 
-  it(`read from under ${LOW_COVERAGE * 100}% of its frontier: the fog prior stands whole, not shrunk toward the track`, () => {
-    // Six turns of a track at 26, each turn reading 30% of its frontier; my income 91.
-    const thin = at(track(A, 26, [26, 26, 26, 26, 26, 26], { share: 0.3 }), { myIncome: 91 });
-    expect(thin).toMatchObject({ estimate: 91, source: 'prior' });
-    expect(thin.thinEvidence).toMatchObject({ coverage: 0.3, rising: null, tracked: 26, prior: 91, trend: null, figure: 91 });
-    // The same evidence read from 80% of its frontier is no thin evidence: the prior shrinks as before (#235).
-    const thick = at(track(A, 26, [26, 26, 26, 26, 26, 26], { share: 0.8 }), { myIncome: 91 });
-    expect(thick.thinEvidence).toBeNull();
-    expect(thick.estimate).toBeLessThan(91);
+  it('nothing of its frontier read: the midpoint between the track and the fog prior, not the prior', () => {
+    // Six turns of a track at 26, none of its frontier read; my income 91. Midpoint 26 + ceil(65 / 2) = 59.
+    const e = at(track(A, 26, [26, 26, 26, 26, 26, 26], { share: 0 }), { myIncome: 91 });
+    expect(e.thinEvidence).toMatchObject({ coverage: 0, rising: null, tracked: 26, prior: 91, trend: null, lower: 26, upper: 91, midpoint: 59, weight: 1, figure: 59 });
+    expect(e).toMatchObject({ estimate: 59, source: 'prior' });
   });
 
-  it('tracked income rising two turns running: the trend projects one more step', () => {
+  it(`read from part of its frontier: the figure moves from the midpoint to what the evidence gives as coverage nears ${LOW_COVERAGE * 100}%`, () => {
+    const at26 = (share: number) => at(track(A, 26, [26, 26, 26, 26, 26, 26], { share }), { myIncome: 91 });
+    // 30% read: the evidence gives #235's blend, 26 + ceil(4 / (4 + 6 × 0.3) × 65) = 71; weight
+    // 1 − 0.3 / 0.5 = 0.4 of the way from it to the midpoint 59: 71 + ceil(0.4 × −12) = 67.
+    const thin = at26(0.3);
+    expect(thin.thinEvidence).toMatchObject({ coverage: 0.3, lower: 26, upper: 91, midpoint: 59, toward: 71, figure: 67 });
+    expect(thin.thinEvidence!.weight).toBeCloseTo(0.4);
+    expect(thin).toMatchObject({ estimate: 67, source: 'prior' });
+    // Never the maximum: below the prior.
+    expect(thin.estimate).toBeLessThan(91);
+    // Just under 50% read the figure is all but what the evidence gives; at 50% it is exactly that: no jump.
+    const under = at26(0.49);
+    const thick = at26(0.5);
+    expect(thick.thinEvidence).toBeNull();
+    expect(thick.priorBlend).not.toBeNull();
+    expect(Math.abs(under.estimate - thick.estimate)).toBeLessThanOrEqual(1);
+  });
+
+  it('with no fog prior the upper bound is the most it could earn', () => {
+    // Tracked 100, no prior, couldEarn 10 + 800 = 810: midpoint 100 + ceil(710 / 2) = 455, nothing read.
+    const e = at(track(A, 100, [100, 100, 100, 100], { share: 0 }));
+    expect(e.thinEvidence).toMatchObject({ prior: null, lower: 100, upper: 810, midpoint: 455, figure: 455 });
+    expect(e).toMatchObject({ estimate: 455, source: 'tracked' });
+  });
+
+  it('tracked income rising two turns running: the trend raises the lower bound', () => {
     // Its readings 10, 20, 40, 60: the tracked figure (the most of a turn and the two before it) as of
     // each of the last three turns read 20, 40, 60 — rising twice; one more step of the mean rise
-    // ((60 − 20) / 2 = 20) gives 80.
+    // ((60 − 20) / 2 = 20) gives 80. Read from 80% of its frontier: the figure is that lower bound.
     const e = at(track(A, 60, [10, 20, 40, 60], { share: 0.8 }));
-    expect(e.thinEvidence).toMatchObject({ coverage: 0.8, rising: [20, 40, 60], tracked: 60, prior: null, trend: 80, figure: 80 });
+    expect(e.thinEvidence).toMatchObject({ coverage: 0.8, rising: [20, 40, 60], tracked: 60, prior: null, trend: 80, lower: 80, toward: 80, weight: 0, figure: 80 });
     expect(e).toMatchObject({ estimate: 80, source: 'tracked' });
   });
 
@@ -221,21 +245,32 @@ describe('(2) thin evidence: the estimate is the highest of the tracked figure, 
     expect(e.estimate).toBe(40);
   });
 
-  it('the trend and the prior: the higher wins, capped at what it could earn', () => {
+  it('rising and thin: the midpoint from the raised lower bound, capped at what it could earn', () => {
+    // Trend 80 is the lower bound, the prior 91 the upper: midpoint 80 + ceil(11 / 2) = 86. The evidence
+    // gives #235's blend 60 + ceil(4 / 5.2 × 31) = 84; 30% read: 84 + ceil(0.4 × 2) = 85.
     const e = at(track(A, 60, [10, 20, 40, 60], { share: 0.3 }), { myIncome: 91 });
-    expect(e.thinEvidence).toMatchObject({ trend: 80, prior: 91, figure: 91 });
+    expect(e.thinEvidence).toMatchObject({ trend: 80, prior: 91, lower: 80, upper: 91, midpoint: 86, toward: 84, figure: 85 });
+    // 600 + 200 = 800 projected, at most its base 10 + the fogged 800 = 810: midpoint 805, 30% read → 802.
     const huge = at(track(A, 600, [100, 200, 400, 600], { share: 0.3 }));
-    // 600 + 200 = 800 projected, at most its base 10 + the fogged 800 = 810; the low-coverage floor
-    // (600 × 1.5 = 900, capped at 810) is higher still and keeps its own label.
-    expect(huge.estimate).toBe(810);
+    expect(huge.thinEvidence).toMatchObject({ lower: 800, upper: 810, midpoint: 805, toward: 800, figure: 802 });
+    expect(huge.estimate).toBe(802);
   });
 
   it('the plan warns what the estimate rests on', () => {
     const p = planTurn(
+      ffa({ board: one, game: { players: [{ id: ME }, { id: A }], turn: 12, symmetricStart: false }, tracks: [track(A, 26, [26, 26, 26, 26, 26, 26], { share: 0.3 })] }),
+    );
+    expect(p.warnings.join('\n')).toMatch(
+      /Enemy deploy estimate for player 20: ~183 \(thin evidence: its tracked income was read from 3 of ~10 frontier territories \(30%\), under 50%, so it is sized between the lower bound ~26 \(the tracked figure\) and the upper bound ~810 \(the most it could earn\): the midpoint ~418, moved toward what the evidence gives, ~26, as more of its frontier is read \(40% of the way from that to the midpoint\)\)/,
+    );
+  });
+
+  it('a rising track read from most of its frontier: the warning names the trend as the lower bound', () => {
+    const p = planTurn(
       ffa({ board: one, game: { players: [{ id: ME }, { id: A }], turn: 12, symmetricStart: false }, tracks: [track(A, 60, [10, 20, 40, 60], { share: 0.8 })] }),
     );
     expect(p.warnings.join('\n')).toMatch(
-      /Enemy deploy estimate for player 20: ~80 \(thin evidence: its tracked income rose two turns running \(20, 40, 60\), so it is sized for the highest of the tracked ~60 and the trend's next step ~80, not the lower bound\)/,
+      /Enemy deploy estimate for player 20: ~80 \(thin evidence: its tracked income rose two turns running \(20, 40, 60\), so its lower bound is the trend's next step ~80 \(the tracked ~60\)/,
     );
   });
 });
