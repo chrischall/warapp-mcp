@@ -601,8 +601,10 @@ private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `wara
   private message"), optional int32 game-group id, two marker strings (the last message seen on
   each channel, `-1` for none: war.app parses them as numbers, and null markers are refused with
   server error 1, `ParseLongSafe(null)`, seen live 2026-11-19), two optional "last seen"
-  dicts. With `-1` markers a team-channel send was accepted live on 2026-11-19; that it reached
-  the teammate is not yet confirmed. Reply: bool present, then the updated message list straight after it (no second flag),
+  dicts. With `-1` markers a team-channel send was verified live on 2026-11-19: the message shows in
+  the game's Team tab in the official app. The channel value (my team, read from GameFeed) is right.
+  The same game's `GameRefresh` read, during territory picks, returned no messages at all, so that
+  read missed it. Reply: bool present, then the updated message list straight after it (no second flag),
   each a present flag and a `GameMessage`. `warapp_send_chat` reads it back: `confirmed` when my
   newest message on that channel has the text sent, `unconfirmed` when it is another, `accepted`
   when the reply cannot be read. Server errors the client names: 36 rate-limited, 33 too long,
