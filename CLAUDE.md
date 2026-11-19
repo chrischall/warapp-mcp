@@ -250,8 +250,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **Who moved first is kept between turns (#127, `src/move-order.ts`).** In a two-player game under `Cycle`
   or `NoLuckCycle` the first mover alternates every turn, so `warapp_plan_turn` keeps one known turn at
   `<dataDir>/move-order/<gameId>.json` (turn, `me`/`opponent`, source) and later turns default to it,
-  alternated. Sources, best first: `first_mover` given now; a kept explicit turn; the award; a kept award
-  turn. Disagreement is a warning; `firstMover` reports `{ who, source, from? }`. The game history is not
+  alternated. Sources, best first: `first_mover` given now; a kept explicit turn; last turn `inferred` (#299,
+  `inferFirstMover`: my first order last turn captured a territory it could not have taken from the armies there
+  at the start of the turn, so the opponent's order ran first — 0% luck and straight rounding only, no card of mine
+  touching it, no Order Priority the opponent may hold; never verified, so it orders moves but never sizes a hold);
+  a kept inferred turn; the award; a kept award turn. Disagreement is a warning; `firstMover` reports
+  `{ who, source, from?, line }` (`line`: "You move first on turn N (…)"). The game history is not
   read for it (UNVERIFIED whether an in-progress `GetHistory` carries the orders in the order they ran).
   `warapp_check_plan` writes nothing and still tries both orders unless `first_mover` is given.
 - **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`).** The `GameRefresh` read of **public** messages is

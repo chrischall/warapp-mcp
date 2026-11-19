@@ -79,6 +79,7 @@ import {
   type TurnOrder,
 } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, type WarappServerError } from '../protocol/rpc.js';
+import { inferFirstMover } from '../move-order.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from './card-effects.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
@@ -1697,7 +1698,23 @@ export async function livePlanSetup(
   const board = award?.board ?? seen;
   const opening = openingThreat(award, game, graph, seen, turn);
   // #127: who moves first — first_mover, else a turn kept for this game alternated, else the award.
-  const mover = await firstMoverFor(ctx.dataDir, game, me, turn, first_mover, award, { write });
+  // #299: my own first order last turn can prove the opponent moved first then.
+  const lastTurn = turn !== null ? history.boards.find((b) => b.turn === turn - 1) : undefined;
+  const rival = game.players.length === 2 ? game.players.find((p) => p.id !== me.id) : undefined;
+  const inferred =
+    turn !== null && lastTurn?.orders && rival
+      ? inferFirstMover({
+          turn: turn - 1,
+          before: lastTurn.board,
+          after: seen,
+          orders: lastTurn.orders,
+          me: me.id,
+          opponent: rival.id,
+          rates: plannerSettings(game.settings),
+          orderPriorityPossible: opponentCanHold(game.settings, 'Order Priority', turn - 1),
+        })
+      : null;
+  const mover = await firstMoverFor(ctx.dataDir, game, me, turn, first_mover, award, { write, ...(inferred ? { inferred } : {}) });
   const settings = plannerSettings(game.settings);
   const rules = cardRules(game.settings);
   // A team shares one hand (#163): mine and my teammates' cards.

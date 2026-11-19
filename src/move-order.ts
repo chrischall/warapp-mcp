@@ -17,12 +17,19 @@
 // write of a process.
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { BoardState, TerritoryState } from './board.js';
+import { armiesToTake, type KillRates } from './analysis/combat.js';
+import type { MyOrders } from './analysis/opponents.js';
 
 export type FirstMover = 'me' | 'opponent';
-/** Where a known first mover came from: `first_mover` given for that turn, or the award of picks. */
-export type FirstMoverSource = 'explicit' | 'award';
+/**
+ * Where a known first mover came from: `first_mover` given for that turn, the award of picks, or
+ * (#299) `inferred` from my own first order's result on that turn ({@link inferFirstMover}). Only
+ * `explicit` is verified: an inferred one orders the moves but never sizes a hold.
+ */
+export type FirstMoverSource = 'explicit' | 'award' | 'inferred';
 
-interface FirstMoverSeen {
+export interface FirstMoverSeen {
   /** The turn it is known for (the turn being played, as every tool reports `turn`). */
   turn: number;
   firstMover: FirstMover;
@@ -47,14 +54,19 @@ const pruned = new Set<string>();
 const other = (m: FirstMover): FirstMover => (m === 'me' ? 'opponent' : 'me');
 const isTurn = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 1;
 const isMover = (v: unknown): v is FirstMover => v === 'me' || v === 'opponent';
-const isSource = (v: unknown): v is FirstMoverSource => v === 'explicit' || v === 'award';
+const isSource = (v: unknown): v is FirstMoverSource => v === 'explicit' || v === 'award' || v === 'inferred';
 
 /** The first mover on `turn`, from one known turn: the same every second turn, the other in between. */
 export function projectFirstMover(seen: { turn: number; firstMover: FirstMover }, turn: number): FirstMover {
   return Math.abs(turn - seen.turn) % 2 === 0 ? seen.firstMover : other(seen.firstMover);
 }
 
-const RANK: Record<FirstMoverSource, number> = { award: 0, explicit: 1 };
+const RANK: Record<FirstMoverSource, number> = { award: 0, inferred: 1, explicit: 2 };
+const KEPT_LABEL: Record<FirstMoverSource, (turn: number) => string> = {
+  explicit: (t) => `the first_mover given on turn ${t}`,
+  inferred: (t) => `my first order's result on turn ${t}`,
+  award: (t) => `the award of picks (kept on turn ${t})`,
+};
 const said = (m: FirstMover, turn: number) => `${m === 'me' ? 'you move' : 'the opponent moves'} first on turn ${turn}`;
 
 /**
@@ -71,6 +83,8 @@ export function resolveFirstMover(input: {
   explicit?: FirstMover;
   /** What the award of picks says for `turn` (`firstMoverOnTurn`); `null` when it says nothing. */
   award: FirstMover | null;
+  /** #299: a turn whose first mover my own first order's result proves ({@link inferFirstMover}). */
+  inferred?: FirstMoverSeen;
   remembered?: FirstMoverSeen;
 }): { resolved: ResolvedFirstMover | null; record?: FirstMoverSeen; warnings: string[] } {
   const { turn, explicit, award } = input;
@@ -83,12 +97,21 @@ export function resolveFirstMover(input: {
   const fromKept = (): Candidate | undefined =>
     kept && {
       firstMover: projectFirstMover(kept, turn),
-      label: kept.source === 'explicit' ? `the first_mover given on turn ${kept.turn}` : `the award of picks (kept on turn ${kept.turn})`,
+      label: KEPT_LABEL[kept.source](kept.turn),
       resolved: { firstMover: projectFirstMover(kept, turn), source: 'remembered', from: { turn: kept.turn, source: kept.source } },
     };
   if (explicit)
     candidates.push({ firstMover: explicit, label: 'first_mover', resolved: { firstMover: explicit, source: 'explicit' }, record: { turn, firstMover: explicit, source: 'explicit' } });
   if (kept?.source === 'explicit') candidates.push(fromKept()!);
+  const inf = input.inferred;
+  if (inf && !same(inf, kept))
+    candidates.push({
+      firstMover: projectFirstMover(inf, turn),
+      label: KEPT_LABEL.inferred(inf.turn),
+      resolved: { firstMover: projectFirstMover(inf, turn), source: 'remembered', from: { turn: inf.turn, source: 'inferred' } },
+      record: inf,
+    });
+  if (kept?.source === 'inferred') candidates.push(fromKept()!);
   if (award) candidates.push({ firstMover: award, label: 'the award of picks', resolved: { firstMover: award, source: 'award' }, record: { turn, firstMover: award, source: 'award' } });
   if (kept?.source === 'award') candidates.push(fromKept()!);
 
@@ -105,6 +128,57 @@ export function resolveFirstMover(input: {
   // Keep what is newly known, unless a better-ranked turn is kept already.
   const record = used.record && (!kept || RANK[used.record.source] >= RANK[kept.source]) && !same(used.record, kept) ? used.record : undefined;
   return { resolved: used.resolved, ...(record ? { record } : {}), warnings };
+}
+
+/**
+ * #299: who moved first on the previous turn, read from my own first order on it. Moving first, my
+ * first order runs before any order of the opponent's, against the target as it stood plus deploys
+ * only, which never shrink it: so when that order captured a territory its sender could not have
+ * taken from the armies the target held at the start of the turn, the opponent's order ran before
+ * it (the stack had left). Read only when the result is exact (0% luck, straight rounding), the
+ * order is the only one of mine into the target, no commander was on either side, and no card could
+ * explain it: none of mine touching the source or target, nor an Order Priority or Order Delay of
+ * mine, nor one the opponent may hold (`orderPriorityPossible`: it reorders that turn alone). Gives
+ * `null` when it proves nothing. The other case of #299 (an attack of mine that failed against
+ * armies moved in first) is not read: my losses cannot be told apart from the opponent's attacks on
+ * my source. Pure.
+ */
+export function inferFirstMover(input: {
+  /** The turn the orders ran on (the previous turn). */
+  turn: number;
+  /** The board at the start of that turn, and the board after it. */
+  before: BoardState;
+  after: BoardState;
+  orders: MyOrders;
+  me: number;
+  opponent: number;
+  rates?: KillRates & { luckModifier?: number; roundingMode?: string; oneArmyStandsGuard?: boolean };
+  orderPriorityPossible: boolean;
+}): FirstMoverSeen | null {
+  const { before, after, orders, me, opponent, rates = {} } = input;
+  if (input.orderPriorityPossible || !orders.cards) return null;
+  if ((rates.luckModifier ?? 0) !== 0 || (rates.roundingMode !== undefined && rates.roundingMode !== 'StraightRound')) return null;
+  const sent = orders.sent ?? orders.moves;
+  const first = sent[0];
+  if (!first || ('transferOnly' in first && first.transferOnly) || first.commander) return null;
+  const move = orders.moves[0];
+  if (!move || move.from !== first.from || move.to !== first.to) return null;
+  if (sent.some((m, i) => i > 0 && m.to === move.to) || orders.moves.some((m, i) => i > 0 && m.to === move.to)) return null;
+  if (orders.cards.some((c) => c.card === 'Order Priority' || c.card === 'Order Delay' || [c.from, c.to, c.target].some((t) => t === move.from || t === move.to)))
+    return null;
+  const at = (b: BoardState, id: number) => b.territories.find((t) => t.territoryId === id);
+  const held = (t: TerritoryState | undefined, p: number): t is TerritoryState & { armies: number } =>
+    t !== undefined && t.owner.kind === 'player' && t.owner.playerId === p && typeof t.armies === 'number' && !t.specialUnits?.length;
+  const source = at(before, move.from);
+  const target = at(before, move.to);
+  if (!held(source, me) || !held(target, opponent)) return null;
+  const now = at(after, move.to);
+  if (now?.owner.kind !== 'player' || now.owner.playerId !== me) return null;
+  const deployed = orders.deploys.filter((d) => d.territoryId === move.from).reduce((s, d) => s + d.armies, 0);
+  const guard = rates.oneArmyStandsGuard === false ? 0 : 1;
+  const sendable = Math.min(move.armies, source.armies + deployed - guard);
+  const need = armiesToTake(target.armies, rates);
+  return need !== null && need > sendable ? { turn: input.turn, firstMover: 'opponent', source: 'inferred' } : null;
 }
 
 /**

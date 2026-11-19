@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   FIRST_MOVER_MAX_AGE_MS,
+  inferFirstMover,
   firstMoverPath,
   projectFirstMover,
   readFirstMover,
@@ -171,5 +172,45 @@ describe('the stored first mover', () => {
     await writeFirstMover(d, GAME, ME, { turn: 2, firstMover: 'me', source: 'explicit' });
     expect(existsSync(old)).toBe(false);
     expect(existsSync(firstMoverPath(d, GAME))).toBe(true);
+  });
+});
+
+describe('inferFirstMover (#299)', () => {
+  const OPP = 7700000022;
+  const t = (territoryId: number, owner: number, armies: number) => ({ territoryId, owner: { kind: 'player' as const, playerId: owner }, armies });
+  const board = (...territories: ReturnType<typeof t>[]) => ({ source: 'browser' as const, verified: true, territories });
+  // My first order sent 10 from territory 1 at his territory 2, which held 20: it cannot take 20
+  // moving first, yet territory 2 is mine afterwards — his stack had left first.
+  const before = board(t(1, ME, 12), t(2, OPP, 20));
+  const after = board(t(1, ME, 2), t(2, ME, 8));
+  const orders = { deploys: [], moves: [{ from: 1, to: 2, armies: 10 }], cards: [] };
+  const base = { turn: 6, before, after, orders, me: ME, opponent: OPP, orderPriorityPossible: false };
+
+  it('reads the opponent first when my first order took what it could not have taken moving first', () => {
+    expect(inferFirstMover(base)).toEqual({ turn: 6, firstMover: 'opponent', source: 'inferred' });
+  });
+  it('proves nothing when the capture was possible, failed, luck was on, or a card could explain it', () => {
+    expect(inferFirstMover({ ...base, before: board(t(1, ME, 12), t(2, OPP, 5)) })).toBeNull();
+    expect(inferFirstMover({ ...base, after: board(t(1, ME, 2), t(2, OPP, 8)) })).toBeNull();
+    expect(inferFirstMover({ ...base, rates: { luckModifier: 0.16 } })).toBeNull();
+    expect(inferFirstMover({ ...base, orderPriorityPossible: true })).toBeNull();
+    expect(inferFirstMover({ ...base, orders: { ...orders, cards: undefined } as never })).toBeNull();
+    expect(inferFirstMover({ ...base, orders: { ...orders, moves: [...orders.moves, { from: 3, to: 2, armies: 30 }] } })).toBeNull();
+  });
+  it('is kept as its own source, alternated, and never verified', () => {
+    const inferred = { turn: 6, firstMover: 'opponent' as const, source: 'inferred' as const };
+    const r = resolveFirstMover({ turn: 7, cyclicDuel: true, award: 'opponent', inferred });
+    expect(r.resolved).toEqual({ firstMover: 'me', source: 'remembered', from: { turn: 6, source: 'inferred' } });
+    expect(r.record).toEqual(inferred);
+    expect(r.warnings[0]).toMatch(/award of picks says the opponent moves first/);
+    expect(verifiedFirstMover(r.resolved!)).toBe(false);
+  });
+  it('says who moves first this turn in the plan', async () => {
+    const game = { id: GAME, players: [{ id: ME }, { id: OPP }], settings: { moveOrder: 'Cycle' } } as never;
+    const r = await firstMoverFor(undefined, game, { id: ME } as never, 7, undefined, undefined, {
+      inferred: { turn: 6, firstMover: 'opponent', source: 'inferred' },
+    });
+    expect(r).toMatchObject({ firstMover: 'me', verified: false });
+    expect(r.view?.line).toBe('You move first on turn 7 (alternated from turn 6: inferred from my first order there, not verified).');
   });
 });

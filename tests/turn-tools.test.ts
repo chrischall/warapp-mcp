@@ -1913,13 +1913,13 @@ describe('cards in the turn tools', () => {
     await h.harness.close();
     h = await harness('3');
     const later = payload<CardsPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(later.firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(later.firstMover).toMatchObject({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
     expect(later.cardAdvice).toBeNull();
     // Turn 3 alternates: the opponent moves first, and the card is advised again.
     await h.harness.close();
     h = await harness('2');
     const odd = payload<CardsPayload & { firstMover: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(odd.firstMover).toEqual({ who: 'opponent', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect(odd.firstMover).toMatchObject({ who: 'opponent', source: 'remembered', from: { turn: 2, source: 'explicit' } });
     expect(odd.cardAdvice).toBe('order-priority');
   });
 
@@ -3866,7 +3866,7 @@ describe('warapp_plan_turn finishing a player off (#179): the move order, the ca
     await writeFirstMover(dir, GAME, me, { turn: 2, firstMover: 'opponent', source: 'explicit' });
     h = await liveHarness({ feed: [duel()], warapp, dataDir: dir });
     const first = await plan();
-    expect((first as unknown as { firstMover: unknown }).firstMover).toEqual({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
+    expect((first as unknown as { firstMover: unknown }).firstMover).toMatchObject({ who: 'you', source: 'remembered', from: { turn: 2, source: 'explicit' } });
     expect(first.rationale.join('\n')).toMatch(FINISHED);
     expect(first.rationale.join('\n')).not.toMatch(COVER);
     expect(first.cardAdvice).toBeNull();
