@@ -42,6 +42,26 @@ export const knownIncomeArg = z
       'for every opponent, wins over it; a player with none of its territories in view is named as unused.',
   );
 
+/** #375: territories never to attack (warapp_plan_turn's and warapp_check_plan's `avoid_territories`). */
+export const avoidTerritoriesArg = z
+  .array(z.union([z.string(), z.number()]))
+  .max(200)
+  .optional()
+  .describe(
+    'Territories (ids or names) never to attack this turn, whoever holds them: a neutral promised to someone, say. ' +
+      'warapp_plan_turn plans around them; warapp_check_plan warns when the orders attack one. Kept for this call only.',
+  );
+
+/** #375: players never to attack (warapp_plan_turn's and warapp_check_plan's `avoid_players`). */
+export const avoidPlayersArg = z
+  .array(z.coerce.number().int())
+  .max(50)
+  .optional()
+  .describe(
+    'Players (GameFeed ids) never to attack this turn: peace promised outside a recorded truce. warapp_plan_turn ' +
+      'attacks none of their territories; warapp_check_plan warns when the orders do. Kept for this call only.',
+  );
+
 /**
  * Who writes the text these tools return: player and game names, chat, and
  * map / territory / bonus names (maps are user-designed). None of it is the user.

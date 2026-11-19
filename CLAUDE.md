@@ -454,6 +454,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`agreementsBroken`; otherwise it says to record it by hand). That is final: `warapp_uncommit_turn`
   does not undo it, and says so (`agreementsStillBroken`, the agreements broken-by-me on that turn). Not yet: writing `broken-by-them` to the
   ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
+- **Deals outside the ledger (#375): `avoid_territories` / `avoid_players`** on `warapp_plan_turn` and
+  `warapp_check_plan`, for this call only (`PlanOptions.avoid`). The planner treats each like a truce's covered
+  territory for T1 (`truceOf` wraps `noTarget`; `Truce.avoided` names it in the "Not attacking" line), a neutral
+  included, in any format; holds are not relaxed (T2 does not apply). check_plan warns when the orders attack one.
 - **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (docs/PLAN-TEAMS.md
   section 8 B3). `priceTruce` (`src/analysis/relations.ts`, pure) diffs two plans on the exact input
   `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the

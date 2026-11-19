@@ -257,6 +257,11 @@ export interface PlanOptions {
   /** Default `balanced`. */
   goal?: PlanGoal;
   /**
+   * #375: territories (any owner, a neutral included) and players (GameFeed ids) no pass of the plan
+   * attacks — a deal outside any recorded truce. Each is treated like a truce's covered territory (T1).
+   */
+  avoid?: { territories?: readonly number[]; players?: readonly number[] };
+  /**
    * #274: `false` keeps my commander where it stands this turn (rule 1k alone, the walk of
    * plan/commander.ts off). Default: it walks toward safety when it should.
    */

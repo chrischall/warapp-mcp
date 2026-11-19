@@ -2833,6 +2833,25 @@ describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)'
     expect(p.safeIfTruceHolds).not.toBeUndefined();
   });
 
+  it('#375: avoid_territories and avoid_players keep warapp_plan_turn off them and make warapp_check_plan warn', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([]) }) });
+    const attacked = (p: EffectPayload) =>
+      (p.moves as unknown as { kind: string; to: { id: number } }[]).flatMap((m) => (m.kind === 'attack' ? [m.to.id] : []));
+    // The planner's own test (tests/analysis/avoid-375.test.ts) shows the attacks it drops; here the arguments reach it.
+    const avoided = payload<EffectPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, avoid_territories: [157], avoid_players: [Number(BOB.feed)] }),
+    );
+    expect(attacked(avoided).some((t) => t === 157 || t === 158)).toBe(false);
+    const check = payload<{ warnings: string[] }>(
+      await h.call('warapp_check_plan', {
+        game_id: GAME,
+        orders: [{ kind: 'deploy', territory: 159, armies: 5 }, { kind: 'move', from: 159, to: 157, armies: 8 }],
+        avoid_territories: [157],
+      }),
+    );
+    expect(check.warnings.join('\n')).toMatch(/which you asked to avoid/);
+  });
+
   it('#277: warapp_check_plan reports the income Sanctions on me leave, as warapp_plan_turn does', async () => {
     h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([san(3)]) }) });
     const p = payload<{ income: number; deployed: number; warnings: string[] }>(
