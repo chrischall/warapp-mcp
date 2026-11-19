@@ -88,6 +88,8 @@ import {
   turnsCompleted,
   gameIdArg,
   knownIncomeArg,
+  avoidPlayersArg,
+  avoidTerritoriesArg,
   graphOf,
   namer,
   readAnnotations,
@@ -1658,6 +1660,8 @@ export interface LivePlanArgs {
   firstMover?: 'me' | 'opponent';
   /** #368: per-player incomes the caller knows (`known_income`): each replaces that opponent's estimate. */
   knownIncome?: readonly { player: number; income: number }[];
+  /** #375: territories and players no pass attacks (`avoid_territories`, `avoid_players`). */
+  avoid?: { territories: readonly number[]; players: readonly number[] };
 }
 
 /**
@@ -1866,6 +1870,7 @@ export async function livePlanSetup(
       ...(reserve !== undefined ? { reserve } : {}),
       ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
       ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
+      ...(a.args?.avoid ? { avoid: a.args.avoid } : {}),
       // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
       ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
       // #215 review: from the award (unverified), the schedule and card advice use it, holds do not.
@@ -2284,6 +2289,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               'fog pressure, commander strikes) stay certain.',
           ),
         known_income: knownIncomeArg,
+        avoid_territories: avoidTerritoriesArg,
+        avoid_players: avoidPlayersArg,
         first_mover: z
           .enum(['me', 'opponent'])
           .optional()
@@ -2303,7 +2310,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ),
       }),
     },
-    async ({ game_id, player, goal, focus, reserve, enemy_deploy, known_income, min_win_chance, first_mover, view }) => {
+    async ({ game_id, player, goal, focus, reserve, enemy_deploy, known_income, avoid_territories, avoid_players, min_win_chance, first_mover, view }) => {
       // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
       const feed = await ctx.client.getGame(game_id, { settings: true, chat: true });
       requireTurnPhase(feed);
@@ -2338,6 +2345,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
           ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
           ...(known_income?.length ? { knownIncome: known_income } : {}),
+          ...(avoid_territories?.length || avoid_players?.length
+            ? { avoid: { territories: (avoid_territories ?? []).map((t) => resolveTerritory(map, t).id), players: avoid_players ?? [] } }
+            : {}),
         },
       });
       const { graph, seen, award, board, mover, rules, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards, income, trend, tracks } = setup;

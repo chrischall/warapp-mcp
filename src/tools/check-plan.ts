@@ -16,7 +16,7 @@ import { claimedCardUses, claimedCardWarning, teamCardClaims, teamHandLeft, uncl
 import { boardStateFromLive } from '../live.js';
 import { withTeammateOrders } from '../team-orders.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
-import { gameIdArg, graphOf, knownIncomeArg, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
+import { avoidPlayersArg, avoidTerritoriesArg, gameIdArg, graphOf, knownIncomeArg, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
 import { loadLiveGame, standInLine, standInOf, type LiveContext } from './live-context.js';
@@ -155,6 +155,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
               'Income in the fog is unseen, so raise it to test a stronger opponent.',
           ),
         known_income: knownIncomeArg,
+        avoid_territories: avoidTerritoriesArg,
+        avoid_players: avoidPlayersArg,
         first_mover: z
           .enum(['me', 'opponent'])
           .optional()
@@ -169,7 +171,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ),
       }),
     },
-    async ({ game_id, player, orders, enemy_deploy, known_income, first_mover, view }) => {
+    async ({ game_id, player, orders, enemy_deploy, known_income, avoid_territories, avoid_players, first_mover, view }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(feed);
       const map = mapOf(feed);
@@ -598,9 +600,22 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       });
       // #275 pattern 3: each border these orders leave below what the default plan leaves there (one plan per call).
       const belowPlan = await bordersBelowPlan(ctx, { game, map, me, turn, territories, info, history, teamsKnown, given: { deploys, moves } });
+      // #375: an order into a territory to avoid, or one an avoided player holds.
+      const avoidT = new Set((avoid_territories ?? []).map((t) => resolveTerritory(map, t).id));
+      const avoidP = new Set(avoid_players ?? []);
+      const ownerOf = (id: number) => {
+        const o = board.territories.find((t) => t.territoryId === id)?.owner;
+        return o?.kind === 'player' ? o.playerId : undefined;
+      };
+      const avoidedHits = [...new Set(moves.map((m) => m.to))].filter(
+        (to) => !mine.has(to) && (avoidT.has(to) || avoidP.has(ownerOf(to) ?? Number.NaN)),
+      );
       const warnings = [
         // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
         ...[standInLine(standInOf(ctx))].filter((w): w is string => w !== undefined),
+        ...(avoidedHits.length
+          ? [`These orders attack ${avoidedHits.map((t) => name(t)).join(', ')}, which you asked to avoid (avoid_territories / avoid_players).`]
+          : []),
         // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
         ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, (w) => untrustedOf.get(w.player) ?? untrustedDeploy(w, income), (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
         ...(award ? assumedWarning(award) : []),

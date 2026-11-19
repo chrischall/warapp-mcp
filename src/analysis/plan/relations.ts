@@ -79,6 +79,8 @@ export interface Truce {
    * the agreement binds, a team or two-player game included.
    */
   noTarget: (t: number) => boolean;
+  /** #375: a territory the plan was told to avoid (`PlanOptions.avoid`); `noTarget` includes it. */
+  avoided: (t: number) => boolean;
   /** T4 for rule 6: a covered territory of a partner a truce binds the planner to (free-for-all only). */
   noFront: (t: number) => boolean;
   /** The format the truces were read in (for the ignored warning). */
@@ -94,6 +96,7 @@ const NONE: Truce = {
   enforced: new Set(),
   lookAheadFoes: new Set(),
   noTarget: () => false,
+  avoided: () => false,
   noFront: () => false,
   format: 'ffa',
 };
@@ -103,6 +106,25 @@ const NONE: Truce = {
  * and the territories none of my passes may attack. `notFoe` says who is me or a teammate.
  */
 export function truceOf(input: PlanInput, o: { notFoe: (p: number) => boolean; format: GameFormat; turnNow: number | null }): Truce {
+  return withAvoid(truceFrom(input, o), input);
+}
+
+/** #375: a territory the caller asked to avoid, or one an avoided player holds, is never a target either. */
+export function avoidedBy(input: PlanInput): (t: number) => boolean {
+  const territories = new Set(input.options?.avoid?.territories ?? []);
+  const players = new Set(input.options?.avoid?.players ?? []);
+  if (!territories.size && !players.size) return () => false;
+  const owner = new Map<number, number>();
+  for (const t of input.board.territories) if (t.owner.kind === 'player') owner.set(t.territoryId, t.owner.playerId);
+  return (t) => territories.has(t) || players.has(owner.get(t) ?? Number.NaN);
+}
+
+function withAvoid(truce: Truce, input: PlanInput): Truce {
+  const avoided = avoidedBy(input);
+  return { ...truce, avoided, noTarget: (t) => avoided(t) || truce.noTarget(t) };
+}
+
+function truceFrom(input: PlanInput, o: { notFoe: (p: number) => boolean; format: GameFormat; turnNow: number | null }): Truce {
   const given = input.relations ?? [];
   if (!given.length) return NONE;
   const ffa = o.format === 'ffa';
@@ -161,7 +183,7 @@ export function truceOf(input: PlanInput, o: { notFoe: (p: number) => boolean; f
   given.forEach((r, i) => {
     if (binds[i] && enforcedNow[i] && (r.enforcedUntil === undefined || (o.turnNow !== null && r.enforcedUntil > o.turnNow + 1))) lookAheadFoes.delete(r.player);
   });
-  return { given, status, binds, partners, enforced, lookAheadFoes, noTarget, noFront, format: o.format };
+  return { given, status, binds, partners, enforced, lookAheadFoes, noTarget, avoided: () => false, noFront, format: o.format };
 }
 
 /**
