@@ -2832,6 +2832,16 @@ describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)'
     expect(p.truces).toEqual([expect.objectContaining({ card: 'Diplomacy', enforced: true, enforcedUntil: 5, verified: false })]);
     expect(p.safeIfTruceHolds).not.toBeUndefined();
   });
+
+  it('#277: warapp_check_plan reports the income Sanctions on me leave, as warapp_plan_turn does', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([san(3)]) }) });
+    const p = payload<{ income: number; deployed: number; warnings: string[] }>(
+      await h.call('warapp_check_plan', { game_id: GAME, orders: [{ kind: 'deploy', territory: 161, armies: 2 }] }),
+    );
+    expect(p.income).toBe(2);
+    expect(p.deployed).toBe(2);
+    expect(p.warnings.join('\n')).not.toMatch(/your income is/);
+  });
 });
 
 describe('Local Deployment in the turn tools (G2, issue #29)', () => {
