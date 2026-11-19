@@ -322,17 +322,17 @@ describe('warapp_plan_turn', () => {
     expect(p.moves.length).toBeGreaterThan(0);
   });
 
-  it('accepts each goal and describes all four', async () => {
+  it('accepts each goal and describes all five', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
-    for (const goal of ['balanced', 'expand', 'complete-bonus', 'defend']) {
+    for (const goal of ['balanced', 'expand', 'complete-bonus', 'defend', 'siege']) {
       const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal }));
       expect(p.goal).toBe(goal);
     }
     const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_plan_turn')!;
     expect(tool.description).toMatch(/"balanced" \(default\)/);
-    for (const goal of ['expand', 'complete-bonus', 'defend']) expect(tool.description).toContain(`"${goal}"`);
+    for (const goal of ['expand', 'complete-bonus', 'defend', 'siege']) expect(tool.description).toContain(`"${goal}"`);
     const props = (tool.inputSchema as { properties: Record<string, { enum?: string[]; description?: string }> }).properties;
-    expect(props.goal!.enum).toEqual(['balanced', 'expand', 'complete-bonus', 'defend']);
+    expect(props.goal!.enum).toEqual(['balanced', 'expand', 'complete-bonus', 'defend', 'siege']);
     expect(props.goal!.description).toMatch(/balanced \(default\)/);
   });
 

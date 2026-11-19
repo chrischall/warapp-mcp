@@ -985,10 +985,15 @@ export function chooseStrikeStack(
   };
   /** The stack on `x` a strike could send: what stays, plus a small expansion's armies (No-Split). */
   const stackAt = (x: number) => stays(x) + (smallExpansion(x)?.armies ?? 0);
-  if (auto && profile.format === '1v1' && goal !== 'defend' && facing.size) {
-    const player = [...facing]
-      .map((p) => ({ p, e: estimates.get(p) }))
-      .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;
+  // #382: a siege builds the stack facing its target in any format (its attacks held until the trigger:
+  // the target's other territories are no targets then, so the stack only grows or breaks).
+  const siege = pc.siege && facing.has(pc.siege.target) ? pc.siege : undefined;
+  if ((auto && profile.format === '1v1' && goal !== 'defend' && facing.size) || siege) {
+    const player = siege
+      ? { p: siege.target, e: estimates.get(siege.target) }
+      : [...facing]
+          .map((p) => ({ p, e: estimates.get(p) }))
+          .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;
     /** The opponent's territories next to `x` a strike could aim at. */
     const aims = (x: number) =>
       neighborsOf(g, x).filter((n) => {
@@ -1415,7 +1420,7 @@ export function spendStrikeStack(
         why: `not made from the strike stack ${label(S)} — ${refused.get(c.id) ?? 'not worth it'}${effect ? `: ${effect}` : ''}`,
       });
     }
-    const builds = `the spare deploys build one strike stack facing player ${strikeStack.player}, the strongest opponent (~${strikeStack.income} income, ${strikeStack.source})`;
+    const builds = `the spare deploys build one strike stack facing player ${strikeStack.player}, ${pc.siege?.target === strikeStack.player ? 'the siege target' : 'the strongest opponent'} (~${strikeStack.income} income, ${strikeStack.source})`;
     if (!taken.length) {
       const held = candidates.length
         ? candidates.map((c) => `${label(c.id)}: ${refused.get(c.id) ?? 'not worth it'}`).join('; ')

@@ -906,7 +906,10 @@
 //     income may lose at most PLAIN_EXPANSION_LOSS (a rationale line "Do not expand into …"
 //     names an affordable one refused). The leftover's expansion stack (rule 5) is a capture's
 //     finisher, never a combined capture's softener.
-//  4a. Balanced (the default goal). Instead of passes 1–2, every candidate is
+//  4a. Balanced (the default goal; `siege` too, #382: the siege target's breaks weigh
+//     SIEGE_BREAK_WEIGHT × a 1v1 break and are never a second front, its other territories are
+//     no target until the trigger fires, and rule 0p.3c's strike stack faces it — plan/siege.ts).
+//     Instead of passes 1–2, every candidate is
 //     scored as income per army and taken greedily (focus first, then score, then
 //     cheaper, fewer bonus borders, id): a hold (protected value / hold cost),
 //     completing or advancing a bonus (value / remaining cost), breaking an enemy
@@ -1537,6 +1540,7 @@ import {
 import { neighborsOf } from './graph.js';
 import { forecastBorder, mainFront, type FrontStack } from './exchange.js';
 import { byNum, pct } from './plan/util.js';
+import { SIEGE_BREAK_WEIGHT } from './plan/siege.js';
 import {
   BREAK_WEIGHT,
   MIN_EXPANSION_SHARE,
@@ -1847,8 +1851,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const secondFrontSaid = new Set<number>();
     /** #167: the neutral's share of a break's score that skips it, scaled by my army lead (at least 1×). */
     const similar = SECOND_FRONT_SIMILAR * Math.max(1, Math.min(SECOND_FRONT_LEAD, armyLead.ratio));
+    /** #382: a break of the siege target's bonus (scored {@link SIEGE_BREAK_WEIGHT} × a 1v1 break, never a second front). */
+    const besieged = (b: Breakable) => pc.siege?.target === b.player;
     const opensSecondFront = (b: Breakable, score: number): boolean =>
       ffa &&
+      !besieged(b) &&
       !leadLever &&
       b.player !== clearLeader &&
       !threatensMyBonus(b.player) &&
@@ -2041,7 +2048,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         .sort((a, b) => a.cost - b.cost || a.scoreCost - b.scoreCost || a.t - b.t);
       const o = options[0];
       if (!o) continue;
-      const worth = strikeWorth(b.value, o);
+      const worth = besieged(b) ? (strikeWorth(b.value, o) * SIEGE_BREAK_WEIGHT) / weight : strikeWorth(b.value, o);
       const score = worth / Math.max(1, o.scoreCost);
       offence.set(`break:${b.bonusId}`, {
         bonusId: b.bonusId,

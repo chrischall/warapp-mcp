@@ -11,8 +11,6 @@ import {
   DEFENSE_DISCOUNT,
   HIDDEN_POOL_INCOMES,
   NEUTRAL_BORDER_COST,
-  ownerShown,
-  TRACKED_MIN_TURNS,
   visibleState,
   WASTELAND_FACTOR,
   type BonusPlan,
@@ -25,15 +23,10 @@ import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
 import { denialsOf, emptyEnemiesOf } from './vacated.js';
+import { breakableBonuses, type Breakable } from './siege.js';
 
 
-export interface Breakable {
-  bonusId: number;
-  value: number;
-  player: number;
-  /** Why an inferred bonus is probably held (absent when every member is visible). */
-  probable?: string;
-}
+export type { Breakable } from './siege.js';
 
 export interface Counter {
   player: number;
@@ -109,54 +102,8 @@ export function breakTargets(pc: PlanCtx, input: PlanInput) {
   // opponent's income gap (all of them listed), or in its single best fit (the first listed, with
   // fewer bonuses than the next), and on this board every member
   // is that opponent's or hidden. Such a break is "probable".
-  const breakable: Breakable[] = [];
-  const breakMember = new Set<number>();
-  if (balanced) {
-    for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
-      const ts = bonusTerritories(g, b.id);
-      if (b.value <= 0 || !ts.length) continue;
-      const owners = new Set<number>();
-      let visible = true;
-      for (const t of ts) {
-        const st = state.get(t);
-        if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null) visible = false;
-        else owners.add(st.owner.playerId);
-      }
-      if (visible && owners.size === 1) {
-        breakable.push({ bonusId: b.id, value: b.value, player: [...owners][0]! });
-        for (const t of ts) breakMember.add(t);
-        continue;
-      }
-      // Inferred (#72): one opponent's visible members, the rest hidden, and its track fits it.
-      if (owners.size !== 1) continue;
-      const player = [...owners][0]!;
-      const hiddenOrTheirs = ts.every((t) => {
-        const st = ownerShown(state.get(t));
-        return st === undefined || (st.owner.kind === 'player' && st.owner.playerId === player);
-      });
-      if (!hiddenOrTheirs) continue;
-      const tr = input.tracks?.find((x) => x.playerId === player);
-      const fits = tr && tr.income !== null && tr.turns.length >= TRACKED_MIN_TURNS ? tr.inferred?.candidates : undefined;
-      if (!fits?.length) continue;
-      // "Every" only when the tracker listed every fit (no "and N more"). The best fit must be
-      // strictly smaller than the next: equal-sized fits are ordered only by bonus id.
-      const more = tr!.inferred!.more;
-      const inEvery = more === 0 && fits.every((c) => c.bonusIds.includes(b.id));
-      const single = fits.length === 1 && more === 0;
-      const inBest =
-        fits[0]!.bonusIds.includes(b.id) && (single || (fits[1] !== undefined && fits[0]!.bonusIds.length < fits[1].bonusIds.length));
-      if (!inEvery && !inBest) continue;
-      breakable.push({
-        bonusId: b.id,
-        value: b.value,
-        player,
-        probable: inEvery
-          ? 'in every combination of bonuses that fits its income gap'
-          : 'in the best fit of its income gap',
-      });
-      for (const t of ts) breakMember.add(t);
-    }
-  }
+  const breakable: Breakable[] = balanced ? breakableBonuses(g, state, foe, input.tracks) : [];
+  const breakMember = new Set<number>(breakable.flatMap((b) => bonusTerritories(g, b.bonusId)));
 
   // ---- counter-attacks (under `balanced`, #72) ----
   // An enemy stack next to me that shrank since the previous board by attacking me: visible on

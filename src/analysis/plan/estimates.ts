@@ -4,6 +4,7 @@
 // territories are worth (#70, #85, #125), where I stand on armies (#167, #201, rule 0p.3) — and the
 // rationale and warnings that state them. Pure: it reads the input and writes only
 // `state.warnings` / `state.rationale`.
+import { siegeOf } from './siege.js';
 import type { BoardState } from '../../board.js';
 import { armiesForGold } from '../../commerce.js';
 import { holdsSeat } from '../../player-states.js';
@@ -296,7 +297,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   const behind = auto && profile.standing === 'behind';
   /** Rule 0p.3 (#72): behind on income in a 1v1 — strike (stay balanced, break first), never defend. */
   const strike = behind && profile.format === '1v1';
-  const goal: PlanGoal = opts.goal ?? (behind && !strike ? 'defend' : 'balanced');
+  // #382: a siege plans as balanced; `siege` below carries what differs.
+  const goal: PlanGoal = opts.goal === 'siege' ? 'balanced' : (opts.goal ?? (behind && !strike ? 'defend' : 'balanced'));
   const balanced = goal === 'balanced';
   /** Rule 0p.3: behind — size attacks at the minimum (no pressure margin). */
   const minimal = behind;
@@ -352,6 +354,35 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
       if (ts.length && ts.every((t) => mineAtStart.has(t))) for (const t of ts) guardedByHeld.add(t);
     }
   const untrustedAt = (player: number, t: number): number => (guardedByHeld.has(t) ? (untrusted.get(player) ?? 0) : 0);
+  // ---- #382: the siege (plan/siege.ts) ----
+  const sieged =
+    opts.goal === 'siege'
+      ? siegeOf({
+          g,
+          state: new Map(board.territories.map((t) => [t.territoryId, t])),
+          mineAtStart,
+          foe,
+          target: opts.siegeTarget,
+          incomeOfPlayer,
+          deployOf,
+          myIncome: Math.max(0, earnedIncome - Math.max(0, Math.floor(input.cardArmies ?? 0))),
+          tracks: input.tracks,
+          settings: s,
+        })
+      : undefined;
+  const siege = sieged && 'siege' in sieged ? sieged.siege : undefined;
+  // Until the trigger fires, no pass attacks the target's territories but its breakable bonuses' members.
+  const held = siege && !siege.ready ? siege : undefined;
+  const heldLand = new Set(
+    held
+      ? board.territories.flatMap((t) =>
+          t.owner.kind === 'player' && t.owner.playerId === held.target && !held.breakMembers.has(t.territoryId) ? [t.territoryId] : [],
+        )
+      : [],
+  );
+  const truceNow: typeof truce = held
+    ? { ...truce, siegeHeld: (t: number) => heldLand.has(t), noTarget: (t: number) => truce.noTarget(t) || heldLand.has(t) }
+    : truce;
   /**
    * #201: the planning horizon. Once the outlook (#178) says the game is decided — winning or losing
    * for OUTLOOK_TURNS turns running — every payback test counts the turns the game has left instead
@@ -391,7 +422,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     allies,
     foe,
     teamFocus: teamFocusOf(board, allies, foe),
-    truce,
+    truce: truceNow,
     turnNow,
     incomePrior,
     incomePriorSkipped,
@@ -403,6 +434,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     strike,
     goal,
     balanced,
+    ...(siege ? { siege } : {}),
+    ...(sieged && 'warning' in sieged ? { siegeWarning: sieged.warning } : {}),
     minimal,
     ...(trendNow ? { incomeTrend: trendNow } : {}),
     pressureFactor,
@@ -877,3 +910,4 @@ export function emptyPlan(ctx: PlanCtx, state: PlanState): TurnPlan {
     offence: [],
   };
 }
+

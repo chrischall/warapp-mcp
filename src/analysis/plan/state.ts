@@ -7,6 +7,7 @@
 // plan has made so far. A phase moved out of planner.ts takes `(ctx, state)` explicitly instead of
 // closing over planPass's locals; planPass still names each field as the local it was.
 
+import type { Siege } from './siege.js';
 import type { IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
 import type { CombatSettings } from '../combat.js';
@@ -72,6 +73,10 @@ export interface OpponentsCtx {
   strike: boolean;
   goal: PlanGoal;
   balanced: boolean;
+  /** #382: the siege of this turn under `goal: 'siege'` (the plan is otherwise `balanced`). */
+  siege?: Siege;
+  /** #382: why `goal: 'siege'` found no one to besiege (the plan is then `balanced`). */
+  siegeWarning?: string;
   /** Rule 0p.3: behind — size attacks at the minimum (no pressure margin). */
   minimal: boolean;
   /** #303: my income trend ({@link TurnPlan.incomeTrend}); absent without history. */
