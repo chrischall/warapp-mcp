@@ -1316,7 +1316,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     above that (plus deploys), so a capture never leaves a safe border takeable. Idle armies
     transfer toward the enemy front first (the nearest non-held territory only when no enemy is
     reachable, and never a teammate's: PLAN-TEAMS C3), a capture of a player's territory sized without a reserve does not make the
-    garrison beside it idle, and my commander's stack beside a conceded border stays.
+    garrison beside it idle, and my commander's stack beside a conceded border stays. #367: a step toward an
+    enemy front (not a #260 step, not toward a neutral edge) must also bring the stack strictly nearer it
+    measured through conceded borders too (`distEnemyThrough`): a stack behind a conceded border waits there,
+    where the front will be once it falls, with a "Keep the N idle armies on X … (#367)" line — live, a 649
+    stack walked away from one and straight back the next turn. One board, no memory of last turn.
   - **Attacks on a player are sized for its owner's deploy (#120).** When the armies beyond what
     holds the source cover it, an attack on a player's territory (break, counter-attack, strike,
     rule 4e capture) is sized for its defenders plus the owner's deploy estimate (or its growth
