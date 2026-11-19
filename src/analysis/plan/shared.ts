@@ -2204,16 +2204,6 @@ export function openingArmies(
 }
 
 /**
- * Per-opponent enemy deploy estimates, one per visible enemy player (sorted by
- * id): base income plus the bonuses that player visibly holds in full, never
- * below max({@link MIN_ENEMY_DEPLOY}, base income). Its stack next to me does not
- * limit it — income held in plain view can all be deployed on my border, however
- * small the stack there. Bonuses in the fog are unseen, so this is what the
- * visible board supports. On the opening board (every visible player territory holds
- * the same count, with no previous board and `when.turn` unknown or the first) every
- * opponent gets the floor.
- */
-/**
  * #368: an opponent's tracked figure as of each of its last three consecutive observed turns — the most
  * it was seen to earn (`earned`) over that turn and the two before it, the tracker's max-observed window —
  * when it rose on both steps; else `null` (fewer than three consecutive turns, or a step not a rise).
@@ -2227,6 +2217,16 @@ export function risingTracked(turns: readonly Pick<ObservedTurn, 'from' | 'earne
   return series[0]! < series[1]! && series[1]! < series[2]! ? series : null;
 }
 
+/**
+ * Per-opponent enemy deploy estimates, one per visible enemy player (sorted by
+ * id): base income plus the bonuses that player visibly holds in full, never
+ * below max({@link MIN_ENEMY_DEPLOY}, base income). Its stack next to me does not
+ * limit it — income held in plain view can all be deployed on my border, however
+ * small the stack there. Bonuses in the fog are unseen, so this is what the
+ * visible board supports. On the opening board (every visible player territory holds
+ * the same count, with no previous board and `when.turn` unknown or the first) every
+ * opponent gets the floor.
+ */
 export function enemyDeployEstimates(
   g: MapGraph,
   board: BoardState,

@@ -18,6 +18,10 @@ export const readAnnotations = (title: string) =>
   toolAnnotations({ title, readOnly: true, idempotent: true, openWorld: true });
 
 /** A game id: the number after `GameID=` in a game URL. Validated by `parseGameId`. */
+export const gameIdArg = z
+  .union([z.number(), z.string()])
+  .describe('The war.app game id — the number after GameID= in the game URL (war.app/MultiPlayer?GameID=<n>).');
+
 /**
  * #368: per-player incomes the caller knows (warapp_plan_turn's and warapp_check_plan's `known_income`):
  * each replaces that opponent's estimate.
@@ -37,10 +41,6 @@ export const knownIncomeArg = z
       'supplied. Taken as given, never checked against the board, and kept for this call only. `enemy_deploy`, a what-if ' +
       'for every opponent, wins over it; a player with none of its territories in view is named as unused.',
   );
-
-export const gameIdArg = z
-  .union([z.number(), z.string()])
-  .describe('The war.app game id — the number after GameID= in the game URL (war.app/MultiPlayer?GameID=<n>).');
 
 /**
  * Who writes the text these tools return: player and game names, chat, and
