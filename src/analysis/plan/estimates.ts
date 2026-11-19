@@ -133,6 +133,8 @@ export function planEnemyEstimates(input: {
   turn?: number | null;
   /** G2: the Sanctions on other players the decoder is sure of ({@link applySanctions}). */
   sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
+  /** #368: per-player incomes the user knows ({@link applyKnown}): each replaces that player's estimate. */
+  known?: readonly { player: number; income: number }[];
 }): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
   const ctx = input.game ?? {};
   // #270: a static seat (out, no AI on it) deploys nothing: its territories read as neutrals.
@@ -149,8 +151,27 @@ export function planEnemyEstimates(input: {
     reinforcement: ctx.reinforcement,
     ...(previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
-  const priced = applyArmyPrice(applySanctions(estimates, input.sanctions ?? []), input.settings?.armyCostMultiplier ?? 0);
+  const priced = applyKnown(
+    applyArmyPrice(applySanctions(estimates, input.sanctions ?? []), input.settings?.armyCostMultiplier ?? 0),
+    input.known ?? [],
+  );
   return { estimates: priced, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
+}
+
+/**
+ * #368: each estimate whose player the user gave a known income for (what it said in chat, say): that
+ * income replaces the estimate's, whatever its source; a Reinforcement card the clock adds stays on top.
+ * `known` keeps the income given and the one it replaced (`was`, card left out). Unchanged without.
+ */
+export function applyKnown(estimates: EnemyDeployEstimate[], known: readonly { player: number; income: number }[]): EnemyDeployEstimate[] {
+  if (!known.length) return estimates;
+  const by = new Map(known.map((k) => [k.player, Math.max(0, Math.floor(k.income))]));
+  return estimates.map((e) => {
+    const income = by.get(e.playerId);
+    if (income === undefined) return e;
+    const card = e.card?.armies ?? 0;
+    return { ...e, estimate: income + card, known: { income, was: e.estimate - card } };
+  });
 }
 
 /**
@@ -225,6 +246,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     game: ctx,
     turn: turnNow,
     ...(input.sanctions?.length ? { sanctions: input.sanctions } : {}),
+    // #368: a what-if enemyDeploy sizes every opponent itself, so a known income is left out under it.
+    ...(input.knownIncome?.length && opts.enemyDeploy === undefined ? { known: input.knownIncome } : {}),
   });
   const estimateList = allEstimates.filter((e) => notAlly(e.playerId));
   /** An opponent's income: its deploy estimate less the Reinforcement card the clock adds (#164). */

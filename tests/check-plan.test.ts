@@ -267,6 +267,16 @@ describe('warapp_check_plan', () => {
     expect(p.atRisk.territories.map((t) => t.territory.id)).toContain(161);
   });
 
+  it('#368: tries a known per-player income in place of the estimate; enemy_deploy wins over it', async () => {
+    h = await live(at(20, 20, 3));
+    const orders = [{ kind: 'deploy', territory: 159, armies: 5 }];
+    const p = await check({ orders, known_income: [{ player: Number(BOB.feed), income: 40 }] });
+    expect(p.enemyDeploy[0]).toMatchObject({ deploy: 40, source: 'known_income' });
+    expect(p.safe).toBe(false);
+    const q = await check({ orders, known_income: [{ player: Number(BOB.feed), income: 40 }], enemy_deploy: 2 });
+    expect(q.enemyDeploy[0]).toMatchObject({ deploy: 2, source: 'enemy_deploy' });
+  });
+
   it('reports a capture that is taken straight back, and an attack that fails when reinforced', async () => {
     h = await live(at(12, 12, 6));
     // Take the neutral 157 with 3 (2 survive beside Bob's stack), and hit Bob's 6 with 10.

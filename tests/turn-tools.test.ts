@@ -485,6 +485,17 @@ describe('warapp_plan_turn', () => {
     expect(bad.isError).toBe(true);
   });
 
+  it('#368: known_income replaces one opponent\'s estimate, and the warning says it was supplied', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', known_income: [{ player: Number(BOB.feed), income: 27 }] }),
+    );
+    expect(p.enemyDeploy).toBe(27);
+    expect(p.warnings.join('\n')).toMatch(/Enemy deploy estimate for player \d+: ~27 \(the known income you supplied \(known_income\), in place of the estimate ~5\)/);
+    const bad = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', known_income: [{ player: 1, income: -1 }] });
+    expect(bad.isError).toBe(true);
+  });
+
   it('focus takes bonus names or ids; reserve is held out of captures', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(

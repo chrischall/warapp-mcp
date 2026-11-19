@@ -881,6 +881,10 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
         warnings.push(
           `No fog prior for the opponents beside the fog (${fogged.length === 1 ? 'player' : 'players'} ${fogged.join(', ')}) in this free-for-all: ${incomePriorSkipped}; their estimates rest on what the board shows, each a lower bound under fog.`,
         );
+      // #368: a known income given for a player with no estimate (none of its territories in view).
+      for (const k of input.knownIncome ?? [])
+        if (!estimates.has(k.player) && foe(k.player))
+          warnings.push(`known_income for player ${k.player} is not used: none of its territories is in view, so the plan has no border it threatens.`);
       for (const p of [...estimated].sort(byNum)) {
         const e = estimates.get(p)!;
         const visible = `base ${e.base} + visible bonuses +${e.bonusIncome} = ${e.base + e.bonusIncome}`;
@@ -1027,6 +1031,13 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               e.source === 'tracked' ? 'tracked' : e.source === 'prior' ? 'the fog prior' : 'its visible base + bonuses'
             }) because a stack walking in is not income (#123). To test the higher figure, pass enemy_deploy ${cut.reading} to warapp_check_plan.`,
           );
+        // #368: an income the user supplied replaces the estimate.
+        if (e.known) {
+          warnings.push(
+            `Enemy deploy estimate for player ${p}: ~${income} (the known income you supplied (known_income), in place of the estimate ~${e.known.was})${withCard}; a figure supplied is taken as it is, not checked against the board.`,
+          );
+          continue;
+        }
         // #368: thin evidence sizes it for the highest of the tracked figure, the prior and the trend.
         if (e.thinEvidence) {
           const t = e.thinEvidence;

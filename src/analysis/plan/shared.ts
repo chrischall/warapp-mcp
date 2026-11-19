@@ -487,6 +487,13 @@ export interface PlanInput {
    * the plan is what it was without.
    */
   untrusted?: readonly { player: number; deploy: number }[];
+  /**
+   * #368: per-player incomes the user knows (warapp_plan_turn's `known_income`: what a player said in
+   * chat, say), by GameFeed id: each replaces that opponent's estimate ({@link applyKnown}), a
+   * Reinforcement card the clock adds kept on top. Ignored under `options.enemyDeploy`, and for a player
+   * with none of its territories in view (a warning names it).
+   */
+  knownIncome?: readonly { player: number; income: number }[];
 }
 
 /** Why a truce's trust is `watch` ({@link PlanRelation.watch}). */
@@ -1122,6 +1129,8 @@ export interface EnemyDeployEstimate {
   sanctioned?: { percentages: number[]; untilTurn: number; before: number; applied: boolean };
   /** #332: a figure read off the board in a commerce game with a rising army price: the gold it earns, and the price. */
   armyPrice?: { gold: number; multiplier: number };
+  /** #368: the income the user supplied for it (`PlanInput.knownIncome`), and the estimate's income it replaced. */
+  known?: { income: number; was: number };
 }
 
 /**

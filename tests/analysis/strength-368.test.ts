@@ -238,3 +238,33 @@ describe('(2) thin evidence: the estimate is the highest of the tracked figure, 
     );
   });
 });
+
+describe('(3) a known per-player income overrides the estimate', () => {
+  it('replaces the estimate, whatever its source, and says it was supplied', () => {
+    const r = est({ players, turn: 12, symmetricStart: true }, { known: [{ player: A, income: 27 }] });
+    const a = r.estimates.find((e) => e.playerId === A)!;
+    expect(a).toMatchObject({ estimate: 27, known: { income: 27, was: 91 } });
+    // Another player's estimate is left alone.
+    expect(r.estimates.find((e) => e.playerId === B)!.known).toBeUndefined();
+  });
+
+  it('a Reinforcement card the clock says it may hold stays on top of the known income', () => {
+    const r = est(
+      { players, turn: 12, symmetricStart: true, reinforcement: { armies: 5, firstTurn: 3, turnsPerCard: 4 } },
+      { known: [{ player: A, income: 27 }] },
+    );
+    expect(r.estimates.find((e) => e.playerId === A)).toMatchObject({ estimate: 32, card: { armies: 5 }, known: { income: 27 } });
+  });
+
+  it('the plan sizes for it and warns that it was supplied; one for a player not in view is named unused', () => {
+    const p = planTurn(ffa({ knownIncome: [{ player: A, income: 40 }, { player: C, income: 60 }] }));
+    const w = p.warnings.join('\n');
+    expect(w).toMatch(/Enemy deploy estimate for player 20: ~40 \(the known income you supplied \(known_income\), in place of the estimate ~91\)/);
+    expect(w).toMatch(/known_income for player 40 is not used: none of its territories is in view/);
+  });
+
+  it('enemyDeploy, a what-if for every opponent, wins over it', () => {
+    const p = planTurn(ffa({ knownIncome: [{ player: A, income: 40 }], options: { adapt: true, enemyDeploy: 12 } }));
+    expect(p.enemyDeploy).toBe(12);
+  });
+});
