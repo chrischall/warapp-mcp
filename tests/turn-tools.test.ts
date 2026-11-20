@@ -1203,6 +1203,15 @@ describe('warapp_plan_turn — threat trend', () => {
       await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }),
     );
     expect(full.sinceLastTurn.capturesMissed).toEqual([{ id: hit, name: mapName(hit!), to: { id: Number(BOB.feed), name: 'Bob' }, fresh: true }]);
+    // Report-only: without the logged turn-3 plan (a fresh data directory) the orders are the same.
+    await h.harness.close();
+    h = await liveHarness({
+      feed: [game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(after) }),
+    });
+    const fresh = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(fresh).not.toHaveProperty('sinceLastTurn');
+    expect({ deploys: p.deploys, moves: p.moves }).toEqual({ deploys: fresh.deploys, moves: fresh.moves });
   });
 
   it('(h) since last turn from a history board when turn 3 was not planned here (#194)', async () => {

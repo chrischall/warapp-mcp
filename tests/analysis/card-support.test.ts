@@ -72,6 +72,16 @@ describe('diplomacyAdvice (D2)', () => {
     expect(diplomacyAdvice(cb(twoFronts()), { atPeace: new Set([B]), lastTurn: new Set() })!.player).toBe(A);
   });
 
+  it('#424: report-only — the advice leaves the plan\'s orders unchanged', () => {
+    const orders = () => ({ deploys: [{ territoryId: 4, armies: 3 }], moves: [{ from: 4, to: 6, armies: 2, kind: 'attack' as const }] });
+    const board1 = cb([neutral(3, 2), mine(4, 20), b(5, 20), neutral(6, 2)], orders());
+    const board2 = cb(twoFronts(), orders());
+    diplomacyAdvice(board1, { opponents: 3 });
+    diplomacyAdvice(board2, { atPeace: new Set([B]), lastTurn: new Set([B]) });
+    expect({ deploys: board1.deploys, moves: board1.moves }).toEqual(orders());
+    expect({ deploys: board2.deploys, moves: board2.moves }).toEqual(orders());
+  });
+
   it('never names a truce partner already covered, and says so', () => {
     const d = diplomacyAdvice(cb(twoFronts()), { truces: [{ player: B, state: 'active', coveredMine: [4] }] })!;
     expect(d.player).toBe(A);
@@ -246,6 +256,15 @@ describe('intelAdvice (G2): the spy cards only where they reveal what the plan n
     expect(intelAdvice(cb(view), { fog: 'Foggy', opponents: [A], held }).advice[0]?.target).toBe(1);
     const { advice } = intelAdvice(cb(view), { fog: 'Foggy', opponents: [A], held, likelyStarts: new Set([2]) });
     expect(advice).toEqual([{ card: 'Reconnaissance', target: 2, why: expect.stringMatching(/behind player 20, .*\(a likely start\)\.$/) }]);
+  });
+
+  it('#443: report-only — the Reconnaissance advice leaves the plan\'s orders unchanged', () => {
+    const orders = () => ({ deploys: [{ territoryId: 4, armies: 3 }], moves: [{ from: 4, to: 7, armies: 2, kind: 'attack' as const }] });
+    const view = [fogged(1), fogged(2), a(3, 10), mine(4, 20), b(5, 20), fogged(6), neutral(7, 2)];
+    const board1 = cb(view, orders());
+    const { advice } = intelAdvice(board1, { fog: 'Foggy', opponents: [A, B], held: new Set<IntelCard>(['Reconnaissance']), likelyStarts: new Set([6]) });
+    expect(advice).toHaveLength(1);
+    expect({ deploys: board1.deploys, moves: board1.moves }).toEqual(orders());
   });
 
   it('holds each card, saying why, when the fog hides nothing the plan needs', () => {
