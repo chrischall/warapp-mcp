@@ -245,6 +245,10 @@ describe('the pure capture helpers', () => {
       { kind: 'surveillance', targets: [9], reason: 'fog' },
     ]);
     expect(JSON.stringify(out)).not.toMatch(/Halving/);
+    // #434: a redeploy says where from and to.
+    expect(cardAdviceLog({ airlift: { from: 7, to: 4, armies: 8, redeploy: { source: 'disconnected', target: 'border' }, order: {} } })).toEqual([
+      { kind: 'airlift', targets: [7, 4], reason: 'disconnected-to-border' },
+    ]);
   });
 
   it('headroomLog: the weakest five rows (none taking last), each with what it protects', () => {

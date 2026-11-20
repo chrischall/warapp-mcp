@@ -188,6 +188,39 @@ describe('airliftAdvice (D2)', () => {
   });
 });
 
+describe('airliftAdvice: idle and cut-off stacks (#434)', () => {
+  it('flies an idle stack (nothing to hold or take, more than a few armies) to the strike stack', () => {
+    // T1's 12 sit behind my land; the plan strikes T5 from T4, which no airlift can save (it withdraws).
+    const ts = [mine(1, 12), mine(2, 1), mine(3, 1), mine(4, 10), b(5, 3), neutral(6, 2), neutral(7, 2)];
+    const out = airliftAdvice(cb(ts, { moves: [{ from: 4, to: 5, armies: 9, kind: 'attack' }] }))!;
+    expect(out).toMatchObject({ from: 1, to: 4, armies: 11, redeploy: { source: 'idle', target: 'strike' } });
+    expect(out.why).toMatch(/^Airlift 11 from 1 to 4: they sit idle .* the strike stack/);
+  });
+
+  it('flies a stack cut off from my main holdings to the border that most needs armies', () => {
+    // T7's 9 face no one and cannot walk home; T4 holds B's ~6 with nothing to spare.
+    const ts = [mine(1, 1), mine(2, 1), mine(3, 1), mine(4, 6), b(5, 2), neutral(6, 2), mine(7, 9)];
+    const out = airliftAdvice(cb(ts))!;
+    expect(out).toMatchObject({ from: 7, to: 4, armies: 8, redeploy: { source: 'disconnected', target: 'border' } });
+    expect(out.why).toMatch(/cut off from your main holdings/);
+  });
+
+  it('keeps the falling-border case first', () => {
+    const ts = [mine(1, 20), mine(2, 1), mine(3, 1), mine(4, 2), b(5, 10), neutral(6, 2), neutral(7, 2)];
+    expect(airliftAdvice(cb(ts))).toMatchObject({ from: 1, to: 4, armies: 7 });
+    expect(airliftAdvice(cb(ts))?.redeploy).toBeUndefined();
+  });
+
+  it('never for a few armies, a stack the plan uses, or one a transfer would bring up', () => {
+    const front = (one: TerritoryState, over: Partial<CardBoard> = {}) =>
+      airliftAdvice(cb([one, mine(2, 1), mine(3, 1), mine(4, 10), b(5, 3), neutral(6, 2), neutral(7, 2)], { moves: [{ from: 4, to: 5, armies: 9, kind: 'attack' }], ...over }));
+    expect(front(mine(1, 4))).toBeUndefined();
+    expect(front(mine(1, 12), { moves: [{ from: 4, to: 5, armies: 9, kind: 'attack' }, { from: 1, to: 3, armies: 11, kind: 'transfer' }] })).toBeUndefined();
+    // T3's 12 stand next to the strike stack: a transfer does it, no card needed.
+    expect(airliftAdvice(cb([mine(1, 1), mine(2, 1), mine(3, 12), mine(4, 10), b(5, 3), neutral(6, 2), neutral(7, 2)], { moves: [{ from: 4, to: 5, armies: 9, kind: 'attack' }] }))).toBeUndefined();
+  });
+});
+
 describe('giftAdvice (D2)', () => {
   const shared: SharedBonus[] = [{ bonusId: 101, value: 3, mine: [3], teammates: [{ player: MATE, territories: [1, 2] }], others: [], nearer: MATE }];
   const ts = () => [mate(1, 2), mate(2, 2), mine(3, 4), mine(4, 4), b(5, 3)];

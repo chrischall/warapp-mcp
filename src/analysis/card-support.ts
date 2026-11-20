@@ -4,7 +4,8 @@
 // onto a border of mine or a teammate's that falls without it, and Gift as team support (a territory
 // that completes a teammate's bonus); and (G2) Spy, Reconnaissance and Surveillance only where the fog
 // hides what the plan needs. Advice only: nothing here changes the plan or its orders. Pure and
-// deterministic (ties on ascending id); no I/O.
+// deterministic (ties on ascending id); no I/O. #434: with no border to save, the Airlift puts an idle or
+// cut-off stack to work at the strike stack or the thinnest border.
 //
 // Rules (docs/STRATEGY.md, the wiki's card pages): a Diplomacy card stops attacks between its two
 // players from the turn after it is played; Sanctions cut the target's income from its next turn (a
@@ -198,12 +199,20 @@ export interface AirliftAdvice {
   armies: number;
   /** The teammate whose territory it lands on (the armies become theirs); absent: mine. */
   teammate?: number;
-  /** What would take the territory without it. */
-  player: number;
-  reach: number;
+  /** What would take the territory without it (absent for a redeploy onto the strike stack). */
+  player?: number;
+  reach?: number;
   commander: boolean;
+  /**
+   * #434: no border falls without it, so an idle stack (nothing beside it but my land, the plan using none of
+   * it) or one cut off from my main holdings is flown to the strike stack or the border that most needs armies.
+   */
+  redeploy?: { source: 'idle' | 'disconnected'; target: 'strike' | 'border' };
   why: string;
 }
+
+/** #434: an idle or cut-off stack is worth an Airlift only with more than this many armies to spare. */
+export const REDEPLOY_MIN_ARMIES = 3;
 
 /**
  * An Airlift onto a territory that falls this turn without it — mine as the plan leaves it, or (in a
@@ -281,7 +290,102 @@ export function airliftAdvice(cb: CardBoard): AirliftAdvice | undefined {
         (t.teammate !== undefined ? " The armies become your teammate's, and hold only if your teammate keeps them there: say so in team chat." : ''),
     };
   }
-  return undefined;
+  return redeployAirlift(cb, r, spare);
+}
+
+/**
+ * #434: with no border to save, an Airlift that puts idle armies to work. Sources: a stack of mine the plan
+ * neither deploys on nor moves out of with only my land beside it (`idle`), or any stack outside my main
+ * holdings (the connected group of my territories with the most territories, then armies, then lowest id;
+ * `disconnected`) — each with more than {@link REDEPLOY_MIN_ARMIES} to spare over its hold. Target, in my main
+ * holdings: the plan's strike stack (the territory its attacks send the most from), else the border with the
+ * thinnest margin (the strongest single reach beside it less what the plan leaves there). An idle stack is
+ * flown only to a target two or more steps away through my land (a transfer brings it up otherwise). The most
+ * armies to spare first, then ascending id. `undefined` when none.
+ */
+function redeployAirlift(cb: CardBoard, r: ReturnType<typeof reader>, spare: ReadonlyMap<number, number>): AirliftAdvice | undefined {
+  const mine = r.ids.filter((t) => r.isMine(t));
+  if (!mine.length) return undefined;
+  // My territories in groups connected through my land; distances through my land from a source.
+  const group = new Map<number, number>();
+  const groups: number[][] = [];
+  for (const t of mine) {
+    if (group.has(t)) continue;
+    const members: number[] = [];
+    const queue = [t];
+    group.set(t, groups.length);
+    while (queue.length) {
+      const x = queue.shift()!;
+      members.push(x);
+      for (const n of neighborsOf(cb.graph, x))
+        if (r.isMine(n) && !group.has(n)) {
+          group.set(n, groups.length);
+          queue.push(n);
+        }
+    }
+    groups.push(members.sort((a, b) => a - b));
+  }
+  const armiesIn = (ts: readonly number[]) => ts.reduce((a, t) => a + r.armiesOf(t), 0);
+  const main = groups
+    .map((ts, i) => ({ i, ts }))
+    .sort((a, b) => b.ts.length - a.ts.length || armiesIn(b.ts) - armiesIn(a.ts) || a.ts[0]! - b.ts[0]!)[0]!.i;
+  const inMain = (t: number) => group.get(t) === main;
+  const stepsThroughMine = (from: number, to: number): number => {
+    const seen = new Map<number, number>([[from, 0]]);
+    const queue = [from];
+    while (queue.length) {
+      const x = queue.shift()!;
+      if (x === to) return seen.get(x)!;
+      for (const n of neighborsOf(cb.graph, x))
+        if (r.isMine(n) && !seen.has(n)) {
+          seen.set(n, seen.get(x)! + 1);
+          queue.push(n);
+        }
+    }
+    return Infinity;
+  };
+  // The strike stack: my territory in the main holdings the plan's attacks send the most from.
+  const sent = new Map<number, number>();
+  for (const m of cb.moves) if (m.kind === 'attack' && r.isMine(m.from) && inMain(m.from)) sent.set(m.from, (sent.get(m.from) ?? 0) + m.armies);
+  const strike = [...sent].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0];
+  // The border with the thinnest margin (not one the plan withdraws from).
+  const border = mine
+    .filter((t) => inMain(t) && r.outOf(t) === 0 && r.state.get(t)?.armies !== null)
+    .flatMap((t) => {
+      const reach = r.reachOf(t);
+      return reach ? [{ t, reach, margin: r.after(t) - reach.reach }] : [];
+    })
+    .sort((a, b) => a.margin - b.margin || a.t - b.t)[0];
+  const target = strike !== undefined ? { id: strike, kind: 'strike' as const } : border ? { id: border.t, kind: 'border' as const } : undefined;
+  if (!target) return undefined;
+  const sources = [...spare]
+    .flatMap(([s, can]): { s: number; can: number; source: 'idle' | 'disconnected' }[] => {
+      if (s === target.id || can <= REDEPLOY_MIN_ARMIES) return [];
+      if (!inMain(s)) return [{ s, can, source: 'disconnected' }];
+      const idle = r.outOf(s) === 0 && r.deployAt(s) === 0 && neighborsOf(cb.graph, s).every((n) => r.isMine(n));
+      return idle && stepsThroughMine(s, target.id) >= 2 ? [{ s, can, source: 'idle' }] : [];
+    })
+    .sort((a, b) => b.can - a.can || a.s - b.s);
+  const best = sources[0];
+  if (!best) return undefined;
+  const commander = r.commanderOf(target.id, (q) => q === cb.me);
+  const from =
+    best.source === 'idle'
+      ? `they sit idle behind your lines (nothing beside ${best.s} but your land, and the plan uses none of them)`
+      : `${best.s} is cut off from your main holdings, so its armies cannot walk to the front`;
+  const to =
+    target.kind === 'strike'
+      ? `${target.id} is the strike stack (the plan's attacks send the most from it): the armies land before the attacks and stand behind the strike for next turn`
+      : `${target.id} is the border with the thinnest margin (player ${border!.reach.player}'s ~${border!.reach.reach} beside it against ${r.after(target.id)} of yours after the plan)`;
+  return {
+    from: best.s,
+    to: target.id,
+    armies: best.can,
+    ...(target.kind === 'border' ? { player: border!.reach.player, reach: border!.reach.reach } : {}),
+    commander,
+    redeploy: { source: best.source, target: target.kind },
+    why: `Airlift ${best.can} from ${best.s} to ${target.id}: ${from}, and ${to}.`,
+  };
 }
 
 export interface GiftAdvice {

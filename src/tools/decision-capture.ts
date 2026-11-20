@@ -222,7 +222,9 @@ export function cardAdviceLog(view: object): LoggedCardAdvice[] {
   const s = rec(v.sanctions);
   if (s) add('sanctions', [], 'strongest', num(s.player));
   const a = rec(v.airlift);
-  if (a) add('airlift', nums([a.from, a.to]), a.teammate !== undefined ? 'teammate-border' : 'border');
+  const re = rec(a?.redeploy);
+  if (a)
+    add('airlift', nums([a.from, a.to]), re ? `${String(re.source)}-to-${String(re.target)}` : a.teammate !== undefined ? 'teammate-border' : 'border');
   const g = rec(v.gift);
   if (g) add('gift', nums(g.territories), 'teammate-bonus', num(g.player));
   const spy = rec(v.spy);

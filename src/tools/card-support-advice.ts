@@ -30,7 +30,8 @@ type CardOrder = { kind: 'card'; card: string } & Record<string, unknown>;
 export interface SupportView {
   diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; chain?: true; order: CardOrder };
   sanctions?: { player: number; skipped?: string[]; order: CardOrder };
-  airlift?: { from: number; to: number; armies: number; teammate?: number; order: CardOrder };
+  /** `redeploy` (#434): no border falls without it; an idle or cut-off stack goes to the strike stack or the thinnest border. */
+  airlift?: { from: number; to: number; armies: number; teammate?: number; redeploy?: { source: 'idle' | 'disconnected'; target: 'strike' | 'border' }; order: CardOrder };
   gift?: { player: number; bonus: number; territories: number[]; orders: CardOrder[] };
   /** G2: the information cards, only where they reveal what the plan needs (never with fog off). */
   spy?: { player: number; order: CardOrder };
@@ -147,6 +148,7 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
         to: a.to,
         armies: a.armies,
         ...(a.teammate !== undefined ? { teammate: a.teammate } : {}),
+        ...(a.redeploy ? { redeploy: a.redeploy } : {}),
         order: { kind: 'card', card: air.id, from: a.from, to: a.to, armies: a.armies },
       };
       warnings.push(`${a.why} ${PLAY_IT}`);

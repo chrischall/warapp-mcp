@@ -326,6 +326,22 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(view.airlift).toEqual({ from: 1, to: 4, armies: 7, order: { kind: 'card', card: 'd'.repeat(32), from: 1, to: 4, armies: 7 } });
   });
 
+  it('#434: advises an Airlift that flies an idle stack to the strike stack, advice only', () => {
+    const territories = [me(1, 12), me(2, 1), me(3, 1), me(4, 10), foe(5, 3), neutral(6, 2), neutral(7, 2)];
+    const plan = { deploys: [], moves: [{ from: 4, to: 5, armies: 9, kind: 'attack' as const, reason: '' }], moveSlots: ['sure' as const], enemyDeploy: 5, conceded: [] };
+    const before = structuredClone(plan);
+    const { view, warnings } = adviseCards(input({ territories, plan, hand: [card(6, 'Airlift')] }));
+    expect(view.airlift).toEqual({
+      from: 1,
+      to: 4,
+      armies: 11,
+      redeploy: { source: 'idle', target: 'strike' },
+      order: { kind: 'card', card: 'd'.repeat(32), from: 1, to: 4, armies: 11 },
+    });
+    expect(warnings.join('\n')).toMatch(/Airlift 11 from 1 to 4: they sit idle .*Advice only, not in the orders/);
+    expect(plan).toEqual(before);
+  });
+
   it("advises a Gift that completes a teammate's bonus, and never a card read under a teammate", () => {
     const MATE: Player = { ...FOE, id: 5544444411, name: 'Dee', team: 1 };
     const a = { ...ME, team: 1 };
