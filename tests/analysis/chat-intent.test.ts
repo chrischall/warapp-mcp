@@ -364,3 +364,90 @@ describe('classifyMessage: review 2', () => {
     }
   });
 });
+
+describe('classifyMessage: review 3', () => {
+  const both = (t: string, ctx: ChatIntentContext = CTX) => [classifyMessage(t, ctx), classifyMessage(untrustedBody(t), ctx)];
+  const proposed: ChatIntentContext = { ...CTX, myRecentMessages: ['truce?'] };
+
+  describe('a refused acceptance is a decline, never an accept', () => {
+    for (const t of ['i will never accept your truce', 'i wont accept a truce', "I won't accept the nap", 'i dont agree to peace', 'not accepting your truce', 'im not accepting a truce']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) {
+          expect(r.intents).not.toContain('truce-accept');
+          expect(r.intents).not.toContain('truce-proposal');
+          expect(r.intents).toContain('truce-decline');
+        }
+      });
+    }
+    for (const t of ['never accept', 'wont accept', 'dont agree', 'not accepting']) {
+      it(`${JSON.stringify(t)} replying to my proposal`, () => {
+        for (const r of both(t, proposed)) {
+          expect(r.intents).not.toContain('truce-accept');
+          expect(r.intents).toContain('truce-decline');
+        }
+      });
+    }
+    it('a conditional "if you dont accept" is no decline', () => {
+      for (const r of both('i will attack you if you dont accept truce')) expect(r.intents).not.toContain('truce-decline');
+    });
+  });
+
+  describe('a demand to accept is a proposal, and a threat when it says "or ..."', () => {
+    for (const t of ['accept truce or i attack', 'agree to peace or i attack', 'accept the truce or ill attack', 'accept truce or else']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) {
+          expect(r.intents).not.toContain('truce-accept');
+          expect(r.intents).toContain('truce-proposal');
+          expect(r.intents).toContain('threat');
+        }
+      });
+    }
+    it('"accept the nap now" is a proposal, not an accept and no threat', () => {
+      for (const r of both('accept the nap now')) {
+        expect(r.intents).not.toContain('truce-accept');
+        expect(r.intents).toContain('truce-proposal');
+        expect(r.intents).not.toContain('threat');
+      }
+    });
+    it('a bare "agree" still accepts my proposal', () => {
+      for (const r of both('agree', proposed)) expect(r.intents).toContain('truce-accept');
+    });
+  });
+
+  describe('a bare accept counts only as a short reply', () => {
+    for (const t of ['yes Redcrane is winning', 'ok everyone attack Redcrane', 'sure but i think you are lying to me', 'yes i will attack Green Owl next']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t, proposed)) {
+          expect(r.intents).not.toContain('truce-accept');
+          expect(r.addressedToMe).toBe(false);
+        }
+      });
+    }
+    for (const t of ['yes', 'ok sure', 'deal', 'sounds good', 'yes please', 'ok deal, truce until turn 10', 'yes, peace it is']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t, proposed)) {
+          expect(r.intents).toContain('truce-accept');
+          expect(r.confidence).toBe('high');
+          expect(r.addressedToMe).toBe(true);
+        }
+      });
+    }
+  });
+
+  describe('friendly "take/hit you up" idioms are no threat', () => {
+    cases('threat', ['ill take you out', 'i will hit you hard', 'im going to take you down'], [
+      'ill take you up on that truce',
+      'i will take you up on the offer',
+      'ill hit you up later',
+      'gonna hit you up after the game',
+    ]);
+  });
+
+  describe('coordination-ask needs a target and an outward verb', () => {
+    cases(
+      'coordination-ask',
+      ['lets attack Redcrane', 'everyone attack the leader', 'someone stop him', 'we should focus Green Owl', '"Bluefox" is winning, everyone attack him'],
+      ['lets focus on the game', 'everyone dont attack me please', 'anyone want to stop for tonight?', 'lets hit the hay', 'someone please stop attacking me'],
+    );
+  });
+});

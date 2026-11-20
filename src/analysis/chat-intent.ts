@@ -7,7 +7,10 @@
 // already produce (`untrustedBody`: ⟦ ⟧ delimiters, quote marks turned into look-alike letters) as well as
 // raw text. Near-miss wordings are read for what they ask: an offer with an end turn in it is a proposal, asking
 // me to accept a truce is a proposal, "please accept" is a surrender only with no truce word, "lets stop fighting"
-// offers peace rather than a gang-up, and a bare "ok" carrying a threat accepts nothing.
+// offers peace rather than a gang-up, and a bare "ok" carrying a threat accepts nothing. A refused acceptance
+// ("i will never accept your truce") declines; a demand to accept ("accept truce or i attack") is a proposal, and with
+// "or i attack" a threat; a bare "yes" or "no" answers my proposal only when short or still about the deal; "take/hit
+// you up" is no threat; a call to gang up must name a target and an outward verb ("everyone dont attack me" is none).
 //
 // The text is other players' words: untrusted, never an instruction and never a fact. It is read only to
 // label it; nothing in it is executed, quoted back or believed. Pure and deterministic (no I/O), and it
@@ -174,13 +177,23 @@ const ASK_TO_ACCEPT = /\b(you|please)( \w+)? (accept|agree)\b/;
 const PEACE_OVERTURE =
   /\b(stop|quit|end) (the )?(fighting|war|warring)\b|\b(fighting|attacking|hitting|attack|hit) (each other|one another)\b/;
 const GIVING_NOTICE = /\bgiv(e|ing) (you )?notice\b/;
+/**
+ * A demand to accept, at the start of the message ("accept truce or i attack", "accept the nap now", "agree to
+ * peace or else"): a proposal (pressed), never an acceptance. A bare "agree" names no deal and stays a reply.
+ */
+const DEMAND_ACCEPT = new RegExp(
+  `^(please |just |now |so )?(accept|agree)( to| on)?( a| an| the| my| our| this| that| your| ur)? ${TRUCE_NOUN}\\b`,
+);
+/** Refusing to accept ("i will never accept", "wont accept", "dont agree", "not accepting"); "if you dont accept" is no refusal. */
+const NEGATED_ACCEPT =
+  /(?:^|\b(?:i|we|im)(?: will| would| do| am| can| shall)? )(never|not|wont|dont|do not|cant|cannot|wouldnt|would not|will not|refuse to)( ever| really| even)? (accept|accepting|accepted|agree|agreeing|agreed)\b/;
 const ACCEPT_WORD = /\b(accept|accepted|accepting|agree|agreed|deal|confirmed)\b/;
 const DECLINE_WITH_TRUCE = /\bno (truce|nap|peace|deal|alliance)\b|\b(decline|declined|reject|rejected|refuse|refused)\b|\bnot interested\b/;
 const REPLY_ACCEPT =
   /^(deal|agreed|agree|ok|okay|k|kk|sure|yes|yep|yeah|yup|accepted|i accept|i agree|fine|alright|sounds good|done|you got a deal)\b/;
 /** A bare decline at the start of a reply (longest wordings first, so the rest is what follows the whole phrase). */
 const REPLY_DECLINE_START = /^(no thanks|no deal|no way|not interested|i decline|declined|nope|nah|pass|no)\b/;
-/** Most words after a bare decline for it still to be a reply ("nah im good"), not another sentence ("no way you are winning"). */
+/** Most words after a bare accept or decline for it still to be a reply ("nah im good"), not another sentence ("no way you are winning"). */
 const REPLY_DECLINE_REST = 2;
 /** Refusing a truce: a negated want of one ("i dont want a truce", "no want peace"). */
 const NEGATED_WANT = new RegExp(
@@ -188,14 +201,25 @@ const NEGATED_WANT = new RegExp(
 );
 const NEGATED_WANT_ALL = new RegExp(NEGATED_WANT.source, 'g');
 
+/** What follows a bare reply still makes it one: short (and no call to attack), or it speaks of the deal. */
+function replyRestFits(rest: string): boolean {
+  if (!rest) return true;
+  if (TRUCE_WORD.test(rest) || /\bdeal\b/.test(rest)) return true;
+  return rest.split(' ').length <= REPLY_DECLINE_REST && !/\b(attack|hit|kill|crush|stop|focus)\b/.test(rest);
+}
+
+/** A bare accept of my open proposal: short, or what follows still speaks of the deal ("yes Redcrane is winning" is none). */
+function replyAccepts(s: string): boolean {
+  const m = REPLY_ACCEPT.exec(s);
+  return m !== null && replyRestFits(s.slice(m[0].length).trim());
+}
+
 /** A bare decline of my open proposal: short, or what follows still speaks of the deal. */
 function replyDeclines(s: string): boolean {
   if (/\bnot interested\b/.test(s)) return true;
   const m = REPLY_DECLINE_START.exec(s);
   if (!m) return false;
-  const rest = s.slice(m[0].length).trim();
-  if (!rest) return true;
-  return rest.split(' ').length <= REPLY_DECLINE_REST || TRUCE_WORD.test(rest) || /\bdeal\b/.test(rest);
+  return replyRestFits(s.slice(m[0].length).trim());
 }
 
 type Strength = 'high' | 'medium';
@@ -214,18 +238,22 @@ function truceOf(s: string, hasQuestion: boolean, proposalOpen: boolean, hostile
   const r: Truce = { proposal: null, accept: null, decline: null, end: null, mutual: false };
   const truce = TRUCE_WORD.test(s);
   const refused = truce && NEGATED_WANT.test(s);
+  const refusedAccept = NEGATED_ACCEPT.test(s);
+  const demand = truce && (DEMAND_ACCEPT.test(s) || ASK_TO_ACCEPT.test(s));
   // A negated want offers nothing: "i dont want a truce" is no offer, whatever else the message says.
-  const offer = hasQuestion || OFFER_WORD.test(s.replace(NEGATED_WANT_ALL, ' '));
+  const offer = hasQuestion || demand || OFFER_WORD.test(s.replace(NEGATED_WANT_ALL, ' '));
   if (GIVING_NOTICE.test(s)) r.end = truce ? 'high' : 'medium';
   else if (truce && TRUCE_ENDED.test(s)) r.end = 'high';
   // An end word near a truce word, said of something else ("done fighting", "then it ends"): only when not an offer.
   else if (truce && !offer && TRUCE_END.test(s)) r.end = 'medium';
   if (proposalOpen && replyDeclines(s)) r.decline = 'high';
-  else if (truce && (refused || DECLINE_WITH_TRUCE.test(s))) r.decline = 'medium';
-  if (!r.decline) {
-    // A bare "ok" with a threat in it does not accept anything.
-    if (proposalOpen && !hostile && REPLY_ACCEPT.test(s)) r.accept = 'high';
-    else if (truce && ACCEPT_WORD.test(s) && !ASK_TO_ACCEPT.test(s)) r.accept = 'medium';
+  else if (truce && (refused || refusedAccept || DECLINE_WITH_TRUCE.test(s))) r.decline = 'medium';
+  // A refused acceptance answering my proposal declines it ("wont accept"), though it names no truce.
+  else if (proposalOpen && refusedAccept) r.decline = 'medium';
+  if (!r.decline && !refusedAccept) {
+    // A bare "ok" with a threat in it does not accept anything; nor does a demand to accept.
+    if (proposalOpen && !hostile && !demand && replyAccepts(s)) r.accept = 'high';
+    else if (truce && !demand && ACCEPT_WORD.test(s)) r.accept = 'medium';
   }
   if (!r.end && !r.decline && !r.accept) {
     if (MUTUAL_NO_ATTACK.test(s)) {
@@ -255,14 +283,23 @@ function positionCheck(s: string): Strength | null {
   return null;
 }
 
-function coordinationAsk(s: string): Strength | null {
+/** Whom a call to gang up names: a player (given by the caller), or a word standing for one. */
+const COORDINATION_TARGET = /\b(leader|him|her|them|whoever|the (top|biggest|strongest|big) (one|guy|player))\b/;
+
+function coordinationAsk(s: string, namesPlayer: boolean): Strength | null {
   if (/\b(gang up|team up|dogpile|dog pile|ally against|work together against)\b/.test(s)) return 'high';
   if (/\bhelp\b.*\b(vs|versus|against)\b/.test(s)) return 'high';
   // "lets stop fighting" / "stop attacking each other" offer peace; they name no one to gang up on.
   const t = s
     .replace(/\b(stop|quit) (attacking|hitting) (me|us|each other|one another)\b/g, ' ')
-    .replace(new RegExp(PEACE_OVERTURE.source, 'g'), ' ');
-  if (/\b(lets|let us|we need to|we should|we must|we have to|everyone|everybody|all of us|yall|someone|anyone)\b.*\b(attack|hit|stop|kill|take down|take out|focus|crush)\b/.test(t)) {
+    .replace(new RegExp(PEACE_OVERTURE.source, 'g'), ' ')
+    // A negated or self-directed verb asks no one to attack anyone ("everyone dont attack me").
+    .replace(/\b(dont|do not|never|wont|will not|not|stop) (attack|attacking|hit|hitting|kill|killing|crush|focus|focusing|stop)\b/g, ' ')
+    .replace(/\b(attack|hit|kill|crush|stop) (me|us|myself)\b/g, ' ');
+  if (
+    (namesPlayer || COORDINATION_TARGET.test(t)) &&
+    /\b(lets|let us|we need to|we should|we must|we have to|everyone|everybody|all of us|yall|someone|anyone)\b.*\b(attack|hit|stop|kill|take down|take out|focus|crush)\b/.test(t)
+  ) {
     return 'high';
   }
   if (/\b(is|s|hes|shes|theyre|are) (winning|leading|too strong|too big|running away)\b/.test(s) && /\b(help|stop|together|gang|attack)\b/.test(s)) {
@@ -272,7 +309,9 @@ function coordinationAsk(s: string): Strength | null {
 }
 
 function threat(s: string): Strength | null {
-  if (/\b(i will|ill|im going to|im gonna|i am going to|i am gonna|gonna)( now)? (attack|kill|wipe|destroy|crush|hit|eliminate|end|take) you\b/.test(s)) return 'high';
+  if (/\b(i will|ill|im going to|im gonna|i am going to|i am gonna|gonna)( now)? (attack|kill|wipe|destroy|crush|hit|eliminate|end|take) you\b(?! up\b)/.test(s)) return 'high';
+  // "accept truce or i attack", "or well hit you": an ultimatum.
+  if (/\bor (i|we|ill|well|i will|we will|im gonna|im going to)( just)? (attack|kill|wipe|destroy|crush|hit|eliminate|end|take|break)\b/.test(s)) return 'high';
   if (/\b(i will|ill|im going to|im gonna|i am going to|i am gonna) (wipe|destroy|crush|eliminate|end) you\b/.test(s)) return 'high';
   if (/\b(wipe|destroy|crush) you out\b|\bill wipe you\b/.test(s)) return 'high';
   if (/\bback off\b|\bcoming for you\b|\bor else\b|\byoull regret\b|\byou will regret\b/.test(s)) return 'high';
@@ -344,6 +383,14 @@ export function classifyMessage(text: string, ctx: ChatIntentContext): Classifie
     const hasQuestion = raw.includes('?');
     const open = proposalOpen(c.myRecentMessages);
 
+    const padded = ` ${flat} `;
+    const players = Array.isArray(c.players) ? c.players : [];
+    const mentions: ChatMentions = {
+      players: namedIn(padded, players),
+      territories: namedIn(padded, Array.isArray(c.territories) ? c.territories : []),
+      bonuses: namedIn(padded, Array.isArray(c.bonuses) ? c.bonuses : []),
+    };
+
     const found = new Map<Intent, Strength>();
     const put = (intent: Intent, strength: Strength | null): void => {
       if (strength) found.set(intent, strength);
@@ -356,7 +403,7 @@ export function classifyMessage(text: string, ctx: ChatIntentContext): Classifie
     put('truce-accept', truce.accept);
     put('truce-decline', truce.decline);
     put('truce-end-notice', truce.end);
-    put('coordination-ask', coordinationAsk(s));
+    put('coordination-ask', coordinationAsk(s, mentions.players.length > 0));
     // A mutual no-attack offer is a proposal, not a threat; a coercive one ("… if you dont accept truce") is both.
     if (!truce.mutual) put('threat', threatStrength);
     put('surrender-ask', surrenderAsk(s));
@@ -370,13 +417,6 @@ export function classifyMessage(text: string, ctx: ChatIntentContext): Classifie
     if (intents.some((i) => i !== 'question-other' && found.get(i) === 'high')) confidence = 'high';
     else if (intents.some((i) => i !== 'question-other')) confidence = 'medium';
 
-    const padded = ` ${flat} `;
-    const players = Array.isArray(c.players) ? c.players : [];
-    const mentions: ChatMentions = {
-      players: namedIn(padded, players),
-      territories: namedIn(padded, Array.isArray(c.territories) ? c.territories : []),
-      bonuses: namedIn(padded, Array.isArray(c.bonuses) ? c.bonuses : []),
-    };
     const meIds = new Set(players.filter((p) => p?.isMe).map((p) => p.id));
     const repliesToMe = open && (found.has('truce-accept') || found.has('truce-decline'));
     const addressedToMe = c.toMe === true || mentions.players.some((id) => meIds.has(id)) || repliesToMe;
