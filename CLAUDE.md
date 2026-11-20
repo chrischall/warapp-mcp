@@ -1158,6 +1158,25 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   golden: 1 plan's rationale; judging the lead by the carry (review fix): calibration unchanged, golden 3
   synthetic plans (readings above my income held: one break attack the plan warned was 0% if reinforced
   dropped, one break target and two ranking incomes lower; next income unchanged);
+  #418 (owner decisions of 2026-11-20): proof may always raise an estimate — a capture with every source
+  army in view (`captureFloor`, `src/analysis/plan/shared.ts`, in `observeDeploy` too: the target a neutral
+  or mine, every neighbour showing its owner and its own their armies, no other player beside it, no
+  Multi-Attack, my orders known in full and untouched beside my land; what stands there plus the attacker the
+  last defender surely killed, at least the fewest armies that kill every defender however split, beyond its
+  stacks beside it less the guard; a possible Bomb halves the defenders) floors the turn's reading
+  (`ObservedTurn.captureFloor`, `proven`), confirms a carry it reaches and is never held below by the rise cap
+  (`incomeRise.proven`); the could-earn cap still applies. Proof may lower one only on a turn with every army
+  it could have deployed in view (`everyArmyInView` → `ObservedTurn.accounted`: its land shown with armies on
+  both boards and nothing beside it hidden — a territory of its in deep fog beside none of its land is the
+  one gap —, no third player beside it, no neutral beside it shrunk or taken, no territory of its lost, my
+  orders known in full and no card of mine on its land when it borders me, a failed attack sure to kill, luck
+  off under straight rounding when it captured, no army price): the over-read tripwire steps the carry down
+  at most one `RISE_CAP` step a turn (⌈carry ÷ 1.3⌉) toward that turn's reading, never below it, and the
+  readings it stepped down from count at most the stepped figure in later windows (`incomeMethod`
+  `tripped`, `incomeTrip`). Measured: calibration 167 samples unchanged (on the recorded games' final
+  tracks 22 of 143 observed turns carry a capture floor, none above the reading it already had, and no
+  turn is accounted); golden 5 synthetic plans' rationale and warnings (the planner's observed line raised
+  by a capture floor), no order, capture, next income or concession changed;
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
   `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;

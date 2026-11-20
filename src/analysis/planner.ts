@@ -297,7 +297,14 @@
 //     guard or beside no other player), never a hold an order `moves` does not carry touched (a
 //     Transfer Only, Attack Only or percentage order in `sent`, a card play in `cards`; orders cached
 //     before those were kept read nothing), and on a turn an opponent may have played a Bomb
-//     (`bombPossibleOn`, `PlannerSettings.bombFrom`) after taking out half the hold, rounded up. A
+//     (`bombPossibleOn`, `PlannerSettings.bombFrom`) after taking out half the hold, rounded up. #418
+//     (owner decision of 2026-11-20: proof may always raise an estimate): a capture with every source
+//     army in view (`captureFloor`) bounds it from below too — what stands on the target plus the
+//     attacker its last defender surely killed, and at least the fewest armies that kill every defender
+//     however the attack was split, beyond what its stacks beside the target could send (less the
+//     guard) — counted when the target was a neutral or mine, every neighbour showed its owner and its
+//     own their armies, no other player borders it, Multi-Attack is off, and (beside or out of my land)
+//     my orders are known in full and none touches it; a Bomb it may have played halves the defenders. A
 //     capture of a neutral in view beside the fog that needed more attackers (`fewestAttackersToTake`)
 //     than its stacks in view sent (`unseenAttackers`) reads what stands there beyond those as deploy
 //     within #123's bound, the rest a move out of the fog. Its stacks in view beside a capture, hidden

@@ -1490,6 +1490,10 @@ export interface DeployObservation {
   repelled: number[];
   /** #271 (1): that bound: the deploy, `low` and `high` are never below it. 0 without my orders. */
   repelledFloor: number;
+  /** #418: its captures read with every source army in view, read as a bound on its deploy ({@link captureFloor}). */
+  proven: number[];
+  /** #418: that bound (proof may always raise an estimate): the deploy, `low` and `high` are never below it. */
+  captureFloor: number;
   /** The deploy with every ambiguous army read the low way (fog moves, emptied captures), floored at 0. */
   low: number;
   /** The deploy with every ambiguous army read the high way (deploys, my stack standing), floored at 0. */
@@ -1783,6 +1787,131 @@ export function repelledFloor(
   return best;
 }
 
+/** #418: the captures {@link captureFloor} read, and the deploy they prove. */
+export interface ProvenCaptures {
+  /** Its captures read, by id. */
+  territories: number[];
+  /** The fewest attackers they needed (summed, or the one capture that sets the floor). */
+  attackers: number;
+  /** What its stacks beside them could send at the start of the turn (each counted once, less the guard; a commander as 7). */
+  supply: number;
+  /** The deploy that turn proves: the attackers beyond that supply, at least 0. */
+  floor: number;
+}
+
+/**
+ * #418 (the owner's decision of 2026-11-20: proof may always raise an estimate): the fewest armies that
+ * can kill `defenders` however the attack is split into orders. One attack of `a` kills at most
+ * round(a × the best kill rate luck allows) (straight; weighted rounding rounds up a fraction); a split
+ * gains most per army at the smallest attack, so the most kills per army is the best over small attacks.
+ */
+function fewestAttackersAnySplit(defenders: number, settings: PlannerSettings): number | null {
+  if (defenders <= 0) return 0;
+  let perArmy = 0;
+  for (let a = 1; a <= 20; a++) {
+    // The most kills `a` attackers can make: the largest k with fewestAttackersToKill(k) ≤ a.
+    let k = 0;
+    for (;;) {
+      const need = fewestAttackersToKill(k + 1, settings, settings.luckModifier, settings.roundingMode);
+      if (need === null || need > a) break;
+      k++;
+    }
+    perArmy = Math.max(perArmy, k / a);
+  }
+  return perArmy > 0 ? Math.ceil(defenders / perArmy - 1e-9) : null;
+}
+
+/**
+ * #418: a capture with every source army in view proves a minimum deploy. Without Multi-Attack each army
+ * moves once, so every attacker on a territory it took — and every army that then moved in — came from
+ * its territories beside the target at the start of the turn: their armies then (less the guard, a
+ * commander as 7) plus what it deployed on them. What arrived is at least what stands there now plus the
+ * attacker the last defender surely killed ({@link guaranteedKills} of one), and at least the fewest
+ * armies that kill every defender however the attack was split ({@link fewestAttackersAnySplit}); what
+ * that leaves beyond the supply was deployed.
+ * A capture reads only when: the target was a neutral or mine, shown with its armies, and its now, shown
+ * with its armies, no special unit on it; every neighbour of the target showed its owner on the earlier
+ * board and each of its showed its armies (a hidden one may have sent a stack); no other player borders
+ * the target on either board (it may have worn the defenders down first); and, when the target was mine
+ * or borders mine, my orders are known in full (`sent` and `cards`) and none of them leaves the target,
+ * enters it or plays a card on it (a move of mine out of it leaves fewer defenders; an attack of mine in
+ * kills some first). A Bomb it may have played (`bomb`) halves the defenders first. Over every such
+ * capture the floor is the larger of the best single capture and all of them together (their attackers
+ * summed against the stacks beside any of them, each counted once), as {@link repelledFloor} does.
+ */
+export function captureFloor(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  playerId: number,
+  settings: PlannerSettings = {},
+  guard = (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
+  opts: { me?: number; orders?: MyOrders | undefined; bomb?: boolean } = {},
+): ProvenCaptures {
+  const none: ProvenCaptures = { territories: [], attackers: 0, supply: 0, floor: 0 };
+  if (settings.multiAttack) return none;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const { me, orders } = opts;
+  const ordersKnown = !!orders?.sent && !!orders.cards;
+  const touchedByMe = (id: number) =>
+    !ordersKnown ||
+    orders!.sent!.some((m) => m.from === id || m.to === id) ||
+    orders!.moves.some((m) => m.from === id || m.to === id) ||
+    orders!.cards!.some((c) => c.from === id || c.to === id || c.target === id);
+  const its = (t: TerritoryState | undefined) => t?.owner.kind === 'player' && t.owner.playerId === playerId;
+  const sendable = (id: number) => {
+    const st = visibleState(was.get(id))!;
+    return Math.max(0, st.armies! - guard) + specialUnitStrength(st.specialUnits?.filter((u) => u.playerId === playerId));
+  };
+  const lastKill = guaranteedKills(1, settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE, settings.luckModifier, settings.roundingMode);
+  const caps: { id: number; attackers: number; beside: number[] }[] = [];
+  for (const t of [...after.territories].sort((a, b) => a.territoryId - b.territoryId)) {
+    const id = t.territoryId;
+    if (!g.territoryById.has(id)) continue;
+    const a = visibleState(t);
+    const b = visibleState(was.get(id));
+    if (!its(a) || !b || its(b) || a!.specialUnits?.length || b.specialUnits?.length) continue;
+    const mineBefore = me !== undefined && b.owner.kind === 'player' && b.owner.playerId === me;
+    if (b.owner.kind !== 'neutral' && !mineBefore) continue;
+    const ns = neighborsOf(g, id);
+    let ok = true;
+    let bordersMe = false;
+    const beside: number[] = [];
+    for (const n of ns) {
+      const o = ownerShown(was.get(n));
+      if (!o) {
+        ok = false;
+        break;
+      }
+      for (const side of [o, ownerShown(now.get(n))]) {
+        if (side?.owner.kind !== 'player' || side.owner.playerId === playerId) continue;
+        if (side.owner.playerId === me) bordersMe = true;
+        else ok = false;
+      }
+      if (its(o)) {
+        if (!visibleState(o)) ok = false;
+        else beside.push(n);
+      }
+    }
+    if (!ok || ((mineBefore || bordersMe) && touchedByMe(id))) continue;
+    const defenders = opts.bomb ? Math.floor(b.armies! / 2) : b.armies!;
+    const kill = fewestAttackersAnySplit(defenders, settings);
+    if (kill === null) continue;
+    const attackers = Math.max(kill, a!.armies! + (defenders > 0 ? lastKill : 0));
+    caps.push({ id, attackers, beside });
+  }
+  if (!caps.length) return none;
+  const supplyOf = (ids: Iterable<number>) => [...new Set(ids)].reduce((n, id) => n + sendable(id), 0);
+  const all = { attackers: caps.reduce((n, c) => n + c.attackers, 0), supply: supplyOf(caps.flatMap((c) => c.beside)) };
+  let best: ProvenCaptures = { territories: caps.map((c) => c.id), ...all, floor: Math.max(0, all.attackers - all.supply) };
+  for (const c of caps) {
+    const supply = supplyOf(c.beside);
+    if (c.attackers - supply > best.floor) best = { ...best, attackers: c.attackers, supply, floor: c.attackers - supply };
+  }
+  return best;
+}
+
 /** #240: the turns {@link repulsedAttacks} looks back over, ending on the board being planned. */
 export const REPULSE_WINDOW = 3;
 /** #240: failed, reinforced attacks on one territory within the window that make it repulsed. */
@@ -1907,7 +2036,8 @@ export function repulsedAttacks(
  * before + deploy + transfers in − kills, so deploy ≥ after + kills − before — beside the fog an
  * ambiguous growth like any other, read as deploy up to the turn's bound. #271: given those orders,
  * a failed attack on a hold of mine bounds the deploy from below ({@link repelledFloor}: `deploy`,
- * `low` and `high` never below it). A capture also claims, after the visible sources, what its stacks
+ * `low` and `high` never below it), and so does a capture with every source army in view (#418,
+ * {@link captureFloor}: proof may always raise an estimate). A capture also claims, after the visible sources, what its stacks
  * in view last turn and hidden now could have sent (`arrivals`: no figure counts them but `high`); a
  * capture of a neutral beside the fog that no visible source sent into reads the attackers it needed
  * beyond its cost ({@link fewestAttackersToTake}) as ambiguous, deploy up to the bound
@@ -2203,7 +2333,13 @@ export function observeSigned(
     context.me !== undefined && context.myOrders
       ? repelledFloor(g, previous, board, context.me, playerId, context.myOrders, rates, guard, context.bomb === true)
       : { territories: [], floor: 0 };
-  const floor = repelled.floor;
+  // #418: a capture with every source army in view proves a minimum deploy, fog or not.
+  const proof = captureFloor(g, previous, board, playerId, rates, guard, {
+    ...(context.me !== undefined ? { me: context.me } : {}),
+    orders: context.myOrders,
+    bomb: context.bomb === true,
+  });
+  const floor = Math.max(repelled.floor, proof.floor);
   return {
     stacks,
     deploy: Math.max(0, total, floor),
@@ -2226,7 +2362,9 @@ export function observeSigned(
     unseenAttackers,
     unseenAttackerArmies,
     repelled: repelled.territories,
-    repelledFloor: floor,
+    repelledFloor: repelled.floor,
+    proven: proof.territories,
+    captureFloor: proof.floor,
     low: Math.max(0, total + lowExtra, floor),
     high: Math.max(0, total + highExtra, floor),
   };
