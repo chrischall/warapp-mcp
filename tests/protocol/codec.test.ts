@@ -480,6 +480,8 @@ describe('methods', () => {
       GetLatestGameInfo: 41,
       SendChat: 43,
       RegisterChatView: 44,
+      RetrieveChat: 45,
+      RetrievePrivateMessageHistory: 46,
       GetGameSettings: 49,
       GetMyGames: 51,
       AcceptGame: 61,

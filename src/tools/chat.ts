@@ -6,7 +6,18 @@ import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations, type EnvSource }
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { MessageAudience } from '../analysis/commitments.js';
-import { CHAT_CHANNELS, feedChatLines, fillFromFeed, readGameRefreshChat, readSendChatReply, type ChatChannel, type ChatLine } from '../chat.js';
+import {
+  CHAT_CHANNELS,
+  feedChatLines,
+  fillFromFeed,
+  mergeChatLines,
+  oldestId,
+  readGameRefreshChat,
+  readMessageHistoryReply,
+  readSendChatReply,
+  type ChatChannel,
+  type ChatLine,
+} from '../chat.js';
 import {
   advanceCursor,
   markedChannels,
@@ -19,10 +30,17 @@ import {
   type UnreadCounts,
 } from '../chat-cursor.js';
 import { parseGameId } from '../client.js';
-import { inGameId, playersByInGameId } from '../live.js';
+import { inGameId, inGameOf, playersByInGameId } from '../live.js';
 import type { Game, Player } from '../normalize.js';
-import type { ReplyEnvelope } from '../protocol/codec.js';
-import { CHAT_CHANNEL_PUBLIC, Method, writeGameRefreshParams, writeSendChatParams } from '../protocol/methods.js';
+import type { ReplyEnvelope, Writer } from '../protocol/codec.js';
+import {
+  CHAT_CHANNEL_PUBLIC,
+  Method,
+  writeGameRefreshParams,
+  writeRetrieveChatParams,
+  writeRetrievePrivateMessageHistoryParams,
+  writeSendChatParams,
+} from '../protocol/methods.js';
 import { carriesTeam } from '../teams.js';
 import {
   gameIdArg,
@@ -79,6 +97,11 @@ export interface ChatRead {
   lines: ChatLine[];
   /** Present when the web read had fewer messages than GameFeed and GameFeed's were used (`source` stays `web`). */
   feedFill?: FeedFill;
+  /**
+   * The channels whose older messages could not be read (#363, #387: RetrieveChat for public and team,
+   * RetrievePrivateMessageHistory for private): messages war.app counts as seen may be missing there.
+   */
+  olderUnread?: ChatChannel[];
 }
 
 /** The additive fields a result carries for a read GameFeed filled (#313, #321), else none. */
@@ -117,13 +140,76 @@ export async function readChat(ctx: LiveContext, game: Game, me: ChatMe): Promis
       const env = await ctx.rpc.call('GameRefresh', Method.GameRefresh, (w) =>
         writeGameRefreshParams(w, { gameId: game.id, chat: true, nonChat: false, lobby: game.state === 'WaitingForPlayers' }),
       );
-      const lines = readGameRefreshChat(await ctx.bundle(), env.body);
-      if (lines) return lines.length < (feed?.length ?? 0) ? withFeed(lines, feed!) : { source: 'web', lines };
+      const refreshed = readGameRefreshChat(await ctx.bundle(), env.body);
+      if (refreshed) {
+        const { lines, olderUnread } = await withOlder(ctx, game, me, refreshed);
+        const read: ChatRead = lines.length < (feed?.length ?? 0) ? withFeed(lines, feed!) : { source: 'web', lines };
+        return olderUnread.length ? { ...read, olderUnread } : read;
+      }
     } catch {
       // Fall back to GameFeed.
     }
   }
   return feed ? { source: 'gamefeed', lines: feed } : undefined;
+}
+
+/** The most private conversations whose history one chat read asks for (one request each). */
+export const MAX_PRIVATE_HISTORY = 8;
+
+/**
+ * GameRefresh's chat with the messages it leaves out added (#363, #387). Sent `-1` markers (as the client
+ * sends on a first load), GameRefresh leaves out messages war.app counts as seen — live, an own team message
+ * showed in the official app only after "Show older messages". The client's button sends RetrieveChat (45)
+ * with, per channel, the oldest message id received (9999E14 when none), and a private conversation's history
+ * button RetrievePrivateMessageHistory (46) the same per counterpart: both are asked here, once each, the
+ * private one per other human seat with an in-game id (at most {@link MAX_PRIVATE_HISTORY}) unless the game
+ * turns private messaging off. A read that fails or does not decode adds nothing and names its channels.
+ */
+async function withOlder(
+  ctx: LiveContext,
+  game: Game,
+  me: NonNullable<ChatMe>,
+  refreshed: ChatLine[],
+): Promise<{ lines: ChatLine[]; olderUnread: ChatChannel[] }> {
+  let lines = refreshed;
+  const olderUnread: ChatChannel[] = [];
+  const history = async (name: string, method: number, write: (w: Writer) => void): Promise<ChatLine[] | undefined> => {
+    try {
+      const env = await ctx.rpc.call(name, method, write);
+      return readMessageHistoryReply(await ctx.bundle(), env.body);
+    } catch {
+      return undefined;
+    }
+  };
+  const older = await history('RetrieveChat', Method.RetrieveChat, (w) =>
+    writeRetrieveChatParams(w, {
+      gameId: game.id,
+      publicBefore: oldestId(refreshed, (l) => l.channel === 'public'),
+      teamBefore: oldestId(refreshed, (l) => l.channel === 'team'),
+    }),
+  );
+  if (older) lines = mergeChatLines(lines, older);
+  else olderUnread.push('public', 'team');
+  if (game.settings?.privateMessaging !== false) {
+    const counterparts = game.players
+      .filter((p) => !p.isAI)
+      .map((p) => inGameOf(p))
+      .filter((id): id is number => id !== undefined && id !== me.inGameId)
+      .sort((a, b) => a - b)
+      .slice(0, MAX_PRIVATE_HISTORY);
+    let failed = false;
+    for (const counterpart of counterparts) {
+      const withThem = (l: ChatLine) =>
+        l.channel === 'private' && (l.to === counterpart || (l.sender === counterpart && l.to === me.inGameId));
+      const got = await history('RetrievePrivateMessageHistory', Method.RetrievePrivateMessageHistory, (w) =>
+        writeRetrievePrivateMessageHistoryParams(w, { gameId: game.id, before: oldestId(refreshed, withThem), counterpart }),
+      );
+      if (got) lines = mergeChatLines(lines, got);
+      else failed = true;
+    }
+    if (failed) olderUnread.push('private');
+  }
+  return { lines, olderUnread };
 }
 
 /** A web read shorter than GameFeed's list, filled from it (#313). */
@@ -261,6 +347,8 @@ export function shown(line: ChatLine, isNew: boolean, players: readonly Player[]
     channel: line.channel,
     ...(line.team !== undefined ? { team: line.team } : {}),
     ...(to ? { to } : {}),
+    // #387: a private message addressed to me, so a watcher can flag diplomacy the moment it arrives.
+    ...(line.channel === 'private' && me !== undefined && line.to === me.inGameId ? { toMe: true } : {}),
     mine: isMine(line, me),
     new: isNew,
   };
@@ -337,6 +425,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
         ...header,
         source: read.source,
         ...feedFillFields(read),
+        ...(read.olderUnread ? { olderUnread: read.olderUnread } : {}),
         messages,
         count: picked.length,
         shown: messages.length,
