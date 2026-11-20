@@ -161,6 +161,8 @@ import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveIntel } from '../analysis/intel.js';
 import { readSiegeMemory, writeSiegeMemory } from '../siege-store.js';
+import { readBonusAttempts, writeBonusAttempts } from '../bonus-attempt-store.js';
+import { rememberBonusAttempts } from '../analysis/plan/bonus-attempts.js';
 import { rememberSiegeTurn, type SiegeMemory } from '../analysis/plan/siege.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
@@ -1784,6 +1786,9 @@ export async function livePlanSetup(
   // #240: territories my cached orders show failed attacks on, their owner reinforcing them each
   // time, on two or more of the last three turns: a further attack is sized for its owner's deploy.
   const repulsed = turn !== null ? repulsedAttacks(graph, [...history.boards, { turn, board: seen }], me.id, settings) : [];
+  // #298: the contested bonuses my plans attempted to complete in this game (read only here; only
+  // warapp_plan_turn writes it): after two failed attempts the planner pushes all-in once or drops the bonus.
+  const bonusAttempts = turn !== null && ctx.dataDir ? await readBonusAttempts(ctx.dataDir, game.id, me.id) : undefined;
   // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
   // #201: the planner reads it too — a decided game shortens its payback horizon.
   const cardArmies = cardArmyCeiling(game.settings);
@@ -1892,6 +1897,7 @@ export async function livePlanSetup(
     // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
     ...(trend && previousOrders ? { previousOrders } : {}),
     ...(repulsed.length ? { repulsed } : {}),
+    ...(bonusAttempts ? { bonusAttempts } : {}),
     ...(turn !== null ? { turn } : {}),
     game: gameContext,
     ...(tracks ? { tracks } : {}),
@@ -2490,6 +2496,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #382: this siege turn joins the memory (not on an enemy_deploy what-if; planning the turn again replaces it).
       if (ctx.dataDir && turn !== null && plan.siege && enemy_deploy === undefined)
         await writeSiegeMemory(ctx.dataDir, game.id, me.id, rememberSiegeTurn(siegeMemory, turn, plan.siege));
+      // #298: this turn's attempts on contested bonuses and its drops join the memory (never on a what-if
+      // plan; planning the turn again replaces them).
+      if (ctx.dataDir && turn !== null && !whatIf) {
+        const attempts = rememberBonusAttempts(setup.input.bonusAttempts, turn, graph, setup.input.board, me.id, plan.expected.bonusesCompleted, plan.bonusPush);
+        if (attempts.bonuses.length || setup.input.bonusAttempts) await writeBonusAttempts(ctx.dataDir, game.id, me.id, attempts);
+      }
       // B2: what each honoured truce freed this turn and what a break would have cost (T6), for "has it
       // been useful in play?" (not a what-if plan).
       const used = (plan.relations ?? []).filter((r) => r.honoured && r.agreement !== undefined);
@@ -2734,6 +2746,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(plan.siege ? { siege: plan.siege } : {}),
         // #361: the single-army jabs among the orders (attrition, never captures); absent with none.
         ...(plan.jabs ? { jabs: plan.jabs } : {}),
+        // #298: the contested bonuses pushed all-in or dropped after repeated failed attempts; absent with none.
+        ...(plan.bonusPush ? { bonusPush: plan.bonusPush } : {}),
         // #276: the guard case first, on or off, with what it means for interior defence.
         profile:
           rung === 'full'

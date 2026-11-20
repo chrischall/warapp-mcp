@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -516,6 +516,31 @@ describe('warapp_plan_turn', () => {
     const kept = JSON.parse(readFileSync(file, 'utf8')) as { target: number; turns: { turn: number }[] };
     expect(kept.target).toBe(first.siege.target);
     expect(kept.turns.map((t) => t.turn)).toEqual([4, 5]);
+    expect(readFileSync(file, 'utf8')).not.toMatch(/Ann|Bob/);
+  });
+
+  it('#298: a contested bonus attempt is kept per game; a running drop leaves it unfunded; a what-if keeps nothing', async () => {
+    // Bob holds Widow's Watch (157), the one member of bonus 118 Ann lacks: taking it is a contested attempt.
+    const contested = BOARD.map((t) => (t.id === 157 ? { ...t, owner: BOB.inGame, armies: 1 } : t));
+    h = await liveHarness({ feed: [game('Playing', { numberOfTurns: '3' })], warapp: routes({ [Method.GetLatestGameInfo]: board(contested) }) });
+    const dir = h.dataDir;
+    const file = join(dir, 'bonus-attempts', `${GAME}-${ANN.feed}.json`);
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', enemy_deploy: 3 });
+    expect(existsSync(file)).toBe(false);
+    const first = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(first.moves.some((m) => m.kind === 'attack' && m.to.id === 157)).toBe(true);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
+      gameId: GAME,
+      playerId: Number(ANN.feed),
+      bonuses: [{ bonusId: 118, attempts: [{ turn: 4, allIn: false }] }],
+    });
+    expect(first.expected.bonusesCompleted.map((b) => b.id)).toEqual([118]);
+    // A drop running from turn 3 to 5: nothing goes into bonus 118, and the plan says so.
+    writeFileSync(file, JSON.stringify({ gameId: GAME, playerId: Number(ANN.feed), bonuses: [{ bonusId: 118, attempts: [], drop: { from: 3, until: 5 } }] }));
+    const dropped = payload<PlanPayload & { bonusPush: unknown[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(dropped.moves.some((m) => m.kind === 'attack' && m.to.id === 157)).toBe(false);
+    expect(dropped.bonusPush).toEqual([{ bonusId: 118, kind: 'dropped', why: 'still-dropped', from: 3, until: 5, failedTurns: [] }]);
+    expect(JSON.parse(readFileSync(file, 'utf8')).bonuses).toEqual([{ bonusId: 118, attempts: [], drop: { from: 3, until: 5 } }]);
     expect(readFileSync(file, 'utf8')).not.toMatch(/Ann|Bob/);
   });
 

@@ -829,6 +829,17 @@
 //     without it would (`repulsedSurplus`: the sure size's surplus over the plain one still on the
 //     source; one that would fall without it stays short), and the leftover put there is not kept
 //     from the #226 margin; the strike stack reports such an attack as sized for the deploy.
+//     #298, all-in or drop (plan/bonus-attempts.ts; owner defaults of 2026-11-20): with
+//     `input.bonusAttempts` (the attempt memory, src/bonus-attempt-store.ts) a contested bonus whose
+//     expected completion failed on FAILED_ATTEMPTS (2) consecutive turns is pushed all-in once
+//     (`planPushed`: focused, every missing member in view and beside mine, each one a player holds
+//     sized for its defenders plus its owner's deploy, #368's middle figure, taken at that size or not
+//     at all, as #240's sure size; the whole at most ALL_IN_VALUE_TURNS (2) × its value and my income)
+//     when that plan takes every missing member; otherwise it is planned again with the bonus dropped
+//     for DROP_TURNS (3) turns, this one included, as it is after an all-in that failed: no bonus
+//     scoring, and rule 4e's contact fallback, #203's lead steps and #272's attack out of a conceded
+//     border never go into its missing members. `bonusPush` and a rationale line say which. No memory,
+//     or no verdict: the plan is byte-identical.
 //     #226, a margin: once the transfers (rule 6) have moved what they move, an attack on a
 //     player's territory whose owner may deploy there (not a combined capture; not under No-Split,
 //     which sends the whole stack already) takes the armies still on its source beyond what holds
@@ -1560,6 +1571,7 @@ import { neighborsOf } from './graph.js';
 import { forecastBorder, mainFront, type FrontStack } from './exchange.js';
 import { byNum, pct } from './plan/util.js';
 import { SIEGE_BREAK_WEIGHT } from './plan/siege.js';
+import { ALL_IN_VALUE_TURNS, bonusVerdicts, DROP_TURNS, judgeAttempts, type AllInTry, type BonusPushEntry } from './plan/bonus-attempts.js';
 import { planJabs } from './plan/jabs.js';
 import {
   BREAK_WEIGHT,
@@ -1654,7 +1666,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   // territories are planned as neutrals (static armies), and it is no opponent anywhere below.
   const seats = staticSeats(input.game?.players, input.game?.endRules, input.me);
   const held = seatTerritories(input.board, seats);
-  const plan = planSettled(withoutStaticSeats(input, seats));
+  const plan = planPushed(withoutStaticSeats(input, seats));
   for (const [p, n] of [...held].sort((a, b) => a[0] - b[0]))
     plan.rationale.push(
       `Player ${p} is out (${seats.get(p)}) and no AI plays its seat: it deploys and attacks nothing, so its ${n} territor${n === 1 ? 'y is' : 'ies are'} planned as neutrals — static armies to take, no hold needed beside them (#270).`,
@@ -1688,6 +1700,95 @@ function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>
     ...(input.sanctions ? { sanctions: input.sanctions.filter((x) => !seats.has(x.player)) } : {}),
     ...(input.game && opening ? { game: { ...input.game, opening: new Map([...opening].filter(([p]) => !seats.has(p))) } } : {}),
   };
+}
+
+/** #298: per plan, the all-in pushes its pass sized (plan/targets.ts), by bonus id. */
+const allInOutcome = new WeakMap<TurnPlan, ReadonlyMap<number, AllInTry>>();
+
+/**
+ * #298: the plan with the attempt memory's verdicts (plan/bonus-attempts.ts). A bonus whose completion
+ * failed on two consecutive turns is pushed all-in (focused, every missing member sized for its owner's
+ * deploy or not taken); when the push does not fit the cap, or the plan does not take every missing
+ * member, it is planned again with that bonus dropped for DROP_TURNS turns. With no verdict, the plan
+ * is exactly what it was without the memory.
+ */
+function planPushed(input: PlanInput): TurnPlan {
+  const turn = input.turn;
+  if (!input.bonusAttempts || turn === undefined) return planSettled(input);
+  const judged = judgeAttempts(input.bonusAttempts, turn, input.graph, input.board, input.me);
+  const verdicts = bonusVerdicts(judged, turn).filter((v) => input.graph.bonusById.has(v.bonusId));
+  if (!verdicts.length) return planSettled(input);
+  const entries = new Map<number, BonusPushEntry>();
+  for (const v of verdicts)
+    if (v.kind === 'dropped') entries.set(v.bonusId, { ...v });
+  let allIn = verdicts.filter((v) => v.kind === 'all-in');
+  const missingOf = (bonusId: number) => {
+    const at = new Map(input.board.territories.map((t) => [t.territoryId, t]));
+    return bonusTerritories(input.graph, bonusId).filter((t) => {
+      const o = at.get(t)?.owner;
+      return !(o?.kind === 'player' && o.playerId === input.me);
+    });
+  };
+  // A bonus already complete, or no longer contested, needs no push.
+  allIn = allIn.filter((v) => missingOf(v.bonusId).length > 0);
+  let plan: TurnPlan;
+  for (;;) {
+    const ids = new Set(allIn.map((v) => v.bonusId));
+    const focus = [...new Set([...(input.options?.focusBonusIds ?? []), ...ids])];
+    plan = planSettled({
+      ...input,
+      bonusPush: { allIn: ids, dropped: new Set([...entries.keys()]) },
+      options: { ...input.options, ...(ids.size ? { focusBonusIds: focus } : {}) },
+    });
+    const tries = allInOutcome.get(plan);
+    const taken = new Set(plan.expected.captures);
+    const failing = allIn.flatMap((v) => {
+      const t = tries?.get(v.bonusId);
+      if (!t) return [{ v, detail: 'it could not be sized' }];
+      if (!t.feasible) return [{ v, detail: t.detail ?? 'it could not be sized', cost: t.cost, cap: t.cap }];
+      const left = missingOf(v.bonusId).filter((x) => !taken.has(x));
+      return left.length ? [{ v, detail: `this turn's plan cannot take ${left.map((x) => `#${x}`).join(', ')} at that size` }] : [];
+    });
+    if (!failing.length) {
+      for (const v of allIn) {
+        const t = tries!.get(v.bonusId)!;
+        entries.set(v.bonusId, { bonusId: v.bonusId, kind: 'all-in', failedTurns: v.failedTurns, cost: t.cost, cap: t.cap });
+      }
+      break;
+    }
+    for (const f of failing)
+      entries.set(f.v.bonusId, {
+        bonusId: f.v.bonusId,
+        kind: 'dropped',
+        why: 'no-all-in',
+        from: turn,
+        until: turn + DROP_TURNS - 1,
+        failedTurns: f.v.failedTurns,
+        detail: f.detail,
+      });
+    const out = new Set(failing.map((f) => f.v.bonusId));
+    allIn = allIn.filter((v) => !out.has(v.bonusId));
+  }
+  const name = (id: number) => `${input.graph.bonusById.get(id)!.name} (#${id})`;
+  const turnsText = (ts: number[]) => (ts.length > 1 ? `${ts.slice(0, -1).join(', ')} and ${ts[ts.length - 1]}` : `${ts[0]}`);
+  const push = [...entries.values()].sort((a, b) => a.bonusId - b.bonusId);
+  for (const e of push) {
+    if (e.kind === 'all-in')
+      plan.rationale.push(
+        `Bonus ${name(e.bonusId)}: my attempts to complete it failed on turns ${turnsText(e.failedTurns)}: all-in this turn, every missing member taken, each one another player holds sized for its owner's deploy (#368's middle figure): ${e.cost} armies, within the cap of ${e.cap} (${ALL_IN_VALUE_TURNS} turns of its value, at most my income) (#298).`,
+      );
+    else {
+      const why =
+        e.why === 'still-dropped'
+          ? `dropped on turn ${e.from} after repeated failed attempts`
+          : e.why === 'all-in-failed'
+            ? `my attempts to complete it failed on turns ${turnsText(e.failedTurns)}, the last of them all-in`
+            : `my attempts to complete it failed on turns ${turnsText(e.failedTurns)}, and no single all-in push this turn completes it: ${e.detail}`;
+      plan.rationale.push(`Bonus ${name(e.bonusId)} is dropped as a target on turns ${e.from} to ${e.until} (#298): ${why}. No armies go into it piecemeal.`);
+    }
+  }
+  plan.bonusPush = push;
+  return plan;
 }
 
 function planSettled(input: PlanInput): TurnPlan {
@@ -3080,6 +3181,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   for (const u of units)
     if (u.contested && !u.conceded) for (const m of u.members) if (!heldBorders.has(m.id)) unheld.add(m.id);
   runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
+  if (tgt.allInTries.size) allInOutcome.set(plan, tgt.allInTries);
   // #274: a plan that walks my commander says so first.
   if (pc.commanderAt?.retreat) plan.warnings.unshift(commanderMoveWarning(pc.commanderAt.retreat, label));
   return plan;

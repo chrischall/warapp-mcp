@@ -25,6 +25,7 @@ import type { Threats } from './threats.js';
 import { byNum } from './util.js';
 import { denialsOf, emptyEnemiesOf } from './vacated.js';
 import { breakableBonuses, type Breakable } from './siege.js';
+import { ALL_IN_VALUE_TURNS, type AllInTry } from './bonus-attempts.js';
 
 
 export type { Breakable } from './siege.js';
@@ -171,6 +172,12 @@ export function captureTargets(
   // ---- 2. targets ----
   const targets = new Map<number, Target>();
   /**
+   * #298: the missing members of the bonuses dropped after repeated failed attempts
+   * (`input.bonusPush.dropped`): no bonus step (rule 4e's contact fallback, #203's lead steps) goes into one.
+   */
+  const bonusDropped: ReadonlySet<number> = input.bonusPush?.dropped ?? new Set<number>();
+  const droppedMembers = new Set([...bonusDropped].flatMap((id) => (g.bonusById.has(id) ? bonusTerritories(g, id).filter((t) => !mineSet.has(t)) : [])));
+  /**
    * #240: territories my attacks failed on repeatedly while their owner reinforced them
    * (`input.repulsed`, {@link repulsedAttacks}): still that opponent's, armies in view, next to mine,
    * its owner able to deploy there. Every capture of one is sized for its defenders plus that deploy
@@ -214,6 +221,42 @@ export function captureTargets(
         .map((a) => `${a.armies} against ${a.before}, ${a.after} after`)
         .join('; ')}): a further attack is sized for ${size}.`,
     );
+  }
+  /**
+   * #298: a bonus pushed all-in (`input.bonusPush.allIn`, after two failed attempts): every missing
+   * member must be in view and beside a territory of mine; one another player holds is sized for its
+   * defenders plus its owner's deploy (#368's middle figure, `reinforcementAt`), like #240's sure size
+   * (taken at that size or not at all), a neutral at its capture cost. The push fits when the whole is at
+   * most ALL_IN_VALUE_TURNS × the bonus's value and at most my income; planTurn drops it otherwise.
+   */
+  const allInTries = new Map<number, AllInTry>();
+  for (const bonusId of [...(input.bonusPush?.allIn ?? [])].sort(byNum)) {
+    const b = g.bonusById.get(bonusId);
+    if (!b) continue;
+    const cap = Math.max(0, Math.min(ALL_IN_VALUE_TURNS * b.value, pc.income));
+    const sized: { t: number; player?: number; defenders: number; extra: number; cost: number }[] = [];
+    let why: string | undefined;
+    for (const t of bonusTerritories(g, bonusId).filter((x) => !mineSet.has(x))) {
+      const st = state.get(t);
+      if (!st || st.owner.kind === 'unknown' || st.armies === null) why ??= `${label(t)} is out of view`;
+      else if (!neighborsOf(g, t).some((n) => mineSet.has(n))) why ??= `${label(t)} is out of reach this turn`;
+      else if (uncounted(t)) why ??= `${label(t)} holds a special unit`;
+      else if (st.owner.kind === 'player' && !foe(st.owner.playerId)) why ??= `${label(t)} is my teammate's`;
+      else {
+        const defenders = defenceAt(t);
+        const extra = st.owner.kind === 'player' ? reinforcementAt(t) : 0;
+        const cost = costAt(t, defenders + extra);
+        if (cost === null) why ??= `${label(t)} cannot be taken`;
+        else sized.push({ t, ...(st.owner.kind === 'player' ? { player: st.owner.playerId } : {}), defenders, extra, cost });
+      }
+    }
+    const cost = sized.reduce((n, x) => n + x.cost, 0);
+    if (!why && cost > cap)
+      why = `the push needs ${cost} armies, over the cap of ${cap} (${ALL_IN_VALUE_TURNS} × its +${b.value}, at most my income ${pc.income})`;
+    allInTries.set(bonusId, { feasible: !why, cost, cap, ...(why ? { detail: why } : {}) });
+    if (why) continue;
+    for (const x of sized)
+      if (x.player !== undefined && x.extra > 0) repulsed.set(x.t, { player: x.player, defenders: x.defenders, extra: x.extra, cost: x.cost, sure: true });
   }
   /** A capture's cost of `t` (its ordinary sizing), or #240's sure one for a repulsed territory. */
   const costFor = (t: number): number | null => repulsed.get(t)?.cost ?? costAt(t);
@@ -288,7 +331,7 @@ export function captureTargets(
     }
     const enemy = st.owner.kind === 'player';
     if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t)))) {
-      if (!leadStepsOn || unitsAt(t) > 0 || !g.map.bonuses.some((b) => b.value > 0 && bonusTs.get(b.id)!.includes(t))) continue;
+      if (!leadStepsOn || unitsAt(t) > 0 || droppedMembers.has(t) || !g.map.bonuses.some((b) => b.value > 0 && bonusTs.get(b.id)!.includes(t))) continue;
       const defenders = defenceAt(t);
       const extra = reinforcementAt(t);
       const sure = costAt(t, defenders + extra);
@@ -306,7 +349,7 @@ export function captureTargets(
   // Bonus passes work toward my own bonuses; under `balanced` enemy targets are only break candidates.
   // #203: a lead step is a bonus target too.
   const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy && !leadSteps.has(t));
-  return { targets, leadSteps, leadStepsOn, leadTry, leadNote, bonusTarget, repulsed, costFor, sizeOf };
+  return { targets, leadSteps, leadStepsOn, leadTry, leadNote, bonusTarget, repulsed, costFor, sizeOf, allInTries, bonusDropped, droppedMembers };
 }
 
 /** Rule 4d: what a capture adds to the frontier (#71), and the offence report (#72). */
@@ -472,6 +515,11 @@ export function bonusScoring(
     }
     if (b.value <= 0 && !isFocus) continue;
     if (!remaining.length) continue;
+    // #298: a bonus dropped after repeated failed attempts is not funded: its members are no bonus step.
+    if (prev.bonusDropped.has(b.id)) {
+      for (const t of remaining) uneconomicMember.add(t);
+      continue;
+    }
     // PLAN-TEAMS C3.3: a bonus pays only the player holding every member, so one with a member my
     // teammate visibly holds is not mine to complete (plan/team.ts reports the shared ones).
     const mates = remaining.filter((t) => teammateAt(pc, t));

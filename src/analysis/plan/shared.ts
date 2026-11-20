@@ -34,6 +34,7 @@ import { byNum } from './util.js';
 import type { TeamView } from './team.js';
 import type { Jab } from './jabs.js';
 import type { SiegeMemory, SiegeReport } from './siege.js';
+import type { BonusAttemptMemory, BonusPushEntry } from './bonus-attempts.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -483,6 +484,17 @@ export interface PlanInput {
   tracks?: readonly OpponentTrack[];
   /** #382: the siege's memory kept for this game (src/siege-store.ts), read under `goal: 'siege'` with `turn`. */
   siegeMemory?: SiegeMemory;
+  /**
+   * #298: the bonuses I attempted to complete in this game (src/bonus-attempt-store.ts), read with `turn`:
+   * after two failed attempts on consecutive turns a bonus is pushed all-in once or dropped as a target
+   * (plan/bonus-attempts.ts). Absent: no change.
+   */
+  bonusAttempts?: BonusAttemptMemory;
+  /**
+   * #298, set by planTurn from `bonusAttempts` (callers leave it out): the bonuses pushed all-in this
+   * pass (each missing member sized for its owner's deploy, or not taken) and those dropped as targets.
+   */
+  bonusPush?: { allIn: ReadonlySet<number>; dropped: ReadonlySet<number> };
   settings?: PlannerSettings;
   options?: PlanOptions;
   /** The game around the board, for the profile (rule 0p). */
@@ -654,6 +666,8 @@ export interface TurnPlan {
   goal: PlanGoal;
   /** #382: under `goal: 'siege'` with a target found, the siege's state this turn (plan/siege.ts). */
   siege?: SiegeReport;
+  /** #298: what the plan did about each bonus the attempt memory names (all-in or dropped). Absent with none. */
+  bonusPush?: BonusPushEntry[];
   /**
    * #361: the single-army jabs among `moves` (0% luck, straight rounding only; plan/jabs.ts): each
    * kills round(1 × the offensive kill rate) and loses its army. Attrition, never a capture. Absent with none.
