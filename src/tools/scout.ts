@@ -11,12 +11,19 @@ import { lookupMeta } from './hints.js';
 import type { LiveContext } from './live-context.js';
 import { metRead } from './profile-reads.js';
 import { resolvePlayer } from './resolve.js';
+import { captureOpponentRead, turnOfGame } from './decision-capture.js';
+import { decisionLogOwner, decisionLogPath } from '../decision-log.js';
+import type { Game } from '../normalize.js';
 
 /**
  * The player's invite token (= GameFeed player id), looked up in a game or given raw, and the numeric
  * id the profile store keys it by (a raw token read as GameFeed ids are).
  */
-async function tokenOf(ctx: LiveContext, gameId: string | number | undefined, player: string | number): Promise<{ token: string; id: number }> {
+async function tokenOf(
+  ctx: LiveContext,
+  gameId: string | number | undefined,
+  player: string | number,
+): Promise<{ token: string; id: number; game?: Game }> {
   const raw = String(player).trim();
   if (gameId === undefined) {
     if (/^\d{5,20}$/.test(raw)) return { token: raw, id: Number(raw) };
@@ -26,7 +33,7 @@ async function tokenOf(ctx: LiveContext, gameId: string | number | undefined, pl
   }
   const game = await ctx.client.getGame(gameId, { map: false });
   const p = resolvePlayer(game.players, raw);
-  return { token: p.feedId ?? String(p.id), id: p.id };
+  return { token: p.feedId ?? String(p.id), id: p.id, game };
 }
 
 async function page(ctx: LiveContext, url: string, what: string): Promise<string> {
@@ -68,7 +75,7 @@ export function registerScoutTool(server: McpServer, ctx: LiveContext, opts: { e
       }),
     },
     async ({ game_id, player }) => {
-      const { token, id } = await tokenOf(ctx, game_id, player);
+      const { token, id, game } = await tokenOf(ctx, game_id, player);
       const [profileHtml, commonHtml] = await Promise.all([
         page(ctx, profileUrl(token), 'profile'),
         page(ctx, commonGamesUrl(token), 'common games'),
@@ -86,6 +93,18 @@ export function registerScoutTool(server: McpServer, ctx: LiveContext, opts: { e
       const { name, ...stats } = profile;
       // Part D (docs/PLAN-PROFILES.md section 11): the cross-game read, when the record has the player.
       const met = await metRead(ctx.dataDir, env, id).catch(() => undefined);
+      // #437: with a game, what was read goes into its decision log (the log's own account; none: nothing kept).
+      if (game && ctx.dataDir) {
+        const owner = await decisionLogOwner(decisionLogPath(ctx.dataDir, game.id), game.id);
+        if (owner !== undefined && owner !== id && game.players.some((p) => p.id === owner)) {
+          await captureOpponentRead(ctx, game.id, owner, id, {
+            turn: turnOfGame(game),
+            level: stats.level,
+            ranked: stats.ranked,
+            bootRatePct: stats.bootRatePct,
+          });
+        }
+      }
       return respond(undefined, ['compact'], () => ({
         player: { id: token, name },
         profile: stats,

@@ -3,6 +3,7 @@ import { surrenderLand, winsOnAcceptance } from '../src/analysis/accept-surrende
 import type { LiveTerritory } from '../src/live.js';
 import type { DecodedRequest, ReplyFrame, Writer } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
+import { readDecisionLog } from '../src/decision-log.js';
 import { untrustedText } from '../src/tools/common.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeGameDetailsAndChat, type SyntheticSeat } from './protocol/chat-bundle.js';
@@ -284,6 +285,18 @@ describe('warapp_accept_surrender', () => {
     const p = payload(await confirmed({ game_id: GAME, player: 'Bob' }));
     expect(s.sent).toEqual([{ gameId: GAME, playerId: BOB.inGame, accept: true, modHook: false, left: 0 }]);
     expect(p).toMatchObject({ status: 'pending', outcome: 'confirmed', player: Number(BOB.feed), inGameId: BOB.inGame });
+  });
+
+  it('#437: logs my confirmed acceptance in the decision log once, by the player\'s id', async () => {
+    const after: SyntheticSeat[] = [{ id: ME.inGame }, { id: BOB.inGame, surrendered: true, acceptedBy: [ME.inGame] }, { id: CAT.inGame }];
+    const s = server({ details: [PENDING, PENDING, after], board: BOARD });
+    h = await liveHarness({ pages: SIGNED_IN, feed: [feedGame(THREE)], warapp: s.warapp });
+    expect(payload(await confirmed({ game_id: GAME, player: 'Bob' })).outcome).toBe('confirmed');
+    const log = (await readDecisionLog(h.dataDir, GAME))!;
+    expect(log.events!.filter((e) => e.kind === 'surrender-accepted-by-me')).toEqual([
+      { turn: 6, kind: 'surrender-accepted-by-me', player: Number(BOB.feed), at: expect.any(String) },
+    ]);
+    expect(JSON.stringify(log)).not.toMatch(/\b(Me|Bob|Cat|Synthetic Brawl)\b/);
   });
 
   it('reports accepted once GameFeed shows the seat SurrenderAccepted', async () => {

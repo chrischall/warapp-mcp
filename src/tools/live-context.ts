@@ -2,6 +2,7 @@
 // chat), the web-client RPC channel through the bridge (board, picks, sends),
 // and the client bundle whose readers decode the board.
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
+import { chatAutomationMode, chatBlocksTurnMode, type ChatAutomation, type ChatBlocksTurn } from '../chat-automation.js';
 import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
 import { type DecisionLogMode, decisionLogMode } from '../decision-log.js';
@@ -50,12 +51,21 @@ export interface LiveContext {
   myIdentity: (opts?: { fresh?: boolean }) => Promise<{ token: number; inGameId: number } | undefined>;
   /** Discard the cached signed-in account (a session was linked: it may be another account). */
   forgetIdentity: () => void;
+  /**
+   * #437: the signed-in account's token when a read within {@link IDENTITY_TTL_MS} already gave it, else
+   * `undefined` — never a request (the decision log's seat capture uses it on every game read).
+   */
+  cachedInviteToken?: () => number | undefined;
   /** GET a war.app page as text through the signed-in tab. */
   fetchPage: (url: string) => Promise<string>;
   /** Where state that survives a restart lives (bundle cache, last planned boards); none: nothing is cached. */
   dataDir?: string;
   /** The decision log's mode (#412, `WARAPP_DECISION_LOG`); absent: read from the process environment. */
   decisionLog?: DecisionLogMode;
+  /** The chat automation gate (#415, `WARAPP_CHAT_AUTOMATION`); absent: read from the process environment. */
+  chatAutomation?: ChatAutomation;
+  /** The chat-blocks-the-turn gate (#415 task 4b, `WARAPP_CHAT_BLOCKS_TURN`); absent: read from the process environment. */
+  chatBlocksTurn?: ChatBlocksTurn;
   /** A hosted child (src/hosted.ts): no session is ever linked there, so no hint suggests linking one. */
   hosted?: boolean;
   /** A hosted child signed in by mcp-host (a captured WARAPP_AUTH_TOKEN, #333): hints point at its "Sign in". */
@@ -297,9 +307,12 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
       cached = undefined;
       settled = started;
     },
+    cachedInviteToken: () => (cached && now() - cached.at < IDENTITY_TTL_MS ? Number(cached.token) : undefined),
     fetchPage: fetchText,
     dataDir: dir,
     decisionLog: decisionLogMode(opts.env ?? process.env),
+    chatAutomation: chatAutomationMode(opts.env ?? process.env),
+    chatBlocksTurn: chatBlocksTurnMode(opts.env ?? process.env),
     hosted: isHosted(opts.env ?? process.env),
     hostSignIn: hostedSession(opts.env ?? process.env) !== null,
     client: opts.client,

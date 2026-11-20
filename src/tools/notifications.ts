@@ -8,7 +8,7 @@
 // players' names in it, read only to classify the notification and find the game its link names.
 // A game-ended notification runs the end-of-game pass on that game (#312, src/tools/end-of-game.ts:
 // idempotent, one history read per game, at most END_OF_GAME_PER_CALL per call), which folds its live
-// profile too; then any kept opponent profile still unfolded is folded (B2, `foldFinishedGame`) — one
+// profile too; then any kept opponent profile still unfolded is folded (B2, `foldKeptProfile`: never a lottery or no-show game, #437) — one
 // GameFeed read (no map) only when one is kept unfolded, none otherwise.
 //
 // Dismissing marks read and never deletes; deleting is its own tool, one 318 per id, error 699 read as
@@ -17,9 +17,9 @@ import { CONFIRM_INJECTION_RULE, toolAnnotations, type EnvSource } from '@chrisc
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { classifyNotification, readInAppNotifications, type Notification, type RawNotification } from '../notifications.js';
-import { foldFinishedGame, hasUnfoldedProfile, profileEnabled } from '../profile-store.js';
+import { hasUnfoldedProfile, profileEnabled } from '../profile-store.js';
 import { END_OF_GAME_PER_CALL, endOfGame, finishedAccount, needsEndOfGame, type EndOfGameStatus } from './end-of-game.js';
-import type { FinishedFold } from './profile-hook.js';
+import { foldKeptProfile, type FinishedFold } from './profile-hook.js';
 import {
   Method,
   NOTIFICATION_ID,
@@ -163,7 +163,7 @@ async function foldEndedGames(ctx: LiveContext, env: EnvSource, games: readonly 
     lookups++;
     try {
       const game = await ctx.client.getGame(gameId, { map: false });
-      const files = game.state === 'Finished' ? await foldFinishedGame(dir, game, env) : 0;
+      const files = await foldKeptProfile(dir, game, env);
       if (files > 0) out.push({ gameId, files });
     } catch {
       // Best effort: the next read that shows the game finished folds it.

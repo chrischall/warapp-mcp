@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { recordOutlook } from '../src/outlook-log.js';
+import { readDecisionLog } from '../src/decision-log.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 
 let h: Harness | undefined;
@@ -108,6 +109,39 @@ describe('warapp_surrender', () => {
     expect(s.sent).toEqual([{ gameId: GAME_ID, surrender: true, trailing: false, left: 0 }]);
     expect(p).toMatchObject({ status: 'surrendered', game: { id: GAME_ID, name: 'Synthetic Duel' } });
     expect(p.outcome).toBe('confirmed');
+  });
+
+  it('#437: logs my confirmed surrender in the decision log once, with my income, the strongest opponent and the outlook then', async () => {
+    const s = surrenderServer();
+    const after = feedGame([me('SurrenderAccepted'), opp(1, 'Won')], 'Finished');
+    h = await harness([feedGame(DUEL), feedGame(DUEL), after], s.warapp);
+    const evidence = {
+      incomes: { mine: 8, theirs: 21, playerId: 1001, source: 'tracked' as const },
+      opponents: [{ playerId: 1001, income: 21, source: 'tracked' as const, coverage: 0.6, thin: false }],
+      thin: false,
+    };
+    await recordOutlook(h.dataDir, GAME_ID, Number(ME.feed), {
+      state: 'losing',
+      heldTurns: 3,
+      k: 3,
+      threshold: 2.4,
+      basis: 'Losing for 3 turns running.',
+      turns: [{ turn: 5, mine: 10, strongest: { playerId: 1001, low: 40, high: 40 }, ratio: { low: 0.25, high: 0.25 }, changed: 1, state: 'losing', evidence }],
+      evidence,
+    });
+    expect(payload(await confirmed({ game_id: GAME_ID })).status).toBe('surrendered');
+    const log = (await readDecisionLog(h.dataDir, GAME_ID))!;
+    const mine = log.events!.filter((e) => e.kind === 'my-surrender');
+    expect(mine).toEqual([
+      {
+        turn: 6,
+        kind: 'my-surrender',
+        detail: { status: 'surrendered', income: 8, strongest: { player: 1001, income: 21, source: 'tracked', thin: false }, outlook: 'losing', outlookTurn: 5 },
+        at: expect.any(String),
+      },
+    ]);
+    // The read back also shows my seat's change.
+    expect(log.events!.some((e) => e.kind === 'surrender-accepted' && e.player === Number(ME.feed))).toBe(true);
   });
 
   it('reports a 3-player surrender as pending the others\' acceptance when the setting asks for it, not surrendered', async () => {

@@ -39,6 +39,7 @@ import { mapOf } from './map.js';
 import { resolvePlayer, resolveTerritory } from './resolve.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveTeamsFor } from './team-source.js';
+import { capturePicksSent } from './decision-capture.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_PICK_ARGS = 200;
@@ -441,7 +442,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
         await requireApprovedAccount(ctx, writeAccount(me));
         const ids = picks.map((p) => p.id);
         const base = { game: gameId, picks };
-        return sendAndVerify({
+        const result = await sendAndVerify({
           send: async () => {
             await ctx.rpc.call('SendTerritoryPicks', Method.SendTerritoryPicks, (w) =>
               writeSendTerritoryPicksParams(w, gameId, ids),
@@ -486,6 +487,14 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
                 };
           },
         });
+        // #437 task 3: what was sent and read back into the game's decision log (ids only; the latest send wins).
+        await capturePicksSent(ctx, gameId, me, {
+          sent: ids,
+          readBack: result.readBack ?? null,
+          verified: result.verified,
+          outcome: result.outcome,
+        });
+        return result;
       },
     },
   );

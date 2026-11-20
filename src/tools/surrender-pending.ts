@@ -11,6 +11,7 @@ import { Method, writeGameRefreshParams } from '../protocol/methods.js';
 import { pendingSurrenders, readGameDetailsSeats, type PendingSurrender } from '../surrender-pending.js';
 import { untrustedText } from './common.js';
 import type { LiveContext } from './live-context.js';
+import { captureGameEvent, turnOfGame } from './decision-capture.js';
 
 /** Where the read comes from, for a result's note. */
 export const SURRENDER_PENDING_NOTE =
@@ -65,8 +66,8 @@ export interface PendingSurrenderView extends PendingSurrender {
  * {@link surrenderMayBePending}, #327).
  */
 export async function readPendingSurrenders(
-  ctx: Pick<LiveContext, 'rpc' | 'bundle'>,
-  game: Pick<Game, 'id' | 'state' | 'players'>,
+  ctx: Pick<LiveContext, 'rpc' | 'bundle'> & Partial<Pick<LiveContext, 'dataDir' | 'decisionLog'>>,
+  game: Pick<Game, 'id' | 'state' | 'players' | 'numberOfTurns'>,
   me: Pick<Player, 'id' | 'feedId' | 'state'> | undefined,
   read: (gameId: number) => ReturnType<typeof readDetailsSeats> = (id) => readDetailsSeats(ctx, id),
 ): Promise<PendingSurrenderView[] | null> {
@@ -79,7 +80,14 @@ export async function readPendingSurrenders(
     const id = inGameOf(p);
     if (id !== undefined) byInGame.set(id, p);
   }
-  return pendingSurrenders(seats, inGameOf(me), (id) => byInGame.get(id)?.id ?? null).map((p) => {
+  const pending = pendingSurrenders(seats, inGameOf(me), (id) => byInGame.get(id)?.id ?? null);
+  // #437: each pending surrender seen goes into the decision log once (by GameFeed id; one without is not kept).
+  for (const p of pending) {
+    if (p.player === null) continue;
+    const detail = p.owedByMe === true ? 'owed' : p.owedByMe === false ? 'not-owed' : 'unknown';
+    await captureGameEvent(ctx, game.id, me.id, { turn: turnOfGame(game), kind: 'surrender-pending', player: p.player, detail }, { create: true });
+  }
+  return pending.map((p) => {
     const player = byInGame.get(p.inGameId);
     return { ...p, name: player ? untrustedText(player.name) : null };
   });

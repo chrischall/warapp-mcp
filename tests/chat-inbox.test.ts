@@ -11,6 +11,7 @@ import { WarappBundle } from '../src/protocol/bundle.js';
 import { LIVE_BUNDLE } from './protocol/live-bundle.js';
 import { CHAT_BUNDLE } from './protocol/chat-bundle.js';
 import { NOTIFICATIONS_BUNDLE } from './protocol/notifications-bundle.js';
+import { CHAT_ADVICE_NOTE } from '../src/tools/chat-advice.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -160,6 +161,23 @@ describe('warapp_chat_inbox', () => {
       [101, 2],
       [103, 1],
     ]);
+  });
+
+  it('labels and advises on every new message, beside its text, with a note that the reading is a hint (#415)', async () => {
+    const fake = warapp(GAMES, {
+      ...CHATS,
+      101: () => [{ id: 1, date: at(1), from: BOB.inGame, text: 'want a truce? no attacks till turn 10', privateTo: ANN.inGame, turn: 2 }],
+    });
+    h = await liveHarness({ feed: FEED, pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    const m = p.games.find((g) => g.id === 101)!.messages[0]!;
+    expect(m.text).toBe('⟦want a truce? no attacks till turn 10⟧');
+    expect(m.intent).toMatchObject({ intents: ['truce-proposal'], confidence: 'high' });
+    expect(m.advice).toMatchObject({ stance: 'price', priceWith: 'warapp_advise_diplomacy' });
+    expect(p.adviceNote).toBe(CHAT_ADVICE_NOTE);
+    // Read-only: nothing marked, on war.app or here.
+    expect(fake.marks).toEqual([]);
+    expect(payload<Inbox>(await h.call('warapp_chat_inbox')).games.map((g) => g.id)).toEqual([101, 103]);
   });
 
   it('mark_seen: true marks what it read, so the next read finds nothing new until a new message arrives', async () => {

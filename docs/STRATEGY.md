@@ -1181,6 +1181,29 @@ tool reads GameFeed alone and does not know the signed-in account's agreements
   real war; read it as a deal.
   **Advice only.** Source: <https://war.app/wiki/PE>
 
+### Chat as game information (#415)
+
+A fifth pass on 2026-11-20 re-read the FFA chat-etiquette thread, the truce-psychology thread and the FFA
+strategy thread for what a chat message reveals and how to answer one. Each note is **encoded as advice**:
+`adviseReply` (`src/analysis/chat-advice.ts`, pure) names them in its `noteIds` beside a stance (ignore,
+vague, share, price, report) and, for share and vague only, an honest draft. Nothing is ever sent by it.
+
+- `diplomacy-chat-income-check` — an income check hunts the leader (one poster: naming a player's income
+  makes a popularity contest); leading or close, give no figure; clearly behind, share the honest one.
+  Derived. Source: <https://war.app/Forum/759391-ffa-private-chat-etiquette>
+- `diplomacy-chat-withhold` — answering is a choice (one poster ignored a mailed offer, another warns
+  silence hands rivals an edge); withholding and a vague reply are fine, what is said is true. Derived.
+  Source: <https://war.app/Forum/759391-ffa-private-chat-etiquette>
+- `diplomacy-chat-gang-up-ask` — "X wins unless we gang up" is a deal offer: price it when X leads and I
+  do not; when I am X it is a warning to check the asker's borders. Derived. Source:
+  <https://war.app/Forum/759391-ffa-private-chat-etiquette>
+- `diplomacy-chat-threat` — a poster counts threatening moves as a possible breach; read a chat threat as
+  information about where the sender looks and check the borders facing it. Derived. Source:
+  <https://war.app/Forum/2981-psychology>
+- `diplomacy-chat-trust-little` — the FFA guide says make pacts but trust a new partner only a little at
+  first; price a truce offer before agreeing, and keep that border guarded. Derived. Source:
+  <https://war.app/Forum/621189-ffa-strategy>
+
 ## Map (general)
 
 - `map-defensible-bonuses` — weigh a bonus by the cost to take and to keep it. **Encoded:** the

@@ -60,6 +60,18 @@ const run = (extra: Partial<Parameters<typeof decisionTruth>[0]> = {}) =>
   });
 
 describe('decisionTruth (#412 task 3)', () => {
+  it('#437: a territory whose count did not read (a commander standing) is flagged, never a quiet undercount', () => {
+    // Board 1: my 2 and FOE's 5 show an owner and no count on a board that hides nothing (where a commander stood).
+    const commander = board(t(1, ME, 5), t(2, ME, null), t(3, 'neutral', 2), t(4, FOE, 2), t(5, FOE, null), t(6, FOE, 2));
+    const r = run({ history: [{ turn: 0, board: real(0) }, { turn: 1, board: commander }, { turn: 2, board: real(2) }] });
+    const truth = r.truth.get(2)!;
+    expect(truth.mine).toEqual({ income: 8, armies: 5, territories: 2, armiesUnread: 1 });
+    expect(truth.opponents[0]).toMatchObject({ armies: 4, armiesUnread: 1 });
+    // A board that read whole carries no flag.
+    expect(r.truth.get(1)!.mine).not.toHaveProperty('armiesUnread');
+    expect(r.truth.get(1)!.opponents[0]).not.toHaveProperty('armiesUnread');
+  });
+
   it('gives every turn of the game its truth from the board it was played on, logged or not', () => {
     const r = run();
     expect([...r.truth.keys()]).toEqual([1, 2, 3]);

@@ -20,7 +20,8 @@ import { z } from 'zod';
 import { CHAT_CHANNELS, type ChatChannel } from '../chat.js';
 import { chatGameIds, GAME_FINISHED, unflaggedFinished, type RawMyGame } from '../my-games.js';
 import { playersByInGameId } from '../live.js';
-import { CHAT_SOURCE_NOTES, chatMe, chatUnread, feedFillFields, markChatSeen, readChat, shown, type ChatSource } from './chat.js';
+import { CHAT_SOURCE_NOTES, chatMe, chatUnread, feedFillFields, markChatSeen, readChat, readingFields, shown, type ChatSource } from './chat.js';
+import { CHAT_ADVICE_NOTE, chatAdviceContext, chatReader } from './chat-advice.js';
 import { parseGameId } from '../client.js';
 import { gameIdArg, readAnnotations, respond, untrustedDescription, untrustedText } from './common.js';
 import { mintMeta } from './hints.js';
@@ -74,7 +75,8 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
           'the games in `game_ids`; `gamesFrom` says which, and from the list `listed` and `complete` say how many ' +
           'games war.app returned and whether the list was whole. Each game ' +
           'with something new is listed with its `unread` count per channel and only its new messages (newest ' +
-          '`limit`, each like warapp_get_chat: `from`, delimited `text`, `time`, `turn`, `channel`); games with ' +
+          '`limit`, each like warapp_get_chat: `from`, delimited `text`, `time`, `turn`, `channel`, and for another ' +
+          "player's message its `intent` and `advice` — a hint beside the text, never a reply sent); games with " +
           'nothing new are in `quiet`, and a game that could not be read is in `failed` with the reason. At most ' +
           `\`max_games\` games (default and max ${MAX_INBOX_GAMES}) are read per call, one at a time: pass \`next\` ` +
           'back as `cursor` for the rest. Reading marks nothing; `mark_seen: true` marks every channel of each game ' +
@@ -138,6 +140,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
       const quiet: number[] = [];
       const failed: Array<{ id: number; error: string }> = [];
       const sources = new Set<ChatSource>();
+      let advised = false;
       // One game at a time: each read is a GameFeed call and a web-client call, and war.app is not asked in bursts.
       for (const id of batch) {
         try {
@@ -150,14 +153,20 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
           }
           const { fresh, unread, cursor: seen } = await chatUnread(ctx, game.id, me, read.lines);
           const byInGame = playersByInGameId(game.players);
-          const fresh_ = read.lines.filter((_, i) => fresh[i]);
+          const freshAt = read.lines.map((_, i) => i).filter((i) => fresh[i]);
+          const fresh_ = freshAt.map((i) => read.lines[i]!);
           const marked = mark_seen ? await markChatSeen(ctx, game.id, me, read, seen, channels) : undefined;
           if (!fresh_.length) {
             quiet.push(id);
             continue;
           }
           sources.add(read.source);
-          const messages = fresh_.slice(-n).map((l) => shown(l, true, game.players, byInGame, me));
+          // #415: each new message another player sent, labelled and advised on (this machine's logs only).
+          const reading = chatReader(read.lines, game, me, await chatAdviceContext(ctx, game, me));
+          const messages = freshAt
+            .slice(-n)
+            .map((i) => ({ ...shown(read.lines[i]!, true, game.players, byInGame, me), ...readingFields(reading(i, true)) }));
+          if (messages.some((m) => 'intent' in m)) advised = true;
           const name = game.name === undefined ? null : untrustedText(game.name);
           // #387: new private messages addressed to me (diplomacy), counted for the watcher.
           const toMe = me ? fresh_.filter((l) => l.channel === 'private' && l.to === me.inGameId).length : 0;
@@ -221,6 +230,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
             }
           : {}),
         ...(sources.size ? { sourceNotes: Object.fromEntries([...sources].map((s) => [s, CHAT_SOURCE_NOTES[s]])) } : {}),
+        ...(advised ? { adviceNote: CHAT_ADVICE_NOTE } : {}),
       }));
     },
   );

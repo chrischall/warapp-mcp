@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { defaultMapCache, WarappClient, type WarappClientOptions } from '../client.js';
+import { captureSeats } from './decision-capture.js';
 import { dataDir } from '../config.js';
 import { StatsCollector } from '../stats.js';
 import type { ClassReader } from '../live.js';
@@ -102,6 +103,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     // The cached signed-in account is discarded whenever the account behind the router may have changed.
     identity: () => bridge.identityState(),
   });
+  // #437: every game read diffs the seats into the game's decision log (no request of its own).
+  client.observeGames((game) => captureSeats(live, game));
   registerHealthcheckTool(server, fetchproxy, bridge, { ...deps, standIn: () => live.decoderReport()?.standIn });
   // The signed-in account names a finished game's player for its end-of-game pass when no board was cached (#312).
   registerGameTool(server, client, () => dataDir(deps.env), deps.env, () => live.myInviteToken());

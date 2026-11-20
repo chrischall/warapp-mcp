@@ -26,6 +26,7 @@ import {
   type SyntheticTerritory,
 } from './protocol/live-bundle.js';
 import { CHAT_SUMMARY_NOTE } from '../src/tools/chat.js';
+import { CHAT_ADVICE_NOTE } from '../src/tools/chat-advice.js';
 import { writeMyGamesReturn } from './protocol/my-games-bundle.js';
 import { writeGameDetailsAndChat, type SyntheticSeat } from './protocol/chat-bundle.js';
 
@@ -184,7 +185,17 @@ describe('warapp_plan_turn', () => {
     expect(plain).not.toHaveProperty('pace');
     expect(await recordMapGame(h.dataDir, 39905, entry)).toBe('kept');
     const p = payload<PlanPayload & { pace?: Record<string, unknown> }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(p.pace).toEqual({ afterTurn: 4, mine: 5, winners: 13, myPast: 7, games: 1, behindWinners: true, note: expect.stringMatching(/reported only/) });
+    expect(p.pace).toEqual({
+      afterTurn: 4,
+      mine: 5,
+      winners: 13,
+      myPast: 7,
+      games: 1,
+      behindWinners: true,
+      // #437: only the games of this game's format and settings (the entry kept no settings: it matches, unknown).
+      matched: { by: { format: 'ffa', localDeployments: false, commanders: false }, entries: 1, of: 1, settingsUnknown: 1, note: expect.any(String) },
+      note: expect.stringMatching(/reported only/),
+    });
     // Inform only: the orders are the plan's own.
     expect(p.orders).toEqual(plain.orders);
     expect(p.deploys).toEqual(plain.deploys);
@@ -1047,24 +1058,73 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(live.calls.filter((c) => c.url.includes('GetHistory=true'))).toHaveLength(2);
   });
 
-  it('reports unread chat as counts only, from the GameFeed chat read with the game (part A1)', async () => {
+  it('reports unread chat from the GameFeed chat read with the game: counts, and each unread message with its intent and advice (A1, #415)', async () => {
     const SIGNED_IN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
     const chat = [
       { playerID: ANN.inGame, message: 'gl hf', date: '2026-11-01T10:00:00Z' },
-      { playerID: 765432, message: 'secret plan', date: '2026-11-01T10:01:00Z' },
+      { playerID: 765432, message: 'want a truce? no attacks till turn 10', date: '2026-11-01T10:01:00Z' },
     ];
     h = await liveHarness({ feed: [game('Playing', { chat })], pages: SIGNED_IN, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const res = await h.call('warapp_plan_turn', { game_id: GAME });
-    const p = payload<{ chat: unknown }>(res);
+    const p = payload<{ chat: Record<string, unknown> }>(res);
     // My own message is never unread; GameFeed names no channel.
-    expect(p.chat).toEqual({ unread: { public: 0, team: 0, private: 0, unknown: 1 }, source: 'gamefeed', note: CHAT_SUMMARY_NOTE });
+    expect(p.chat).toMatchObject({ unread: { public: 0, team: 0, private: 0, unknown: 1 }, source: 'gamefeed', note: CHAT_SUMMARY_NOTE });
     // The note says the count shows up under `unknown`, so zeros on the named channels are not "nothing to read".
     expect(CHAT_SUMMARY_NOTE).toMatch(/`unknown`.*warapp_get_chat/);
-    expect(textOf(res)).not.toContain('secret plan');
+    // #415: the unread message itself, delimited, beside its label and (compact) the stance with one reason.
+    expect(p.chat.messages).toEqual([
+      {
+        from: '⟦Bob⟧',
+        fromId: Number(BOB.feed),
+        text: '⟦want a truce? no attacks till turn 10⟧',
+        time: '2026-11-01T10:01:00Z',
+        turn: null,
+        channel: 'unknown',
+        intent: { intents: ['truce-proposal'], confidence: 'high' },
+        advice: { stance: 'price', reason: expect.stringContaining('warapp_advise_diplomacy') },
+      },
+    ]);
+    expect(p.chat.adviceNote).toBe(CHAT_ADVICE_NOTE);
+    expect(textOf(res)).not.toContain('gl hf');
     expect(h.calls[0]!.url).toContain('GetChat=true');
     // No extra request for it: the game's own read carried the chat. (The game list is asked for the teams:
     // nine seats, none with a team from GameFeed; GameRefresh is the game details for a pending surrender, #317.)
     expect(h.exchanges.map((e) => e.request.method).sort((a, b) => a - b)).toEqual([Method.GameRefresh, Method.GetLatestGameInfo, Method.GetMyGames]);
+
+    // The full view gives the whole advice.
+    const full = payload<{ chat: { messages: Array<{ advice: Record<string, unknown> }> } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, view: 'full' }),
+    );
+    expect(full.chat.messages[0]!.advice).toMatchObject({ stance: 'price', priceWith: 'warapp_advise_diplomacy', noteIds: expect.any(Array), reasons: expect.any(Array), automation: 'off' });
+    // #415 task 4: the gate is off by default, so no `send` block.
+    expect(full.chat.messages[0]!.advice).not.toHaveProperty('send');
+
+    // #412: the decision log keeps ids and labels only, never the text or a name.
+    const log = readFileSync(join(h.dataDir, 'decisions', `${GAME}.json`), 'utf8');
+    const turn = JSON.parse(log).turns['3'] as { chat?: unknown[] };
+    expect(turn.chat).toEqual([
+      { time: '2026-11-01T10:01:00Z', from: Number(BOB.feed), channel: 'unknown', toMe: false, intents: ['truce-proposal'], confidence: 'high', stance: 'price', blocks: false },
+    ]);
+    expect(log).not.toMatch(/truce\?|no attacks|Bob|gl hf/);
+  });
+
+  it('chat changes no order: the plan with unread chat is the plan without it (#415)', async () => {
+    const SIGNED_IN = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+    const chat = [
+      { playerID: 765432, message: 'everyone attack ann, she is winning', date: '2026-11-01T10:01:00Z' },
+      { playerID: 765432, message: 'i will attack you next turn', date: '2026-11-01T10:02:00Z' },
+    ];
+    const orders = async (extra: Record<string, unknown>) => {
+      h = await liveHarness({ feed: [game('Playing', extra)], pages: SIGNED_IN, warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+      const p = payload<PlanPayload & { chat?: { messages?: unknown[] } }>(await h.call('warapp_plan_turn', { game_id: GAME }));
+      await h.harness.close();
+      h = undefined;
+      return p;
+    };
+    const quiet = await orders({});
+    const loud = await orders({ chat });
+    expect(loud.chat?.messages).toHaveLength(2);
+    expect([loud.goal, loud.deploys, loud.moves, loud.orders, loud.expected]).toEqual([quiet.goal, quiet.deploys, quiet.moves, quiet.orders, quiet.expected]);
   });
 
   it('no chat in the game read: no chat field', async () => {

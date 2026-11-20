@@ -30,6 +30,7 @@ import { mapOf } from './map.js';
 import { resolvePlayer } from './resolve.js';
 import { noBrowserNote } from './session.js';
 import { readDetailsSeats } from './surrender-pending.js';
+import { captureGameEvent, turnOfGame } from './decision-capture.js';
 import { resolveTeamsFor } from './team-source.js';
 import { defineGatedWrite, mySeat, refuse, requireMe, requirePlaying, sendAndVerify, worded } from './write-kit.js';
 
@@ -59,6 +60,8 @@ interface AcceptState {
   inGameId: number;
   /** Whether the surrendering seat was already an AI (or a human turned into one) at plan time: its read-back flag is then no evidence. */
   alreadyAI: boolean;
+  /** #437: the turn being played at the preview, for the decision log's event. */
+  turn?: number;
 }
 
 /** A seat named by both its ids, never one standing in for the other. */
@@ -289,14 +292,14 @@ export function registerAcceptSurrenderTool(server: McpServer, ctx: LiveContext)
               untrusted: UNTRUSTED_PREVIEW_NOTE,
             },
           },
-          state: { gameId, name: gameLabel(game), me, player: target.player, inGameId: target.inGameId, alreadyAI } satisfies AcceptState,
+          state: { gameId, name: gameLabel(game), me, player: target.player, inGameId: target.inGameId, alreadyAI, turn: turnOfGame(game) } satisfies AcceptState,
         };
       },
-      async execute({ gameId, name, me, player, inGameId, alreadyAI }: AcceptState) {
+      async execute({ gameId, name, me, player, inGameId, alreadyAI, turn }: AcceptState) {
         await requireApprovedAccount(ctx, writeAccount(me));
         const game = { id: gameId, name };
         const who = { player, inGameId };
-        return sendAndVerify({
+        const result = await sendAndVerify({
           send: async () => {
             await ctx.rpc.call('AcceptSurrender', Method.AcceptSurrender, (w) =>
               writeAcceptSurrenderParams(w, { gameId, playerId: inGameId, accept: true }),
@@ -367,6 +370,11 @@ export function registerAcceptSurrenderTool(server: McpServer, ctx: LiveContext)
             };
           },
         });
+        // #437: my acceptance, once confirmed, into the decision log (by GameFeed id; a seat without one is not kept).
+        if (result.outcome === 'confirmed' && player !== null && turn !== undefined) {
+          await captureGameEvent(ctx, gameId, me, { turn, kind: 'surrender-accepted-by-me', player }, { create: true });
+        }
+        return result;
       },
     },
   );
