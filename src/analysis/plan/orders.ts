@@ -9,7 +9,8 @@ import { neighborsOf } from '../graph.js';
 import { chargeDeploys, deployPools } from '../local-deploy.js';
 import { territoryIncome } from '../player.js';
 import { opensBehind, type Opened } from '../opens.js';
-import { BREACH_WEIGHT, OPENS_WEIGHT, WASTELAND_FACTOR, type PlannedMove } from './shared.js';
+import type { BoardState } from '../../board.js';
+import { BREACH_WEIGHT, OPENS_WEIGHT, WASTELAND_FACTOR, visibleState, type PlannedMove } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
 import { secondLineOf } from './guard-off.js';
@@ -29,7 +30,7 @@ export interface Cut {
 export type DeployBook = ReturnType<typeof deployBook>;
 
 /** Open the deploy book of one pass: sets `ps.budget`, `ps.holdings` and the starting `avail`. */
-export function deployBook(ctx: PlanCtx, ps: PlanState) {
+export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardState) {
   const {
     g, territories: state, s, mine, mineSet, myCommanders, foe, guard, noSplit, armiesOf, incomeGain, label, income,
     reserve, econCostAt, paybackTurns, baseIncome, unitsAt, deployOf, untrustedAt,
@@ -165,6 +166,45 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
       worst = Math.max(worst, c);
     }
     return cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
+  };
+  /**
+   * #298: a foe's stack arrived on `x` since `previousBoard`: it took `x` from me, or its armies there
+   * grew, both read only where that board showed `x` (owner and armies). No previous board: none.
+   */
+  const before = new Map(previousBoard?.territories.map((t) => [t.territoryId, t]));
+  const arrived = (x: number, armiesNow: number): boolean => {
+    const was = visibleState(before.get(x));
+    if (!was) return false;
+    if (was.owner.kind !== 'player') return false;
+    return was.owner.playerId === ctx.me || (foe(was.owner.playerId) && armiesNow > (was.armies ?? 0));
+  };
+  /**
+   * #298: an enemy stack roams inside bonus `ts`, beside my member `t`. Every missing member is a
+   * visible neutral or a visible foe's territory, at least one of them a foe's beside `t` whose stack
+   * arrived since the previous board (it took the member from me, or grew there: {@link arrived}), and
+   * finishing it passes #122's economy tests on what stands there now. My members within that stack's
+   * reach are garrisoned like those of a bonus I am building, so the bonus is not lost one member at a
+   * time while I retake the one it left.
+   */
+  const roamedBy = (t: number, ts: readonly number[], value: number): boolean => {
+    let cost = 0;
+    let worst = 0;
+    let reach = false;
+    for (const x of ts) {
+      if (ps.holdings.has(x)) continue;
+      const st = state.get(x);
+      if (st === undefined || st.armies === null) return false;
+      const o = st.owner;
+      if (o.kind === 'player') {
+        if (!foe(o.playerId)) return false;
+        // A stack: armies that can move (an empty or guard-only member roams nowhere).
+        if (st.armies > (guard ? 1 : 0) && neighborsOf(g, t).includes(x) && arrived(x, st.armies)) reach = true;
+      } else if (o.kind !== 'neutral') return false;
+      const c = econCostAt(x);
+      cost += c;
+      worst = Math.max(worst, c);
+    }
+    return reach && cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
   };
   /**
    * #235: what losing my `t` cuts off from the rest of my holdings (`ps.holdings` without `t`): when
@@ -308,7 +348,8 @@ export function deployBook(ctx: PlanCtx, ps: PlanState) {
       // foothold) was worth the whole bonus. Being built: every missing member is a visible
       // neutral, and finishing it passes rule 4's economy tests (a bonus behind an enemy, the
       // fog or a wasteland is not being built).
-      if (building(ts, b.value)) {
+      // #298: so does a member an enemy stack roaming inside the bonus can reach (`roamedBy`).
+      if (building(ts, b.value) || roamedBy(t, ts, b.value)) {
         const held = ts.filter((x) => ps.holdings.has(x) || x === t).length;
         v += Math.round(((b.value * held) / ts.length) * 10) / 10;
       }
