@@ -147,7 +147,16 @@ import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
 import { withTeammateOrders } from '../team-orders.js';
-import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../team-cards.js';
+import {
+  claimedCardUses,
+  claimedCardWarning,
+  teamCardClaims,
+  teamCardLimit,
+  teamCardRoles,
+  teamHandLeft,
+  unclaimedFirst,
+  type TeamCardLimit,
+} from '../team-cards.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
 import { resolveIntel } from '../analysis/intel.js';
@@ -194,8 +203,8 @@ const TEAM_JOINT_NOTE =
 const TEAM_CARDS_NOTE =
   "Who plays each card of the team hand this turn: a teammate for a card they have already entered a play or discard " +
   "of (so the team never uses one card twice; the plan chooses from the rest), you for a card your orders play or " +
-  'discard, nobody for a card held. Read from their entered orders on the live board (unverified, V5); how war.app keys ' +
-  "a team's hand is unverified too (V8).";
+  'discard, nobody for a card held. Read from their entered orders on the live board (unverified, V5). The hand is the ' +
+  "team's: every teammate's cards, each kept under that teammate's id (V8, verified).";
 
 const territoryRef = z.union([z.string(), z.number()]);
 /** #332: the most cities one purchase order may name (a sanity bound, not a game rule). */
@@ -1335,31 +1344,37 @@ function resolveCardPlays(
 }
 
 /**
- * The team's gathered hand is over the limit while mine is not (#163): a warning, not a refusal,
- * because how war.app keys a team's hand is unverified — a wrong guess must not block a valid turn.
+ * The team's hand is over the limit but the limit does not bind these orders (V8, #310): a teammate has yet to
+ * commit (war.app refuses only the last of the team to commit), or a committed teammate's orders were unread.
  */
-function teamHandOver(held: number, rules: CardRules, shed: number, given: number): string {
+function teamHandOver(team: TeamCardLimit, rules: CardRules, given: number): string {
+  const held = team.left.length;
+  const shed = team.shed;
   return (
-    `The team's hand as read (your cards and your teammates') holds ${held} cards; the limit is ${rules.maxCardsHold}, ` +
-    `so ${shed} card${shed === 1 ? '' : 's'} may need to be played or discarded; these orders use ${given}. How war.app keys ` +
-    "a team's hand is not yet verified, so this is not refused: check the hand in the game — war.app refuses the commit " +
-    '(error 51) if the team is over the limit.'
+    `The team's hand (your cards and your teammates', less what committed teammates play or discard) holds ${held} cards; ` +
+    `the limit is ${rules.maxCardsHold}, so ${shed} card${shed === 1 ? '' : 's'} must leave it this turn; these orders use ${given}. ` +
+    (team.lastToCommit
+      ? "A committed teammate's orders could not be read, so this is not refused: war.app refuses the last of the team to commit (error 51) while the team is over the limit."
+      : 'A teammate has yet to commit, so war.app takes these orders: it refuses only the last of the team to commit (error 51) while the team is still over the limit. Agree in team chat who plays or discards.')
   );
 }
 
-/** Cards these orders use that were read only under a teammate's id (V8, #163): a warning, never a refusal. */
+/** Cards these orders use that were read only under a teammate's id (V8, #310): a warning, never a refusal. */
 export function teammateCardWarning(cards: readonly Card[]): string {
   return (
     `${cards.map((c) => `${c.name} ${c.id}`).join(', ')} ${cards.length === 1 ? 'was' : 'were'} read under a teammate, not under you. ` +
-    "A team shares one hand, but whether you can play or discard a card held under a teammate is not yet verified: war.app " +
-    'refusing it (e.g. error 50, CardInstanceUnavailable) means only that teammate can.'
+    "A team shares one hand: war.app's order check (the client bundle's) takes any card of the team's hand, but no play of a " +
+    "teammate's card has been sent live yet, and a card a committed teammate already uses is swapped for another of its type " +
+    'or refused (error 50, CardInstanceUnavailable). Agree in team chat first.'
   );
 }
 
 /** The required-play refusal (war.app's error 51, `MustUseCard`), raised before anything is sent. */
-function mustPlayCard(hand: readonly Card[], rules: CardRules, shed: number, given: number): McpToolError {
+function mustPlayCard(hand: readonly Card[], rules: CardRules, shed: number, given: number, team = false): McpToolError {
   return new McpToolError(
-    `${SERVER_ERROR_MESSAGES[51]} (You hold ${hand.length}; the limit is ${rules.maxCardsHold}, so ${shed} card${
+    `${SERVER_ERROR_MESSAGES[51]} (${team ? 'Your team holds' : 'You hold'} ${hand.length}${
+      team ? ", every teammate has committed and you are the last to" : ''
+    }; the limit is ${rules.maxCardsHold}, so ${shed} card${
       shed === 1 ? '' : 's'
     } must be played or discarded; these orders use ${given}.)`,
     {
@@ -1736,12 +1751,12 @@ export async function livePlanSetup(
   const handUnknown = rules.inPlay.length > 0 && !handReadable(info, owners);
   const inGame = cardGame(game, me);
   // PLAN-TEAMS C3.7: a card my teammate has entered a play or discard of is theirs this turn, so my plan
-  // chooses from the rest (their orders: V5; the team hand's keying: V8 — both unverified live).
+  // chooses from the rest (their orders: V5, unverified live; the team hand's keying: V8, verified #310).
   const { left: myHand, claimed: teamClaimed } = teamHandLeft(
     hand,
     inGame.team ? teamCardClaims(seen.teammateOrders, new Set(teammatesOf(game.players, me).map((p) => p.id))) : [],
   );
-  // V8: of what is left, a card read under a teammate's id is not mine to play (unverified): chooseCardPlays
+  // V8: of what is left, a card read under a teammate's id is left to them (#310): chooseCardPlays
   // and the card advice play, discard and advise only my own, so no card is both claimed and advised to me.
   const cards = chooseCardPlays(myHand, rules, inGame);
   const myCards = myHand.filter((c) => isMyCard(c, inGame.me));
@@ -3238,9 +3253,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const board = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
         const playerId = inGameId(me);
         const rules = cardRules(game.settings);
-        // A team shares one hand (#163): cards under my teammates may be played or discarded too. But how
-        // war.app keys a team's hand is unverified, so the hard refusal (error 51) counts only my own cards,
-        // as before, and the team's gathered count is a warning until a live team board verifies it.
+        // A team shares one hand (#163, V8 #310): the standing keeps each player's cards under that player's
+        // id, and the team's hand is all of them, counted against the one limit (teamCardLimit).
         const owners = handOwners(game, me);
         const myHand = readHand(info, playerId);
         const hand = owners.length > 1 ? readHand(info, owners) : myHand;
@@ -3263,11 +3277,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const placedAt = (p: ResolvedCardPlay) => (p.before !== undefined && p.before <= moves.length ? p.before : undefined);
         const discards = resolveDiscards(pickFrom, plays, discardInputs);
         // Every play and discard takes its card out of the hand; war.app refuses (error 51) while more
-        // than MaxCardsHold remain (verified, #20).
+        // than MaxCardsHold remain (verified, #20). In a team game the hand is the team's, less what my
+        // committed teammates' orders use, and war.app refuses only the last of the team to commit (V8, #310).
         const used = plays.length + discards.length;
-        const shed = cardsToShed(myHand, rules);
-        if (used < shed) throw mustPlayCard(myHand, rules, shed, used);
-        const teamShed = owners.length > 1 ? cardsToShed(hand, rules) : 0;
+        const team =
+          owners.length > 1 ? teamCardLimit(hand, rules, teammatesOf(game.players, me), board.teammateOrders) : undefined;
+        const shed = team ? (team.binding ? team.shed : 0) : cardsToShed(myHand, rules);
+        if (used < shed) throw mustPlayCard(team ? team.left : myHand, rules, shed, used, team !== undefined);
+        const teamShed = team && !team.binding ? team.shed : 0;
         for (const p of plays) {
           const t = p.target && territories.find((x) => x.territoryId === p.target!.id);
           if (p.target && (!t || t.fogged || t.owner !== playerId)) {
@@ -3464,8 +3481,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         for (const p of plays) warnings.push(...(p.targets?.warnings ?? []));
         const unverifiedPlays = [...new Set(plays.filter((p) => UNVERIFIED_CARD_PLAYS.has(p.kind)).map((p) => p.card.name))];
         if (unverifiedPlays.length) warnings.push(unverifiedCardWarning(unverifiedPlays));
-        if (used < teamShed) warnings.push(teamHandOver(hand.length, rules, teamShed, used));
-        // V8: a card read only under a teammate's id may be theirs to play; war.app has the last word.
+        if (team && used < teamShed) warnings.push(teamHandOver(team, rules, used));
+        // V8 (#310): war.app's order check takes a teammate's card, but none has been played live: a warning.
         const theirs = [...plays.map((p) => p.card), ...discards].filter((c) => !isMyCard(c, playerId));
         if (theirs.length) warnings.push(teammateCardWarning(theirs));
         const clash = claimedCardWarning(

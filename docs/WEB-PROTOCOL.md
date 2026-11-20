@@ -102,7 +102,7 @@ elsewhere in this document beside a method's name are protocol 242's unless mark
 | 41 [40] | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
 | 44 [43] | **RegisterChatView** | params: int32 gameId, string public mark, string team mark, optional dict private counterpart → mark, optional dict game group → mark; no result — marks a game's chat read, see [Notifications and read marks](#notifications-and-read-marks) (VERIFIED live 2026-11-16, direct transport) |
 | 45 [44] | **RetrieveChat** | params: int32 gameId, string public "older than" marker, string team marker (the lowest message id received; `999900000000000000`, the client's 9999E14, when none); reply: result flag, list of optional `GameMessage` — see [Chat](#chat) (VERIFIED live 2026-11-19: returned a team message GameRefresh left out) |
-| 46 [45] | **RetrievePrivateMessageHistory** | params: int32 gameId, string "older than" marker (as RetrieveChat's), int32 counterpart (in-game id); reply as RetrieveChat's — see [Chat](#chat) (UNVERIFIED live: answered, no private message to compare) |
+| 46 [45] | **RetrievePrivateMessageHistory** | params: int32 gameId, string "older than" marker (as RetrieveChat's), int32 counterpart (in-game id); reply as RetrieveChat's — see [Chat](#chat) (UNVERIFIED live: answered in a team game and in a free-for-all with private messaging on, 2026-11-19, neither with a private message to compare) |
 | 49 [48] | GetGameSettings | |
 | 61 [60] | AcceptGame | accept an invitation (not used) |
 | 62 [61] | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
@@ -365,6 +365,18 @@ cards than `MaxCardsHold`: live, a commit with no card was accepted at 4/4 and r
 51 at 5/4. The bundle's `GameValidateOrders` agrees: it removes every played and discarded
 instance from a copy of the hand, then answers 51 while `remaining > MaxCardsHold` — so each card
 over the limit needs its own play or discard.
+
+**A team's hand (V8, #310; verified 2026-11-19).** The standing's card dict holds one `PlayerCards`
+(`PlayerID`, `Pieces`, `WholeCards` by GUID) per player, keyed by the player's in-game id: a live 2v2
+board read two cards under me and three under my teammate, no GUID under both. The bundle's team hand
+(`hJ` in the client's game class) is every teammate's entry merged — pieces summed, whole cards by GUID —
+and `MaxCardsHold` is "the most a player or team can hold" (the settings' own text). `GameValidateOrders`
+starts from that merged hand, takes out each **committed** teammate's entered plays and discards (728 when
+one is missing), then mine: a play names any card of the team hand (a card a committed teammate already
+used is swapped for another of its type, else 50). Over the limit it answers 51 only when no teammate still
+`Playing` has yet to commit — the last of the team to commit must bring the hand to the limit; before that
+the orders are taken. `teamCardLimit` (`src/team-cards.ts`) applies this in `warapp_submit_turn` (a refusal
+only when every committed teammate's orders were read; else a warning). No such refusal has been drawn live.
 
 **The hand is the current `GameStanding`'s.** `LatestGameInfo` holds the pending orders, the
 current `GameStanding`, the last `GameTurn` and the previous `GameStanding`, and card instances
@@ -632,7 +644,11 @@ private channels (fields 2, 6 with a team, 7; a team message VERIFIED live 2026-
   merged by message id. A history read that fails or does not decode adds nothing and is named in `olderUnread`
   (`public`/`team`, `private`). VERIFIED live 2026-11-19 (direct transport) on the team game of #363: the team
   message GameRefresh left out came back on the team channel; the private history answered (no private message
-  there to compare). Whether one RetrieveChat page holds every older message is not known (the client asks again
+  there to compare). **Private messages are still UNVERIFIED live (#387):** on 2026-11-19 five live free-for-alls
+  were read the same way; four turn private messaging off (no history asked), and in the one that allows it every
+  seat's history answered (`olderUnread` empty) and the read returned public messages only — so there was no
+  private message on war.app to decode, or its diplomacy went elsewhere. The decode is from the bundle and the
+  synthetic tests until a game with a private message is read. Whether one RetrieveChat page holds every older message is not known (the client asks again
   on each press): one page is read. A private message addressed to me carries `toMe: true`, and an inbox entry
   counts them in `toMe`.
 - **Other chat methods** (not used): 47 RetrieveGameGroupMessageHistory. Push 242

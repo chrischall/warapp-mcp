@@ -365,7 +365,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `warapp_submit_turn` and `warapp_get_team` when the dict is there — no key otherwise (1v1, FFA: goldens
   unchanged), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
   the team hand is `readHand` over `handOwners` (`{ inPlay: false }` when the settings put no card in play); unread team chat is counted from the web chat only. All
-  UNVERIFIED live (V1, V5, V6, #163); absent means unknown (`null`), never "none".
+  UNVERIFIED live (V1, V5, V6); absent means unknown (`null`), never "none". **The team hand is VERIFIED (V8, #310):**
+  each player's cards sit under that player's id (`warapp_get_team` shows `heldBy`), the hand is all of them, and
+  `teamCardLimit` (`src/team-cards.ts`) applies the limit as the bundle's `GameValidateOrders` does — the team's hand
+  less the committed teammates' entered plays and discards, error 51 only for the last of the team to commit — so
+  `warapp_submit_turn` refuses then (every committed teammate's orders read) and otherwise warns.
 - **The planner reads teammate orders (C3.4–C3.7) only when `board.teammateOrders` carries them** (none in the
   golden corpus: those plans are byte-identical). `teamFocusOf` (`src/analysis/plan/team.ts`, `PlanCtx.teamFocus`)
   is a tie-break only: a capture of a player a teammate attacks ranks above an otherwise equal one (balanced greedy
@@ -375,7 +379,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   simulator with only those attacks, both orders, also against the owner's deploy; `mustGoFirst` under a cyclic
   `game.moveOrder`) are advisory: a move onto a teammate is V7, so neither is ever in `orders`. Cards
   (`src/team-cards.ts`): a card a teammate entered a play or discard of leaves my hand before `chooseCardPlays`, and
-  plan_turn's `cards.team.roles` says who plays each card (V5, V8 unverified); `warapp_submit_turn` and
+  plan_turn's `cards.team.roles` says who plays each card (V5 unverified); `warapp_submit_turn` and
   `warapp_check_plan` warn when my orders use such a card (`claimedCardUses`), and a card named by type resolves to
   an unclaimed one first (`unclaimedFirst`).
 - **The team brief (C4) is `warapp_team_brief`, read-only: data for a team-chat message, never sent.** It plans
@@ -698,7 +702,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   owner shown beside my most hidden stacks), Surveillance on a bonus I hold half or more of with a fogged
   member (else the most valuable with a hidden border of mine), Reconnaissance on the hidden territory
   beside the most of mine. **A team hand's cards carry `owner`**
-  (the in-game id read under, mine when under me at all; V8 unverified): the planner plays, discards and
+  (the in-game id read under, mine when under me at all; V8 verified, #310): the planner plays, discards and
   advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
   teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not
   discarded.

@@ -2,9 +2,9 @@
 // card my teammate has already entered a play or a discard of is theirs this turn: the plan never plays it
 // too, and the card advice says who plays each card.
 //
-// UNVERIFIED live: whether war.app sends a teammate's orders before they commit (V5), and how a team's hand
-// and its limit are keyed (V8). Tolerant: no teammate orders read means no claim, and the hand is as before.
-import type { Card } from './cards.js';
+// UNVERIFIED live: whether war.app sends a teammate's orders before they commit (V5). VERIFIED (V8, #310): how a
+// team's hand and its limit are keyed (teamCardLimit). Tolerant: no teammate orders read means no claim.
+import { cardsToShed, type Card, type CardRules } from './cards.js';
 import type { TeammateOrders } from './team-orders.js';
 
 /** A card a teammate's entered orders play or discard. */
@@ -133,4 +133,49 @@ export function claimedCardWarning(uses: readonly ClaimedCardUse[]): string | un
 export function unclaimedFirst(hand: readonly Card[], claimed: readonly ClaimedCard[]): Card[] {
   const ids = new Set(claimed.map((c) => c.card.id));
   return [...hand.filter((c) => !ids.has(c.id)), ...hand.filter((c) => ids.has(c.id))];
+}
+
+/** A teammate as the team's card limit reads it (GameFeed: still playing, and whether committed). */
+export interface LimitMate {
+  id: number;
+  hasCommittedOrders: boolean;
+  state?: string;
+}
+
+/** The team's hand against the team's card limit (V8, #310). */
+export interface TeamCardLimit {
+  /** The team's hand less the cards my committed teammates' entered orders play or discard. */
+  left: Card[];
+  /** Cards that must still leave {@link left} for war.app to accept orders from the last of the team to commit. */
+  shed: number;
+  /** No teammate still playing is yet to commit: these orders are the team's last. */
+  lastToCommit: boolean;
+  /** Every committed teammate's entered orders were read (V5): their plays and discards are known. */
+  ordersRead: boolean;
+  /** The limit binds these orders: war.app refuses them (error 51) unless `shed` cards leave the hand. */
+  binding: boolean;
+}
+
+/**
+ * The team's card limit as war.app applies it (V8, #310; the client bundle's GameValidateOrders, the hand seen
+ * live): the standing keeps each player's cards under that player's id, and a team's hand is every card under
+ * any of its players, counted against `MaxCardsHold` (the settings call it the most "a player or team" may hold).
+ * The cards my committed teammates' orders play or discard leave it first; then mine. Over the limit, war.app
+ * refuses (error 51) only the orders of the last of the team still playing to commit: while a teammate has yet
+ * to commit, they may still shed, and the orders are taken. `binding` holds only when every committed
+ * teammate's orders were read, so an unread teammate never makes a refusal.
+ */
+export function teamCardLimit(
+  hand: readonly Card[],
+  rules: CardRules,
+  mates: readonly LimitMate[],
+  entries: readonly TeammateOrders[] | undefined,
+): TeamCardLimit {
+  const playing = mates.filter((m) => (m.state ?? 'Playing') === 'Playing');
+  const committed = playing.filter((m) => m.hasCommittedOrders);
+  const lastToCommit = playing.every((m) => m.hasCommittedOrders);
+  const ordersRead = committed.every((m) => entries?.some((e) => e.playerId === m.id && e.orders !== null) === true);
+  const { left } = teamHandLeft(hand, teamCardClaims(entries, new Set(committed.map((m) => m.id))));
+  const shed = cardsToShed(left, rules);
+  return { left, shed, lastToCommit, ordersRead, binding: lastToCommit && ordersRead };
 }

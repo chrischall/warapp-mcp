@@ -146,11 +146,13 @@ describe('warapp_get_team', () => {
     ]);
     expect(p.teammates[0]!.name).not.toMatch(/‮/);
     expect(p.opponents).toEqual([{ id: Number(CY.feed), name: untrustedText('Cy'), team: 1 }]);
+    // V8 (#310): war.app keeps each player's cards under that player's id and the team's hand is all of them,
+    // so each card says whose entry holds it (`heldBy`, a GameFeed id).
     expect(p.hand).toMatchObject({
       readable: true,
       cards: [
-        { id: OP, name: 'Order Priority' },
-        { id: RF, name: 'Reinforcement', armies: 5 },
+        { id: OP, name: 'Order Priority', heldBy: Number(ANN.feed) },
+        { id: RF, name: 'Reinforcement', armies: 5, heldBy: Number(BOB.feed) },
       ],
     });
     expect(p.notes.join('\n')).toMatch(/UNVERIFIED/);

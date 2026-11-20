@@ -59,8 +59,8 @@ export const handOwners = (game: Pick<Game, 'players'>, me: Player): number[] =>
 /** In a team game: the hand and the limit are the team's (said once in the plan's warnings). */
 export const TEAM_HAND =
   "This is a team game: the hand and the card limit are the team's, shared with your teammates. The hand shown " +
-  "gathers every card under you and your teammates on the live board; how war.app keys a team's hand is not yet " +
-  'verified, so check the hand in the game before shedding cards.';
+  "is every card under you and your teammates (war.app keeps each player's cards under that player's id), and war.app " +
+  'refuses only the last of the team to commit while the team is over the limit: agree in team chat who sheds.';
 
 /** A card setting's `MultiplyAmount` (Blockade, Emergency Blockade), when the game sets one. */
 function multiplier(settings: GameSettings | undefined, key: string): number | undefined {
@@ -141,7 +141,7 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
   const { game, me, turn, hand, choice, plan, label } = input;
   const view: CardAdviceView = {};
   const warnings: string[] = [];
-  // V8: in a team game a card read under a teammate's id is theirs to play (unverified), never advised to me.
+  // V8 (#310): in a team game a card read under a teammate's id is left to them, never advised to me.
   const own = hand.filter((c) => isMyCard(c, cardGame(game, me).me));
   const gone = new Set([...choice.plays, ...choice.discards].map((c) => c.id));
   const held = (type: number) => own.find((c) => c.type === type && !gone.has(c.id));

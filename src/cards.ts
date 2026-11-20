@@ -56,7 +56,7 @@ export interface Card {
   armies?: number;
   /**
    * A team hand only (readHand given several ids): the in-game id the card was read under — mine when
-   * it is under me at all. How war.app keys a team's hand is UNVERIFIED (V8, #163).
+   * it is under me at all. VERIFIED (V8, #310): war.app keeps each player's cards under that player's id.
    */
   owner?: number;
 }
@@ -101,9 +101,11 @@ function cardOf(o: Obj, key: unknown): Card | undefined {
  *
  * A team shares one hand and one card limit (the wiki's Team Games). Given several in-game
  * ids (mine and my teammates'), the hand is every card under any of them, each GUID once.
- * UNVERIFIED live (#163): how war.app keys a team's hand — under each player, under one, or
- * repeated under all — has not been seen on a team board. So each card of a team hand carries the
- * id it was read under (`owner`): the first id given (mine) when it is under that one at all.
+ * VERIFIED (V8, #310): the standing keeps each player's cards (`PlayerCards`) under that player's
+ * id, and the client's own team hand (GameValidateOrders) is every teammate's entry merged, whole
+ * cards by GUID; a live 2v2 board showed two cards under me and three under my teammate, none
+ * repeated. Each card of a team hand carries the id it was read under (`owner`): the first id
+ * given (mine) when it is under that one at all. The team's limit is `teamCardLimit` (src/team-cards.ts).
  */
 export function readHand(info: unknown, myInGameId: number | readonly number[]): Card[] {
   const ids = typeof myInGameId === 'number' ? [myInGameId] : [...myInGameId];
@@ -261,12 +263,13 @@ export interface CardGame {
   fog?: string;
   /**
    * A team game: my in-game id. A card read under another id (a teammate's, {@link Card.owner}) is
-   * never played or discarded for me (V8: whether I can is unverified).
+   * never played or discarded for me: war.app's order check takes it (V8, #310), but the planner leaves a
+   * teammate's card to them and no such play has been sent live yet.
    */
   me?: number;
 }
 
-/** Whether a card is mine to play: not read under a teammate's id (V8 unverified). */
+/** Whether a card is mine to play: not read under a teammate's id (V8, #310: the planner leaves theirs to them). */
 export const isMyCard = (c: Card, me: number | undefined): boolean => me === undefined || c.owner === undefined || c.owner === me;
 
 /**
@@ -352,7 +355,7 @@ export function chooseCardPlays(hand: readonly Card[], rules: CardRules, game: C
     if (theirs > 0) {
       warnings.push(
         `${theirs} more card${theirs === 1 ? '' : 's'} must leave the team's hand from your teammates' cards: ` +
-          'ask them to play or discard (whether you can play a card read under a teammate is not yet verified).',
+          "ask them to play or discard (war.app's order check takes a teammate's card too, but no such play has been sent live yet).",
       );
     }
   }
