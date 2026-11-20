@@ -90,9 +90,11 @@ export interface StoredPreviousBoard {
 /**
  * The planner's input as kept: `PlanInput` without the graph (the map store gives it back), the board
  * (the entry's own), and what `planTurn` sets itself (`vacated`, `bonusPush`); `previousBoard` is kept
- * as a change against the board. Maps and Sets are tagged (`{ $map }`, `{ $set }`).
+ * as a change against the board. Maps and Sets are tagged (`{ $map }`, `{ $set }`). The board's
+ * `teammateOrders` (ids only) are kept here, never on the stored board, and `decodeInput` puts them back on
+ * the rebuilt board: the planner reads them, and no store can rebuild them.
  */
-export type LoggedInput = Rec & { previousBoard?: StoredPreviousBoard };
+export type LoggedInput = Rec & { previousBoard?: StoredPreviousBoard; teammateOrders?: unknown };
 
 /** The keys of `PlanInput` that are not kept in {@link LoggedInput}. */
 const INPUT_DROPPED = new Set(['graph', 'board', 'vacated', 'bonusPush', 'previousBoard']);
@@ -281,6 +283,7 @@ export function encodeInput(input: PlanInput): LoggedInput {
     if (INPUT_DROPPED.has(k) || v === undefined) continue;
     out[k] = encodeValue(v);
   }
+  if (input.board.teammateOrders) out.teammateOrders = encodeValue(input.board.teammateOrders);
   if (input.previousBoard) {
     const prev = plainBoard(input.previousBoard);
     out.previousBoard = { source: prev.source, verified: prev.verified, ...diff(plainBoard(input.board), prev) };
@@ -290,12 +293,12 @@ export function encodeInput(input: PlanInput): LoggedInput {
 
 /** The planner's input rebuilt from a kept one, this turn's board and the map's graph. */
 export function decodeInput(logged: LoggedInput, board: BoardState, graph: PlanInput['graph']): PlanInput {
-  const { previousBoard, ...rest } = logged;
+  const { previousBoard, teammateOrders, ...rest } = logged;
   const out = decodeValue(rest) as Rec;
   return {
     ...(out as unknown as PlanInput),
     graph,
-    board,
+    board: Array.isArray(teammateOrders) ? { ...board, teammateOrders: decodeValue(teammateOrders) as BoardState['teammateOrders'] } : board,
     ...(isRec(previousBoard) && Array.isArray(previousBoard.changed) ? { previousBoard: patch(board, previousBoard) } : {}),
   };
 }
@@ -321,7 +324,8 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * `v` with every player name in `players` replaced by `Player <id>` in every string, and every `name`
- * field holding one dropped. Names shorter than two characters are left (they would hit any word).
+ * field holding one dropped. A name is matched only standing alone (no letter, digit or `_` either side), so
+ * a short name never rewrites part of a territory or bonus name. Names shorter than two characters are left.
  */
 export function scrubNames<T>(v: T, players: readonly { id: number; name?: string }[] | undefined): T {
   const named = (players ?? [])
@@ -330,7 +334,7 @@ export function scrubNames<T>(v: T, players: readonly { id: number; name?: strin
     .sort((a, b) => b.name.length - a.name.length);
   if (!named.length) return v;
   const byName = new Set(named.map((p) => p.name.toLowerCase()));
-  const res = named.map((p) => ({ re: new RegExp(`(?:Player )?${escapeRe(p.name)}`, 'gi'), to: `Player ${p.id}` }));
+  const res = named.map((p) => ({ re: new RegExp(`(?<![\\p{L}\\p{N}_])(?:Player )?${escapeRe(p.name)}(?![\\p{L}\\p{N}_])`, 'giu'), to: `Player ${p.id}` }));
   const walk = (x: unknown): unknown => {
     if (typeof x === 'string') return res.reduce((s, r) => s.replace(r.re, r.to), x);
     if (Array.isArray(x)) return x.map(walk);
@@ -430,9 +434,10 @@ export async function recordDecision(
 ): Promise<boolean> {
   try {
     const board = plainBoard(rec.board);
+    const teammateOrders = rec.input.board.teammateOrders ?? rec.board.teammateOrders;
     const entry: DecisionEntry = scrubNames(
       {
-        input: encodeInput({ ...rec.input, board }),
+        input: encodeInput({ ...rec.input, board: teammateOrders ? { ...board, teammateOrders } : board }),
         planner: { version: VERSION },
         decision: decisionOf(rec.plan, rec.outlookState),
       },

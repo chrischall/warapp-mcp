@@ -177,6 +177,33 @@ describe('decision log store (#412 task 1)', () => {
     expect(boardAt((await readDecisionLog(dir, GAME))!, 1)).toEqual(boardOn(1));
   });
 
+  it('keeps teammate orders in the input, id-only, and puts them back on the rebuilt board for replay', async () => {
+    const teammateOrders = [
+      {
+        playerId: 3003,
+        orders: { deploys: [{ territoryId: 2, armies: 3 }], moves: [{ from: 2, to: 3, armies: 5 }], cards: [], discards: [], unread: [] },
+        picks: null,
+      },
+    ];
+    const b = { ...boardOn(1), teammateOrders } as unknown as BoardState;
+    await recordDecision(dir, GAME, ME, { turn: 1, board: b, input: input(1, { board: b }), plan: plan(1) });
+    const log = (await readDecisionLog(dir, GAME))!;
+    const raw = JSON.parse(await readFile(decisionLogPath(dir, GAME), 'utf8'));
+    expect(raw.turns['1'].board.teammateOrders).toBeUndefined();
+    expect(raw.turns['1'].input.teammateOrders).toEqual(teammateOrders);
+    const back = decodeInput(log.turns['1']!.input!, boardAt(log, 1)!, { map: { id: 1 } } as unknown as PlanInput['graph']);
+    expect(back.board.teammateOrders).toEqual(teammateOrders);
+    expect(back.board.territories).toEqual(boardOn(1).territories);
+    expect((back as unknown as Record<string, unknown>).teammateOrders).toBeUndefined();
+  });
+
+  it('leaves the board without a teammateOrders key when none were read', async () => {
+    await record(1);
+    const log = (await readDecisionLog(dir, GAME))!;
+    const back = decodeInput(log.turns['1']!.input!, boardAt(log, 1)!, { map: { id: 1 } } as unknown as PlanInput['graph']);
+    expect('teammateOrders' in back.board).toBe(false);
+  });
+
   it('planning a turn again replaces its entry and later boards still rebuild', async () => {
     await record(1);
     await record(2);
@@ -226,6 +253,20 @@ describe('decision log store (#412 task 1)', () => {
     expect(text).not.toMatch(/Zebulon|Quux/i);
     const e = (await readDecisionLog(dir, GAME))!.turns['1']!;
     expect(e.decision?.warnings[0]).toBe(`Player ${FOE} may deploy 5.`);
+  });
+
+  it('scrubs a short name only where it stands alone, never inside a territory name or another word', async () => {
+    const players = [{ id: FOE, name: 'Al' }];
+    await record(1, {
+      players,
+      plan: {
+        warnings: ['Al may deploy 5 into Albania.'],
+        rationale: ['Take Albania; Player Al holds Territory 4 (al).', 'Totally calm.'],
+      },
+    });
+    const e = (await readDecisionLog(dir, GAME))!.turns['1']!;
+    expect(e.decision?.warnings[0]).toBe(`Player ${FOE} may deploy 5 into Albania.`);
+    expect(e.decision?.rationale).toEqual([`Take Albania; Player ${FOE} holds Territory 4 (Player ${FOE}).`, 'Totally calm.']);
   });
 
   it('never overwrites a file that exists but does not parse', async () => {
