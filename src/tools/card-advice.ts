@@ -147,12 +147,38 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
   const gone = new Set([...choice.plays, ...choice.discards].map((c) => c.id));
   const held = (type: number) => own.find((c) => c.type === type && !gone.has(c.id));
   const friends = new Set(teammatesOf(game, me).map((p) => p.id));
+  // The cards in effect (unverified decoding), by GameFeed id: read once, for the Bomb's peace and the warnings below.
+  const active = readActiveCards(input.info);
+  const byInGame = new Map(game.players.flatMap((p) => {
+    try {
+      return [[inGameId(p), p] as const];
+    } catch {
+      return [];
+    }
+  }));
+  const feed = (id: number | undefined) => (id === undefined ? undefined : byInGame.get(id)?.id);
+  const activeView = active.map((a) => ({
+    card: a.card,
+    ...(a.players ? { players: a.players.map((p) => feed(p) ?? p) } : {}),
+    ...(a.target !== undefined ? { target: feed(a.target) ?? a.target } : {}),
+    ...(a.playedBy !== undefined ? { playedBy: feed(a.playedBy) ?? a.playedBy } : {}),
+    ...(a.expiresAfterTurn !== undefined ? { expiresAfterTurn: a.expiresAfterTurn } : {}),
+    ...(a.untilTurn !== undefined ? { untilTurn: a.untilTurn } : {}),
+  }));
+  // #452: the players at peace with me — a Diplomacy card in force (decoded, or the plan's T9 set) or a
+  // binding truce — whose territories the Bomb advice passes over, as the Sanctions and Diplomacy advice do.
+  const peace = new Set<number>([
+    ...activeView.flatMap((a) => (a.card === 'Diplomacy' && a.players?.includes(me.id) ? a.players.filter((p) => p !== me.id) : [])),
+    ...(input.enforced ?? []),
+    ...(input.truces ?? []).map((t) => t.player),
+  ]);
   const cb: CardBoard = {
     graph: input.graph,
     board: input.board,
     me: me.id,
     friends,
     ...(input.truceCovered?.size ? { noBomb: input.truceCovered } : {}),
+    ...(peace.size ? { peace } : {}),
     deploys: plan.deploys,
     moves: plan.moves,
     enemyDeploy: plan.enemyDeploy,
@@ -255,24 +281,8 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
   }
 
   // The cards in effect (unverified decoding): Diplomacy protecting a player, Sanctions on me.
-  const active = readActiveCards(input.info);
   if (active.length) {
-    const byInGame = new Map(game.players.flatMap((p) => {
-      try {
-        return [[inGameId(p), p] as const];
-      } catch {
-        return [];
-      }
-    }));
-    const feed = (id: number | undefined) => (id === undefined ? undefined : byInGame.get(id)?.id);
-    view.active = active.map((a) => ({
-      card: a.card,
-      ...(a.players ? { players: a.players.map((p) => feed(p) ?? p) } : {}),
-      ...(a.target !== undefined ? { target: feed(a.target) ?? a.target } : {}),
-      ...(a.playedBy !== undefined ? { playedBy: feed(a.playedBy) ?? a.playedBy } : {}),
-      ...(a.expiresAfterTurn !== undefined ? { expiresAfterTurn: a.expiresAfterTurn } : {}),
-      ...(a.untilTurn !== undefined ? { untilTurn: a.untilTurn } : {}),
-    }));
+    view.active = activeView;
     const owner = (t: number) => {
       const o = input.board.territories.find((x) => x.territoryId === t)?.owner;
       return o?.kind === 'player' ? o.playerId : undefined;

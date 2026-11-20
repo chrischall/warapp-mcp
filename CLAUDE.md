@@ -786,7 +786,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   already covers is passed over unless the truce is in notice or leaves a border it presses uncovered; one a
   Diplomacy card in force covers is passed over, unless this is that card's last turn: then it is chained
   first, `chain: true`, and the in-effect warning says it is the last turn and to chain or ready the borders — in a 1v1 only to ready them,
-  `diplomacyOpponents` gating both), Sanctions
+  `diplomacyOpponents` gating both), a Bomb (`bombAdvice`, `src/analysis/card-threats.ts`) never on a territory
+  of a player at peace with me (#452: a Diplomacy card in force — decoded, or the plan's T9 set — or a binding
+  truce; the hold-the-card line names them as passed over), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
   percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
   Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only

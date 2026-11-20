@@ -26,6 +26,11 @@ export interface CardBoard {
   friends?: ReadonlySet<number>;
   /** Territories a truce covers (active or in notice): bombing one breaks the truce, so never a Bomb target (D3). */
   noBomb?: ReadonlySet<number>;
+  /**
+   * #452: players at peace with me — a Diplomacy card in force between us, or a binding truce (active or
+   * in notice): none of their territories is a Bomb target (the attack it would serve is never made).
+   */
+  peace?: ReadonlySet<number>;
   deploys: readonly { territoryId: number; armies: number }[];
   moves: readonly { from: number; to: number; armies: number; kind: 'attack' | 'transfer' }[];
   /** The deploy assumed for each opponent (the plan's `enemyDeploy`). */
@@ -40,6 +45,8 @@ interface BombAdvice {
   /** What halving it changes. */
   kind?: 'commander' | 'hold' | 'capture';
   why: string;
+  /** #452: players at peace with me (`CardBoard.peace`) beside my land whose territories were passed over. Ascending. */
+  passed?: number[];
 }
 
 /** A border of mine that holds only while it is not bombed. */
@@ -180,12 +187,18 @@ const KIND_RANK = { commander: 0, hold: 1, capture: 2 } as const;
 export function bombAdvice(cb: CardBoard): BombAdvice {
   const r = reader(cb);
   const best: { target: number; kind: BombAdvice['kind'] & string; stake: number; why: string }[] = [];
+  const passed = new Set<number>();
   for (const t of r.ids) {
     const p = r.ownerOf(t);
     if (!r.foe(p) || r.state.get(t)?.armies === null) continue;
     if (cb.noBomb?.has(t)) continue;
     const borders = neighborsOf(cb.graph, t).filter(r.isMine);
     if (!borders.length) continue;
+    // #452: a player at peace with me is never bombed — the capture or hold it would serve is never made.
+    if (p !== undefined && cb.peace?.has(p)) {
+      passed.add(p);
+      continue;
+    }
     const n = r.armiesOf(t) + cb.enemyDeploy;
     const left = Math.ceil(n / 2);
     const cmd = r.commanderOf(t, (q) => q === p) ? COMMANDER_STRENGTH : 0;
@@ -213,12 +226,18 @@ export function bombAdvice(cb: CardBoard): BombAdvice {
   }
   best.sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || b.stake - a.stake || a.target - b.target);
   const top = best[0];
+  const peace = [...passed].sort((a, b) => a - b);
+  const passedOver = peace.length
+    ? ` ${peace.map((p) => `Player ${p}`).join(', ')} ${peace.length === 1 ? 'is' : 'are'} passed over: you are at peace with ${peace.length === 1 ? 'it' : 'them'} (a Diplomacy card in force or a binding truce), so no attack on ${peace.length === 1 ? 'it' : 'them'} is planned for a Bomb to serve.`
+    : '';
+  const withPassed = peace.length ? { passed: peace } : {};
   if (!top) {
     return {
-      why: 'Hold the Bomb: halving no stack next to me changes a hold, a capture or a commander kill this turn, and while I hold it the opponent cannot safely stack.',
+      why: `Hold the Bomb: halving no stack next to me changes a hold, a capture or a commander kill this turn, and while I hold it the opponent cannot safely stack.${passedOver}`,
+      ...withPassed,
     };
   }
-  return { target: top.target, kind: top.kind, why: `Bomb ${top.target}: ${top.why}.` };
+  return { target: top.target, kind: top.kind, why: `Bomb ${top.target}: ${top.why}.`, ...withPassed };
 }
 
 /**
