@@ -1312,7 +1312,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   "counts start with games played on this build", except a fold that failed (`failed`, retried on the next read)
   and no data directory (`no-data-dir`), which say so. warapp_wait_for_turn reads no map, so it folds files only. A store or salt
   that cannot be parsed is never overwritten (`pastGames: 'unreadable'`, folds fail). **Profiles inform only:** the planner reads none
-  of it until part 0's measurement is reported and the owner approves each hook (P1).
+  of it until part 0's measurement is reported and the owner approves each hook (P1). **The one hook approved (#420, P1
+  amended by the owner on 2026-11-20): a quiet neighbour.** `quietNeighbour` (`src/analysis/opponent-profile.ts`, pure)
+  walks this game's observed turns in order: a contact turn whose attack on me could be told counts; with
+  `QUIET_CONTACT_TURNS` (10) or more at an attack rate of `QUIET_ATTACK_RATE` (0.1) or less it is quiet, until its first
+  attack on me after that, which ends it for the game. `quietNeighbours` (`src/tools/profile-hook.ts`, in
+  `livePlanSetup`, so every tool planning on the live board reads it) reads the kept turns with the turns the boards in
+  hand show observed afresh over them (the board just read included: an attack last turn restores full sizing at once,
+  before the hook keeps it); nothing with profiling off, no data dir or the teams unknown. `PlanInput.quiet` → each of its
+  borders of mine, its most valuable included, is sized at its stacks beside it plus its largest top-up seen (the
+  track's `topUp`, #420 below; none seen: full sizing), with a "has not attacked me in N contact turns (#420, P1
+  amended …)" line. Every other habit stays inform-only. Golden unchanged (no input carries it); counterfactual with
+  every tracked opponent quiet: 399 plans, 78 orders, captures +19/−11, next income up on 7 and down on 3, 37 fewer
+  concessions and none more.
   **Where the read is reported (part D, `src/tools/profile-reads.ts`, read-only, never throws):** one computation
   (`readOpponents`) serves `warapp_profile_opponents` and three reports, none of which any plan, price or verdict
   reads (the golden corpus is unchanged): `warapp_plan_turn`'s `reads` (each opponent in contact on the live board

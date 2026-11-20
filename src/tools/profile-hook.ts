@@ -4,11 +4,13 @@
 // Its own module so src/tools/turn.ts can call it without importing the tool that imports turn.ts.
 import { stat, utimes } from 'node:fs/promises';
 import type { EnvSource } from '@chrischall/mcp-utils';
-import type { ObserveInput } from '../analysis/opponent-profile.js';
+import { quietNeighbour, type ObserveInput, type ObservedPrimitives } from '../analysis/opponent-profile.js';
+import type { MapGraph } from '../analysis/graph.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import type { Game, Player } from '../normalize.js';
 import {
   foldFinishedGame,
+  observeBoards,
   profileEnabled,
   profileFileState,
   profileGameFolded,
@@ -90,6 +92,54 @@ export async function recordProfile(
   }
 }
 
+
+/**
+ * #420 (P1 amended, owner decision of 2026-11-20): the quiet neighbours the planner may size at their
+ * stack plus their largest top-up (`PlanInput.quiet`). This game's kept turns (`readProfileTurns`) with
+ * the turns `boards` show observed afresh over them (`observeBoards`: the board just read included, so an
+ * attack on me last turn restores full sizing at once, before the hook keeps it), each opponent read by
+ * `quietNeighbour`. Nothing without a data directory, with `WARAPP_PLAYER_PROFILE=off`, or while the
+ * teams are unknown (any player may be my teammate). Never throws.
+ */
+export async function quietNeighbours(a: {
+  dataDir: string | undefined;
+  env: EnvSource;
+  gameId: number;
+  me: number;
+  graph: MapGraph;
+  settings: ObserveInput['settings'];
+  cards?: readonly string[] | undefined;
+  opponents: readonly number[];
+  boards: readonly TurnBoard[];
+  teamsKnown: boolean;
+}): Promise<{ player: number; contactTurns: number; attacks: number }[]> {
+  if (!a.dataDir || !a.teamsKnown || !profileEnabled(a.env)) return [];
+  try {
+    const kept = await readProfileTurns(a.dataDir, a.gameId, a.me, a.env);
+    const fresh = observeBoards({
+      gameId: a.gameId,
+      me: a.me,
+      graph: a.graph,
+      settings: a.settings,
+      ...(a.cards !== undefined ? { cards: a.cards } : {}),
+      opponents: a.opponents,
+      boards: a.boards,
+    });
+    const out: { player: number; contactTurns: number; attacks: number }[] = [];
+    for (const player of [...a.opponents].sort((x, y) => x - y)) {
+      const byTurn = new Map<number, ObservedPrimitives>((kept.get(player) ?? []).map((t) => [t.turn, t]));
+      for (const [turn, m] of fresh) {
+        const p = m.get(player);
+        if (p) byTurn.set(turn, { turn, primitives: p });
+      }
+      const q = quietNeighbour([...byTurn.values()]);
+      if (q.quiet) out.push({ player, contactTurns: q.contactTurns, attacks: q.attacks });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
 
 /**
  * {@link foldFinishedGame} for a read that shows a game finished with no fold report (warapp_wait_for_turn's

@@ -406,6 +406,9 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
   const topUpOf = new Map<number, number>();
   if (!custom)
     for (const tr of input.tracks ?? []) if (foe(tr.playerId) && typeof tr.topUp === 'number') topUpOf.set(tr.playerId, tr.topUp);
+  /** #420 (P1 amended): the quiet neighbours with a top-up seen, by player. */
+  const quietOf = new Map<number, { contactTurns: number; attacks: number }>();
+  for (const q of input.quiet ?? []) if (topUpOf.has(q.player)) quietOf.set(q.player, { contactTurns: q.contactTurns, attacks: q.attacks });
   return {
     growthOf,
     teamOf,
@@ -420,6 +423,7 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
     hiddenPool,
     lostAt,
     topUpOf,
+    quietOf,
   };
 }
 
@@ -579,8 +583,9 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, val
    * sized at those stacks plus its largest top-up seen (`topUpOf`), never above the full deploy. `capAt`:
    * by my territory, the players capped there and the figure; `primary`: each such player's full border.
    * Not on my commander's territory (rule 1k's worst case), nor for an untrusted estimate (#275) at that
-   * border, a player with no top-up seen, or one facing a single border of mine. Judged on the board as
-   * it stands (no territory gone) and built once.
+   * border, a player with no top-up seen, or one facing a single border of mine. A quiet neighbour
+   * (`quietOf`, #420's P1 amendment) has every border capped so, its most valuable one included, and no
+   * `primary`. Judged on the board as it stands (no territory gone) and built once.
    */
   let oneBorderMemo: { capAt: Map<number, Map<number, number>>; primary: Map<number, number> } | undefined;
   const oneBorder = () => {
@@ -594,10 +599,12 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, val
         facing.set(player, [...(facing.get(player) ?? []), { t, movable: p.stacks.reduce((n, x) => n + x.movable, 0) }]);
       }
     for (const [player, list] of [...facing].sort((a, b) => a[0] - b[0])) {
-      if (list.length < 2) continue;
+      // #420 (P1 amended): a quiet neighbour's every border, its most valuable one included.
+      const quiet = src.quietOf.has(player);
+      if (list.length < 2 && !quiet) continue;
       const ranked = [...list].sort((a, b) => valueOf(b.t) - valueOf(a.t) || b.movable - a.movable || a.t - b.t);
-      oneBorderMemo.primary.set(player, ranked[0]!.t);
-      for (const { t } of ranked.slice(1)) {
+      if (!quiet) oneBorderMemo.primary.set(player, ranked[0]!.t);
+      for (const { t } of quiet ? ranked : ranked.slice(1)) {
         if (pc.myCommanders.has(t) || untrustedAt(player, t) > 0) continue;
         const m = oneBorderMemo.capAt.get(t) ?? new Map<number, number>();
         m.set(player, src.topUpOf.get(player)!);
@@ -870,6 +877,13 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
   // #420: say where one opponent's full deploy is sized, and which borders take its top-up instead.
   {
     const { capAt, primary } = forces.oneBorder();
+    for (const [player, q] of [...src.quietOf].sort((a, b) => a[0] - b[0])) {
+      const sized = [...capAt].filter(([t, m]) => borders.has(t) && m.has(player)).map(([t]) => t).sort(byNum);
+      if (!sized.length) continue;
+      rationale.push(
+        `Player ${player} ${q.attacks ? `has attacked me on ${q.attacks} of ${q.contactTurns} contact turns, and not since it was read quiet` : `has not attacked me in ${q.contactTurns} contact turns`} (#420, P1 amended: a quiet neighbour): ${sized.map(label).join(', ')} ${sized.length === 1 ? 'is' : 'are'} sized at its stack beside ${sized.length === 1 ? 'it' : 'them'} plus its largest top-up seen, +${src.topUpOf.get(player)}, not its ~${pc.deployOf(player)} deploy, until its first attack on me.`,
+      );
+    }
     for (const [player, top] of [...primary].sort((a, b) => a[0] - b[0])) {
       // The deploy its most valuable border is sized for (under Local Deployment, what reaches it).
       const at = borders.get(top);

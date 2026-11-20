@@ -111,7 +111,7 @@ import { failureText, loadLiveGame, requireApprovedAccount, standInLine, standIn
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
 import { guessSalt, peekGuessSalt } from '../guess-salt.js';
-import { recordProfile } from './profile-hook.js';
+import { cardsInPlay, observeSettings, profiledOpponents, quietNeighbours, recordProfile } from './profile-hook.js';
 import { confidentHabits, counterOf, neighboursOf, readOpponents, type OpponentRead } from './profile-reads.js';
 import { mapOf } from './map.js';
 import { PACE_TURNS } from '../analysis/game-lessons.js';
@@ -2018,6 +2018,22 @@ export async function livePlanSetup(
     : history.boards.map((b) => ({ turn: b.turn, income: incomeDetail(graph, b.board, me.id, game.settings).income }));
   // #417 / #428: each fogged territory's newest earlier sighting, one source for both readers: who held it
   // (a static seat's stays vacated, #417) and, when that board showed them, its armies (#428's fog price).
+  // #420 (P1 amended): the quiet neighbours, from this game's kept profile turns and the boards in hand.
+  const quiet =
+    turn !== null
+      ? await quietNeighbours({
+          dataDir: ctx.dataDir,
+          env: a.env ?? process.env,
+          gameId: game.id,
+          me: me.id,
+          graph,
+          settings: observeSettings(game),
+          ...cardsInPlay(game),
+          opponents: profiledOpponents(game, me),
+          boards: [...history.boards, { turn, board: seen }],
+          teamsKnown: a.teamsKnown !== false,
+        })
+      : [];
   const sightings = fogSightings(board, history.boards);
   const lastSeen = ownersOf(sightings);
   const lastCounts = countsOf(sightings);
@@ -2028,6 +2044,7 @@ export async function livePlanSetup(
     income,
     ...(incomeHistory.length && turn !== null ? { incomeHistory } : {}),
     ...(untrusted.length ? { untrusted } : {}),
+    ...(quiet.length ? { quiet } : {}),
     // #368: incomes the caller knows. Not in the estimates above, which the tripwire keeps: those stay the
     // board's own (a figure supplied is no observation).
     ...(a.args?.knownIncome?.length ? { knownIncome: a.args.knownIncome } : {}),

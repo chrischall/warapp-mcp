@@ -260,6 +260,8 @@
 //     (`oneBorder` in plan/threats.ts, read by `forceAt`), with a "deploys its ~D in one place (#420)"
 //     line. Not with no top-up seen (no track), under `enemyDeploy`, on my commander's territory, for an
 //     untrusted estimate (#275) there, or for an opponent facing a single border of mine.
+//     A quiet neighbour (`PlanInput.quiet`, #420's P1 amendment: 10+ contact turns at an attack rate of
+//     0.1 or less, no attack on me since) has every border so sized, its most valuable included.
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
 //     income (the larger of MinimumArmyBonus and, with BonusArmyPer on, its
 //     visible territories / BonusArmyPer) plus the bonuses that player

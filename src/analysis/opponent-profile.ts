@@ -7,7 +7,8 @@
 // go through the planner's visibility rules (`visibleState`, `ownerShown`): a territory not shown on
 // both boards contributes nothing, so a fog reveal is never a change (#69).
 //
-// Profiles INFORM ONLY (owner decision P1): nothing here is read by the planner.
+// Profiles INFORM ONLY (owner decision P1): nothing here is read by the planner, save #420's quiet
+// neighbour ({@link quietNeighbour}, P1 amended by the owner on 2026-11-20).
 import type { BoardState, TerritoryState } from '../board.js';
 import { luckFraction, straightKills, armiesToTake, specialUnitStrength, DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
@@ -510,6 +511,59 @@ export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
     }
   }
   return h;
+}
+
+// ---- #420: the one profile read the planner may make (P1 amended, owner decision of 2026-11-20) ----
+
+/** #420: the contact turns (each one whose attack on me could be told) a quiet neighbour needs. */
+export const QUIET_CONTACT_TURNS = 10;
+/** #420: the most attacks on me per contact turn a quiet neighbour may show. */
+export const QUIET_ATTACK_RATE = 0.1;
+
+/** #420: whether an opponent is a quiet neighbour, from this game's observed turns. */
+export interface QuietRead {
+  /** Its contact turns whose attack on me could be told. */
+  contactTurns: number;
+  /** Of those, the turns it attacked me. */
+  attacks: number;
+  /** Sized at its stack plus its largest top-up: qualified, and no attack on me since. */
+  quiet: boolean;
+  /** The turn it first qualified ({@link QUIET_CONTACT_TURNS} or more contact turns at {@link QUIET_ATTACK_RATE} or less). */
+  since?: number;
+  /** Its first attack on me after it qualified: full sizing again, for the rest of the game. */
+  attackedOn?: number;
+}
+
+/**
+ * #420 (owner decision of 2026-11-20): the one case P1 lets the planner read a profile. Over this
+ * game's observed turns in order, a contact turn whose attack on me could be told counts; once there are
+ * {@link QUIET_CONTACT_TURNS} or more at an attack rate of {@link QUIET_ATTACK_RATE} or less it is quiet,
+ * until its first attack on me after that, which ends it for the game (full sizing at once). Pure.
+ */
+export function quietNeighbour(turns: readonly ObservedPrimitives[]): QuietRead {
+  const by = new Map<number, TurnPrimitives>();
+  for (const t of turns) by.set(t.turn, t.primitives);
+  let n = 0;
+  let e = 0;
+  let since: number | undefined;
+  let attackedOn: number | undefined;
+  for (const t of [...by.keys()].sort(byNum)) {
+    const p = by.get(t)!;
+    if (!p.contact || p.attackedMe === null) continue;
+    n++;
+    if (p.attackedMe) {
+      e++;
+      if (since !== undefined && attackedOn === undefined) attackedOn = t;
+    }
+    if (since === undefined && n >= QUIET_CONTACT_TURNS && e <= QUIET_ATTACK_RATE * n) since = t;
+  }
+  return {
+    contactTurns: n,
+    attacks: e,
+    quiet: since !== undefined && attackedOn === undefined,
+    ...(since !== undefined ? { since } : {}),
+    ...(attackedOn !== undefined ? { attackedOn } : {}),
+  };
 }
 
 // ---- the estimate (B1): this game pooled with past games, shrunk toward the population or a default ----

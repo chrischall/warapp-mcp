@@ -544,6 +544,14 @@ export interface PlanInput {
    */
   untrusted?: readonly { player: number; deploy: number }[];
   /**
+   * #420 (P1 amended, owner decision of 2026-11-20): the quiet neighbours — opponents with 10 or more
+   * observed contact turns at an attack rate of 0.1 or less and no attack on me since
+   * (`quietNeighbour`, src/analysis/opponent-profile.ts). Each of their borders of mine is sized at the
+   * stacks beside it plus their largest top-up seen (the track's `topUp`). Absent or empty, the plan is
+   * what it was without.
+   */
+  quiet?: readonly { player: number; contactTurns: number; attacks: number }[];
+  /**
    * #368: per-player incomes the user knows (warapp_plan_turn's `known_income`: what a player said in
    * chat, say), by GameFeed id: each replaces that opponent's estimate ({@link applyKnown}), a
    * Reinforcement card the clock adds kept on top. Ignored under `options.enemyDeploy`, and for a player
