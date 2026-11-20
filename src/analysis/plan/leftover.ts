@@ -8,14 +8,17 @@
 // defends as well; #268: else spread over the borders facing one opponent for equal headroom
 // over its deploy), the step it saves toward, the expansion stack (#218: with no front in view,
 // the territory central to what I hold instead when the stack lies far from it; #288: with the
-// attacks out of it when it has nothing left to attack once they land), the most fogged
+// attacks out of it when it has nothing left to attack once they land: first what each next step
+// from their targets needs, then the rest offered to another capture, rule 5b's), the most fogged
 // border or the biggest stack — split against a Bomb when it concentrates for
 // nothing — and under Local Deployment each pool's rest inside its bonus. planPass runs it where
 // it ran before: after rule 1c's second reconsideration and the strike stack's choice, before the
 // strike stack is spent.
 import { bonusTerritories } from '../bonuses.js';
+import { straightKills } from '../combat.js';
 import { bfsDistances, neighborsOf } from '../graph.js';
 import { chargeDeploys } from '../local-deploy.js';
+import { plainEconomy, plainEligible } from './after-leftover.js';
 import { completedMembers } from './completed.js';
 import { COMFORT_MARGIN, type PlannedMove } from './shared.js';
 
@@ -28,6 +31,24 @@ import type { PlanCtx, PlanState } from './state.js';
 import type { StrikeStack } from './strike.js';
 import type { Targets } from './targets.js';
 import type { Border, Threats } from './threats.js';
+
+/** #288: the rest of the leftover, offered to another capture this turn on `at`. */
+export interface LeftoverOffer {
+  at: number;
+  /** Sends it with the attacks out of the expansion stack after all (no capture took it). */
+  revert: () => void;
+}
+
+/** #288: an attack the leftover may join, and what the next step from its target needs. */
+interface JoinStep {
+  m: PlannedMove;
+  need: number;
+  step?: number;
+  cost?: number;
+  movable: number;
+  /** The leftover covers its need whole. */
+  funded?: boolean;
+}
 
 /** #125: the step the leftover saved toward, and its source, which idle stacks stage toward (rule 6). */
 export interface Staging {
@@ -67,6 +88,11 @@ export function leftoverDeploy(
   let strikeStack: StrikeStack | undefined;
   /** Armies a Local Deployment pool put on each border this turn (#103): never moved out. */
   const poolDeployed = new Map<number, number>();
+  /**
+   * #288: the rest of the leftover offered to another capture this turn (its territory), and how to send
+   * it with the attacks after all when rule 5b takes nothing from there (planPass calls `revert`).
+   */
+  let offered: LeftoverOffer | undefined;
   /**
    * #125: the capture to save toward — rule 4e's top step it could not afford, else (rule 4f
    * committing) the closest bonus's cheapest missing member in reach when this turn made no capture
@@ -693,6 +719,74 @@ export function leftoverDeploy(
         .sort((a, b) => onward(b.to) - onward(a.to) || a.to - b.to);
       return out.length ? out : undefined;
     };
+    /**
+     * #288 (second half): the next step from the target of `m`, an attack out of `src` the leftover may
+     * join: the cheapest visible neutral beside it that is neither mine nor captured this turn, and the
+     * armies its capture next turn needs beyond those that land movable (0 with no such neutral).
+     */
+    const nextStep = (m: PlannedMove, src: number): JoinStep => {
+      const lands = ps.survivorsAt.get(m.to) ?? m.armies - straightKills(pc.defenceAt(m.to), pc.rates.defensiveKillRate);
+      const movable = Math.max(0, lands - pc.guard);
+      const best = leftToAttack(m.to)
+        .filter((x) => x !== src && state.get(x)?.owner.kind === 'neutral' && typeof state.get(x)?.armies === 'number')
+        .map((x) => ({ x, c: pc.costAt(x) }))
+        .filter((o): o is { x: number; c: number } => o.c !== null)
+        .sort((a, b) => a.c - b.c || a.x - b.x)[0];
+      return best ? { m, need: Math.max(0, best.c - movable), step: best.x, cost: best.c, movable } : { m, need: 0, movable };
+    };
+    /**
+     * #288: another capture this turn the rest of the leftover (`left`) can pay for, rule 5b's way: a
+     * neutral not captured that passes pass 3's eligibility and economy tests, beside an open territory
+     * of mine other than `src` that issues no order, holds no commander of mine and attacks no player,
+     * whose armies fall short of its cost by no more than `left` (fewest short first, then cost, id).
+     * Not under Local Deployment (the pools decide where the rest may land). Rule 5b judges the hold.
+     */
+    const otherCapture = (left: number, src: number) => {
+      // As rule 5b: never under `complete-bonus` (No-Split never gets here: no join).
+      if (local || pc.goal === 'complete-bonus') return undefined;
+      const c = [...targets.values()]
+        .filter((tg) => state.get(tg.id)?.owner.kind === 'neutral' && !captured.has(tg.id) && !repulsed.has(tg.id) && !pc.truce.noTarget(tg.id))
+        .filter((tg) => {
+          const gain = book.gainWith([tg.id]);
+          return gain >= 0 && plainEligible(pc, tgt, tg.id, false) && !plainEconomy(pc, tgt, tg.id, gain);
+        })
+        .flatMap((tg) =>
+          tg.sources
+            .filter(
+              (x) =>
+                x !== src &&
+                mineSet.has(x) &&
+                open(x) &&
+                !conceded.has(x) &&
+                !pc.myCommanders.has(x) &&
+                !orderOf(x) &&
+                !moves.some((m) => m.from === x && m.kind === 'attack' && state.get(m.to)?.owner.kind === 'player'),
+            )
+            .map((x) => ({ t: tg.id, at: x, cost: tg.cost, short: tg.cost - avail.get(x)! })),
+        )
+        .filter((o) => o.short > 0 && o.short <= left)
+        .sort((a, b) => a.short - b.short || a.cost - b.cost || a.t - b.t || a.at - b.at)[0];
+      return c ? { ...c, n: left } : undefined;
+    };
+    /** Sends `k` more of `src`'s armies with the attack `m`. */
+    const applyTo = (src: number, m: PlannedMove, k: number) => {
+      m.armies += k;
+      m.winChance = pc.chanceOf(m.armies, pc.defenceAt(m.to));
+      avail.set(src, avail.get(src)! - k);
+      if (ps.survivorsAt.has(m.to)) ps.survivorsAt.set(m.to, ps.survivorsAt.get(m.to)! + k);
+    };
+    /** The rationale line of the leftover `k` deployed on `src` and sent with the attacks (`add` more each). */
+    const joinLine = (src: number, k: number, steps: readonly JoinStep[], add: ReadonlyMap<PlannedMove, number>) => {
+      const parts = steps
+        .filter((s) => (add.get(s.m) ?? 0) > 0)
+        .map((s) => `the attack on ${label(s.m.to)} (${s.m.armies - add.get(s.m)!} → ${s.m.armies})`);
+      const needs = steps
+        .filter((s) => s.funded)
+        .map((s) => `${label(s.step!)} beside ${label(s.m.to)} takes ${s.cost}, ${s.need} more than the ${s.movable} that would land movable`);
+      return `Deploy the leftover ${k} to ${label(src)} and send it with ${parts.join(' and ')} (#288): once this turn's captures land ${label(src)} has nothing left to attack, so a leftover there would idle, while the armies that land fund the next step from there without a deploy${
+        needs.length ? ` (${needs.join('; ')})` : ''
+      }.`;
+    };
     if (stack) {
       lock = true;
       concentrating = true;
@@ -823,23 +917,74 @@ export function leftoverDeploy(
       }
     }
     if (n > 0 && !spreadRest && joins) {
-      // #288: an equal share for each attack, the remainder to the first; the source keeps what it had.
-      deploy(where, n);
-      const parts: string[] = [];
-      joins.forEach((m, i) => {
-        const add = Math.floor(n / joins!.length) + (i < n % joins!.length ? 1 : 0);
-        if (add <= 0) return;
-        const before = m.armies;
-        m.armies += add;
-        m.winChance = pc.chanceOf(m.armies, pc.defenceAt(m.to));
-        avail.set(where, avail.get(where)! - add);
-        if (ps.survivorsAt.has(m.to)) ps.survivorsAt.set(m.to, ps.survivorsAt.get(m.to)! + add);
-        parts.push(`the attack on ${label(m.to)} (${before} → ${m.armies})`);
-      });
-      rationale.push(
-        `Deploy the leftover ${n} to ${label(where)} and send it with ${parts.join(' and ')} (#288): once this turn's captures land ${label(where)} has nothing left to attack, so a leftover there would idle, while the armies that land fund the next step from there without a deploy.`,
-      );
-      locked.add(where);
+      // #288 (second half, the rule chosen for the owner): extra armies go with an attack only as far as
+      // the next step from its target needs them; what is left is offered to another capture this turn
+      // (rule 5b takes it, else planPass hands it back here); only the rest still rides the attacks.
+      const js = joins;
+      const src = where;
+      const steps = js.map((m) => nextStep(m, src));
+      const add = new Map<PlannedMove, number>();
+      let left = n;
+      // First each need the leftover covers whole, in the joins' order (most steps onward first), one
+      // attack per next step: a share that leaves the step short still costs a deploy next turn.
+      const funded = new Set<number>();
+      for (const s of steps) {
+        if (s.need > 0 && s.need <= left && !funded.has(s.step!)) {
+          add.set(s.m, s.need);
+          left -= s.need;
+          funded.add(s.step!);
+          s.funded = true;
+        }
+      }
+      const offer = left > 0 ? otherCapture(left, src) : undefined;
+      if (offer) left -= offer.n;
+      // The rest rides the attacks as before (#288's first half), an army at a time to the one with the
+      // least extra so far (the first among equals): the even split #402 made whenever no need exceeds
+      // its share, so a landing that also faces an enemy next turn keeps what it had.
+      const spread = (k: number, out: Map<PlannedMove, number>) => {
+        for (let a = 0; a < k; a++) {
+          const m = js.reduce((best, x) => ((out.get(x) ?? 0) < (out.get(best) ?? 0) ? x : best));
+          out.set(m, (out.get(m) ?? 0) + 1);
+        }
+      };
+      spread(left, add);
+      const sent = n - (offer?.n ?? 0);
+      let firstLine: string | undefined;
+      if (sent > 0) {
+        deploy(src, sent);
+        for (const [m, k] of add) applyTo(src, m, k);
+        firstLine = joinLine(src, sent, steps, add);
+        rationale.push(firstLine);
+        locked.add(src);
+      }
+      if (offer) {
+        deploy(offer.at, offer.n);
+        const offerLine = `Deploy ${offer.n} of the leftover to ${label(offer.at)} for another capture this turn (#288): the attacks out of ${label(src)} already carry what the next steps from their targets need, so the rest is offered to a capture (${label(offer.t)}, ${offer.cost} to take) before it rides them.`;
+        rationale.push(offerLine);
+        offered = {
+          at: offer.at,
+          revert: () => {
+            // No capture took it (rule 5b refused it): it rides the attacks out of the stack after all,
+            // unless an order since sent some of it.
+            if (avail.get(offer.at)! < offer.n) return;
+            undeploy(offer.at, offer.n);
+            const i = rationale.indexOf(offerLine);
+            if (i >= 0) rationale.splice(i, 1);
+            const total = new Map(add);
+            spread(offer.n, total);
+            deploy(src, offer.n);
+            for (const m of js) {
+              const k = (total.get(m) ?? 0) - (add.get(m) ?? 0);
+              if (k > 0) applyTo(src, m, k);
+            }
+            const again = joinLine(src, n, steps, total);
+            const was = firstLine === undefined ? -1 : rationale.indexOf(firstLine);
+            if (was >= 0) rationale[was] = again;
+            else rationale.push(again);
+            locked.add(src);
+          },
+        };
+      }
     } else if (n > 0 && !spreadRest) {
       rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
       deploy(where, n);
@@ -898,5 +1043,5 @@ export function leftoverDeploy(
       deploy(where, ps.budget);
     }
   }
-  return { strikeStack, poolDeployed, staging };
+  return { strikeStack, poolDeployed, staging, offered };
 }

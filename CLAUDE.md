@@ -1543,7 +1543,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     first; not under No-Split or into a combined capture), so the armies that land fund the next step without a
     deploy ("… and send it with the attack on … (#288)"). Golden: 466 of 6,253 plans changed (462 in their
     orders), no capture lost, next income and concessions unchanged, the frontier's hold cost lower on 96 and
-    never higher. Not yet: crediting the larger landing against another capture (the turns it saves).
+    never higher. The extra is sized to the next step (#288's second half, the rule chosen for the owner): each
+    attack first gets what the capture of the cheapest visible neutral beyond its target needs next turn beyond
+    the armies that land movable, only when the leftover covers it whole (one attack per step); the rest is
+    offered to another capture this turn (`otherCapture`: a neutral passing pass 3's tests beside another open
+    territory of mine with no order, no commander and no attack on a player, short by no more than the rest;
+    not under Local Deployment or `complete-bonus`), deployed there for rule 5b, and sent back with the attacks
+    (`LeftoverOffer.revert`, from planPass) when rule 5b takes nothing there; what is left rides them an army at
+    a time to the attack with the least extra (#402's even split whenever no need exceeds its share). Golden: 105
+    of 6,253 plans changed, 5 in their orders (the rest only the rationale's named step), no capture lost or
+    added, next income, concessions, warnings and the frontier's hold cost unchanged; no corpus board takes the
+    offer (4 of 40,000 further synthetic seeds do).
     #268: otherwise the rest, once every short border has its margin, is spread over the open borders
     facing that border's opponent alone (no other opponent's stack beside them, no attack leaving
     them; one protecting nothing only when the first protects nothing too), an army at a time to the
