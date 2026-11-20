@@ -4,15 +4,19 @@
 // format and coverage band). Read-only: nothing here writes, requests or throws. Off with
 // `WARAPP_PLAYER_PROFILE=off` and without a data directory. Profiles and lessons INFORM ONLY (owner
 // decision P1): the views go beside a plan's output, never into a planner input — save #419's fog pace
-// (`fogPaceFor`, owner decision of 2026-11-20): the past winners' income tops thin evidence's estimate range.
+// (`fogPaceFor`, owner decision of 2026-11-20): the past winners' income tops thin evidence's estimate range —
+// and #436's outlook calibration (`outlookCalibrationFor`): the tracker's estimate ÷ truth per coverage band
+// turns the outlook's income estimates into calibrated ones (the outlook's income lean and surrender line only).
 import type { EnvSource } from '@chrischall/mcp-utils';
 import { PACE_TURNS, startRegion } from '../analysis/game-lessons.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { ProfileFormat } from '../analysis/opponent-profile.js';
 import type { FogPace } from '../analysis/plan/shared.js';
+import { MIN_CALIBRATION_SAMPLES, type OutlookCalibration } from '../analysis/outlook.js';
 import {
   formatPaceAt,
   lessonsSummary,
+  outlookCalibration,
   mapPaceAt,
   mapRecordStarts,
   mapRecordSummary,
@@ -172,6 +176,23 @@ export async function fogPaceFor(
     if (own) return { basis: 'map', afterTurn, games: own.games, income: own.income };
     const fmt = formatPaceAt(await readMapRecords(dataDir), afterTurn, match);
     return fmt ? { basis: 'format', afterTurn, games: fmt.games, ratio: fmt.ratio } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * #436 (owner decision of 2026-11-20): the outlook's calibration — past games' tracked income ÷ true income per
+ * coverage band, this format's band with `MIN_CALIBRATION_SAMPLES` or more, else every format's
+ * (`outlookCalibration`); `undefined` when off, without a data dir, unreadable or with no band. Never throws.
+ */
+export async function outlookCalibrationFor(dataDir: string | undefined, env: EnvSource | undefined, format: ProfileFormat): Promise<OutlookCalibration | undefined> {
+  if (!dataDir || !profileEnabled(env ?? process.env)) return undefined;
+  try {
+    const file = await readLessons(dataDir);
+    if (file === 'unreadable') return undefined;
+    const c = outlookCalibration(file, format, MIN_CALIBRATION_SAMPLES);
+    return Object.keys(c).length ? c : undefined;
   } catch {
     return undefined;
   }

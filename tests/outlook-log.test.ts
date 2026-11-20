@@ -47,6 +47,36 @@ describe('outlook log (#178)', () => {
     expect(raw).not.toMatch(/name/i);
   });
 
+  it('#436: keeps each turn\'s incomes and lean, and the surrender line on the latest (figures only)', async () => {
+    const o = outlook(7, 'behind');
+    o.turns[0] = {
+      ...o.turns[0]!,
+      income: {
+        mine: 5,
+        theirs: { playerId: 2001, low: 9, high: 14, estimate: 12 },
+        ratio: { low: 0.36, high: 0.56, estimate: 0.42 },
+        calibrated: true,
+        lean: 'behind',
+      },
+      state: 'behind',
+    };
+    o.surrenderLine = {
+      crossed: true,
+      turnsBelow: 3,
+      needed: 3,
+      myIncome: 5,
+      theirIncome: 12,
+      playerId: 2001,
+      line: 8,
+      calibrated: true,
+      advice: 'Surrender line crossed (advice only).',
+    };
+    await recordOutlook(dir, 7001, 1001, o);
+    const log = await readOutlookLog(dir, 7001, 1001);
+    expect(log?.turns['7']?.income).toEqual({ mine: 5, low: 9, high: 14, estimate: 12, lean: 'behind', calibrated: true });
+    expect(log?.latest?.surrenderLine).toEqual({ crossed: true, turnsBelow: 3, line: 8 });
+  });
+
   it('#283: keeps each turn\'s armies and income, mine and the strongest side\'s, with its id (name-free)', async () => {
     const o = outlook(6, 'losing');
     o.turns[0] = {
@@ -122,5 +152,21 @@ describe('outlook log (#178)', () => {
     expect(await recordFinalResult(dir, { id: 7001, state: 'Finished', players })).toBe(true);
     expect((await readOutlookLog(dir, 7001, 1001))?.result).toBe('Eliminated');
     expect(await recordFinalResult(dir, { id: 7009, state: 'Finished', players })).toBe(false);
+  });
+});
+
+describe('#436: the chat standing read from the outlook log', () => {
+  it('maps the income lean: ahead and behind as the standing, unknown as unknown', async () => {
+    const { standingFromOutlook } = await import('../src/tools/chat-advice.js');
+    const log = (state: GameOutlook['state']) => ({
+      gameId: 1,
+      playerId: 2,
+      turns: { '5': { mine: 40, low: 20, high: 30, ratio: { low: 1.33, high: 2 }, state: state ?? 'even' } },
+      latest: { turn: 5, state, heldTurns: 3, basis: '' },
+    });
+    expect(standingFromOutlook(log('ahead'))?.standing).toBe('ahead');
+    expect(standingFromOutlook(log('behind'))?.standing).toBe('behind');
+    expect(standingFromOutlook(log('unknown'))?.standing).toBe('unknown');
+    expect(standingFromOutlook(log('stalemate'))?.standing).toBe('even');
   });
 });

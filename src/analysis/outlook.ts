@@ -83,6 +83,26 @@
 // LOW_COVERAGE, or none measured, under fog is thin evidence, and the basis says "even" is then not safe.
 // Reporting only: the state never reads it.
 //
+// #436 (owner decision of 2026-11-20): the outlook follows both incomes and their trend. Each turn reads my
+// side's income against the strongest opponent side's income (`income`): its range under fog — `low` the
+// income the tracker reads (its visible income at least), `high` the most the likely high lets it earn a turn
+// while its frontier read is thin (else `low`) — and its ESTIMATE, the tracked figure divided by the
+// estimate ÷ truth past games measured in its coverage band (`calibration`, from lessons.json, a band with
+// at least MIN_CALIBRATION_SAMPLES), never below its visible income; uncalibrated, the tracked figure. Its
+// lean: `unknown` when the range spans both thresholds (mine ÷ high at most INCOME_BEHIND_RATIO and mine ÷
+// low at least INCOME_AHEAD_RATIO), `behind` / `ahead` when the whole range, else the estimate, is past one,
+// else `even` — unless each side's income, moved one more turn at its change per turn over the turns judged
+// (`trend`), crosses a threshold the ratio is already heading to (`byTrend`). No lead is claimed at low
+// coverage (any opponent's evidence thin, #304): an `ahead` lean reads `unknown`, and a win on the likely
+// high alone is not read (`noLeadClaim`); a win on the bound still is. The lean replaces `even` in the
+// state (winning, losing and stalemate keep their tests), so the state can read `ahead`, `behind` or
+// `unknown`; the planner acts on winning and losing only (#201). `pace` is the income line: both incomes and
+// their change per turn over the turns judged. `surrenderLine` is ADVICE ONLY (the server never acts on it):
+// crossed when my income stayed under INCOME_BEHIND_RATIO × the strongest's estimate for SURRENDER_TURNS
+// consecutive turns and no bonus in reach closes the gap (`bonusesInReach`: a positive bonus I do not hold
+// whose every missing member borders my land and whose visible defenders are fewer than my armies beside them
+// plus my income; it closes the gap when my income plus its value reaches the line).
+//
 // OUTLOOK_RATIO (2.4×) is borrowed from a published bot's "lost" rule and has never been measured
 // for war.app: the outlook is a basis for a decision, not a verdict. The planner acts on it in one
 // way only (#201): once winning or losing, its payback tests count the turns the game has left.
@@ -101,6 +121,7 @@ import { BEHIND_RATIO, STRENGTH_INCOME_TURNS, type GameStanding } from './profil
 import { FORECAST_TURNS, forecastBorder, mainFront, type BorderOutcome, type FrontStack } from './exchange.js';
 import { specialUnitStrength } from './combat.js';
 import { coverageText, LOW_COVERAGE, type TrackCoverage } from './plan/shared.js';
+import { coverageBucket, type CoverageBucket } from './game-lessons.js';
 
 /** Turns a state must hold before it is reported. */
 export const OUTLOOK_TURNS = 3;
@@ -130,7 +151,72 @@ export function peerPace(p: { base: number; mine: number; peers: number; ceiling
 export type LikelySource = 'tracked' | 'prior';
 export type PriorWhy = 'unseen' | 'unmeasured';
 
-export type OutlookState = 'winning' | 'losing' | 'even' | 'stalemate';
+export type OutlookState = 'winning' | 'losing' | 'ahead' | 'behind' | 'even' | 'unknown' | 'stalemate';
+
+/** #436: behind on incomes at this share of the strongest opponent's or less — the owner's surrender line (two-thirds). */
+export const INCOME_BEHIND_RATIO = 2 / 3;
+/** #436: ahead on incomes at this multiple of the strongest opponent's or more (the line's inverse). */
+export const INCOME_AHEAD_RATIO = 1.5;
+/** #436: consecutive turns under the line before the surrender line is crossed (owner). */
+export const SURRENDER_TURNS = 3;
+/** #436: the samples a coverage band needs before its estimate ÷ truth calibrates an estimate (unmeasured). */
+export const MIN_CALIBRATION_SAMPLES = 5;
+
+/** #436: past games' estimate ÷ truth per coverage band (lessons.json's calibration: geometric mean and samples). */
+export type OutlookCalibration = Partial<Record<CoverageBucket, { geoMean: number; n: number }>>;
+
+/** #436: one turn's incomes, mine against the strongest opponent side's. */
+export interface OutlookIncome {
+  /** My side's income (card armies out). */
+  mine: number;
+  /** The strongest side by estimate: its income range and estimate (summed over an enemy team). */
+  theirs: { playerId: number; team?: number; players?: number[]; low: number; high: number; estimate: number };
+  /** Mine ÷ theirs: `low` against its high, `high` against its low, `estimate` against its estimate (`null`: that figure is 0). */
+  ratio: { low: number | null; high: number | null; estimate: number | null };
+  /** The estimate was divided by past games' estimate ÷ truth in its coverage band. */
+  calibrated: boolean;
+  /** Each side's income change per turn over the turns judged up to this one; absent on the first. */
+  trend?: { mine: number; theirs: number };
+  lean: 'ahead' | 'behind' | 'even' | 'unknown';
+  /** The lean came from the trend, not the incomes now. */
+  byTrend?: true;
+  /** A lead (an `ahead` lean, or a win on the likely high) was not claimed: the evidence is thin. */
+  noLeadClaim?: true;
+}
+
+/** #436: a bonus I could complete next turn (see the header). */
+export interface BonusInReach {
+  bonus: number;
+  value: number;
+  /** The visible defenders on its members I do not hold. */
+  defenders: number;
+}
+
+/** #436: the surrender line — ADVICE ONLY; the server never acts on it. */
+export interface SurrenderLine {
+  crossed: boolean;
+  /** Consecutive turns, up to the latest, with my income under the line. */
+  turnsBelow: number;
+  needed: number;
+  myIncome: number;
+  theirIncome: number;
+  playerId: number;
+  team?: number;
+  /** INCOME_BEHIND_RATIO × their estimate. */
+  line: number;
+  calibrated: boolean;
+  /** The largest bonus in reach that would bring my income to the line. */
+  closer?: BonusInReach;
+  advice: string;
+}
+
+/** #436: the pace line — both incomes and their change per turn over the turns judged. */
+export interface OutlookPace {
+  from: number;
+  to: number;
+  mine: { income: number; perTurn: number };
+  theirs: { playerId: number; team?: number; income: number; perTurn: number };
+}
 
 /** #283: a side's armies on the board and its board income (strength = armies + k × income). */
 export interface OutlookFigures {
@@ -215,6 +301,10 @@ export interface OutlookTurn {
    * in full on it, by id; absent without the board before or with none lost.
    */
   bonusesLost?: number[];
+  /** #436: my income against the strongest opponent's (see the header); absent with no opponent. */
+  income?: OutlookIncome;
+  /** #436: the bonuses in reach (latest turn only), largest first; absent when none. */
+  bonusesInReach?: BonusInReach[];
   state: OutlookState;
 }
 
@@ -268,6 +358,10 @@ export interface GameOutlook {
    * profile's standing is #287's). Absent otherwise.
    */
   leaning?: { toward: 'behind'; turns: number; lost: { turn: number; value: number }[] };
+  /** #436: the pace line; absent with fewer than two turns judged or no opponent. */
+  pace?: OutlookPace;
+  /** #436: ADVICE ONLY — present when the latest turn's income is under the line. */
+  surrenderLine?: SurrenderLine;
 }
 
 interface OutlookInput {
@@ -292,6 +386,8 @@ interface OutlookInput {
    * beside an `ahead` or `behind` standing says why the two differ.
    */
   standing?: GameStanding;
+  /** #436: past games' estimate ÷ truth per coverage band, to calibrate the opponents' income estimates. */
+  calibration?: OutlookCalibration;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -511,8 +607,9 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         const low = a + k * income;
         const seen = { armies: a, income };
         const none = { likely: undefined as number | undefined, source: undefined as LikelySource | undefined, why: undefined as PriorWhy | undefined };
-        if (open) return { playerId, low, high: low as number | null, seen, ...none };
-        if (start === null || likelyStart === null || cardsBound === undefined) return { playerId, low, high: null, seen, ...none };
+        if (open) return { playerId, low, high: low as number | null, seen, paceIncome: income, ...none };
+        if (start === null || likelyStart === null || cardsBound === undefined)
+          return { playerId, low, high: null, seen, paceIncome: Math.max(income, turnCap(turn, playerId)), ...none };
         // Each turn's could-earn cap: from that turn's board when I have it, else the ceiling.
         let received = start;
         for (let t = 1; t <= turn; t++) received += turnCap(t, playerId);
@@ -545,7 +642,9 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         if (last) for (let t = last.turn + 1; t <= turn; t++) since += Math.min(turnCap(t, playerId), paceAt(t));
         const likely =
           Math.max(a, likelyReceived + now, since) + k * Math.max(income, last?.income ?? 0, Math.min(cap, pace)) + ahead;
-        return { playerId, low, high, seen, likely: Math.min(high, Math.max(low, likely)), source, why };
+        // #436: the most it likely earns a turn, as the likely high counts it.
+        const paceIncome = Math.max(income, last?.income ?? 0, Math.min(cap, pace));
+        return { playerId, low, high, seen, paceIncome, likely: Math.min(high, Math.max(low, likely)), source, why };
       });
     // PLAN-TEAMS C3: an enemy team is one side, its figures summed; elsewhere a side is a player.
     const teamOf = (p: number) => {
@@ -736,6 +835,87 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       opponents: evidenceRows,
       thin: evidenceRows.some((r) => r.thin),
     };
+    // #436: each opponent's income range and estimate, summed per side; the strongest side by estimate.
+    const calibrationFor = (share: number | null) => {
+      const c = input.calibration?.[coverageBucket(share)];
+      return c && c.n >= MIN_CALIBRATION_SAMPLES && c.geoMean > 0 ? c.geoMean : undefined;
+    };
+    const incomeSides = new Map<string, { playerId: number; team?: number; players?: number[]; low: number; high: number; estimate: number; calibrated: boolean }>();
+    for (const r of rows) {
+      const tr = trackedOf(r.playerId);
+      const row = evidenceRows.find((x) => x.playerId === r.playerId)!;
+      const low = row.income;
+      const factor = tr?.income != null ? calibrationFor(tr.coverage?.share ?? null) : undefined;
+      const estimate = open ? low : factor !== undefined ? Math.max(r.seen.income, Math.round(tr!.income! / factor)) : low;
+      const high = open ? low : Math.max(estimate, low, row.thin ? r.paceIncome : low);
+      const t = teamOf(r.playerId);
+      const key = t === undefined ? `p${r.playerId}` : `t${t}`;
+      const side = incomeSides.get(key);
+      if (!side)
+        incomeSides.set(key, {
+          playerId: r.playerId,
+          ...(t !== undefined ? { team: t, players: [r.playerId] } : {}),
+          low: Math.min(low, estimate),
+          high,
+          estimate,
+          calibrated: factor !== undefined,
+        });
+      else {
+        side.low += Math.min(low, estimate);
+        side.high += high;
+        side.estimate += estimate;
+        side.calibrated ||= factor !== undefined;
+        side.players!.push(r.playerId);
+      }
+    }
+    const theirs = [...incomeSides.values()].sort((a, b) => b.estimate - a.estimate || b.high - a.high || a.playerId - b.playerId)[0];
+    const income: OutlookIncome | undefined = theirs
+      ? {
+          mine: myNow,
+          theirs: {
+            playerId: theirs.playerId,
+            ...(theirs.team !== undefined ? { team: theirs.team, players: theirs.players! } : {}),
+            low: theirs.low,
+            high: theirs.high,
+            estimate: theirs.estimate,
+          },
+          ratio: {
+            low: theirs.high > 0 ? round2(myNow / theirs.high) : null,
+            high: theirs.low > 0 ? round2(myNow / theirs.low) : null,
+            estimate: theirs.estimate > 0 ? round2(myNow / theirs.estimate) : null,
+          },
+          calibrated: theirs.calibrated,
+          lean: 'even',
+        }
+      : undefined;
+    // #436: the bonuses I could complete next turn (the latest turn only: the surrender line reads them).
+    const bonusesInReach: BonusInReach[] = [];
+    if (turn === run.at(-1)) {
+      const side = new Set([me, ...mates]);
+      const ownerOfT = (id: number) => ownerById.get(id);
+      const isMine = (id: number) => {
+        const o = ownerOfT(id);
+        return o?.kind === 'player' && side.has(o.playerId);
+      };
+      for (const bonus of [...g.bonusById.values()].sort((a, b) => a.id - b.id)) {
+        if (bonus.value <= 0) continue;
+        const ts = bonusTerritories(g, bonus.id);
+        const missing = ts.filter((t) => !isMine(t));
+        if (!ts.length || !missing.length) continue;
+        const beside = new Set<number>();
+        let reachable = true;
+        for (const t of missing) {
+          const mineNext = neighborsOf(g, t).filter(isMine);
+          if (!mineNext.length) reachable = false;
+          for (const n of mineNext) beside.add(n);
+        }
+        if (!reachable) continue;
+        const defenders = missing.reduce((n, t) => n + (armiesById.get(t) ?? 0) + unitsOn(board, t), 0);
+        const attackers = [...beside].reduce((n, t) => n + (armiesById.get(t) ?? 0), 0) + myNow;
+        if (defenders < attackers) bonusesInReach.push({ bonus: bonus.id, value: bonus.value, defenders });
+      }
+      bonusesInReach.sort((a, b) => b.value - a.value || a.bonus - b.bonus);
+    }
     // #368: the bonuses my side held in full on the board before and does not now.
     const bonusesLost = prev
       ? (() => {
@@ -757,8 +937,11 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
           return lost;
         })()
       : [];
+    // #436: no lead is claimed at low coverage — a win on the likely high alone needs evidence that is not thin.
+    const claimWin = estimated && !evidence.thin;
+    if (income && estimated && !claimWin) income.noLeadClaim = true;
     const state: OutlookState =
-      bound || estimated
+      bound || claimWin
         ? 'winning'
         : lostOnBound || lostOnEstimate
           ? 'losing'
@@ -776,12 +959,53 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       changed,
       ...(forecast ? { front: forecast } : {}),
       state,
-      ...(estimated || lostOnEstimate ? { estimated: true as const } : {}),
+      ...(claimWin || lostOnEstimate ? { estimated: true as const } : {}),
       ...(lowLikely ? { lowLikely: { myIncome: myNow, mostTracked: mostTracked(), groundDown, losing: lostOnEstimate } } : {}),
       evidence,
       ...(bonusesLost.length ? { bonusesLost } : {}),
+      ...(income ? { income } : {}),
+      ...(bonusesInReach.length ? { bonusesInReach } : {}),
     };
   });
+
+  // #436: each turn's income lean, with each side's change per turn over the turns judged up to it; it
+  // replaces an `even` state (winning, losing and stalemate keep their own tests).
+  const first = turns[0];
+  for (const t of turns) {
+    const inc = t.income;
+    if (!inc) continue;
+    if (first && first !== t && first.income) {
+      const span = t.turn - first.turn;
+      inc.trend = { mine: round2((inc.mine - first.income.mine) / span), theirs: round2((inc.theirs.estimate - first.income.theirs.estimate) / span) };
+    }
+    const r = inc.ratio;
+    const spans = r.low !== null && r.low <= INCOME_BEHIND_RATIO && (r.high === null || r.high >= INCOME_AHEAD_RATIO);
+    let lean: OutlookIncome['lean'];
+    if (spans) lean = 'unknown';
+    else if (r.high !== null && r.high <= INCOME_BEHIND_RATIO) lean = 'behind';
+    else if (r.low === null || r.low >= INCOME_AHEAD_RATIO) lean = 'ahead';
+    else if (r.estimate !== null && r.estimate <= INCOME_BEHIND_RATIO) lean = 'behind';
+    else if (r.estimate === null || r.estimate >= INCOME_AHEAD_RATIO) lean = 'ahead';
+    else {
+      lean = 'even';
+      // The trend: one more turn at each side's change per turn, toward a threshold the ratio is heading to.
+      if (inc.trend && r.estimate !== null) {
+        const mineNext = Math.max(0, inc.mine + inc.trend.mine);
+        const theirsNext = Math.max(0, inc.theirs.estimate + inc.trend.theirs);
+        const next = theirsNext > 0 ? mineNext / theirsNext : null;
+        if (next !== null && r.estimate < 1 && next <= INCOME_BEHIND_RATIO) lean = 'behind';
+        else if ((next === null || next >= INCOME_AHEAD_RATIO) && r.estimate > 1) lean = 'ahead';
+        if (lean !== 'even') inc.byTrend = true;
+      }
+    }
+    if (lean === 'ahead' && t.evidence?.thin) {
+      lean = 'unknown';
+      inc.noLeadClaim = true;
+      delete inc.byTrend;
+    }
+    inc.lean = lean;
+    if (t.state === 'even') t.state = lean;
+  }
 
   const last = turns.at(-1);
   let heldTurns = 0;
@@ -799,6 +1023,54 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
           })),
         }
       : undefined;
+  // #436: the pace line, over the turns judged.
+  const lastIncome = last?.income;
+  const firstIncome = turns[0]?.income;
+  const pace: OutlookPace | undefined =
+    last && lastIncome && firstIncome && turns.length >= 2 && lastIncome.trend
+      ? {
+          from: turns[0]!.turn,
+          to: last.turn,
+          mine: { income: lastIncome.mine, perTurn: lastIncome.trend.mine },
+          theirs: {
+            playerId: lastIncome.theirs.playerId,
+            ...(lastIncome.theirs.team !== undefined ? { team: lastIncome.theirs.team } : {}),
+            income: lastIncome.theirs.estimate,
+            perTurn: lastIncome.trend.theirs,
+          },
+        }
+      : undefined;
+  // #436: the surrender line (advice only): my income under the line for SURRENDER_TURNS turns running.
+  const below = (t: OutlookTurn) => !!t.income && t.income.mine < INCOME_BEHIND_RATIO * t.income.theirs.estimate;
+  let turnsBelow = 0;
+  for (let i = turns.length - 1; i >= 0 && below(turns[i]!) && (i === turns.length - 1 || turns[i + 1]!.turn === turns[i]!.turn + 1); i--) turnsBelow++;
+  let surrenderLine: SurrenderLine | undefined;
+  if (last && lastIncome && turnsBelow > 0) {
+    const line = round2(INCOME_BEHIND_RATIO * lastIncome.theirs.estimate);
+    const closer = (last.bonusesInReach ?? []).find((b) => lastIncome.mine + b.value >= line);
+    const crossed = turnsBelow >= SURRENDER_TURNS && !closer;
+    const who = lastIncome.theirs.team !== undefined ? `team ${lastIncome.theirs.team}` : `player ${lastIncome.theirs.playerId}`;
+    const est = `${who}'s ~${lastIncome.theirs.estimate} (${lastIncome.calibrated ? "calibrated on past games' estimate ÷ truth" : 'the tracked figure, uncalibrated'})`;
+    const mineText = `my ${teamGame ? "team's " : ''}income ${lastIncome.mine}`;
+    const advice = crossed
+      ? `Surrender line crossed (advice only; the server never acts on it): ${mineText} has stayed below two-thirds of ${est} for ${turnsBelow} turns running (the line is ${line}), and no bonus in reach closes the gap.`
+      : closer
+        ? `Under the surrender line for ${turnsBelow} turn${turnsBelow === 1 ? '' : 's'} (advice only): ${mineText} is below two-thirds of ${est} (the line is ${line}), but bonus ${closer.bonus} (+${closer.value}) is in reach and would close the gap.`
+        : `Under the surrender line for ${turnsBelow} of the ${SURRENDER_TURNS} turns it needs (advice only): ${mineText} is below two-thirds of ${est} (the line is ${line}).`;
+    surrenderLine = {
+      crossed,
+      turnsBelow,
+      needed: SURRENDER_TURNS,
+      myIncome: lastIncome.mine,
+      theirIncome: lastIncome.theirs.estimate,
+      playerId: lastIncome.theirs.playerId,
+      ...(lastIncome.theirs.team !== undefined ? { team: lastIncome.theirs.team } : {}),
+      line,
+      calibrated: lastIncome.calibrated,
+      ...(closer ? { closer } : {}),
+      advice,
+    };
+  }
   const measure = teamGame
     ? `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). By team: my team's strength (mine and my teammates' still playing) against the strongest enemy team's, each the sum of its players'; summed, a teammate's transfers stay inside its team's high.`
     : `Strength = armies + ${k} × income; an opponent's is a range under fog (low: what is in view; high: the most it could have received and earn). Per player: my strength alone against the single strongest opponent, teams not summed.`;
@@ -853,6 +1125,27 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       reading += ` Thin evidence: the income of ${which} was read from under ${pct}% of its frontier, so "${last.state}" is not a safe reading: an opponent may be stronger than the fog shows.`;
     }
     reading += est;
+    // #436: the incomes, their range and lean, and the pace line.
+    const inc = last.income;
+    if (inc) {
+      const t = inc.theirs;
+      const whose = t.team !== undefined ? `team ${t.team}` : `player ${t.playerId}`;
+      const range = t.low === t.high ? `${t.estimate}` : `~${t.estimate} (range ${t.low}–${t.high})`;
+      const leanText =
+        inc.lean === 'unknown'
+          ? inc.noLeadClaim
+            ? 'unknown: the evidence is thin, so no lead is claimed'
+            : `unknown: the range spans both thresholds (${round2(INCOME_BEHIND_RATIO)}× and ${INCOME_AHEAD_RATIO}×)`
+          : `${inc.lean}${inc.byTrend ? ' on the trend' : ''}`;
+      reading += ` On incomes: ${teamGame ? "my team's" : 'mine'} ${inc.mine} against the strongest, ${whose}, at ${range}${inc.calibrated ? ", calibrated on past games' estimate ÷ truth" : ''}: ${leanText}.`;
+      if (inc.noLeadClaim && inc.lean !== 'unknown') reading += ' No lead is claimed on the likely high: the evidence is thin.';
+    }
+    if (pace) {
+      const sign = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+      const gap = pace.mine.perTurn > pace.theirs.perTurn ? 'my income gains on it' : pace.mine.perTurn < pace.theirs.perTurn ? 'its income gains on mine' : 'both move alike';
+      reading += ` Pace: my income ${pace.mine.income} (${sign(pace.mine.perTurn)}/turn over turns ${pace.from}–${pace.to}) against ${pace.theirs.team !== undefined ? `team ${pace.theirs.team}` : `player ${pace.theirs.playerId}`}'s ~${pace.theirs.income} (${sign(pace.theirs.perTurn)}/turn): ${gap}.`;
+    }
+    if (surrenderLine) reading += ` ${surrenderLine.advice}`;
     // #228: a likely ratio far below parity, said with what it took (or lacked) to read losing.
     const low = last.lowLikely;
     if (low) {
@@ -901,5 +1194,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     basis: `${reading} ${measure} ${thresholdsText}`,
     ...(last?.evidence ? { evidence: last.evidence } : {}),
     ...(leaning ? { leaning } : {}),
+    ...(pace ? { pace } : {}),
+    ...(surrenderLine ? { surrenderLine } : {}),
   };
 }

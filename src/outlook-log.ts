@@ -42,6 +42,11 @@ export interface OutlookLogTurn {
    * Absent on turns logged before #304.
    */
   evidence?: LoggedEvidence;
+  /**
+   * #436: my income against the strongest opponent's (its range and estimate), the lean, and whether the
+   * estimate was calibrated. Absent on turns logged before #436.
+   */
+  income?: { mine: number; low: number; high: number; estimate: number; lean: string; calibrated: boolean };
 }
 
 /** #304: {@link OutlookEvidence} as logged: name-free, without the words. */
@@ -63,7 +68,15 @@ export interface OutlookLog {
   playerId: number;
   turns: Record<string, OutlookLogTurn>;
   /** The outlook of the newest turn planned. */
-  latest?: { turn: number; state: OutlookState | null; heldTurns: number; basis: string; evidence?: LoggedEvidence };
+  latest?: {
+    turn: number;
+    state: OutlookState | null;
+    heldTurns: number;
+    basis: string;
+    evidence?: LoggedEvidence;
+    /** #436: the surrender line (advice only) on the newest turn, when under it. */
+    surrenderLine?: { crossed: boolean; turnsBelow: number; line: number };
+  };
   /** My GameFeed state once the game was seen finished (e.g. `Won`, `Eliminated`, `SurrenderAccepted`). */
   result?: string;
   /**
@@ -121,6 +134,18 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
             }
           : {}),
         ...(t.evidence ? { evidence: logged(t.evidence) } : {}),
+        ...(t.income
+          ? {
+              income: {
+                mine: t.income.mine,
+                low: t.income.theirs.low,
+                high: t.income.theirs.high,
+                estimate: t.income.theirs.estimate,
+                lean: t.income.lean,
+                calibrated: t.income.calibrated,
+              },
+            }
+          : {}),
       };
     const keep = Object.keys(log.turns)
       .map(Number)
@@ -135,6 +160,10 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
         heldTurns: outlook.heldTurns,
         basis: outlook.basis,
         ...(outlook.evidence ? { evidence: logged(outlook.evidence) } : {}),
+        // #436: the surrender line as it stood (advice only), figures only.
+        ...(outlook.surrenderLine
+          ? { surrenderLine: { crossed: outlook.surrenderLine.crossed, turnsBelow: outlook.surrenderLine.turnsBelow, line: outlook.surrenderLine.line } }
+          : {}),
       };
     await write(dir, log);
   } catch {

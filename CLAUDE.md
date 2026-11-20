@@ -2118,6 +2118,25 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn of the run lost one, `GameOutlook.leaning` is `{ toward: 'behind', turns, lost }` and the basis says
   "Leaning behind: …"; plan_turn's compact outlook carries it. Reporting only: the state, its thresholds and
   the profile's standing (#287) are unchanged.
+  **Incomes, their trend, and the surrender line (#436, owner decision of 2026-11-20).** Each turn carries `income`
+  (`OutlookIncome`): my side's income against the strongest opponent side's by estimate — its range (`low` the
+  tracked income, its visible at least; `high` the likely high's income per turn while its evidence is thin, else
+  `low`) and its estimate (the tracked figure ÷ past games' estimate ÷ truth in its coverage band, `calibration`
+  from lessons.json through `outlookCalibrationFor` in `src/tools/past-games.ts`: this format's band with
+  `MIN_CALIBRATION_SAMPLES` (5) or more, else every format's; never below its visible income; uncalibrated, the
+  tracked figure). Its `lean`: `unknown` when the range spans both lines (`INCOME_BEHIND_RATIO` ⅔ and
+  `INCOME_AHEAD_RATIO` 1.5), `behind`/`ahead` when the whole range, else the estimate, is past one, else `even`
+  unless each side's change per turn over the turns judged (`trend`), one turn on, crosses a line the ratio heads
+  to (`byTrend`). No lead is claimed at low coverage (any `evidence.thin`): `ahead` reads `unknown`, and a win on
+  the likely high alone is not read (`noLeadClaim`; a win on the bound still is). The lean replaces `even` as the
+  state (winning, losing, stalemate keep their tests; the planner reads only winning and losing), so the state can
+  read `ahead`, `behind`, `unknown`; the chat standing maps them. `GameOutlook.pace` is the pace line (both incomes
+  and their change per turn) and `surrenderLine` — ADVICE ONLY, the server never acts on it — is present while my
+  income is under ⅔ of the strongest estimate, `crossed` after `SURRENDER_TURNS` (3) turns running with no bonus in
+  reach closing the gap (`bonusesInReach`: every missing member beside my land, its visible defenders below my
+  armies beside them plus my income); plan_turn's compact outlook carries `income`, `pace` and `surrenderLine`, a
+  crossed line is a leading warning, and the outlook log keeps `income` per turn and `latest.surrenderLine`. Play
+  policy (notify the owner, surrender next turn unless he objects) lives outside the repo. Golden unchanged.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

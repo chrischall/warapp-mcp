@@ -758,3 +758,24 @@ export function lessonsSummary(file: LessonsFile): {
   }
   return { games, byFormat, calibration: calibrationSummary(all), ...excludedCounts(file.excluded) };
 }
+
+/**
+ * #436: the outlook's calibration — per coverage band, past games' tracked income ÷ the true income
+ * (geometric mean and samples): this format's band when it has `min` samples or more, else every format's
+ * band together; a band with fewer than `min` either way is left out. Pure.
+ */
+export function outlookCalibration(file: LessonsFile, format: ProfileFormat, min: number): Partial<Record<(typeof COVERAGE_BUCKETS)[number], { geoMean: number; n: number }>> {
+  let all: Calibration = {};
+  for (const f of PROFILE_FORMATS) {
+    const t = file.byFormat[f];
+    if (t && t.games > 0) all = addCalibration(all, t.calibration);
+  }
+  const own = file.byFormat[format]?.calibration ?? {};
+  const out: Partial<Record<(typeof COVERAGE_BUCKETS)[number], { geoMean: number; n: number }>> = {};
+  for (const k of COVERAGE_BUCKETS) {
+    const x = (own[k]?.n ?? 0) >= min ? own[k]! : all[k];
+    if (!x || x.n < min) continue;
+    out[k] = { geoMean: r2(Math.exp(x.logSum / x.n)), n: x.n };
+  }
+  return out;
+}

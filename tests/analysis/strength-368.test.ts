@@ -322,7 +322,13 @@ describe('(4) the outlook leans behind when it reads even while bonuses keep fal
   const lg = buildGraph(ten);
   const held = (k: number) => board(Array.from({ length: 10 }, (_, i) => (i < k ? mine(i + 1, 30) : enemy(i + 1, 10))));
   const game = { players: [{ id: ME }, { id: A }] };
-  const run = (ks: number[]) => gameOutlook({ graph: lg, me: ME, boards: ks.map((k, i) => ({ turn: 3 + i, board: held(k) })), game });
+  // #436: a high base income keeps the incomes (and their trend) inside the even band, so the strength ratio's lag shows.
+  const run = (ks: number[], baseIncome = 50) =>
+    gameOutlook({ graph: lg, me: ME, boards: ks.map((k, i) => ({ turn: 3 + i, board: held(k) })), settings: { baseIncome }, game });
+
+  it('#436: at the default base income the same slide reads behind on the incomes and their trend', () => {
+    expect(run([5, 4, 3, 2], 5).turns.map((t) => t.state)).toEqual(['even', 'behind', 'behind']);
+  });
 
   it('even for OUTLOOK_TURNS turns running, a bonus of mine lost on each: leaning behind, with the bonuses lost', () => {
     const o = run([5, 4, 3, 2]);
