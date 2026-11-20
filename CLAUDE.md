@@ -101,7 +101,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `lessons.json`, `maps-record/`, `finished/` (processed marks included), and for games still in play only
   (finished: an end-of-game record or processed mark, else a game record saying `Finished`; no record and no
   mark: unknown, left out) the boards, game records, outlook, picks, move order, teams, per-game profile turns and
-  siege memory. Never credentials, the bundle cache, the guess salt, chat cursors, maps or stats. The account is
+  siege memory and contested-bonus attempts. Never credentials, the bundle cache, the guess salt, chat cursors, maps or stats. The account is
   `--account`, else the one the board caches' `playerId` names, else the one the per-account file names name.
   The CLI prints counts and sizes only. Hosted (only with mcp-host's blob store, `blobStoreFromEnv`),
   `warapp_upload_slots` mints a signed PUT (`mintUploadSlot`) and `warapp_import_state` (confirm-gated, the
