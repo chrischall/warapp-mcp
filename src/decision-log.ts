@@ -1001,6 +1001,43 @@ export async function compactDecisionLog(
   );
 }
 
+/**
+ * Mark the logs of games known to be over `finished`, dropping nothing (each stays whole for a later
+ * truth and compaction, which accept a `finished` log): a game whose end-of-game pass captured no
+ * history (`read-failed`, `history-unreadable`) or did not run (`WARAPP_PLAYER_PROFILE=off`) would
+ * otherwise keep its log `active`, which the prune never deletes. `playerId` restricts it to that
+ * account's logs; without it the log's own owner serves (the account may be unknown, but the game is
+ * over whoever played it). A missing, unreadable, empty or already finished/compacted log is left as
+ * it is; only the head of each file is read unless it needs a write. Returns the game ids written.
+ * Never throws.
+ */
+export async function finishDecisionLogs(
+  dir: string,
+  gameIds: readonly number[],
+  playerId: number | undefined,
+  opts: DecisionLogOptions = {},
+): Promise<number[]> {
+  if ((opts.mode ?? decisionLogMode()) === 'off') return [];
+  const done: number[] = [];
+  for (const gameId of new Set(gameIds)) {
+    try {
+      const head = await headOf(decisionLogPath(dir, gameId), gameId);
+      if (head?.status !== 'active' || (playerId !== undefined && head.playerId !== playerId)) continue;
+      const written = await updateDecisionLog(
+        dir,
+        gameId,
+        head.playerId,
+        (log) => (log.status === 'active' && Object.keys(log.turns).length ? { ...log, status: 'finished' } : undefined),
+        opts,
+      );
+      if (written) done.push(gameId);
+    } catch {
+      // Missing or unreadable: nothing to close.
+    }
+  }
+  return done;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Listing and pruning
 

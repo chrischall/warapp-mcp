@@ -21,7 +21,7 @@ import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { BoardState } from '../board.js';
 import { decisionTruth } from '../analysis/decision-truth.js';
 import { captureFinished, outcomeOf, type FinishedCapture } from '../analysis/finished-game.js';
-import { compactDecisionLog, decisionLogMode, recordTruth } from '../decision-log.js';
+import { compactDecisionLog, decisionLogMode, finishDecisionLogs, recordTruth } from '../decision-log.js';
 import { teammatesOf } from '../teams.js';
 import {
   aggregateCalibration,
@@ -144,6 +144,9 @@ function remember(set: Set<string>, key: string): void {
   while (set.size > MEMO_LIMIT) set.delete(set.values().next().value as string);
 }
 
+/** The decision log's mode as `env` sets it. */
+const decisionLogModeOf = (env: EnvSource) => decisionLogMode({ WARAPP_DECISION_LOG: readEnvVar('WARAPP_DECISION_LOG', { env }) });
+
 /**
  * Games (per data dir and account) whose history request this process already spent, whatever came
  * of it: a game in here is never read again by any trigger in this process, even when no record
@@ -190,7 +193,12 @@ export async function endOfGame(
   opts: EndOfGameOptions = {},
 ): Promise<EndOfGameResult> {
   const { dataDir, env } = deps;
-  if (!profileEnabled(env)) return { status: 'off' };
+  if (!profileEnabled(env)) {
+    // #412: no pass runs, but the game is over: its decision log leaves `active` (the prune never deletes
+    // an active log), dropping nothing. The account may be unknown here (none is read with profiling off).
+    if (dataDir && seen?.state === 'Finished') await finishDecisionLogs(dataDir, [gameId], me, { mode: decisionLogModeOf(env) });
+    return { status: 'off' };
+  }
   if (!dataDir) return { status: 'no-data-dir' };
   if (me === undefined) return { status: 'account-unknown' };
   if (seen && seen.state !== 'Finished') return { status: 'not-finished' };
@@ -402,11 +410,12 @@ async function processHistory(dataDir: string, env: EnvSource, salt: string, me:
  * The decision log of a finished game (#412 task 3): with the history captured, every turn's truth and
  * every logged turn's accuracy from the FULL history boards (`h.boards`, before the finished record's
  * head/tail cut: no-gaps rule (c)); then the log is compacted (no-gaps rule (b); `full` keeps it whole).
- * Without a captured history nothing is written: the retry that brings it writes the truth, then compacts.
- * Nothing with `WARAPP_DECISION_LOG=off`. Never throws.
+ * Without a captured history the log is only marked `finished` (whole, but no longer protected from the
+ * prune): the retry that brings it writes the truth, then compacts. Nothing with `WARAPP_DECISION_LOG=off`.
+ * Never throws.
  */
 async function closeDecisionLog(dataDir: string, env: EnvSource, me: number, gameId: number, game: Game | undefined, h: CapturedHistory | undefined): Promise<void> {
-  const mode = decisionLogMode({ WARAPP_DECISION_LOG: readEnvVar('WARAPP_DECISION_LOG', { env }) });
+  const mode = decisionLogModeOf(env);
   if (mode === 'off') return;
   try {
     if (h?.graph && game) {
@@ -438,9 +447,14 @@ async function closeDecisionLog(dataDir: string, env: EnvSource, me: number, gam
       );
     }
     // Compaction follows the truth (its choice of turns reads the accuracy): with no history captured, a
-    // retry (warapp_get_game include_history) can still bring it, so the log stays whole until then. A
+    // retry (warapp_get_game include_history) can still bring it, so the log stays whole until then — but
+    // marked `finished` (the game is over), so the prune may drop it: an `active` log is never pruned, and
+    // no trigger retries the read by itself. The retry's truth and compaction accept a `finished` log. A
     // captured history with no map can never give a truth (a captured pass is not run again): compact.
-    if (!h) return;
+    if (!h) {
+      await finishDecisionLogs(dataDir, [gameId], me, { mode });
+      return;
+    }
     const lost = game ? ['lost', 'surrendered', 'eliminated', 'booted'].includes(outcomeOf(game.players, me)) : false;
     await compactDecisionLog(dataDir, gameId, me, { mode, lost });
   } catch {
@@ -555,6 +569,9 @@ export async function sweepFinished(
 ): Promise<{ processed: { gameId: number; status: EndOfGameStatus; turns?: number }[]; pending: number }> {
   // warapp_backfill_history may widen the window, never past the record bound (every game in it is protected).
   const window = gameIds.slice(0, Math.max(1, Math.min(size ?? sweepWindow(keep), keep)));
+  // #412: with profiling off no pass runs, but these games are over: their decision logs leave `active`
+  // (no request; a log already closed costs one head read).
+  if (deps.dataDir && !profileEnabled(deps.env)) await finishDecisionLogs(deps.dataDir, window, me, { mode: decisionLogModeOf(deps.env) });
   const todo: number[] = [];
   for (const id of window) if (await needsEndOfGame(deps.dataDir, deps.env, id, me)) todo.push(id);
   await refreshProcessed(deps, me, window).catch(() => undefined);

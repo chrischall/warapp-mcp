@@ -121,6 +121,10 @@ caps/pruning order, `off` mode writes nothing.
   (Review: compaction runs only once the history is captured — a failed read leaves the log whole for the
   `include_history` retry, which writes the truth and then compacts; the truth starts no log for a game
   with none logged, so truth-only files never crowd real logs out of the prune budget.)
+  (Review: a finished game whose pass captured no history — `read-failed`, `history-unreadable` — or ran no
+  pass at all — `WARAPP_PLAYER_PROFILE=off`, from the finished read or the `warapp_my_games` sweep window — has
+  its log marked `finished` without compacting (`finishDecisionLogs`), so only games still running stay
+  protected from the prune; the `include_history` retry still writes the truth and compacts.)
 - `pruneDecisionLogs` runs after writes (like `pruneBoardCaches`), at most once per process interval.
 - Add `decisions` to `STORES` + `RULES` in src/state-bundle.ts (per game: `/^(\d{1,12})\.json$/`, kept for
   finished games too — `allGames: true`) so export/import carries it; update the state-bundle tests.

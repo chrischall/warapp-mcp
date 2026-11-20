@@ -8,10 +8,10 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../src/board.js';
 import { WarappClient } from '../src/client.js';
-import { type DecisionEntry, decisionLogPath, readDecisionLog, updateDecisionLog } from '../src/decision-log.js';
+import { type DecisionEntry, decisionLogPath, pruneDecisionLogs, readDecisionLog, updateDecisionLog } from '../src/decision-log.js';
 import { finishedDir, finishedPath } from '../src/finished-store.js';
 import { playerRecordSalt } from '../src/player-record-store.js';
-import { endOfGame } from '../src/tools/end-of-game.js';
+import { endOfGame, sweepFinished } from '../src/tools/end-of-game.js';
 import { CREDS, stubFetch } from './helpers.js';
 
 const GAME = 12345679;
@@ -136,8 +136,8 @@ describe('the decision log at the end-of-game pass (#412 task 3)', () => {
     expect(existsSync(decisionLogPath(dir, GAME))).toBe(false);
   });
 
-  it('a pass whose history read fails leaves the log uncompacted; the retry writes the truth, then compacts', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
+  /** Two planned turns, then a pass whose own history read fails (a network error): `read-failed`. */
+  async function readFailedPass(dir: string): Promise<Awaited<ReturnType<typeof endOfGame>>> {
     await updateDecisionLog(
       dir,
       GAME,
@@ -145,25 +145,85 @@ describe('the decision log at the end-of-game pass (#412 task 3)', () => {
       (l) => ({ ...l, turns: { '1': planned(1, [t(1, ME, 5), t(6, FOE, 5)], 5), '2': planned(2, [t(1, ME, 4), t(5, 'fog', null), t(6, 'fog', null)], 3) } }),
       { mode: 'on' },
     );
-    const before = readFileSync(decisionLogPath(dir, GAME), 'utf8');
-    const { fetchImpl } = stubFetch(finished);
-    const seen = await new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }).getGame(GAME, { history: true, settings: true });
-    // The pass's own history read fails (a network error): no truth can be written yet.
     const failing = (async () => {
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
     const down = new WarappClient({ env: CREDS, fetchImpl: failing, sleep: async () => undefined });
-    expect((await endOfGame({ client: down, dataDir: dir, env: {} }, GAME, ME, seen)).status).toBe('read-failed');
-    // Not compacted: a retry can still bring the history, and compaction must follow the truth.
-    expect(readFileSync(decisionLogPath(dir, GAME), 'utf8')).toBe(before);
+    return endOfGame({ client: down, dataDir: dir, env: {} }, GAME, ME, await seenFinished());
+  }
+
+  async function seenFinished() {
+    const { fetchImpl } = stubFetch(finished);
+    return new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }).getGame(GAME, { history: true, settings: true });
+  }
+
+  /** A second game's log, still being played. */
+  const OTHER = 12345680;
+  const playing = (dir: string) => updateDecisionLog(dir, OTHER, ME, (l) => ({ ...l, turns: { '1': planned(1, [t(1, ME, 5)], 5) } }), { mode: 'on' });
+
+  it('a pass whose history read fails marks the log finished but whole; the retry writes the truth, then compacts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
+    expect((await readFailedPass(dir)).status).toBe('read-failed');
+    // The game is over, so the log is no longer protected from pruning; but nothing is dropped yet: a retry
+    // can still bring the history, and compaction must follow the truth.
+    const after = (await readDecisionLog(dir, GAME, ME))!;
+    expect(after.status).toBe('finished');
+    expect(after.turns['1']!.input).toBeDefined();
+    expect(after.turns['2']!.input).toBeDefined();
+    expect(after.accuracySummary).toBeUndefined();
     // The retry (warapp_get_game include_history): truth first, then compaction.
+    const { fetchImpl } = stubFetch(finished);
     const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined });
+    const seen = await seenFinished();
     expect((await endOfGame({ client, dataDir: dir, env: {} }, GAME, ME, seen, { history: seen, retry: true })).status).toBe('captured');
     const log = (await readDecisionLog(dir, GAME, ME))!;
     expect(log.status).toBe('compacted');
     expect(log.turns['2']!.accuracy!.estimates[0]).toMatchObject({ estimate: 3, truth: 9 });
     expect(log.turns['2']!.accuracy!.myIncome).toBe(5);
     expect(log.accuracySummary).toBeDefined();
+  });
+
+  it('a read-failed pass leaves a log the prune can drop when over the cap (a game still played stays)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
+    await playing(dir);
+    expect((await readFailedPass(dir)).status).toBe('read-failed');
+    expect(await pruneDecisionLogs(dir, { maxGames: 1 })).toEqual([GAME]);
+    expect(existsSync(decisionLogPath(dir, GAME))).toBe(false);
+    expect((await readDecisionLog(dir, OTHER, ME))!.status).toBe('active');
+  });
+
+  it('with WARAPP_PLAYER_PROFILE=off a finished game still closes its log (finished, nothing dropped), so the caps hold', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
+    await playing(dir);
+    await updateDecisionLog(dir, GAME, ME, (l) => ({ ...l, turns: { '1': planned(1, [t(1, ME, 5), t(6, FOE, 5)], 5) } }), { mode: 'on' });
+    const { fetchImpl, calls } = stubFetch(finished);
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined });
+    const off = { WARAPP_PLAYER_PROFILE: 'off' };
+    const seen = await seenFinished();
+    // warapp_get_game with profiling off knows no account (finishedAccount reads none): the log's own owner serves.
+    expect((await endOfGame({ client, dataDir: dir, env: off }, GAME, undefined, seen)).status).toBe('off');
+    expect(calls).toHaveLength(0);
+    const log = (await readDecisionLog(dir, GAME, ME))!;
+    expect(log.status).toBe('finished');
+    expect(log.turns['1']!.input).toBeDefined();
+    // A game shown still in play is not closed.
+    expect((await endOfGame({ client, dataDir: dir, env: off }, OTHER, ME, { ...seen, id: OTHER, state: 'Playing' })).status).toBe('off');
+    expect((await readDecisionLog(dir, OTHER, ME))!.status).toBe('active');
+    expect(await pruneDecisionLogs(dir, { maxGames: 1 })).toEqual([GAME]);
+  });
+
+  it('with WARAPP_PLAYER_PROFILE=off the warapp_my_games sweep closes the finished games\' logs, with no request', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
+    await playing(dir);
+    await updateDecisionLog(dir, GAME, ME, (l) => ({ ...l, turns: { '1': planned(1, [t(1, ME, 5), t(6, FOE, 5)], 5) } }), { mode: 'on' });
+    const { fetchImpl, calls } = stubFetch(finished);
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined });
+    const r = await sweepFinished({ client, dataDir: dir, env: { WARAPP_PLAYER_PROFILE: 'off' } }, ME, [GAME, 999]);
+    expect(r).toEqual({ processed: [], pending: 0 });
+    expect(calls).toHaveLength(0);
+    expect((await readDecisionLog(dir, GAME, ME))!.status).toBe('finished');
+    expect((await readDecisionLog(dir, OTHER, ME))!.status).toBe('active');
+    expect(existsSync(decisionLogPath(dir, 999))).toBe(false);
   });
 
   it('writes nothing with WARAPP_DECISION_LOG=off', async () => {
