@@ -59,6 +59,7 @@ function localDir(): string {
     put(dir, `${s}/${DONE}.json`, { gameId: DONE });
   }
   put(dir, `siege/${ACTIVE}-${ME}.json`, { v: 1 });
+  put(dir, `bonus-attempts/${ACTIVE}-${ME}.json`, { v: 1 }); // #410
   put(dir, 'bundle/known-good.json', { v: 1 });
   put(dir, 'guess-salt', 'c'.repeat(32));
   put(dir, `chat/${ACTIVE}.json`, { v: 1 });
@@ -99,6 +100,7 @@ describe('collectExport', () => {
         `move-order/${ACTIVE}.json`,
         `teams/${ACTIVE}.json`,
         `siege/${ACTIVE}-${ME}.json`,
+        `bonus-attempts/${ACTIVE}-${ME}.json`,
       ].sort(),
     );
     expect(result.leftOut).toEqual({ finishedGames: 1, unknownGames: 1, otherAccountFiles: 1 });

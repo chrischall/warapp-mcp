@@ -7,7 +7,7 @@
 // deal record and the per-game ledgers, the opponent profiles, the lessons, the map records and the
 // end-of-game records with their processed marks — and, for games still in play only, the per-game
 // files the planner reads (boards, game records, outlook, picks, move order, teams, the per-game
-// profile turns and siege memory). Never: credentials (`.env`, `session.json`), the client bundle
+// profile turns, siege memory and contested-bonus attempts). Never: credentials (`.env`, `session.json`), the client bundle
 // cache, the guess salt, chat cursors, the map cache and stats (all rebuilt), nor the per-game files
 // of a finished game. A path outside {@link RULES} is never read on export nor written on import.
 //
@@ -62,6 +62,7 @@ export const STORES = [
   'moveOrder',
   'teams',
   'siege',
+  'bonusAttempts',
 ] as const;
 export type StoreName = (typeof STORES)[number];
 
@@ -92,6 +93,8 @@ const RULES: readonly Rule[] = [
   { store: 'moveOrder', dir: 'move-order', name: /^(\d{1,12})\.json$/, game: 'game' },
   { store: 'teams', dir: 'teams', name: /^(\d{1,12})\.json$/, game: 'game' },
   { store: 'siege', dir: 'siege', name: /^(\d{1,12})-(\d{1,20})\.json$/, game: 'game-account' },
+  // #410: the planner's contested-bonus attempt and drop memory (#405, src/bonus-attempt-store.ts).
+  { store: 'bonusAttempts', dir: 'bonus-attempts', name: /^(\d{1,12})-(\d{1,20})\.json$/, game: 'game-account' },
 ];
 
 /** Top-level entries keyed by the salt: moved aside whole under `replace` when the salt changes. */
