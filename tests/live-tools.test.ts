@@ -977,6 +977,78 @@ describe('warapp_get_chat', () => {
       });
     });
 
+    describe('older messages (#363, #387): GameRefresh leaves out what war.app counts as seen', () => {
+      const OLDEST = '999900000000000000';
+      const MINE: SyntheticMessage = { id: 10, date: at(5), from: ANN.inGame, text: 'gl hf', turn: 1 };
+      const TEAM: SyntheticMessage = { id: 3, date: at(3), from: BOB.inGame, text: 'push north', channel: 1, turn: 1 };
+      const PRIVATE: SyntheticMessage = { id: 2, date: at(2), from: BOB.inGame, text: 'truce?', privateTo: ANN.inGame, turn: 1 };
+      function server(opts: { retrieve?: () => Partial<ReplyFrame>; history?: () => Partial<ReplyFrame> } = {}) {
+        const asked: Array<Record<string, unknown>> = [];
+        const warapp = routes({
+          [Method.GameRefresh]: () => ({ body: (w) => writeGameDetailsAndChat(w, [MINE]) }),
+          [Method.RetrieveChat]: (req) => {
+            const r = req.body;
+            asked.push({ m: 'RetrieveChat', gameId: r.int32(), publicBefore: r.string(), teamBefore: r.string() });
+            return opts.retrieve ? opts.retrieve() : { body: (w) => writeSendChatReply(w, [TEAM]) };
+          },
+          [Method.RetrievePrivateMessageHistory]: (req) => {
+            const r = req.body;
+            asked.push({ m: 'RetrievePrivateMessageHistory', gameId: r.int32(), before: r.string(), counterpart: r.int32() });
+            return opts.history ? opts.history() : { body: (w) => writeSendChatReply(w, [PRIVATE]) };
+          },
+        });
+        return { asked, warapp };
+      }
+
+      it('asks for what is older than the oldest message received per channel, and per private counterpart', async () => {
+        const s = server();
+        h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: s.warapp });
+        const p = payload<{ messages: Array<Record<string, unknown>> } & Record<string, unknown>>(await h.call('warapp_get_chat', { game_id: GAME }));
+        // The client's "show older messages": the oldest id received (public: 10), else 9999E14 (team: none).
+        expect(s.asked).toEqual([
+          { m: 'RetrieveChat', gameId: GAME, publicBefore: '10', teamBefore: OLDEST },
+          { m: 'RetrievePrivateMessageHistory', gameId: GAME, before: OLDEST, counterpart: BOB.inGame },
+        ]);
+        expect(p.source).toBe('web');
+        expect(p.messages.map((m) => [m.channel, m.text, m.mine])).toEqual([
+          ['private', '⟦truce?⟧', false],
+          ['team', '⟦push north⟧', false],
+          ['public', '⟦gl hf⟧', true],
+        ]);
+        // A private message to me says so, for the watcher (#387).
+        expect(p.messages[0]).toMatchObject({ toMe: true, to: { id: Number(ANN.feed) } });
+        expect(p.messages[1]).not.toHaveProperty('toMe');
+        expect(p.unread).toEqual({ public: 0, team: 1, private: 1 });
+      });
+
+      it('a message read twice is listed once', async () => {
+        const s = server({ retrieve: () => ({ body: (w) => writeSendChatReply(w, [TEAM, MINE]) }) });
+        h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: s.warapp });
+        const p = payload<{ messages: unknown[] }>(await h.call('warapp_get_chat', { game_id: GAME }));
+        expect(p.messages).toHaveLength(3);
+      });
+
+      it('a failed or unreadable older read keeps what GameRefresh returned', async () => {
+        const s = server({
+          retrieve: () => ({ error: { code: 17, message: 'x' } }),
+          history: () => ({ body: (w) => w.bool(true).bool(true).int32(1) }),
+        });
+        h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: s.warapp });
+        const p = payload<{ messages: Array<Record<string, unknown>> } & Record<string, unknown>>(await h.call('warapp_get_chat', { game_id: GAME }));
+        expect(p.source).toBe('web');
+        expect(p.messages.map((m) => m.text)).toEqual(['⟦gl hf⟧']);
+        expect(p.olderUnread).toEqual(['public', 'team', 'private']);
+      });
+
+      it('no private history when the game turns private messages off', async () => {
+        const s = server();
+        const g = game('Playing');
+        h = await liveHarness({ feed: [{ ...g, settings: { ...settingsOf(), PrivateMessaging: false } }], pages: SIGNED_IN_ANN, warapp: s.warapp });
+        await h.call('warapp_get_chat', { game_id: GAME });
+        expect(s.asked.map((a) => a.m)).toEqual(['RetrieveChat']);
+      });
+    });
+
     it('falls back to GameFeed when GameRefresh fails or answers nothing readable', async () => {
       for (const warapp of [
         routes({ [Method.GameRefresh]: () => ({ error: { code: 17, message: 'not in game' } }) }),

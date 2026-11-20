@@ -265,7 +265,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `GameRefresh` (40, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
   fields by read order (243: 12 fields, the shared images at 5 and the reactions at 7, both optional lists), a private counterpart first, then a game group (`unknown`), then the channel,
   -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
-  failure, GameFeed's `chat` (no channel: `unknown`). **A web read with fewer messages than GameFeed's chat (#313:
+  failure, GameFeed's `chat` (no channel: `unknown`). **GameRefresh leaves out messages war.app counts as seen
+  (#363: an own team message), so the web read also asks `RetrieveChat` (45) and, unless private messaging is off,
+  `RetrievePrivateMessageHistory` (46) per other human seat (at most `MAX_PRIVATE_HISTORY`, 8)** — the client's "show
+  older messages", markers the oldest id received or `999900000000000000` (`OLDEST_CHAT_MARKER`) — merged by id; a
+  failed one is named in `olderUnread`. A private message to me carries `toMe: true`; inbox entries count them (#387). **A web read with fewer messages than GameFeed's chat (#313:
   a finished game's surrender line was missing) uses GameFeed's too**, from the GameFeed read the tool already made
   (`readChat` in `src/tools/chat.ts`, no extra request): with no web message GameFeed's list stands in, else the
   GameFeed messages no web message matches (same sender, times within a second, or the same text when either has no

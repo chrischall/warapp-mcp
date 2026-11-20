@@ -7,6 +7,9 @@ import {
   writeSendChatParams,
   writeGameRefreshParams,
   writeRegisterChatViewParams,
+  writeRetrieveChatParams,
+  writeRetrievePrivateMessageHistoryParams,
+  OLDEST_CHAT_MARKER,
   Method,
   methodName,
   writeAttackTransferOrder,
@@ -158,6 +161,39 @@ describe('RegisterChatView params (UNVERIFIED live, from the client writer; #311
   it('refuses a mark that is not a message id', () => {
     expect(() => writeRegisterChatViewParams(new Writer(), { gameId: 5, publicMark: '1a' })).toThrow(RangeError);
     expect(() => writeRegisterChatViewParams(new Writer(), { gameId: 5, groupMarks: new Map([[1, '']]) })).toThrow(RangeError);
+  });
+});
+
+describe('RetrieveChat / RetrievePrivateMessageHistory params (the "show older messages" reads; #363, #387)', () => {
+  // The client's "nothing received yet" marker, 9999E14, as text: present, length 18, "9999" then 14 zeros.
+  const OLDEST = '01' + '12' + '39393939' + '30'.repeat(14);
+
+  it('are methods 45 and 46', () => {
+    expect(Method.RetrieveChat).toBe(45);
+    expect(methodName(45)).toBe('RetrieveChat');
+    expect(Method.RetrievePrivateMessageHistory).toBe(46);
+    expect(methodName(46)).toBe('RetrievePrivateMessageHistory');
+    expect(OLDEST_CHAT_MARKER).toBe('999900000000000000');
+  });
+
+  it('RetrieveChat: game id, then the public and team "older than" markers; none received is 9999E14', () => {
+    expect(hex((w) => writeRetrieveChatParams(w, { gameId: 5 }))).toBe('05000000' + OLDEST + OLDEST);
+    expect(hex((w) => writeRetrieveChatParams(w, { gameId: 0x0102, publicBefore: '12' }))).toBe('02010000' + '01023132' + OLDEST);
+    expect(hex((w) => writeRetrieveChatParams(w, { gameId: 5, teamBefore: '7' }))).toBe('05000000' + OLDEST + '010137');
+  });
+
+  it('RetrievePrivateMessageHistory: game id, the "older than" marker, then the counterpart (int32)', () => {
+    expect(hex((w) => writeRetrievePrivateMessageHistoryParams(w, { gameId: 5, counterpart: 765432 }))).toBe(
+      '05000000' + OLDEST + 'F8AD0B00',
+    );
+    expect(hex((w) => writeRetrievePrivateMessageHistoryParams(w, { gameId: 5, before: '30', counterpart: 765432 }))).toBe(
+      '05000000' + '01023330' + 'F8AD0B00',
+    );
+  });
+
+  it('refuses a marker that is not a message id', () => {
+    expect(() => writeRetrieveChatParams(new Writer(), { gameId: 5, publicBefore: '-1' })).toThrow(RangeError);
+    expect(() => writeRetrievePrivateMessageHistoryParams(new Writer(), { gameId: 5, before: 'x', counterpart: 1 })).toThrow(RangeError);
   });
 });
 

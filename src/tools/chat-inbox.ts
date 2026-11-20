@@ -159,6 +159,8 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
           sources.add(read.source);
           const messages = fresh_.slice(-n).map((l) => shown(l, true, game.players, byInGame, me));
           const name = game.name === undefined ? null : untrustedText(game.name);
+          // #387: new private messages addressed to me (diplomacy), counted for the watcher.
+          const toMe = me ? fresh_.filter((l) => l.channel === 'private' && l.to === me.inGameId).length : 0;
           withNew.push({
             // #322/#323: the game as warapp_get_chat nests it; the top-level keys stay for existing callers.
             game: { id: game.id, name, state: game.state },
@@ -167,8 +169,10 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
             state: game.state,
             source: read.source,
             ...feedFillFields(read),
+            ...(read.olderUnread ? { olderUnread: read.olderUnread } : {}),
             unread,
             newCount: fresh_.length,
+            ...(toMe ? { toMe } : {}),
             messages,
             ...(mark_seen ? { markedSeen: marked ?? [] } : {}),
             ...(marked && fresh_.length > messages.length ? { markedUnshown: fresh_.length - messages.length } : {}),
