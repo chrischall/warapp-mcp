@@ -2,7 +2,7 @@
 // chat), the web-client RPC channel through the bridge (board, picks, sends),
 // and the client bundle whose readers decode the board.
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
-import { chatAutomationMode, type ChatAutomation } from '../chat-automation.js';
+import { chatAutomationMode, chatBlocksTurnMode, type ChatAutomation, type ChatBlocksTurn } from '../chat-automation.js';
 import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
 import { type DecisionLogMode, decisionLogMode } from '../decision-log.js';
@@ -64,6 +64,8 @@ export interface LiveContext {
   decisionLog?: DecisionLogMode;
   /** The chat automation gate (#415, `WARAPP_CHAT_AUTOMATION`); absent: read from the process environment. */
   chatAutomation?: ChatAutomation;
+  /** The chat-blocks-the-turn gate (#415 task 4b, `WARAPP_CHAT_BLOCKS_TURN`); absent: read from the process environment. */
+  chatBlocksTurn?: ChatBlocksTurn;
   /** A hosted child (src/hosted.ts): no session is ever linked there, so no hint suggests linking one. */
   hosted?: boolean;
   /** A hosted child signed in by mcp-host (a captured WARAPP_AUTH_TOKEN, #333): hints point at its "Sign in". */
@@ -310,6 +312,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     dataDir: dir,
     decisionLog: decisionLogMode(opts.env ?? process.env),
     chatAutomation: chatAutomationMode(opts.env ?? process.env),
+    chatBlocksTurn: chatBlocksTurnMode(opts.env ?? process.env),
     hosted: isHosted(opts.env ?? process.env),
     hostSignIn: hostedSession(opts.env ?? process.env) !== null,
     client: opts.client,

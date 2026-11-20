@@ -1103,7 +1103,7 @@ describe('warapp_plan_turn — threat trend', () => {
     const log = readFileSync(join(h.dataDir, 'decisions', `${GAME}.json`), 'utf8');
     const turn = JSON.parse(log).turns['3'] as { chat?: unknown[] };
     expect(turn.chat).toEqual([
-      { time: '2026-11-01T10:01:00Z', from: Number(BOB.feed), channel: 'unknown', toMe: false, intents: ['truce-proposal'], confidence: 'high', stance: 'price' },
+      { time: '2026-11-01T10:01:00Z', from: Number(BOB.feed), channel: 'unknown', toMe: false, intents: ['truce-proposal'], confidence: 'high', stance: 'price', blocks: false },
     ]);
     expect(log).not.toMatch(/truce\?|no attacks|Bob|gl hf/);
   });

@@ -182,12 +182,12 @@ describe('packaging for the browser bridge (phase 2)', () => {
     expect(mint).toMatch(/^\s+- name: WARAPP_WS_PORT$/m);
   });
 
-  it('WARAPP_CHAT_AUTOMATION is declared everywhere, optional and off by default (#415)', () => {
+  it.each(['WARAPP_CHAT_AUTOMATION', 'WARAPP_CHAT_BLOCKS_TURN'])('%s is declared everywhere, optional and off by default (#415)', (name) => {
     const manifest = read('../manifest.json') as {
       server: { mcp_config: { env: Record<string, string> } };
       user_config: Record<string, { required?: boolean; description?: string }>;
     };
-    const ref = manifest.server.mcp_config.env.WARAPP_CHAT_AUTOMATION;
+    const ref = manifest.server.mcp_config.env[name];
     expect(ref).toMatch(/^\$\{user_config\.(\w+)\}$/);
     const key = /user_config\.(\w+)/.exec(ref!)![1]!;
     expect(manifest.user_config[key]?.required).toBe(false);
@@ -195,11 +195,11 @@ describe('packaging for the browser bridge (phase 2)', () => {
     const server = read('../server.json') as {
       packages: Array<{ environmentVariables: Array<{ name: string; isRequired: boolean; description: string }> }>;
     };
-    const v = server.packages[0]!.environmentVariables.find((e) => e.name === 'WARAPP_CHAT_AUTOMATION');
+    const v = server.packages[0]!.environmentVariables.find((e) => e.name === name);
     expect(v?.isRequired).toBe(false);
     expect(v?.description).toMatch(/off by default/i);
-    const entry = mint.slice(mint.indexOf('- name: WARAPP_CHAT_AUTOMATION'));
-    expect(entry).toMatch(/^- name: WARAPP_CHAT_AUTOMATION\n\s+required: false\n\s+help: >-[\s\S]*?off by default/i);
+    const entry = mint.slice(mint.indexOf(`- name: ${name}\n`));
+    expect(entry).toMatch(new RegExp(`^- name: ${name}\\n\\s+required: false\\n\\s+help: >-[\\s\\S]*?off by default`, 'i'));
   });
 
   it('manifest.json and server.json expose WARAPP_WS_PORT as optional', () => {
@@ -867,6 +867,18 @@ describe('packaging for chat as game information (#415)', () => {
     expect(all).toContain('D2 automated chat is off unless `WARAPP_CHAT_AUTOMATION=on`');
     for (const s of ['src/analysis/chat-intent.ts', 'src/analysis/chat-advice.ts', 'src/analysis/chat-read.ts', 'src/chat-automation.ts']) expect(all, s).toContain(s);
     expect(all).toContain('**Fourteen tools write, all confirm-gated:**');
+  });
+
+  it('the chat turn block (task 4b): README, the skill and CLAUDE.md name WARAPP_CHAT_BLOCKS_TURN, off by default, and chat_reviewed', () => {
+    const vars = readme.slice(readme.indexOf('| Variable |'), readme.indexOf('The server starts without credentials'));
+    const row = vars.split('\n').find((l) => l.startsWith('| `WARAPP_CHAT_BLOCKS_TURN` |')) ?? '';
+    expect(row).toMatch(/off/);
+    expect(row).toContain('chat_reviewed');
+    const start = skill.indexOf('## Chat and diplomacy');
+    const section = flat(skill.slice(start, skill.indexOf('\n## ', start + 1)));
+    for (const s of ['WARAPP_CHAT_BLOCKS_TURN', '`chatBlocks`', '`chat_reviewed: true`']) expect(section, s).toContain(s);
+    const all = flat(claude);
+    for (const s of ['src/analysis/chat-blocks.ts', 'WARAPP_CHAT_BLOCKS_TURN', '`chat_reviewed`', '`chatWarnings`', '`chatBlocks`']) expect(all, s).toContain(s);
   });
 });
 

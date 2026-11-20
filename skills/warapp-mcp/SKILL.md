@@ -918,6 +918,15 @@ Withholding is free: nothing obliges a message to say everything.
   and the draft to the owner and let them send it. With `on` and a draft, `send` holds the exact
   `warapp_send_chat` arguments (`automated: true`); still check the draft against the honesty line, and it
   still waits on the confirm gate. Advice never changes an order: the plan never reads chat.
+- **Chat can block a turn, rarely.** `warapp_plan_turn`'s `chatBlocks` (in its `chat` block) lists the unread messages that may
+  change this turn — only at high confidence, from this turn or the last: a truce message from a partner (or from
+  a player I proposed to), a threat or gang-up call aimed at me from a player beside me, a surrender waiting on my
+  acceptance, a teammate privately asking about this turn's orders, cards or gifts. Income checks, banter, gg and
+  old or uncertain messages never block. Read those messages before submitting and tell the owner. The gate
+  `WARAPP_CHAT_BLOCKS_TURN` is off by default: `warapp_submit_turn`'s preview then only warns (`chatWarnings`).
+  With it on the submit refuses until the messages are marked seen (`warapp_get_chat` `mark_seen: true`) or it is
+  sent with `chat_reviewed: true` — only after reading them and deciding with the owner that the orders stand.
+  The orders never read chat.
 - **Check whether diplomacy is allowed first.** `warapp_advise_diplomacy`'s `messaging`: where
   `privateMessaging` is `false` (or `null`: the feed did not say), or the host's `description` says no
   alliances (or anything like it), propose nothing — and accept no deal where the host forbids alliances. No deal before a game starts,

@@ -373,6 +373,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `automated: true` (an agent's own reply) is refused before any request with the gate off
   (`AUTOMATED_CHAT_OFF`); with it on it goes through the usual confirm gate and the result records `automated`.
   A manual send (the default) is unchanged. Not a new write tool.
+  **Chat can block a turn (task 4b), behind a second gate:** `WARAPP_CHAT_BLOCKS_TURN` (`chatBlocksTurnMode`, `off`
+  unless `on`; declared in all three files like the first). `src/analysis/chat-blocks.ts` (`chatBlocks`, pure) blocks a
+  message only when ALL hold: another player's, unread by the cursor, its GameFeed `turn` this turn or the last (read
+  as turns completed when sent, UNVERIFIED), its intent's own strength `high`, and one of four cases — a truce
+  end notice/proposal/accept from a partner (`chatTruces`: active, in notice, or my proposal pending); a threat or
+  gang-up naming me (my name, or private to me) from a player in contact on this board; a surrender ask with my
+  acceptance owed; a teammate's private question about this turn's orders/cards/gifts (its own pattern,
+  `team-orders-ask`). A context not read (contact, surrenders: `null`) never blocks. `turnChatBlocks`
+  (`src/tools/chat-advice.ts`) feeds it from the GameFeed chat of the tool's own game read (`chatSummary`): the
+  submit now asks that read with `GetChat=true`, no extra request (asserted), and reads no surrenders, so case 3
+  only shows in warapp_plan_turn. `warapp_plan_turn` reports `chat.chatBlocks` (+ `chatBlocksGate`,
+  `CHAT_BLOCKS_NOTE`; report only, orders unchanged — asserted). `warapp_submit_turn`: gate off, the preview's
+  `chatWarnings` ("would block with WARAPP_CHAT_BLOCKS_TURN=on: …"), never a refusal; on, refused before sending,
+  naming each message by id (else time), sender id, intent and why, unless `chat_reviewed` is true (the result's
+  `chatReviewed` lists what it waived) or the messages were marked seen since. The decision log's chat entries
+  carry `blocks` (the plan's every entry; the submit sets only the flag, `blockFlagOnly`).
 - **In-app notifications (#311) are `GetInAppNotifications` (323) via `warapp_get_notifications`** (read-only,
   hosted too; `src/notifications.ts`, the reply decoded by the bundle's readers by type name —
   `GetInAppNotificationsReturn` / `InAppNotification`, 7 fields by read order — like GetMyGames). Name-free

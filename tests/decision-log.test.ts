@@ -670,6 +670,13 @@ describe('the chat block (#415 task 3)', () => {
     expect(compactLog(log).turns['2']!.chat).toHaveLength(2);
   });
 
+  it("the submit's block flag (task 4b) sets only `blocks` on the plan's reading of the message", async () => {
+    await record(2);
+    await recordChat(dir, GAME, ME, 2, [msg({ blocks: false })]);
+    await recordChat(dir, GAME, ME, 2, [msg({ intents: ['threat'], stance: undefined, blocks: true })], { blockFlagOnly: true });
+    expect((await readDecisionLog(dir, GAME))!.turns['2']!.chat).toEqual([msg({ blocks: true })]);
+  });
+
   it("a re-plan keeps both the turn's chat (#415) and warapp_check_plan's summary (#437)", async () => {
     await record(2);
     await recordChat(dir, GAME, ME, 2, [msg()]);

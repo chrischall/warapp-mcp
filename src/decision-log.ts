@@ -1081,7 +1081,7 @@ export async function recordChat(
   playerId: number,
   turn: number,
   chat: readonly LoggedChatMessage[],
-  opts: DecisionLogOptions = {},
+  opts: DecisionLogOptions & { blockFlagOnly?: boolean } = {},
 ): Promise<boolean> {
   try {
     const kept = chat.map(keptChat).filter((m): m is LoggedChatMessage => m !== undefined);
@@ -1095,8 +1095,11 @@ export async function recordChat(
         if (!e) return undefined;
         const merged = new Map((e.chat ?? []).map((m) => [chatKey(m), m]));
         for (const m of kept) {
+          // A later reading replaces the message's fields, keeping those it does not give; a block flag alone (the
+          // submit's, #415 task 4b) only sets `blocks` on the plan's reading of the message.
+          const was = merged.get(chatKey(m));
           merged.delete(chatKey(m));
-          merged.set(chatKey(m), m);
+          merged.set(chatKey(m), was ? (opts.blockFlagOnly ? { ...was, blocks: m.blocks } : { ...was, ...m }) : m);
         }
         return { ...log, turns: { ...log.turns, [String(turn)]: { ...e, chat: [...merged.values()].slice(-MAX_LOGGED_CHAT) } } };
       },

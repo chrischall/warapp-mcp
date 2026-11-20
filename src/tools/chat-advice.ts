@@ -7,6 +7,10 @@
 // message text goes beside them (through `untrustedBody`) so the calling model reads it and may disagree.
 import { chatTruces, compactAdvice, readChatMessage, type ChatReadContext, type ChatReadPlayer, type ChatReading, type ChatStandingRead } from '../analysis/chat-read.js';
 import { chatAutomationMode } from '../chat-automation.js';
+import { chatBlocks, type ChatBlock, type ChatBlockMessage } from '../analysis/chat-blocks.js';
+import type { ChatTruce } from '../analysis/chat-read.js';
+import type { BoardState } from '../board.js';
+import type { PendingSurrender } from '../surrender-pending.js';
 import type { ChatLine } from '../chat.js';
 import type { LoggedChatMessage } from '../decision-log.js';
 import { playersByInGameId } from '../live.js';
@@ -249,4 +253,124 @@ export function planStanding(a: {
     ...(top ? { strongest: { playerId: top.playerId, income: top.estimate, thin: !!top.thinEvidence } } : {}),
     basis: "this turn's plan",
   };
+}
+
+/** What `turnChatBlocks` reads of the turn, beyond the chat itself (no war.app request of its own). */
+export interface TurnChatBlockInput {
+  /** My GameFeed id. */
+  meId: number;
+  /** The live board this turn (owners by GameFeed id), for who is in contact; absent: contact unknown. */
+  board?: Pick<BoardState, 'territories'>;
+  neighbors?: ReadonlyMap<number, readonly number[]>;
+  /** The truces of the agreement ledger (`chatTruces`). */
+  truces?: ReadonlyMap<number, ChatTruce>;
+  /** The surrenders pending (the game details); null or absent: not read, so case 3 never blocks. */
+  surrenders?: readonly Pick<PendingSurrender, 'player' | 'owedByMe'>[] | null;
+}
+
+/** The players (GameFeed ids) holding a territory beside one of mine on `board`. Pure. */
+export function playersInContact(board: Pick<BoardState, 'territories'>, neighbors: ReadonlyMap<number, readonly number[]>, meId: number): Set<number> {
+  const owner = new Map<number, number>();
+  for (const t of board.territories) if (t.owner.kind === 'player') owner.set(t.territoryId, t.owner.playerId);
+  const out = new Set<number>();
+  for (const [id, who] of owner) {
+    if (who !== meId) continue;
+    for (const n of neighbors.get(id) ?? []) {
+      const o = owner.get(n);
+      if (o !== undefined && o !== meId) out.add(o);
+    }
+  }
+  return out;
+}
+
+/**
+ * The messages of a plan's chat read (GameFeed's chat from the game read the tool already made, flagged unread by
+ * the cursor) that would block the turn (#415 task 4b). Pure over what was read; never throws.
+ */
+export function turnChatBlocks(read: { lines: readonly ChatLine[]; fresh: readonly boolean[]; me: Me }, game: Game, a: TurnChatBlockInput): ChatBlock[] {
+  try {
+    const byInGame = playersByInGameId(game.players);
+    const mine = (l: ChatLine) => read.me !== undefined && l.sender === read.me.inGameId;
+    const messages: ChatBlockMessage[] = read.lines.map((l, i) => {
+      let senderId: number | null = null;
+      if (l.sender !== null) senderId = (byInGame.get(l.sender) ?? game.players.find((p) => p.id === l.sender))?.id ?? null;
+      else if (l.senderName !== undefined) {
+        const named = game.players.filter((p) => p.name === l.senderName);
+        senderId = named.length === 1 ? named[0]!.id : null;
+      }
+      const toMe = l.channel === 'private' && read.me !== undefined && l.to === read.me.inGameId;
+      const same = (x: ChatLine) => (l.channel === 'private' ? x.channel === 'private' && x.to === l.sender : x.channel === l.channel);
+      const myRecent = read.lines
+        .slice(0, i)
+        .filter((x) => mine(x) && same(x))
+        .slice(-MY_RECENT)
+        .map((x) => x.text);
+      return {
+        ...(l.id !== undefined ? { id: l.id } : {}),
+        ...(l.time !== undefined ? { time: l.time } : {}),
+        senderId: mine(l) ? a.meId : senderId,
+        text: l.text,
+        turn: l.turn,
+        channel: l.channel,
+        ...(toMe ? { toMe: true } : {}),
+        unread: read.fresh[i] === true,
+        ...(myRecent.length ? { myRecent } : {}),
+      };
+    });
+    const owed = a.surrenders === null || a.surrenders === undefined ? null : new Set(a.surrenders.flatMap((s) => (s.owedByMe === true && s.player !== null ? [s.player] : [])));
+    return chatBlocks(messages, {
+      meId: a.meId,
+      turnsCompleted: game.numberOfTurns ?? -1,
+      players: game.players.map((p) => ({ id: p.id, name: p.name, ...(p.team !== undefined ? { team: p.team } : {}) })),
+      ...(a.truces ? { truces: a.truces } : {}),
+      inContact: a.board && a.neighbors ? playersInContact(a.board, a.neighbors, a.meId) : null,
+      surrenderOwedBy: owed,
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** What every view carrying `chatBlocks` says beside them. */
+export const CHAT_BLOCKS_NOTE =
+  '`chatBlocks` are unread messages that may change this turn (a truce message from a partner, a threat aimed at you from a ' +
+  "player beside you, a surrender waiting on your acceptance, a teammate's question about this turn): read them before " +
+  'submitting. With WARAPP_CHAT_BLOCKS_TURN=on warapp_submit_turn refuses until they are marked seen or it is given ' +
+  '`chat_reviewed: true`; off (the default), its preview only warns. The orders never read chat.';
+
+/** The decision log's chat entries with `blocks` set on each message a block names (by id, else time). Pure. */
+export function withBlocks(logged: readonly LoggedChatMessage[], blocks: readonly ChatBlock[]): LoggedChatMessage[] {
+  const keys = new Set(blocks.flatMap((b) => b.messageIds.map((k) => `${b.from}|${k}`)));
+  return logged.map((m) => {
+    const key = m.id ?? m.time;
+    return key !== undefined && keys.has(`${m.from}|${key}`) ? { ...m, blocks: true } : { ...m, blocks: false };
+  });
+}
+
+/**
+ * The decision log's entries for the messages `blocks` name (ids and labels only, `blocks: true`), keyed as
+ * warapp_plan_turn logged them so the submit's flag lands on the same message. Pure; never throws.
+ */
+export function blockedLog(read: { lines: readonly ChatLine[]; me: Me }, blocks: readonly ChatBlock[]): LoggedChatMessage[] {
+  try {
+    return blocks.flatMap((b) => {
+      const l = read.lines[b.index];
+      if (!l) return [];
+      return [
+        {
+          ...(l.id !== undefined ? { id: l.id } : {}),
+          ...(l.time !== undefined ? { time: l.time } : {}),
+          ...(l.turn !== null ? { turn: l.turn } : {}),
+          from: b.from,
+          channel: l.channel,
+          toMe: l.channel === 'private' && read.me !== undefined && l.to === read.me.inGameId,
+          intents: [b.intent],
+          confidence: 'high' as const,
+          blocks: true,
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
 }
