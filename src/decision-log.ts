@@ -25,7 +25,6 @@
 // (no compaction).
 import { open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { MyOrders } from './analysis/opponents.js';
 import type { OutlookState } from './analysis/outlook.js';
 import type { PlanInput, TurnPlan } from './analysis/plan/shared.js';
 import type { BoardState, TerritoryState } from './board.js';
@@ -124,6 +123,50 @@ export interface LoggedDecision {
   outlook: OutlookState | null;
 }
 
+/** One move as sent (#412): its count (a percentage when `percent`), and any option it carries. */
+export interface LoggedMove {
+  from: number;
+  to: number;
+  armies: number;
+  /** `armies` is a percentage of what can move when the order runs. */
+  percent?: true;
+  /** Absent: an ordinary attack/transfer. */
+  mode?: 'attack-only' | 'transfer-only';
+  attackTeammates?: true;
+  /** The move took my commander along. */
+  commander?: true;
+}
+
+/** One card play as sent (#412): the card, its instance id, and the targets it took (ids only). */
+export interface LoggedCardPlay {
+  card: string;
+  cardId: string;
+  target?: number;
+  player?: number;
+  players?: readonly [number, number];
+  bonus?: number;
+  from?: number;
+  to?: number;
+  armies?: number;
+  commander?: true;
+  /** Order Delay: the move it is written above. */
+  beforeMove?: number;
+}
+
+/**
+ * The orders actually sent on a turn (#412), every kind, in the order sent within each kind: deploys,
+ * every move (a percentage or a mode one included, with its count), card plays, discards (card
+ * instance ids) and city purchases. Ids and counts only. The card, discard and purchase lists are
+ * absent only in entries written without them.
+ */
+export interface LoggedSent {
+  deploys: readonly { territoryId: number; armies: number }[];
+  moves: readonly LoggedMove[];
+  cards?: readonly LoggedCardPlay[];
+  discards?: readonly string[];
+  purchases?: readonly { territoryId: number; count: number }[];
+}
+
 /** Who chose orders that differ from the logged decision, and why when said. */
 export interface DecisionOverride {
   by: 'hand' | 'agent';
@@ -157,7 +200,7 @@ export interface DecisionEntry {
   input?: LoggedInput;
   planner?: { version: string };
   decision?: LoggedDecision;
-  sent?: MyOrders;
+  sent?: LoggedSent;
   override?: DecisionOverride;
   next?: DecisionOutcome;
 }
@@ -570,11 +613,11 @@ export async function recordSent(
   gameId: number,
   playerId: number,
   turn: number,
-  sent: MyOrders,
+  sent: LoggedSent,
   override?: DecisionOverride,
   opts: RecordSentOptions = {},
 ): Promise<boolean> {
-  const kept = encodeValue(sent) as MyOrders;
+  const kept = encodeValue(sent) as LoggedSent;
   const ov = override
     ? { by: override.by, ...(override.reason !== undefined ? { reason: scrubNames(String(override.reason), opts.players) } : {}) }
     : undefined;
@@ -699,8 +742,8 @@ export function ordersDiffer(decision: Pick<LoggedDecision, 'deploys' | 'moves'>
 
 /** What {@link recordSubmission} logs. */
 export interface Submission {
-  /** The orders as kept (`myOrdersOf`). */
-  sent: MyOrders;
+  /** The orders as kept (`loggedSentOf`): every order sent. */
+  sent: LoggedSent;
   /** The same orders for comparing with the decision. */
   orders: SentOrders;
   /** Who chose orders that differ, when the caller says. */
@@ -727,7 +770,7 @@ export async function recordSubmission(
   opts: DecisionLogOptions = {},
 ): Promise<boolean> {
   try {
-    const kept = encodeValue(sub.sent) as MyOrders;
+    const kept = encodeValue(sub.sent) as LoggedSent;
     const reason = sub.reason !== undefined ? scrubNames(String(sub.reason), sub.players) : undefined;
     return await updateDecisionLog(
       dir,

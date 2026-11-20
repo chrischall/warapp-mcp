@@ -129,7 +129,8 @@ describe('decision log capture (#412 task 2)', () => {
     const mine = [{ kind: 'deploy', territory: 161, armies: 5 }];
     await submit({ game_id: GAME, player: 'Ann', orders: mine, override_reason: 'Bob looks weak; stack 161.' });
     let e = (await log())!.turns['3']!;
-    expect(e.sent?.deploys).toEqual([{ territoryId: 161, armies: 5 }]);
+    // The whole turn as sent (#412 review): no card, discard or purchase is an empty list, not a gap.
+    expect(e.sent).toEqual({ deploys: [{ territoryId: 161, armies: 5 }], moves: [], cards: [], discards: [], purchases: [] });
     expect(e.override).toEqual({ by: 'agent', reason: `Player ${BOB.feed} looks weak; stack 161.` });
     expect(fileText()).not.toMatch(/\bBob\b/);
     // Re-planned and sent by hand.

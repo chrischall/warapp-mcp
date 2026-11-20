@@ -485,7 +485,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           live = true;
           if (ctx.dataDir) {
             await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
-        await captureObservation(ctx, game.id, me.id, [{ turn, board, source: 'live' }]);
+            await captureObservation(ctx, game.id, me.id, [{ turn, board, source: 'live' }]);
             await writeGameRecord(ctx.dataDir, game);
             await recordProfile(ctx.dataDir, env, game, me, boards, teamsKnown);
           }

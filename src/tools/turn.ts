@@ -142,7 +142,7 @@ import { hasCostlyBonus, noteContext, notesFor } from '../strategy/notes.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { capturePlan, captureObservation, captureSent } from './decision-capture.js';
-import { scrubNames, type SentOrders } from '../decision-log.js';
+import { scrubNames, type LoggedSent, type SentOrders } from '../decision-log.js';
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
@@ -1453,6 +1453,54 @@ export function sentOrdersOf(orders: readonly TurnOrder[]): SentOrders {
           ]
         : [],
     ),
+  };
+}
+
+/**
+ * Every order of a sent turn, for the decision log (#412): unlike {@link myOrdersOf}, a percentage or
+ * mode move keeps its count and options, and card plays (with their targets), discards and purchases
+ * are all kept. Ids and counts only: a commander is a flag, never its unit id.
+ */
+export function loggedSentOf(orders: readonly TurnOrder[]): LoggedSent {
+  return {
+    deploys: orders.flatMap((o) => (o.kind === 'deploy' ? [{ territoryId: o.territoryId, armies: o.armies }] : [])),
+    moves: orders.flatMap((o) =>
+      o.kind === 'move'
+        ? [
+            {
+              from: o.from,
+              to: o.to,
+              armies: o.armies,
+              ...(o.byPercent ? { percent: true as const } : {}),
+              ...(o.mode === AttackTransferMode.Attack ? { mode: 'attack-only' as const } : {}),
+              ...(o.mode === AttackTransferMode.Transfer ? { mode: 'transfer-only' as const } : {}),
+              ...(o.attackTeammates ? { attackTeammates: true as const } : {}),
+              ...(o.commander ? { commander: true as const } : {}),
+            },
+          ]
+        : [],
+    ),
+    cards: orders.flatMap((o) =>
+      o.kind === 'card'
+        ? [
+            {
+              card: o.card,
+              cardId: o.cardId,
+              ...(o.target !== undefined ? { target: o.target } : {}),
+              ...(o.player !== undefined ? { player: o.player } : {}),
+              ...(o.players !== undefined ? { players: o.players } : {}),
+              ...(o.bonus !== undefined ? { bonus: o.bonus } : {}),
+              ...(o.from !== undefined ? { from: o.from } : {}),
+              ...(o.to !== undefined ? { to: o.to } : {}),
+              ...(o.armies !== undefined ? { armies: o.armies } : {}),
+              ...(o.commander ? { commander: true as const } : {}),
+              ...(o.beforeMove !== undefined ? { beforeMove: o.beforeMove } : {}),
+            },
+          ]
+        : [],
+    ),
+    discards: orders.flatMap((o) => (o.kind === 'discard' ? [o.cardId] : [])),
+    purchases: orders.flatMap((o) => (o.kind === 'purchase' ? o.cities.map((c) => ({ territoryId: c.territoryId, count: c.count })) : [])),
   };
 }
 
@@ -3827,7 +3875,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             if (ctx.dataDir) await writeOrdersCache(ctx.dataDir, st.gameId, st.feedPlayerId, st.turnNumber, myOrdersOf(st.orders));
             // #412: the decision log keeps what was sent, and an override when it differs from the plan.
             await captureSent(ctx, st.gameId, st.feedPlayerId, st.turnNumber, {
-              sent: myOrdersOf(st.orders),
+              sent: loggedSentOf(st.orders),
               orders: sentOrdersOf(st.orders),
               ...(st.override?.by !== undefined ? { by: st.override.by } : {}),
               ...(st.override?.reason !== undefined ? { reason: st.override.reason } : {}),
