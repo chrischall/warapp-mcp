@@ -367,9 +367,13 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   InitialPlayerArmiesPerTerritory`, assumed to be what each player starts with under manual
   or automatic distribution. Unverified: manual picks might leave a player fewer territories
   than the limit, and then the term overstates its start.
-- `DistributionMode` -1 is taken to be full distribution (every territory split among the
-  players, `TerritoryLimit` ignored). Unverified. The bound leaves the starting armies out in
-  that case, and for a map distribution whose type is not `normal`.
+- #428: `DistributionMode` -1 is a **limited** start (the client's random warlords: each player gets
+  `TerritoryLimit` territories at `InitialPlayerArmiesPerTerritory`), VERIFIED against the end-of-game
+  histories of three finished games (reading it as full distribution put an opponent's start at 189 for
+  a real 9). Full distribution is `DistributionMode` 0 with no `TerritoryLimit` (unset or 0, the client's
+  "no cap"; `fullDistribution` in `src/analysis/opponents.ts`); mode 0 with a `TerritoryLimit` stays a
+  limited start (unverified that a full-distribution game never sends one). The bound leaves the
+  starting armies out under full distribution, and for a map distribution whose type is not `normal`.
 - #235, read from the client bundle (its game-settings guide and its per-player count), NOT verified
   against GameFeed: the client's own DistributionModeID is -3 custom scenario, 0 full distribution, -1
   random warlords, -2 random cities, and any other id a map's distribution mode (`normal` or
@@ -380,9 +384,8 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   territory-by-territory start) may start players unevenly. So the fog prior (`symmetricStart`)
   treats every distribution but a custom scenario (-3, or a `CustomScenario` setting other than
   `null`) as even. Two things stay open: whether GameFeed's `DistributionMode` uses the same ids
-  (the cached games show -2, -1, 0, 1 and 2, and a map's own ids start at 1), and the -1 = full
-  distribution assumption above, which the client's ids contradict (it names -1 random warlords and
-  0 full); the tracker's start bound is unchanged until that is checked live.
+  (the cached games show -2, -1, 0, 1 and 2, and a map's own ids start at 1); #428 settled -1 (a
+  limited start, as the client's ids say) and 0 with no limit (full distribution) from finished games.
 - #205: the outlook's **upper** bound on a fogged opponent needs a start too. With the start
   unknown under full distribution or without `TerritoryLimit`, it takes ⌈territories ÷ seated
   players⌉ × `InitialPlayerArmiesPerTerritory` (every player gets an even share; unverified that full

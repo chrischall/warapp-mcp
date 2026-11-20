@@ -1152,9 +1152,12 @@
 //     are all among its own, net values summed, over the score's cost; a "complete together" line
 //     names it when another as close competes), then — given `previousBoard` — a bonus advanced last
 //     turn (a member captured since), then the score order; the rationale lists the order and says
-//     which advanced bonus kept or gave way. Armies to finish count every missing member: a fogged one at its bonus's
-//     costliest visible missing member (counted as free before, the figure jumped when it came into
-//     view), named in every "N armies to finish". #439 (plan/two-move.ts): a single-territory bonus of
+//     which advanced bonus kept or gave way. Armies to finish count every missing member: a fogged one
+//     a static seat left at its #417 price (below); else (#428) at its last sighting on my boards
+//     (`options.lastSeen`, unless the fog shows another owner now), else its picking-board size
+//     (#201), else — its owner hidden too — the game's neutral size (`settings.neutralArmies`), else at
+//     its bonus's costliest visible missing member (counted as free before, the figure jumped when it
+//     came into view), named in every "N armies to finish". #439 (plan/two-move.ts): a single-territory bonus of
 //     at least TWO_MOVE_MIN_VALUE two moves away through a visible neutral is a two-turn completion
 //     (cost: that neutral plus the territory); the neutral in between is a `stage` candidate under
 //     `balanced` (net over both costs, ranked as an advance), else taken before the advances.
@@ -1381,7 +1384,7 @@
 //     warning ("Breaking player … without eliminating it invites retaliation"): what it has left is
 //     likeliest aimed at whoever broke it. In a 1v1 it attacks me anyway, so no warning there.
 //     Wastelands (#167, `settings.wastelands`): a fogged missing member of a bonus is costed at the
-//     costliest visible missing member plus the expected surcharge of being a wasteland
+//     neutral size or costliest visible missing member (#428) plus the expected surcharge of being a wasteland
 //     (ceil(count ÷ the map's territories × (a wasteland's capture cost − that))), with a rationale line.
 //     #201: given `options.rememberedNeutrals` (the picking board's neutrals, which warapp_plan_picks
 //     and warapp_submit_picks' preview keep per game), a fogged missing member the picking board showed

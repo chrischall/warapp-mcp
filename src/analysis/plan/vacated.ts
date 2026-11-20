@@ -27,26 +27,61 @@ import type { Captures } from './captures.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
+import { visibleState } from './shared.js';
 
 /** The end of every empty enemy capture's reason (#281, the owner's extension): tests and sweeps match on it. */
 export const CHEAP_EXPANSION = 'cheap expansion (#281)';
+
+/** #417 / #428: a fogged territory's newest earlier sighting: its owner (a player id, `null` a neutral) and its armies when shown. */
+export interface FogSighting {
+  owner: number | null;
+  armies: number | null;
+}
+
+/**
+ * #417 / #428: for each territory fogged on `board`, its sighting on the newest earlier board that showed
+ * its owner (`boards` in any order; boards that fog it too are skipped): the owner, and the armies that
+ * board showed (`null` when only its owner was shown). The one source of both {@link foggedLastSeen}
+ * (#417, who held it) and the planner's last-seen price (#428, `PlanOptions.lastSeen`), so they never
+ * read different boards. A GameFeed history board (`source: 'history'`) gives its owner only: no army count.
+ */
+export function fogSightings(
+  board: BoardState,
+  boards: readonly { turn: number; board: BoardState; source?: string }[],
+): Map<number, FogSighting> {
+  const fogged = new Set(board.territories.filter((t) => t.owner.kind === 'unknown').map((t) => t.territoryId));
+  const out = new Map<number, FogSighting>();
+  for (const b of [...boards].sort((x, y) => y.turn - x.turn))
+    for (const t of b.board.territories) {
+      if (!fogged.has(t.territoryId) || out.has(t.territoryId) || t.owner.kind === 'unknown') continue;
+      // A GameFeed history board (unverified while the game is played) gives the owner, never a count.
+      const armies = b.source === 'history' ? null : (visibleState(t)?.armies ?? null);
+      out.set(t.territoryId, { owner: t.owner.kind === 'player' ? t.owner.playerId : null, armies });
+    }
+  return out;
+}
 
 /**
  * #417: for each territory fogged on `board`, the player who held it on the newest earlier board that
  * showed it (`boards` in any order; boards that fog it too are skipped). None when that sighting was
  * neutral, or no earlier board showed it. A static seat's land stays costed as vacated however many
- * turns it has been out of view, not only on the turn after vision was lost.
+ * turns it has been out of view, not only on the turn after vision was lost. The owners of {@link fogSightings}.
  */
-export function foggedLastSeen(board: BoardState, boards: readonly { turn: number; board: BoardState }[]): Map<number, number> {
-  const fogged = new Set(board.territories.filter((t) => t.owner.kind === 'unknown').map((t) => t.territoryId));
+export function foggedLastSeen(board: BoardState, boards: readonly { turn: number; board: BoardState; source?: string }[]): Map<number, number> {
+  return ownersOf(fogSightings(board, boards));
+}
+
+/** #417: the players of a {@link fogSightings} map (its neutral sightings left out). */
+export function ownersOf(sightings: ReadonlyMap<number, FogSighting>): Map<number, number> {
   const out = new Map<number, number>();
-  const settled = new Set<number>();
-  for (const b of [...boards].sort((x, y) => y.turn - x.turn))
-    for (const t of b.board.territories) {
-      if (!fogged.has(t.territoryId) || settled.has(t.territoryId) || t.owner.kind === 'unknown') continue;
-      settled.add(t.territoryId);
-      if (t.owner.kind === 'player') out.set(t.territoryId, t.owner.playerId);
-    }
+  for (const [t, s] of sightings) if (s.owner !== null) out.set(t, s.owner);
+  return out;
+}
+
+/** #428: the counts of a {@link fogSightings} map (a sighting that showed only the owner left out). */
+export function countsOf(sightings: ReadonlyMap<number, FogSighting>): Map<number, { armies: number; owner: number | null }> {
+  const out = new Map<number, { armies: number; owner: number | null }>();
+  for (const [t, s] of sightings) if (s.armies !== null) out.set(t, { armies: s.armies, owner: s.owner });
   return out;
 }
 

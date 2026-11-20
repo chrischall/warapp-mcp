@@ -232,6 +232,13 @@ export interface PlannerSettings {
    */
   wastelands?: { count: number; size: number };
   /**
+   * #428: the game's neutral size (the larger of InitialNonDistributionArmies and
+   * InitialNeutralsInDistribution the settings give): a fogged missing bonus member whose owner the fog
+   * does not show, and that no board showed, is costed as a neutral of this size. Absent: at the bonus's
+   * costliest visible missing member, as before.
+   */
+  neutralArmies?: number;
+  /**
    * #271 review: the first turn an opponent may play a Bomb card (the card clock's fastest turn), when
    * one is in play; absent, none can be. A bomb on a hold of mine reads as a failed attack, so on a turn
    * one may have been played {@link repelledFloor} leaves out the half it could take ({@link bombPossibleOn}).
@@ -295,6 +302,12 @@ export interface PlanOptions {
    * A missing bonus member the fog hides now is costed at its remembered size, never attacked.
    */
   rememberedNeutrals?: ReadonlyMap<number, number>;
+  /**
+   * #428: each territory's last sighting on my board history (its armies, and its owner: a player id,
+   * `null` for a neutral). A missing bonus member the fog hides now is costed at those armies, ahead of
+   * `rememberedNeutrals` and the neutral size — unless the fog shows another owner now.
+   */
+  lastSeen?: ReadonlyMap<number, { armies: number; owner: number | null }>;
   /** Bonuses to work on first, even when uneconomic. */
   focusBonusIds?: number[];
   /** Income held back from captures (still deployed, as leftover). */
@@ -2745,6 +2758,18 @@ export interface BonusPlan {
   fogged: number;
   /** The armies each fogged member counts for: its bonus's costliest visible missing member. */
   fogEach: number;
+  /**
+   * #428: the fogged members costed as the game's neutral size (`PlannerSettings.neutralArmies`) instead,
+   * `count` of them at `each` armies; not counted in `fogged`.
+   */
+  fogNeutral?: FogNeutral;
+}
+
+/** #428: fogged bonus members costed as a neutral of the game's neutral size (`size`), `each` armies apiece. */
+export interface FogNeutral {
+  count: number;
+  each: number;
+  size: number;
 }
 
 /**

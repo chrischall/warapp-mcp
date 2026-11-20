@@ -171,7 +171,7 @@ import { readSiegeMemory, writeSiegeMemory } from '../siege-store.js';
 import { readBonusAttempts, writeBonusAttempts } from '../bonus-attempt-store.js';
 import { rememberBonusAttempts } from '../analysis/plan/bonus-attempts.js';
 import { rememberSiegeTurn, type SiegeMemory } from '../analysis/plan/siege.js';
-import { foggedLastSeen } from '../analysis/plan/vacated.js';
+import { countsOf, fogSightings, ownersOf } from '../analysis/plan/vacated.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
@@ -345,6 +345,10 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   const m = commerceRules(s)?.armyCostMultiplier ?? 0;
   if (m > 0) out.armyCostMultiplier = m;
   if (s.wastelands && s.wastelands.count > 0) out.wastelands = { ...s.wastelands };
+  // #428: the game's neutral size (a fogged bonus member no board showed is costed as one): the larger
+  // of the two the settings give, since such a member may have been in the distribution or outside it.
+  const sizes = [s.initialNonDistributionArmies, s.initialNeutralsInDistribution].filter((n): n is number => n !== undefined && n >= 0);
+  if (sizes.length) out.neutralArmies = Math.max(...sizes);
   // #271 review: the first turn an opponent may play a Bomb (a bomb reads as a failed attack on my hold).
   const bombFrom = cardClock(s)?.cards.find((c) => c.card === 'Bomb')?.firstPlayableTurn.fastest;
   if (bombFrom !== undefined && bombFrom !== null) out.bombFrom = bombFrom;
@@ -1586,11 +1590,6 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
 }
 
 /**
- * The "since last turn" view (#194): one line comparing this turn's income with the next income
- * the previous turn's plan expected, and naming the bonuses broken and territories lost since the
- * previous board. `full` adds the figures and the lists by id and name beside the line.
- */
-/**
  * #442: the captures the decision log's plan of `turn` expected, kept to the targets of the moves sent that
  * turn when they were logged (a capture the orders sent did not try is no failed attack). Never throws.
  */
@@ -1602,6 +1601,11 @@ async function previousCaptures(dir: string, gameId: number, me: number, turn: n
   return sent ? caps.filter((id) => sent.some((m) => m.to === id)) : [...caps];
 }
 
+/**
+ * The "since last turn" view (#194): one line comparing this turn's income with the next income
+ * the previous turn's plan expected, and naming the bonuses broken and territories lost since the
+ * previous board. `full` adds the figures and the lists by id and name beside the line.
+ */
 function sinceLastView(
   s: SinceLast,
   previousTurn: number,
@@ -1997,8 +2001,11 @@ export async function livePlanSetup(
   const incomeHistory = commerceRules(game.settings)
     ? []
     : history.boards.map((b) => ({ turn: b.turn, income: incomeDetail(graph, b.board, me.id, game.settings).income }));
-  // #417: who held each fogged territory when an earlier board last showed it (a static seat's stays vacated).
-  const lastSeen = foggedLastSeen(board, history.boards);
+  // #417 / #428: each fogged territory's newest earlier sighting, one source for both readers: who held it
+  // (a static seat's stays vacated, #417) and, when that board showed them, its armies (#428's fog price).
+  const sightings = fogSightings(board, history.boards);
+  const lastSeen = ownersOf(sightings);
+  const lastCounts = countsOf(sightings);
   const input: PlanInput = {
     graph,
     board,
@@ -2031,6 +2038,8 @@ export async function livePlanSetup(
       outlook: { state: outlook.state, turns: outlook.turns },
       // #201: the picking board's neutrals, so a fogged one keeps its size (wastelands).
       ...(picking?.neutrals ? { rememberedNeutrals: new Map(picking.neutrals) } : {}),
+      // #428: and a member my earlier boards showed keeps its last-seen armies.
+      ...(lastCounts.size ? { lastSeen: lastCounts } : {}),
       ...(goal !== undefined ? { goal } : {}),
       focusBonusIds,
       ...(opponents > 0 ? { opponents } : {}),

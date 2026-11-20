@@ -134,6 +134,13 @@ describe('the race for vacated land (#417)', () => {
     expect(text(p)).not.toMatch(/#417/);
   });
 
+  it("#428: a static seat's land keeps its #417 price ahead of a last-seen count and the game's neutral size", () => {
+    const sightings = { lastSeen: new Map([[4, { armies: 1, owner: S }], [5, { armies: 1, owner: S }]]) };
+    const p = planTurn({ ...input(seen), settings: { ...STD, neutralArmies: 4 }, options: { adapt: true, ...sightings } });
+    expect(text(p)).toMatch(/B700 \(#700\): T4 \(#4\), fogged now, was player 30's \(out, no AI\): .* so it is costed at 3, not at a stack in view \(#417\)\./);
+    expect(text(p)).not.toMatch(/last seen at|neutral size/);
+  });
+
   it('without that sighting, a fogged member is still costed at the costliest one in view', () => {
     const p = planTurn(input());
     expect(text(p)).not.toMatch(/#417/);

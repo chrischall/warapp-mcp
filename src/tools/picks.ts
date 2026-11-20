@@ -5,7 +5,7 @@ import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { clientPickLimits, planPicks, type CoverageReport, type PickGroup, type PickSettings } from '../analysis/picks.js';
-import { DEFAULT_TERRITORY_LIMIT } from '../analysis/opponents.js';
+import { DEFAULT_TERRITORY_LIMIT, fullDistribution } from '../analysis/opponents.js';
 import { OWNER_PICKABLE } from '../live.js';
 import type { Game, GameSettings } from '../normalize.js';
 import { bonusNamer, gameIdArg, graphOf, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
@@ -28,6 +28,31 @@ const VIEWS = ['compact', 'full'] as const;
 export const PICK_PHASE_STATE = 'DistributingTerritories';
 /** TerritoryLimit assumed when the settings do not say (war.app's usual default; shared with the outlook). */
 export { DEFAULT_TERRITORY_LIMIT };
+
+/**
+ * The territories each player is granted, as the pick advisor plans them (#428): the settings'
+ * TerritoryLimit when set; under full distribution (DistributionMode 0 with no limit) every territory is
+ * dealt, so the client's no-cap share — floor(pickable ÷ players), at least 1 — the picks only choosing
+ * which ones; otherwise (a limited start that does not say) {@link DEFAULT_TERRITORY_LIMIT}. `warning`
+ * says which assumption it made.
+ */
+export function pickTerritoryLimit(
+  settings: Pick<GameSettings, 'territoryLimit' | 'distributionMode'> | undefined,
+  players: number,
+  pickable: number,
+): { limit: number; warning?: string } {
+  const set = settings?.territoryLimit;
+  if (set !== undefined && set > 0) return { limit: set };
+  if (fullDistribution(settings)) {
+    const n = Math.max(1, players);
+    const limit = Math.max(1, Math.floor(pickable / n));
+    return {
+      limit,
+      warning: `Full distribution (DistributionMode 0, no territory limit): every territory is dealt, so each of the ${n} players gets about ${limit} of the ${pickable} pickable; the list only says which you would rather hold.`,
+    };
+  }
+  return { limit: DEFAULT_TERRITORY_LIMIT, warning: `Territory limit missing from settings; assumed ${DEFAULT_TERRITORY_LIMIT}.` };
+}
 
 /** The pick scorer's view of the game settings. */
 export function pickSettings(s: GameSettings | undefined): PickSettings {
@@ -162,19 +187,18 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
       const { game, source: teamSource } = await resolveTeams(ctx, feed);
       const map = mapOf(game);
       const warnings: string[] = [];
-      let territoryLimit = game.settings?.territoryLimit;
-      if (territoryLimit === undefined || territoryLimit <= 0) {
-        territoryLimit = DEFAULT_TERRITORY_LIMIT;
-        warnings.push(`Territory limit missing from settings; assumed ${DEFAULT_TERRITORY_LIMIT}.`);
-      }
+      const active = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length;
+      const players = Math.max(2, active || game.players.length);
+      // #428: the limit set, else the full-distribution share, else the default (each with a warning).
+      const limitRead = pickTerritoryLimit(game.settings, game.players.length, pickable.length);
+      const territoryLimit = limitRead.limit;
+      if (limitRead.warning) warnings.push(limitRead.warning);
       // The list is as long as war.app's client allows (players × territories per player, #129),
       // never shorter than the primary.
       const maxPicks = Math.max(
         territoryLimit,
         clientPickLimits({ territoryLimit, players: game.players.length, pickable: pickable.length })?.max ?? 0,
       );
-      const active = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length;
-      const players = Math.max(2, active || game.players.length);
       const settings = pickSettings(game.settings);
       // A team game (C2): only the players off my team are opponents. My seat is looked up only here.
       const team = isTeamGame(game.players) ? await teamOf(ctx, game, warnings) : undefined;

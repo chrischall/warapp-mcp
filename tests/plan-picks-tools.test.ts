@@ -229,6 +229,33 @@ describe('warapp_plan_picks', () => {
     expect(p.submitPicks.territories).toHaveLength(2);
   });
 
+  it('#428: no TerritoryLimit under full distribution (DistributionMode 0) deals every territory: the share, not "assume 3"', async () => {
+    // Three players over six pickables: full distribution gives each two (the client's no-cap share).
+    const g = game('DistributingTerritories', { TerritoryLimit: null, DistributionMode: 0 });
+    h = await liveHarness({
+      feed: [{ ...g, players: (g.players as unknown[]).slice(0, 3) }],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }),
+    });
+    const p = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.territoryLimit).toBe(2);
+    expect(p.maxPicks).toBe(6);
+    expect(p.warnings.join(' ')).not.toMatch(/assumed 3/);
+    expect(p.warnings).toContain(
+      'Full distribution (DistributionMode 0, no territory limit): every territory is dealt, so each of the 3 players gets about 2 of the 6 pickable; the list only says which you would rather hold.',
+    );
+  });
+
+  it('#428: a limited start (DistributionMode -1) with no TerritoryLimit still assumes the default 3', async () => {
+    const g = game('DistributingTerritories', { TerritoryLimit: null, DistributionMode: -1 });
+    h = await liveHarness({
+      feed: [{ ...g, players: (g.players as unknown[]).slice(0, 2) }],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }),
+    });
+    const p = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.territoryLimit).toBe(3);
+    expect(p.warnings).toContain('Territory limit missing from settings; assumed 3.');
+  });
+
   it('lists as many picks as the client allows: players × territories per player (#129)', async () => {
     const g = game('DistributingTerritories');
     h = await liveHarness({

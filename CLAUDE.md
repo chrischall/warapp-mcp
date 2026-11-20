@@ -223,6 +223,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **The pick advisor `warapp_plan_picks` is read-only** and refuses outside `DistributingTerritories` or when the
   live board has nothing pickable. Its scorer (`src/analysis/picks.ts`) is pure and deterministic like the turn
   planner; neutral sizes come from the live board when shown (wastelands at their real size), else the settings.
+  The territories per player (`pickTerritoryLimit`, #428): TerritoryLimit when set; under full distribution
+  (DistributionMode 0, no limit) the client's no-cap share floor(pickable ÷ players), every territory being dealt; else
+  the default 3 (each assumption a warning).
   Its opening simulation keeps armies where they stand (an attack is funded by its bordering source plus that
   turn's deploys, never by pooling another pick's armies — that made it promise first-turn bonuses `plan_turn`
   could not deliver, #47; at 0% luck, straight rounding and No-Split off, a neutral one order cannot pay for
@@ -1536,8 +1539,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     first; equally close ones by the income per army (on the score's cost) of every bonus the capture
     completes (#438: a pair bonus on top of a single-territory one adds up; a "complete together" line
     when another bonus as close competes), then a bonus advanced last turn, then the score. Golden: 14 of
-    6253 plans' orders changed, captures, next income and warnings unchanged. "N armies to finish" counts fogged members at the bonus's costliest
-    visible missing member. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
+    6253 plans' orders changed, captures, next income and warnings unchanged. "N armies to finish" counts a
+    fogged member a static seat left at its #417 price first; else (#428) at its last sighting on my boards
+    (`options.lastSeen`, unless the fog shows another owner now), else its picking-board size (#201), else — its
+    owner hidden too — the game's neutral size (`settings.neutralArmies`: the larger of the two neutral sizes the
+    settings give), and only without any of those at the bonus's costliest visible missing member (65
+    finished-game plans counted every one at 208). The sightings are one source with #417's: `fogSightings`
+    (plan/vacated.ts) over my board history gives each fogged territory's newest sighting (owner, and armies when
+    shown — never from a GameFeed history board, unverified in play: those give the owner only); `foggedLastSeen` is its owners, `lastSeen` its counts. Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input 1017 of 6253 plans, 722
+    orders, captures +21/−2, next income lower on 1; with sightings from each input's previous board, 51 plans, 34 orders,
+    captures +1. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
     are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or
@@ -2048,7 +2059,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   planner): each turn 2 × the higher of my income and the most any opponent was tracked earning, the
   map's even share only a ceiling — never sized by the map; it can still block `winning`. Every likely
   high starts symmetric: the given start, the even share under full distribution (the real start
-  then), else my opening board, else the default territory limit (3) at the starting armies — never
+  then; #428, `fullDistribution`: DistributionMode 0 with no TerritoryLimit — -1 is a limited start,
+  TerritoryLimit × InitialPlayerArmiesPerTerritory, verified on three games), else my opening board, else the default territory limit (3) at the starting armies — never
   the territories I hold on a later board; my income before my first board ramps up from that
   opening's.
   #228: the likely high is generous to the opponent (every army received, none lost: a game I lead read
