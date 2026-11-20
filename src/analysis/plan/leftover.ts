@@ -735,7 +735,8 @@ export function leftoverDeploy(
      * protects, with an opponent within two steps; it gets armies until taking it needs more than
      * COMFORT_MARGIN × a casual attack (the largest deploy estimate of those opponents, or its own
      * threat when it is a border). The borders that would fall keep what makes them hold (a truce-covered
-     * one excepted: the truce covers it). Its armies then stay (`locked`: rule 6 moves none out).
+     * one excepted: the truce covers it). Its armies then stay (`locked`: rule 6 moves none out), and so do
+     * they when it already needs more than that to take and gets no deploy.
      */
     const deterrentGuard = (bs: readonly Border[]) => {
       const relaxed = (id: number) => ps.truce?.relaxed.has(id) ?? false;
@@ -775,15 +776,29 @@ export function leftoverDeploy(
         if (take === null || take > bar) break;
         d++;
       }
-      if (d <= 0) return;
+      const against = `${COMFORT_MARGIN} × the ~${casual} ${
+        borders.has(hub) && casual === borders.get(hub)!.threat ? 'threat beside it' : `deploy of player ${foes.length === 1 ? foes[0] : foes.join(' or ')} within two steps`
+      }`;
+      if (d <= 0) {
+        // Already at its bar: it needs no deploy, but its armies still stay (rule 6 would otherwise
+        // walk them to the front and leave a stronger capital weaker than a topped-up one).
+        const at = stays(hub) + unitsAt(hub);
+        const take = toTake(at);
+        if (take !== null && take <= bar) return;
+        locked.add(hub);
+        rationale.push(
+          `${label(hub)} keeps its ${at} armies as a deterrent guard (#440): it has the most income at stake (protects +${value}, the borders being topped up at most +${top}), and they ${
+            take === null ? 'cannot be taken' : `need ${take} to take`
+          }, more than ${against}, so none move to the front.`,
+        );
+        return;
+      }
       deploy(hub, d);
       locked.add(hub);
       keepFromMargin(hub);
       const at = stays(hub) + unitsAt(hub);
       rationale.push(
-        `Deploy ${d} of the leftover to ${label(hub)} as a deterrent guard (#440): it has the most income at stake (protects +${value}, the borders being topped up at most +${top}), and its ${at} armies now need ${toTake(at)} to take, more than ${COMFORT_MARGIN} × the ~${casual} ${
-          borders.has(hub) && casual === borders.get(hub)!.threat ? 'threat beside it' : `deploy of player ${foes.length === 1 ? foes[0] : foes.join(' or ')} within two steps`
-        }, before any border that already holds is topped up.`,
+        `Deploy ${d} of the leftover to ${label(hub)} as a deterrent guard (#440): it has the most income at stake (protects +${value}, the borders being topped up at most +${top}), and its ${at} armies now need ${toTake(at)} to take, more than ${against}, before any border that already holds is topped up.`,
       );
     };
     /** #268: the rest spread by {@link headroomSpread}, already deployed: nothing is left for `where`. */

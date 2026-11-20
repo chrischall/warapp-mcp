@@ -61,6 +61,13 @@ describe('a deterrent guard on the territory with the most income at stake (#440
     expect(lines.findIndex((l) => l.includes('#440'))).toBeLessThan(lines.findIndex((l) => l.includes('comfortable margin')));
   });
 
+  it.each([5, 6, 8, 12])('a +8 capital already at its bar (%i armies) keeps them: none move out to the front', (at) => {
+    const p = plan(8, field([mine(1, at)]));
+    expect(deployOn(p, 1)).toBe(0);
+    expect(p.moves.filter((m) => m.from === 1)).toEqual([]);
+    expect(why(p)).toMatch(new RegExp(`T1 \\(#1\\) keeps its ${at} armies as a deterrent guard \\(#440\\)`));
+  });
+
   it('below +5 the capital gets no guard and its idle armies move to the front as before', () => {
     const p = plan(4);
     expect(deployOn(p, 1)).toBe(0);
