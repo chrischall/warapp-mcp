@@ -1,6 +1,9 @@
-// The decision log (#412): per game, for every turn this server planned, what was seen (the fogged
-// board), what the planner read and decided and why, what was actually sent (and any override), and
-// what happened next. It is the data strategy changes and scenarios are replayed against offline
+// The decision log (#412): per game, an entry for every turn the account plays. A turn this server
+// planned is a full entry: what was seen (the fogged board), what the planner read and decided and why,
+// what was actually sent (and any override), and what happened next. Any other turn the server sees (a
+// board read live or filled from history) gets at least an observation entry (`kind: 'observed'`: the
+// board, plus what was sent when known), which a later plan of that turn upgrades and which never
+// overwrites a planned entry. It is the data strategy changes and scenarios are replayed against offline
 // (src/analysis/decision-replay.ts, scripts/replay-decisions.mjs).
 //
 // `<dataDir>/decisions/<gameId>.json`: `{ version: 1, gameId, playerId, status, turns }`, one account's
@@ -28,9 +31,9 @@ import { VERSION } from './version.js';
 
 export const DECISION_LOG_VERSION = 1;
 /** Games whose decision logs are kept at most. */
-export const MAX_DECISION_GAMES = 200;
+export const MAX_DECISION_GAMES = 1000;
 /** Bytes of decision logs kept at most, all games together. */
-export const MAX_DECISION_BYTES = 50 * 1024 * 1024;
+export const MAX_DECISION_BYTES = 500 * 1024 * 1024;
 /** A full board at least this many turns after the last full one (and at the first logged turn). */
 export const FULL_BOARD_EVERY = 10;
 
@@ -136,7 +139,14 @@ export interface DecisionOutcome {
   eliminated: boolean;
 }
 
+/** Where an observation's board came from: read live, or filled from the game's history. */
+export type ObservationSource = 'live' | 'history';
+
 export interface DecisionEntry {
+  /** `planned`: written by {@link recordDecision}; `observed`: a board seen without a plan ({@link recordObservation}). Absent on an entry holding only sent orders. */
+  kind?: 'planned' | 'observed';
+  /** Set on an observation only. */
+  source?: ObservationSource;
   board?: StoredBoard;
   input?: LoggedInput;
   planner?: { version: string };
@@ -437,6 +447,7 @@ export async function recordDecision(
     const teammateOrders = rec.input.board.teammateOrders ?? rec.board.teammateOrders;
     const entry: DecisionEntry = scrubNames(
       {
+        kind: 'planned',
         input: encodeInput({ ...rec.input, board: teammateOrders ? { ...board, teammateOrders } : board }),
         planner: { version: VERSION },
         decision: decisionOf(rec.plan, rec.outlookState),
@@ -451,6 +462,42 @@ export async function recordDecision(
         const boards = decodeBoards(log);
         boards.set(rec.turn, board);
         const turns = { ...log.turns, [String(rec.turn)]: entry };
+        encodeBoards(turns, boards);
+        return { ...log, turns };
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Log the board of a turn seen but not planned (no-gaps rule (a)): an observation entry, keeping any sent
+ * orders and override already logged for the turn. Never overwrites a planned entry (`false` then); a
+ * later {@link recordDecision} of the turn upgrades it. `true` when written. Never throws.
+ */
+export async function recordObservation(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  turn: number,
+  board: BoardState,
+  source: ObservationSource,
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  try {
+    const plain = plainBoard(board);
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        const was = log.turns[String(turn)];
+        if (was?.kind === 'planned' || was?.decision) return undefined;
+        const boards = decodeBoards(log);
+        boards.set(turn, plain);
+        const turns = { ...log.turns, [String(turn)]: { ...was, kind: 'observed' as const, source } };
         encodeBoards(turns, boards);
         return { ...log, turns };
       },

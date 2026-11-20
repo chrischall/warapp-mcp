@@ -7,6 +7,8 @@ import type { BoardState, TerritoryState } from '../src/board.js';
 import {
   DECISION_LOG_VERSION,
   FULL_BOARD_EVERY,
+  MAX_DECISION_BYTES,
+  MAX_DECISION_GAMES,
   boardAt,
   decisionLogMode,
   decisionLogPath,
@@ -15,6 +17,7 @@ import {
   pruneDecisionLogs,
   readDecisionLog,
   recordDecision,
+  recordObservation,
   recordOutcome,
   recordSent,
   updateDecisionLog,
@@ -315,7 +318,60 @@ describe('decision log store (#412 task 1)', () => {
   });
 });
 
+describe('observation entries (#412 no-gaps rule (a))', () => {
+  it('logs a turn seen but not planned as an observation, with its board', async () => {
+    expect(await recordObservation(dir, GAME, ME, 2, boardOn(2), 'live')).toBe(true);
+    const log = (await readDecisionLog(dir, GAME))!;
+    expect(log.turns['2']).toMatchObject({ kind: 'observed', source: 'live' });
+    expect(log.turns['2']!.decision).toBeUndefined();
+    expect(boardAt(log, 2)).toEqual(boardOn(2));
+  });
+
+  it('never overwrites a planned entry', async () => {
+    await record(3);
+    expect(await recordObservation(dir, GAME, ME, 3, boardOn(9), 'history')).toBe(false);
+    const log = (await readDecisionLog(dir, GAME))!;
+    expect(log.turns['3']!.kind).toBe('planned');
+    expect(log.turns['3']!.source).toBeUndefined();
+    expect(log.turns['3']!.decision?.goal).toBe('balanced');
+    expect(boardAt(log, 3)).toEqual(boardOn(3));
+  });
+
+  it('keeps sent orders on an observation and its board, and other turns still rebuild', async () => {
+    await record(1);
+    const sent = { deploys: [{ territoryId: 2, armies: 5 }], moves: [] };
+    await recordSent(dir, GAME, ME, 2, sent, { by: 'hand' });
+    expect(await recordObservation(dir, GAME, ME, 2, boardOn(2), 'history')).toBe(true);
+    await record(3);
+    const log = (await readDecisionLog(dir, GAME))!;
+    expect(log.turns['2']).toMatchObject({ kind: 'observed', source: 'history', sent, override: { by: 'hand' } });
+    expect(boardAt(log, 1)).toEqual(boardOn(1));
+    expect(boardAt(log, 2)).toEqual(boardOn(2));
+    expect(boardAt(log, 3)).toEqual(boardOn(3));
+  });
+
+  it('a later plan of the turn upgrades the observation', async () => {
+    await recordObservation(dir, GAME, ME, 4, boardOn(4), 'live');
+    await record(4);
+    const e = (await readDecisionLog(dir, GAME))!.turns['4']!;
+    expect(e.kind).toBe('planned');
+    expect(e.source).toBeUndefined();
+    expect(e.decision?.goal).toBe('balanced');
+  });
+
+  it('writes nothing when off, and never throws', async () => {
+    expect(await recordObservation(dir, GAME, ME, 1, boardOn(1), 'live', { mode: 'off' })).toBe(false);
+    expect(await readDecisionLog(dir, GAME)).toBeUndefined();
+    expect(await recordObservation(dir, GAME, ME, 1, null as unknown as BoardState, 'live')).toBe(false);
+  });
+});
+
 describe('listing and pruning decision logs', () => {
+  it('keeps generous caps by default: 1000 games and 500 MB (no-gaps rule (d))', () => {
+    expect(MAX_DECISION_GAMES).toBe(1000);
+    expect(MAX_DECISION_BYTES).toBe(500 * 1024 * 1024);
+  });
+
   const game = async (gameId: number, status: 'active' | 'finished' | 'compacted', ageDays: number) => {
     await recordDecision(dir, gameId, ME, { turn: 1, board: boardOn(1), input: input(1), plan: plan(1) });
     if (status !== 'active') await updateDecisionLog(dir, gameId, ME, (l) => ({ ...l, status }));
