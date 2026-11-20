@@ -85,7 +85,8 @@ const input = (relations?: PlanRelation[], over: Partial<PlanInput> = {}): PlanI
   income: 5,
   settings: STD,
   game: { players: FFA, turn: 8 },
-  options: { adapt: true, enemyDeploy: 5 },
+  // #420: the total hold cap off: these test an earlier hold rule, not the cap.
+  options: { holdCap: false, adapt: true, enemyDeploy: 5 },
   ...(relations ? { relations } : {}),
   ...over,
 });
@@ -396,7 +397,8 @@ describe('B2 T5: no order of mine fills a capped border past its cap (B2a review
     income: 5,
     settings: STD,
     game: { players: FFA, turn: 8 },
-    options: { adapt: true, enemyDeploy: 3 },
+    // #420: the total hold cap off: these test an earlier hold rule, not the cap.
+    options: { holdCap: false, adapt: true, enemyDeploy: 3 },
     ...(relations ? { relations } : {}),
   });
   const capped = (borderCap: number) => truce({ coveredMine: [5], coveredTheirs: [2], borderCap });

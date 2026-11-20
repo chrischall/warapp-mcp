@@ -289,6 +289,16 @@ export interface PlanOptions {
    * plan/commander.ts off). Default: it walks toward safety when it should.
    */
   commanderWalks?: boolean;
+  /**
+   * #420: `false` turns the total hold cap off (plain holds take whatever they need, as before it). Default:
+   * plain holds take at most half my income, 70% when behind. Tests of earlier hold rules use it.
+   */
+  holdCap?: boolean;
+  /**
+   * #421: `false` holds no strike share out of captures (`planShare` replans so when holding it would
+   * lower next income). Default: in contact on a flat income, 25% of income goes to the strike stack.
+   */
+  strikeShare?: boolean;
   /** #382: `false` keeps the profile from picking the siege (adapting with no goal). Default: it picks it when it fits. */
   siegeAuto?: boolean;
   /**
@@ -520,6 +530,12 @@ export interface PlanInput {
    * pass (each missing member sized for its owner's deploy, or not taken) and those dropped as targets.
    */
   bonusPush?: { allIn: ReadonlySet<number>; dropped: ReadonlySet<number> };
+  /**
+   * #421, set by planTurn on a stockpile (callers leave it out): the contested bonuses pushed all-in as a spend
+   * of the pile — every missing member a target (an opponent's included), sized for its owner's deploy or not
+   * taken, the push capped at the payback horizon × the bonus's value (the armies already stand on the board).
+   */
+  stockpileAllIn?: ReadonlySet<number>;
   settings?: PlannerSettings;
   options?: PlanOptions;
   /** The game around the board, for the profile (rule 0p). */
@@ -543,6 +559,14 @@ export interface PlanInput {
    * the plan is what it was without.
    */
   untrusted?: readonly { player: number; deploy: number }[];
+  /**
+   * #420 (P1 amended, owner decision of 2026-11-20): the quiet neighbours — opponents with 10 or more
+   * observed contact turns at an attack rate of 0.1 or less and no attack on me since
+   * (`quietNeighbour`, src/analysis/opponent-profile.ts). Each of their borders of mine is sized at the
+   * stacks beside it plus their largest top-up seen (the track's `topUp`). Absent or empty, the plan is
+   * what it was without.
+   */
+  quiet?: readonly { player: number; contactTurns: number; attacks: number }[];
   /**
    * #368: per-player incomes the user knows (warapp_plan_turn's `known_income`: what a player said in
    * chat, say), by GameFeed id: each replaces that opponent's estimate ({@link applyKnown}), a

@@ -106,7 +106,8 @@ describe('rule 0p.1: a 1v1 in contact', () => {
   });
 
   it('adapting: the hold outranks expansion that completes nothing', () => {
-    const p = planTurn(input({ adapt: true }));
+    // #420: the hold cap off (3 of 5 is past half): this tests rule 0p.1's rank, not the cap.
+    const p = planTurn(input({ adapt: true, holdCap: false }));
     expect(p.profile).toMatchObject({ format: '1v1', phase: 'contact', standing: 'even' });
     expect(why(p)).toMatch(/Deploy 3 to T2 \(#2\) so it holds \(protects \+2\)/);
     expect(p.conceded).toEqual([]);

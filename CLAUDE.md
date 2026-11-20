@@ -609,7 +609,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   acceptance not owed (already given, or my seat cannot accept). The preview (`src/analysis/accept-surrender.ts`,
   pure): whose `seat` (`player`, `inGameId`, name through `untrustedText`), `landBecomes` (`AI` / `neutral` /
   `null`, from `SurrenderedPlayersTurnIntoAIs`, not for a seat already an AI), `land` (from the live board, else
-  `null`: its territories in view and `borderedBy`, each neighbour by how many of ITS territories border that land),
+  `null`: its territories in view and `borderedBy`, each neighbour by how many of ITS territories border that land;
+  #417: `hiddenLand` — 0 when the board hides no territory, else `null`, said plainly in `hiddenLine` and the advice:
+  the standing carries no per-player territory count, so its land behind the fog is unknown — and `hiddenOnBoard`,
+  the map's territories the board does not show, the bound),
   `othersStillToAccept` (`{ player, inGameId }` each) / `goesThroughNow`, `winsGame` (no seat off my side left, a seat handed to an AI counting as
   one unless the AIs give up when one human remains; `null` when it hangs on an unread setting or teams I could not
   read) and one `advice` line: the win, or in a free-for-all the neighbour with the most bordering territories, citing
@@ -878,6 +881,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   counts at `VACATED_FOG_ARMIES` defenders, never above the costliest member in view (not at the seat's
   border stack), with a "… was player N's (out, no AI) … (#417)" line. Golden: 22 of 2000 synthetic plans
   changed (rationale), 3 plans' orders: +4 captures, none lost, next income and concessions unchanged.
+  **The breach force (#417, owner decision of 2026-11-20):** a vacated territory beside mine whose armies the fog
+  hides (`fogVacated`: owner hidden, or the seat's own shown without armies; never one the fog shows a live player
+  holding) is a target at `VACATED_FOG_ARMIES` defenders (`defenceAt` reads it so, a "… is fogged and was player N's …
+  (#417)" line) instead of the fog's "no attack is planned"; pass 3 takes vacated land outside a negative bonus even
+  as a member of an uneconomic bonus (`plainEligible`); and rule 6 (and #125's staging) keeps every idle army on a
+  territory beside vacated land still untaken and cheap (`breachOf`: fogged, or costing at most `VACATED_MAX_COST`;
+  a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
+  orders (a move's reason only); captures, next income and concessions unchanged.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -955,7 +966,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   against a finished 1v1. #420 (`priorOnlyHold`, `plan/holds.ts`): a single-border hold under `balanced` that
   only the prior makes needed (no usable track; the border holds against its one opponent's stacks plus
   base + visible bonuses / an observed deploy / a clock card; plain borders only) ranks after every capture
-  in rule 4a's greedy step, with a "(#420)" line when it passed one; held-bonus units and evidence-sized holds keep their rank. **Frontier coverage (#294).** Each observed turn carries `coverage`
+  in rule 4a's greedy step, with a "(#420)" line when it passed one; held-bonus units and evidence-sized holds keep their rank. **The total hold cap (#420, owner decision of 2026-11-20, `holdCapOf` in `plan/holds.ts`):** plain holds take at
+  most `HOLD_CAP_EVEN` (50%) of my income when even or ahead, `HOLD_CAP_BEHIND` (70%) when the profile reads me behind
+  (rounded down); a held bonus's own gate (rule 1h's units, `hold(m, true)`) and my commander's hold are funded first,
+  outside it, and count nothing. A plain hold past it (rule 1a's `defend` triage, rule 4a's greedy hold, `singleNow` /
+  `singleLate`, a deferred hold) is conceded with "… cannot be held within the hold cap (#420: …): conceded"; rule 4a's
+  hold-and-break runs before the check, as a capture, and counts toward it. The leftover's revival ("Hold … after
+  all") can still hold a capped border with what the captures leave; a strike stack takes it instead when the leftover
+  builds one. Off under a `defend` goal the caller gave and with `PlanOptions.holdCap: false` (the tests of earlier hold
+  rules use it). Golden: 67 of 6253 plans, 47 in their orders: captures +25/−3, next income up on 7 and lower on none,
+  45 more concessions and 1 fewer. **Frontier coverage (#294).** Each observed turn carries `coverage`
   (`frontierCoverage`, pure, in `src/analysis/plan/shared.ts`): its territories in view with a neighbour
   not its own, plus every territory beside them whose owner is hidden (it could hold it: the "~M"), read
   when in view with armies on both boards, and the positive bonuses it could hold with a hidden member;
@@ -1010,9 +1030,25 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   labels the cut reading — "reads up to +N if the armies that arrived beside the fog were deploys …;
   the estimate keeps ~T (tracked) because a stack walking in is not income" — and suggests
   `warapp_check_plan`'s `enemy_deploy` to test it (`EnemyDeployEstimate.newestCut`); the planner reads
-  that turn with the track's own bound, so its observed line agrees with the track. Each border
-  is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
-  land), not a double count.
+  that turn with the track's own bound, so its observed line agrees with the track. **One border per
+  opponent takes its whole deploy (#420, owner decision of 2026-11-20):** the opponent picks where to
+  land, but deploys its income in one place, so only its single most valuable border of mine (protected
+  value, then its movable armies beside it, then id) is sized for its whole deploy; each of its other
+  borders of mine is sized at its stacks beside it plus its largest top-up seen — `OpponentTrack.topUp`, the
+  most one of its stacks beside my land grew in one turn (`borderTopUp`, `ObservedTurn.topUp`; live boards
+  only, never a GameFeed history board) — never above the whole deploy (`oneBorder` in `plan/threats.ts`,
+  read by `forceAt`; a "Player N deploys its ~D in one place (#420)" line). Not without a top-up seen (no
+  track: every border keeps the whole deploy), under `enemyDeploy`, on my commander's territory, for an
+  untrusted estimate (#275) there, or for an opponent beside a single border of mine. Golden: 49 of 6253
+  plans changed, 16 in their orders (captures +3/−7, next income unchanged on all, concessions 6 fewer
+  and 3 more). **The full-deploy border is revived first** (review fix, `fullConceded` in `plan/leftover.ts`,
+  read through `Threats.oneBorder`): a top-up of 0 sizes a guard-only stack's other borders at no threat, so
+  no border was short of its margin, the leftover's revival ("Hold … after all") did not run and the leftover
+  went to a border nothing threatens while the most valuable one stayed conceded. When an opponent's
+  full-deploy border is conceded while a border of its takes only the top-up, the revival runs for that
+  border alone (every conceded border, as before, when some border is short). Golden: 20 of 6253 plans
+  changed, 19 in their orders: captures +1/−0, next income unchanged on all, concessions 14 fewer and 1 more
+  (a border held by transfers after the leftover lost them to the revived full-deploy border).
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
   border's threat to movable + max(that opponent's deploy, growth). `warapp_plan_turn` gets it from
   `<dataDir>/boards/<gameId>.json` first — the verified live boards written after each plan or
@@ -1292,7 +1328,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   "counts start with games played on this build", except a fold that failed (`failed`, retried on the next read)
   and no data directory (`no-data-dir`), which say so. warapp_wait_for_turn reads no map, so it folds files only. A store or salt
   that cannot be parsed is never overwritten (`pastGames: 'unreadable'`, folds fail). **Profiles inform only:** the planner reads none
-  of it until part 0's measurement is reported and the owner approves each hook (P1).
+  of it until part 0's measurement is reported and the owner approves each hook (P1). **The one hook approved (#420, P1
+  amended by the owner on 2026-11-20): a quiet neighbour.** `quietNeighbour` (`src/analysis/opponent-profile.ts`, pure)
+  walks this game's observed turns in order: a contact turn whose attack on me could be told counts; with
+  `QUIET_CONTACT_TURNS` (10) or more at an attack rate of `QUIET_ATTACK_RATE` (0.1) or less it is quiet, until its first
+  attack on me after that, which ends it for the game. `quietNeighbours` (`src/tools/profile-hook.ts`, in
+  `livePlanSetup`, so every tool planning on the live board reads it) reads the kept turns with the turns the boards in
+  hand show observed afresh over them (the board just read included: an attack last turn restores full sizing at once,
+  before the hook keeps it); nothing with profiling off, no data dir or the teams unknown. `PlanInput.quiet` → each of its
+  borders of mine, its most valuable included, is sized at its stacks beside it plus its largest top-up seen (the
+  track's `topUp`, #420 below; none seen: full sizing), with a "has not attacked me in N contact turns (#420, P1
+  amended …)" line. Every other habit stays inform-only. Golden unchanged (no input carries it); counterfactual with
+  every tracked opponent quiet: 399 plans, 78 orders, captures +19/−11, next income up on 7 and down on 3, 37 fewer
+  concessions and none more.
   **Where the read is reported (part D, `src/tools/profile-reads.ts`, read-only, never throws):** one computation
   (`readOpponents`) serves `warapp_profile_opponents` and three reports, none of which any plan, price or verdict
   reads (the golden corpus is unchanged): `warapp_plan_turn`'s `reads` (each opponent in contact on the live board
@@ -1699,6 +1747,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     army first, never weighed against spreading); otherwise it stays contested as before. Live, a +4
     bonus's one border was floored and spread on 9 armies while 15 went to an advance into a bonus
     47 armies from done, and fell to the 33 that could reach it whoever moved first.
+  - **The 1v1 race for vacated land (#417, owner decision of 2026-11-20).** In a 1v1 in contact, while a static
+    seat's (#270) land is still untaken, its capture targets costing at most `VACATED_MAX_COST` (neutral, or
+    hidden at the 2-defender price; never a negative bonus's member: `raceTargets` in `plan/vacated.ts`) are
+    `race` candidates of the greedy step that rank ahead of rule 0p.1's "expansion last": after the held-bonus
+    units and my commander's hold (`raceTier`), before every other hold, break, completion and advance; the
+    contested units are settled before the first race, as before the first advance. A "1v1 race for vacated
+    land (#417)" line names them. Golden: unchanged (no corpus plan is a 1v1 in contact with such land).
   - **The army cap prices idle armies (#253, rule 4h, `src/analysis/plan/cap-spend.ts`).** When my
     armies after this turn plus next income exceed the cap, the income above it is lost, so captures of
     neutrals and of foe territories holding at most 1 army (no truce, teammate or commander) are taken
@@ -1799,7 +1854,33 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     "Stockpile (#421)" rationale line (`chooseStrikeStack`, `stackFacing`, `plan/strike.ts`). The golden corpus
     carries no income history, so it is byte-identical; with a flat history injected on its 1,839 plans of turn
     ≥ 5, 7 changed orders: 2 captures gained, none lost, next income never lower, no concession, warnings 1 added
-    and 1 removed. Left for later: a fixed share of income for the stack, breaks and all-in completions.
+    and 1 removed. The rule lives in `plan/stockpile.ts` (`pileOf`, `stockpileOf`, `strikeShareOf`; pure, shared by
+    the estimates and strike phases). **The strike share (#421, owner decision of 2026-11-20):** in contact on a
+    flat income — wherever rule 0p.3c builds a strike stack (a 1v1 adapting with a foe's visible territory beside
+    mine, a siege on such a foe, or the stockpile) — `STRIKE_SHARE` (25%) of my income, rounded down, is held out of
+    captures (`PlanCtx.strikeShare`, added to `reserve`, which holds back captures only: holds, the #122
+    garrison and the #276 second line (`fillSecondLine`) keep their exact need first), so the leftover gives it to the stack ahead of comfort margins, with a
+    "Strike share (#421)" line. Never at the cost of next income: `planShare` (planner.ts) replans with
+    `PlanOptions.strikeShare: false` and keeps that plan when it earns more next turn (a completion the share
+    starved), saying so. Golden byte-identical (no history); with a flat history injected on every plan of turn
+    ≥ 5, 115 plans changed (the line), 5 in their orders: captures +2/−4 (advances that no longer fit), next
+    income and concessions unchanged. **The break spend (#421, owner decision of 2026-11-20):** on the pile (`pileOf`:
+    adapting, not `defend` or No-Split, flat, my armies in view ≥ `STOCKPILE_TURNS` × income; `PlanCtx.pile`, any
+    format) rule 4a's greedy runs the break of the strongest opponent's (highest income estimate, then id)
+    cheapest visible bonus (every member in view, never a probable one; its cheapest member, then value, then id)
+    before every other capture (`Candidate.spend`, moved ahead of the first capture; holds keep their places, and
+    the held-bonus units still fund first at it) and never skips it as a second front, with a "Stockpile spend
+    (#421)" line and the attack's reason naming it. Golden byte-identical; with the flat history injected, 12 plans
+    changed (the line), none in their orders. **The all-in completion (#421, same decision):** on the pile, each
+    contested bonus (`contestedBonuses`: positive, a member mine, every missing member in view beside mine, one an
+    opponent's, none a teammate's) the plan does not complete, and #298 neither pushes nor drops, is planned all-in
+    (`planPushed` → `planAttempts` with `PlanInput.stockpileAllIn`: #298's push, focused, its missing members bonus
+    targets under `balanced` — an opponent's included — each an opponent holds sized for its owner's deploy, the push
+    capped at the payback horizon × its value, not at my income: the armies already stand on the board). One the plan
+    does not take whole is left out without a drop or a `bonusPush` entry (no failed attempt), and the pushes are not
+    made when they would change a #298 verdict's outcome. A "Stockpile all-in (#421)" line names each. Golden
+    byte-identical; with the flat history injected, 11 plans had a candidate and none was taken whole (8 over the
+    cap, 4 not taken): no plan changed.
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and

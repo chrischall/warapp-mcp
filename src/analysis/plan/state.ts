@@ -186,7 +186,15 @@ export interface StandingCtx {
 }
 
 /** Everything a planning pass reads and never changes. */
-export type PlanCtx = OpponentsCtx & BoardCtx & CombatCtx & StandingCtx;
+export type PlanCtx = OpponentsCtx & BoardCtx & CombatCtx & StandingCtx & {
+  /**
+   * #421: the strike share held out of captures this turn (part of `reserve`; 0 when none): in contact on a
+   * flat income, {@link STRIKE_SHARE} of the income goes to the strike stack ahead of comfort margins.
+   */
+  strikeShare: number;
+  /** #421: a stockpile on a flat income (`pileOf`): my armies in view and how many turns of income they are. */
+  pile?: { my: number; turns: number };
+};
 
 /**
  * What the phases of one planning pass share and change. The collections are shared as they are,

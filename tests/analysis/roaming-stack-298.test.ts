@@ -60,7 +60,8 @@ const plan = (previousBoard?: ReturnType<typeof board>) =>
     income: 6,
     settings: RATES,
     game: { players, turn: 7 },
-    options: { adapt: true },
+    // #420: the total hold cap off: these test an earlier hold rule, not the cap.
+    options: { holdCap: false, adapt: true },
     ...(previousBoard ? { previousBoard } : {}),
   });
 const before = (t44: TerritoryState) =>

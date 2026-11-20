@@ -105,7 +105,8 @@ describe('#235: a border whose loss cuts my holdings in two protects what it cut
       income: 7,
       settings: STD,
       game: { players: [{ id: ME }, { id: 20 }], turn: 8 },
-      options: { goal: 'balanced', enemyDeploy: 5 },
+      // #420: the total hold cap off: these test an earlier hold rule, not the cap.
+      options: { holdCap: false, goal: 'balanced', enemyDeploy: 5 },
     });
 
   it('a cut vertex: held, the cut named in the rationale', () => {

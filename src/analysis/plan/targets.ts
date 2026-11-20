@@ -24,7 +24,7 @@ import type { Holds } from './holds.js';
 import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
-import { denialsOf, emptyEnemiesOf, VACATED_FOG_ARMIES } from './vacated.js';
+import { denialsOf, emptyEnemiesOf, fogVacated, VACATED_FOG_ARMIES } from './vacated.js';
 import { breakableBonuses, type Breakable } from './siege.js';
 import { ALL_IN_VALUE_TURNS, type AllInTry } from './bonus-attempts.js';
 
@@ -178,6 +178,10 @@ export function captureTargets(
    */
   const bonusDropped: ReadonlySet<number> = input.bonusPush?.dropped ?? new Set<number>();
   const droppedMembers = new Set([...bonusDropped].flatMap((id) => (g.bonusById.has(id) ? bonusTerritories(g, id).filter((t) => !mineSet.has(t)) : [])));
+  /** #421: the missing members of the contested bonuses a stockpile pushes all-in: targets, an opponent's included. */
+  const pileMembers = new Set(
+    [...(input.stockpileAllIn ?? [])].flatMap((id) => (g.bonusById.has(id) ? bonusTerritories(g, id).filter((t) => !mineSet.has(t)) : [])),
+  );
   /**
    * #240: territories my attacks failed on repeatedly while their owner reinforced them
    * (`input.repulsed`, {@link repulsedAttacks}): still that opponent's, armies in view, next to mine,
@@ -234,7 +238,9 @@ export function captureTargets(
   for (const bonusId of [...(input.bonusPush?.allIn ?? [])].sort(byNum)) {
     const b = g.bonusById.get(bonusId);
     if (!b) continue;
-    const cap = Math.max(0, Math.min(ALL_IN_VALUE_TURNS * b.value, pc.income));
+    // #421: a stockpile's push spends armies already on the board: capped at the payback horizon × its value.
+    const pile = input.stockpileAllIn?.has(bonusId) === true;
+    const cap = pile ? Math.max(0, pc.paybackTurns * b.value) : Math.max(0, Math.min(ALL_IN_VALUE_TURNS * b.value, pc.income));
     const sized: { t: number; player?: number; defenders: number; extra: number; cost: number }[] = [];
     let why: string | undefined;
     for (const t of bonusTerritories(g, bonusId).filter((x) => !mineSet.has(x))) {
@@ -253,7 +259,9 @@ export function captureTargets(
     }
     const cost = sized.reduce((n, x) => n + x.cost, 0);
     if (!why && cost > cap)
-      why = `the push needs ${cost} armies, over the cap of ${cap} (${ALL_IN_VALUE_TURNS} × its +${b.value}, at most my income ${pc.income})`;
+      why = pile
+        ? `the push needs ${cost} armies, over the cap of ${cap} (${pc.paybackTurns} × its +${b.value}, #421)`
+        : `the push needs ${cost} armies, over the cap of ${cap} (${ALL_IN_VALUE_TURNS} × its +${b.value}, at most my income ${pc.income})`;
     allInTries.set(bonusId, { feasible: !why, cost, cap, ...(why ? { detail: why } : {}) });
     if (why) continue;
     for (const x of sized)
@@ -315,6 +323,18 @@ export function captureTargets(
       );
       continue;
     }
+    // #417, the breach force: land a static seat left, hidden now, is attacked at the 2-defender price
+    // (`defenceAt` reads it so), until it is taken or the fog shows another player there.
+    if (fogVacated(pc.vacated, st, t)) {
+      const cost = costAt(t);
+      if (cost !== null) {
+        targets.set(t, { id: t, cost, enemy: false, sources });
+        rationale.push(
+          `${label(t)} is fogged and was player ${pc.vacated.get(t)}'s (out, no AI): its land behind the old border stands on ${VACATED_FOG_ARMIES} at most, so an attack into it is priced at ${VACATED_FOG_ARMIES} defenders (${cost} armies) (#417).`,
+        );
+        continue;
+      }
+    }
     if (!st || st.owner.kind === 'unknown' || st.armies === null) {
       warnings.push(
         `Fogged territory ${label(t)} borders my ${sources.map(label).join(', ')}: its armies are unknown (fog), so no attack is planned.`,
@@ -331,7 +351,7 @@ export function captureTargets(
       continue;
     }
     const enemy = st.owner.kind === 'player';
-    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t)))) {
+    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t))) && !pileMembers.has(t)) {
       if (!leadStepsOn || unitsAt(t) > 0 || droppedMembers.has(t) || !g.map.bonuses.some((b) => b.value > 0 && bonusTs.get(b.id)!.includes(t))) continue;
       const defenders = defenceAt(t);
       const extra = reinforcementAt(t);
@@ -349,7 +369,8 @@ export function captureTargets(
 
   // Bonus passes work toward my own bonuses; under `balanced` enemy targets are only break candidates.
   // #203: a lead step is a bonus target too.
-  const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy && !leadSteps.has(t));
+  // #421: a member of a contested bonus a stockpile pushes all-in is a bonus target too.
+  const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy && !leadSteps.has(t) && !pileMembers.has(t));
   return { targets, leadSteps, leadStepsOn, leadTry, leadNote, bonusTarget, repulsed, costFor, sizeOf, allInTries, bonusDropped, droppedMembers };
 }
 

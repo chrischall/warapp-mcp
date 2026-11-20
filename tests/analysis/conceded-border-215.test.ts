@@ -220,7 +220,8 @@ describe('#215 review: a conceded border in a bonus completed this turn is kept,
       income: o.income,
       settings: { ...RATES, ...o.settings },
       game: { players: [{ id: ME }, { id: FOE }], turn: 10 },
-      options: { adapt: true },
+      // #420: the total hold cap off: these test an earlier hold rule, not the cap.
+      options: { holdCap: false, adapt: true },
       previousBoard: before(board),
     };
   };

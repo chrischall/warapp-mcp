@@ -162,7 +162,8 @@ describe('#201: the strike stack reads the multi-turn forecast when no border ca
       income: 12,
       settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true, ...(noSplit ? { noSplit: true } : {}) },
       game: { players: [{ id: ME }, { id: 20 }], turn: 8 },
-      options: { adapt: true, enemyDeploy: 4 },
+      // #420: the total hold cap off: these test an earlier hold rule, not the cap.
+      options: { holdCap: false, adapt: true, enemyDeploy: 4 },
     });
 
   it('the border that breaks its front soonest gets the stack', () => {

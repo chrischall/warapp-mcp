@@ -5,6 +5,7 @@
 // rationale and warnings that state them. Pure: it reads the input and writes only
 // `state.warnings` / `state.rationale`.
 import { siegeFit, siegeOf, type Siege } from './siege.js';
+import { pileOf, strikeShareOf } from './stockpile.js';
 import type { BoardState } from '../../board.js';
 import { armiesForGold } from '../../commerce.js';
 import { holdsSeat } from '../../player-states.js';
@@ -59,6 +60,7 @@ import { skirtedNeutrals, truceOf } from './relations.js';
 import { teamFocusOf } from './team.js';
 import { neutralizeSeats, staticSeats } from '../static-seats.js';
 import { commanderPlace } from './commander.js';
+import { fogVacated, VACATED_FOG_ARMIES } from './vacated.js';
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
@@ -564,8 +566,11 @@ function boardCtx(input: PlanInput, o: OpponentsCtx): BoardCtx {
   const uncounted = (id: number) => (state.get(id)?.specialUnits ?? []).some((u) => u.kind !== 'commander');
   const uncountedKind = (id: number) =>
     [...new Set((state.get(id)?.specialUnits ?? []).filter((u) => u.kind !== 'commander').map((u) => (u.kind === 'boss' ? 'a boss' : u.kind === 'custom' ? 'a custom unit' : 'a special unit')))].join(' and ');
-  /** What a territory defends as now: its armies plus its special units. */
-  const defenceAt = (id: number) => armiesOf(id) + unitsAt(id);
+  /**
+   * What a territory defends as now: its armies plus its special units. #417 (the breach force): land a
+   * static seat left whose armies the fog hides stands on {@link VACATED_FOG_ARMIES} at most.
+   */
+  const defenceAt = (id: number) => (fogVacated(input.vacated, state.get(id), id) ? VACATED_FOG_ARMIES : armiesOf(id)) + unitsAt(id);
 
   // ---- income change (#70): the one computation nextIncome, R3 and the negative-bonus rules use ----
   const bonusTs = new Map(g.map.bonuses.map((b) => [b.id, bonusTerritories(g, b.id)]));
@@ -849,7 +854,27 @@ function standingCtx(o: OpponentsCtx, b: BoardCtx): StandingCtx {
 export function planContext(input: PlanInput): PlanCtx {
   const o = opponentsCtx(input);
   const b = boardCtx(input, o);
-  return { ...o, ...b, ...combatCtx(o, b), ...standingCtx(o, b) };
+  const c = combatCtx(o, b);
+  // #421 (owner decision, 2026-11-20): in contact on a flat income the strike share is held out of
+  // captures (the reserve holds back captures only, so holds keep their exact need first).
+  const contact = new Set<number>();
+  for (const id of b.mine)
+    for (const n of neighborsOf(o.g, id)) {
+      const st = b.territories.get(n);
+      if (st?.owner.kind === 'player' && st.armies !== null && o.foe(st.owner.playerId)) contact.add(st.owner.playerId);
+    }
+  const pileArgs = {
+    territories: b.territories, mineSet: b.mineSet, unitsAt: b.unitsAt, foe: o.foe, income: o.income,
+    ...(o.incomeTrend ? { incomeTrend: o.incomeTrend } : {}), auto: o.auto, goal: o.goal, noSplit: c.noSplit,
+  };
+  const strikeShare = o.opts.strikeShare === false ? 0 : strikeShareOf({ ...pileArgs, format: o.profile.format, siege: o.siege?.target, contact });
+  const reserve = Math.min(o.income, o.reserve + strikeShare);
+  // #421: the pile itself, for the break and all-in spends.
+  const pile = pileOf(pileArgs);
+  return {
+    ...o, ...b, ...c, ...standingCtx(o, b), reserve, strikeShare: reserve - o.reserve,
+    ...(pile ? { pile: { my: pile.my, turns: pile.turns } } : {}),
+  };
 }
 
 /**

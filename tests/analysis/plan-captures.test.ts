@@ -40,7 +40,7 @@ function upToCaptures(i: number) {
   if (!ctx.mine.length) return undefined;
   const book = deployBook(ctx, state);
   reserveCommanderMove(ctx, state);
-  const threats = threatsPhase(ctx, state, input);
+  const threats = threatsPhase(ctx, state, input, book.valueOf);
   const pass = noPass();
   const hd = holdsPhase(ctx, state, book, threats, pass);
   const tgt = targetsPhase(ctx, state, input, threats, hd);

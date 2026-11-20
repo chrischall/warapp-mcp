@@ -24,6 +24,7 @@ import type { DeployBook } from './orders.js';
 import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { capStepRoom, truceKeep } from './relations.js';
+import { breachLine, breachOf } from './vacated.js';
 
 /** The transfers (rule 6), with staging toward `staging` (#125) when the leftover saved toward a step. */
 export function transfers(
@@ -218,6 +219,8 @@ export function transfers(
       for (const t of mine) {
         const n = avail.get(t)!;
         if (n <= 0 || locked.has(t) || t === st.from || conceded.has(t) || myCommanders.has(t)) continue;
+        // #417: the breach force stays beside the land a static seat left (said by rule 6 below).
+        if (breachOf(pc, captured, t).length) continue;
         if (neighborsOf(g, t).some((x) => isEnemy(x) || x === st.t)) continue;
         if (moves.some((m) => m.from === t && m.kind === 'attack')) continue;
         const d = distStage.get(t);
@@ -274,6 +277,13 @@ export function transfers(
       const dist = via ? distEnemyVia : distEnemy.has(t) ? distEnemy : distAny;
       const n = avail.get(t)!;
       if (n <= 0 || locked.has(t)) continue;
+      // #417, the breach force: beside land a static seat left, still untaken and cheap at the
+      // 2-defender price, the stack stays until it is taken (it attacks into it when a pass funds it).
+      const land = breachOf(pc, captured, t);
+      if (land.length) {
+        rationale.push(breachLine(pc, t, n, land));
+        continue;
+      }
       // My commander's territory next to an enemy at the start of the turn keeps its armies,
       // even when this turn's captures make it interior: a capture can still fail. So does one
       // next to a border the plan concedes (#121): the enemy takes it next, and then faces it.

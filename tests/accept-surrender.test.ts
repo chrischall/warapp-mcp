@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { surrenderLand, winsOnAcceptance } from '../src/analysis/accept-surrender.js';
+import { hiddenLandLine, surrenderLand, winsOnAcceptance } from '../src/analysis/accept-surrender.js';
 import type { LiveTerritory } from '../src/live.js';
 import type { DecodedRequest, ReplyFrame, Writer } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
@@ -139,13 +139,37 @@ describe('surrenderLand', () => {
 
   it('counts each neighbour by its territories bordering the land, most first, and the hidden ones', () => {
     const land = surrenderLand([t(1, 9), t(2, 9), t(3, 7), t(4, -1, true), t(5, 8), t(6, 8)], adj, 9);
-    expect(land).toEqual({ territories: [1, 2], neighbours: [{ inGameId: 7, bordering: 1 }, { inGameId: 8, bordering: 1 }], hiddenNeighbours: 1 });
+    expect(land).toEqual({
+      territories: [1, 2],
+      neighbours: [{ inGameId: 7, bordering: 1 }, { inGameId: 8, bordering: 1 }],
+      hiddenNeighbours: 1,
+      hiddenOnBoard: 1,
+      hiddenLand: null,
+    });
     const two = surrenderLand([t(1, 9), t(2, 8), t(3, 7), t(4, 7), t(5, 8)], adj, 9);
     expect(two.neighbours).toEqual([{ inGameId: 7, bordering: 2 }, { inGameId: 8, bordering: 1 }]);
   });
 
   it('leaves out neutrals and its fogged land', () => {
-    expect(surrenderLand([t(1, 9, true), t(2, 0)], adj, 9)).toEqual({ territories: [], neighbours: [], hiddenNeighbours: 0 });
+    expect(surrenderLand([t(1, 9, true), t(2, 0)], adj, 9)).toEqual({
+      territories: [],
+      neighbours: [],
+      hiddenNeighbours: 0,
+      // 1 fogged, and 3–6 not on the board at all.
+      hiddenOnBoard: 5,
+      hiddenLand: null,
+    });
+  });
+
+  it('#417: its hidden land is unknown while the fog hides any territory (no per-player count), 0 when it hides none', () => {
+    const all = [t(1, 9), t(2, 9), t(3, 7), t(4, 7), t(5, 8), t(6, 8)];
+    expect(surrenderLand(all, adj, 9)).toMatchObject({ territories: [1, 2], hiddenOnBoard: 0, hiddenLand: 0 });
+    const someFog = [t(1, 9), t(2, 9), t(3, 7), t(4, 7), t(5, -1, true), t(6, -1, true)];
+    expect(surrenderLand(someFog, adj, 9)).toMatchObject({ territories: [1, 2], hiddenOnBoard: 2, hiddenLand: null });
+    expect(hiddenLandLine(surrenderLand(all, adj, 9))).toBe('The fog hides none of the board: its land is the 2 in view.');
+    expect(hiddenLandLine(surrenderLand(someFog, adj, 9))).toBe(
+      'How many of its territories the fog hides is unknown: the live board gives no per-player count, and 2 territories on the board are hidden, so its hidden land is anywhere from 0 to that. Only the 2 in view are counted here.',
+    );
   });
 });
 
@@ -189,6 +213,10 @@ describe('warapp_accept_surrender', () => {
         { player: Number(ME.feed), inGameId: ME.inGame, name: untrustedText('Me'), territoriesBordering: 2, you: true },
       ],
       hiddenNeighbours: 0,
+      // #417: the fixture map's other territories are not on the board: the count is unknown, said plainly.
+      hiddenLand: null,
+      hiddenOnBoard: expect.any(Number),
+      hiddenLine: expect.stringMatching(/^How many of its territories the fog hides is unknown: the live board gives no per-player count, and \d+ territories on the board are hidden, so its hidden land is anywhere from 0 to that\. Only the 1 in view is counted here\.$/),
     });
     expect(preview.othersStillToAccept).toEqual([{ player: Number(CAT.feed), inGameId: CAT.inGame }]);
     // GameFeed ids and in-game ids are never mixed in one field.
@@ -196,6 +224,7 @@ describe('warapp_accept_surrender', () => {
     expect(preview.goesThroughNow).toBe(false);
     expect(preview.winsGame).toBe(false);
     expect(preview.advice).toMatch(/ffa-surrender-veto.*player 5512121233 borders.*most territories \(3; you: 2\).*gains most/);
+    expect(preview.advice).toMatch(/Its land behind the fog is unknown \(#417\): only what is in view is counted\./);
     // A write preview's sentences name players by id only; the names are in `land.borderedBy`.
     expect(preview.advice).not.toMatch(/Cat/);
     expect(preview.unverified).toMatch(/UNVERIFIED|not yet verified live/);

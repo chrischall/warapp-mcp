@@ -221,6 +221,12 @@ export interface ObservedTurn {
    * reading itself goes above it.
    */
   leadIncome?: number;
+  /**
+   * #420: the most one of its stacks beside my land grew that turn ({@link borderTopUp}); absent when no
+   * stack of its beside my land was in view with armies on both boards, or either board came from
+   * GameFeed history (its army counts are unverified).
+   */
+  topUp?: number;
   /** Its observed deploy, capped at what it could earn ({@link ObservedTurn.cap}). */
   observed: number;
   /** The observed deploy before the cap ({@link ObservedTurn.measured} included). */
@@ -467,6 +473,11 @@ export interface OpponentTrack {
   unexplained: number | null;
   /** Bonuses that could explain `income − visibleIncome`; `null` when there is no gap. */
   inferred: InferredBonuses | null;
+  /**
+   * #420: its largest top-up seen — the most one of its stacks beside my land grew in one turn over its
+   * observed turns ({@link ObservedTurn.topUp}); `null` when no turn read one. Absent on a track built by hand.
+   */
+  topUp?: number | null;
   /** Its territories in view on the newest board. */
   visible: number;
   /**
@@ -1547,6 +1558,28 @@ export function incomeJumpText(j: IncomeJump, income: number, earlier: readonly 
  * with its received lower bound (#94). `boards` are my views of the same game, any order; only
  * consecutive turns are compared. See the module comment for the rules.
  */
+/**
+ * #420: the most armies one of `playerId`'s stacks beside my land grew over one turn (board `before` →
+ * `after`): each territory its own on both boards, shown with its armies on both (`visibleState`), and
+ * next to a territory of mine on `before`; a stack that shrank or stood still reads 0. `undefined` when
+ * there is no such stack. Growth counts deploys and armies moved in alike: what the stack facing me
+ * gained, the top-up a border must answer.
+ */
+export function borderTopUp(g: MapGraph, before: BoardState, after: BoardState, playerId: number, me: number): number | undefined {
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const owns = (t: ReturnType<typeof visibleState>, p: number) => t?.owner.kind === 'player' && t.owner.playerId === p;
+  let most: number | undefined;
+  for (const id of [...g.territoryById.keys()].sort(byNum)) {
+    const b = visibleState(was.get(id));
+    const a = visibleState(now.get(id));
+    if (!owns(b, playerId) || !owns(a, playerId)) continue;
+    if (!neighborsOf(g, id).some((n) => owns(ownerShown(was.get(n)), me))) continue;
+    most = Math.max(most ?? 0, a!.armies! - b!.armies!);
+  }
+  return most;
+}
+
 export function trackOpponents(
   g: MapGraph,
   boards: readonly TurnBoard[],
@@ -1559,9 +1592,13 @@ export function trackOpponents(
   // One board per turn (the last given wins), oldest first.
   const byTurn = new Map<number, BoardState>();
   const ordersOn = new Map<number, MyOrders | undefined>();
+  /** #420: the turns whose board came from GameFeed history (army counts unverified). */
+  const fromHistory = new Set<number>();
   for (const b of boards) {
     byTurn.set(b.turn, neutralizeSeats(b.board, seats));
     ordersOn.set(b.turn, b.orders);
+    if (b.source === 'history') fromHistory.add(b.turn);
+    else fromHistory.delete(b.turn);
   }
   const turns = [...byTurn.keys()].sort(byNum);
   if (!turns.length) return [];
@@ -1709,10 +1746,12 @@ export function trackOpponents(
         } else if (t.owner.playerId === playerId) itsArmies += t.armies ?? 0;
       }
       const leadIncome = myArmies >= LEAD_ARMIES * itsArmies ? boardIncome(g, myLand, rules).total : null;
+      const topUp = fromHistory.has(from) || fromHistory.has(to) ? undefined : borderTopUp(g, before, after, playerId, me);
       observed.push({
         from,
         to,
         coverage: frontierCoverage(g, after, before, playerId),
+        ...(topUp !== undefined ? { topUp } : {}),
         ...(leadIncome !== null ? { leadIncome } : {}),
         observed: seenObserved,
         raw,
@@ -2138,6 +2177,7 @@ export function trackOpponents(
       ...(incomeTrip ? { incomeTrip } : {}),
       unexplained,
       inferred,
+      topUp: observed.reduce<number | null>((n, x) => (x.topUp === undefined ? n : Math.max(n ?? 0, x.topUp)), null),
       visible,
       turnsUnseen,
       turnsUnseenAtLeast,

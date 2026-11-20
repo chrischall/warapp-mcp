@@ -76,6 +76,10 @@
 //          more than CONCEDE_FACTOR × its worth, so the captures go first) is held whole before the
 //          first advance when what is left covers it (best worth per army first, never weighed
 //          against spreading: `settleContested(true)`); the rest stays contested as before.
+//          #417, the race for vacated land: while a static seat's land is untaken, its captures
+//          costing at most VACATED_MAX_COST (`raceTargets`, the 2-defender price of its fogged land
+//          included) rank ahead of that rule — after the held-bonus units and my commander's hold,
+//          before every other candidate (`raceTier`); the contested units are settled before the first.
 //       2. FFA with two or more opponents left: no second front — a break (also from a held
 //          border, rule 4a) against a player that can take no member of a bonus I hold next
 //          turn and loses nothing to this turn's strike / finishing off is skipped when a
@@ -204,6 +208,15 @@
 //          builds the same stack facing the opponent beside me whose visible armies mine outnumber
 //          STOCKPILE_LEAD× (fewest first, then id; never an income estimate), never on my commander's
 //          territory, and spends it as above ("Stockpile (#421): …").
+//          #421, the strike share: in contact on a flat income (a stack built as above), STRIKE_SHARE
+//          of the income is held out of captures for the stack (holds keep their exact need first),
+//          unless that lowers next income (`planShare`) ("Strike share (#421): …").
+//          #421, the break spend: on the pile (`pc.pile`), rule 4a runs the break of the strongest
+//          opponent's cheapest visible bonus before every other capture, never skipped as a second
+//          front ("Stockpile spend (#421): …").
+//          #421, the all-in completion: on the pile, each contested bonus is planned all-in through
+//          #298's push (`planPushed`, `PlanInput.stockpileAllIn`), kept only when taken whole
+//          ("Stockpile all-in (#421): …").
 //       3d. Decided (#201): given `options.outlook` (#178) reporting winning or losing, the game is
 //          decided, and every payback test (PAYBACK_TURNS everywhere it appears in these rules)
 //          counts the turns it has left instead: the loser's strength over the winner's income a
@@ -248,6 +261,16 @@
 //     per-territory income, plus what the estimate holds beyond every such pool, with a
 //     warning). An enemy commander counts in
 //     the expected attack too (rule 1h's near miss, kept garrisons).
+//     #420 (owner decision of 2026-11-20, "One opponent's deploy"): an opponent deploys its income in
+//     one place, so its full deploy sizes only its single most valuable border of mine (by protected
+//     value, then its movable armies beside it, then id); its other borders of mine are sized at its
+//     stacks beside them plus its largest top-up seen (`OpponentTrack.topUp`: the most one of its
+//     stacks beside my land grew in one turn on the tracker's live boards), never above the full deploy
+//     (`oneBorder` in plan/threats.ts, read by `forceAt`), with a "deploys its ~D in one place (#420)"
+//     line. Not with no top-up seen (no track), under `enemyDeploy`, on my commander's territory, for an
+//     untrusted estimate (#275) there, or for an opponent facing a single border of mine.
+//     A quiet neighbour (`PlanInput.quiet`, #420's P1 amendment: 10+ contact turns at an attack rate of
+//     0.1 or less, no attack on me since) has every border so sized, its most valuable included.
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
 //     income (the larger of MinimumArmyBonus and, with BonusArmyPer on, its
 //     visible territories / BonusArmyPer) plus the bonuses that player
@@ -481,6 +504,15 @@
 //     (fully visible, fewer territories than mine, deploy below my income) that
 //     threatens it now is never conceded economically (the rationale says so once its
 //     hold is deployed); under `balanced` its hold goes first.
+//  #420 (owner decision of 2026-11-20, "Total hold cap", `holdCapOf` in plan/holds.ts): plain holds
+//     take at most HOLD_CAP_EVEN (50%) of my income when even or ahead and HOLD_CAP_BEHIND (70%) when
+//     the profile reads me behind (rounded down). A held bonus's own gate (rule 1h's units) and my
+//     commander's hold (rule 1k) are funded first, outside it, and count nothing toward it. A plain hold
+//     past it — rule 1a's `defend` triage, rule 4a's greedy hold, a unit member judged alone, a deferred
+//     hold — is conceded with a "cannot be held within the hold cap (#420 …)" line (its armies may still
+//     attack out); a hold that breaks its one threat (rule 4a's hold-and-break) runs first, as a capture,
+//     and counts. The leftover's revival may still hold a capped border after all. Off under a `defend`
+//     goal the caller gave, and with `options.holdCap: false` (tests of earlier hold rules use it).
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
 //     of my complete bonuses containing it, plus incomplete bonuses containing it
 //     that I would lose all access to without it, plus (#122) its share of every other
@@ -1014,6 +1046,10 @@
 //     may fall to 0 or below; a plain capture's never goes below one army), and a member of an
 //     uneconomic bonus of mine is still eligible for it. Each denial is judged once per plan
 //     (`denialsOf`, `Targets.denials`). It spends only what stands above its source's hold (#121).
+//     #417, the breach force: land a static seat left whose armies the fog hides is a target at
+//     VACATED_FOG_ARMIES defenders (`fogVacated`, read by `defenceAt`), pass 3 takes vacated land outside
+//     a negative bonus even in an uneconomic bonus, and rule 6 keeps the idle armies beside such land still
+//     untaken and cheap (`breachOf`) until it is taken.
 //     #281, the owner's extension (2026-11-16; guard off, not under No-Split, `balanced`/`defend`):
 //     a live opponent's own territory beside mine in view at 0 (no special unit) whose owner holds
 //     no positive bonus it is in (#165 breaks those) and that was not mine on `previousBoard` (#276
@@ -1630,13 +1666,14 @@ import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
+import { contestedBonuses } from './plan/stockpile.js';
 import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { stageTwoMove, twoMoveStages } from './plan/two-move.js';
-import { addEmptyEnemyTargets, dropEmptyEnemyTargets, foggedLastSeen, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
+import { addEmptyEnemyTargets, dropEmptyEnemyTargets, foggedLastSeen, plainOrderCosts, raceLine, raceTargets, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
 import { captureInsteadOfHold } from './plan/capture-instead.js';
@@ -1747,18 +1784,75 @@ function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>
 const allInOutcome = new WeakMap<TurnPlan, ReadonlyMap<number, AllInTry>>();
 
 /**
+ * #298's attempt memory ({@link planAttempts}), then #421's stockpile all-in completions: on a pile, the
+ * contested bonuses a push could complete are planned all-in, those it does not take whole left out.
+ */
+function planPushed(input: PlanInput): TurnPlan {
+  const plan = planAttempts(input);
+  const candidates = pileAllInOutcome.get(plan);
+  if (!candidates?.length) return plan;
+  // #421 (owner decision, 2026-11-20): on a stockpile, every contested bonus whose missing members can all be
+  // taken this turn — each an opponent holds sized for its owner's deploy, the push within the payback horizon ×
+  // its value — is completed all-in. One the plan does not take whole is left out (no drop: it is no failed
+  // attempt), and a push that would cost a #298 verdict its plan is not made.
+  const missingOf = (id: number) => {
+    const at = new Map(input.board.territories.map((t) => [t.territoryId, t.owner]));
+    return bonusTerritories(input.graph, id).filter((t) => {
+      const o = at.get(t);
+      return !(o?.kind === 'player' && o.playerId === input.me);
+    });
+  };
+  const pushed = new Set(candidates);
+  for (;;) {
+    const next = planAttempts({ ...input, stockpileAllIn: new Set(pushed) });
+    const tries = allInOutcome.get(next);
+    const taken = new Set(next.expected.captures);
+    const failing = [...pushed].filter((id) => !tries?.get(id)?.feasible || missingOf(id).some((t) => !taken.has(t)));
+    if (!failing.length) {
+      if (JSON.stringify(next.bonusPush ?? []) !== JSON.stringify(plan.bonusPush ?? [])) return plan;
+      const name = (id: number) => `${input.graph.bonusById.get(id)!.name} (#${id})`;
+      for (const id of [...pushed].sort((a, b) => a - b)) {
+        const t = tries!.get(id)!;
+        next.rationale.push(
+          `Stockpile all-in (#421): bonus ${name(id)} is contested and my armies stand idle on a flat income, so every missing member is taken this turn, each one another player holds sized for its owner's deploy: ${t.cost} armies, within the cap of ${t.cap} (the payback horizon × its value).`,
+        );
+      }
+      return next;
+    }
+    for (const id of failing) pushed.delete(id);
+    if (!pushed.size) return plan;
+  }
+}
+
+/** #421: per plan, the contested bonuses a stockpile could push all-in (only on a plan made without such a push). */
+const pileAllInOutcome = new WeakMap<TurnPlan, readonly number[]>();
+
+/** Merge the #421 stockpile pushes (`input.stockpileAllIn`) into #298's push and focus. */
+function withPush(input: PlanInput, allIn: ReadonlySet<number>, dropped: ReadonlySet<number>): PlanInput {
+  const ids = new Set([...allIn, ...(input.stockpileAllIn ?? [])]);
+  const focus = [...new Set([...(input.options?.focusBonusIds ?? []), ...ids])];
+  return {
+    ...input,
+    bonusPush: { allIn: ids, dropped },
+    options: { ...input.options, ...(ids.size ? { focusBonusIds: focus } : {}) },
+  };
+}
+
+/**
  * #298: the plan with the attempt memory's verdicts (plan/bonus-attempts.ts). A bonus whose completion
  * failed on two consecutive turns is pushed all-in (focused, every missing member sized for its owner's
  * deploy or not taken); when the push does not fit the cap, or the plan does not take every missing
  * member, it is planned again with that bonus dropped for DROP_TURNS turns. With no verdict, the plan
  * is exactly what it was without the memory.
  */
-function planPushed(input: PlanInput): TurnPlan {
+function planAttempts(input: PlanInput): TurnPlan {
   const turn = input.turn;
-  if (!input.bonusAttempts || turn === undefined) return planSettled(input);
+  const none = new Set<number>();
+  if (!input.bonusAttempts || turn === undefined)
+    return planShare(input.stockpileAllIn?.size ? withPush(input, none, none) : input);
   const judged = judgeAttempts(input.bonusAttempts, turn, input.graph, input.board, input.me);
   const verdicts = bonusVerdicts(judged, turn).filter((v) => input.graph.bonusById.has(v.bonusId));
-  if (!verdicts.length) return planSettled(input);
+  if (!verdicts.length) return planShare(input.stockpileAllIn?.size ? withPush(input, none, none) : input);
   const entries = new Map<number, BonusPushEntry>();
   for (const v of verdicts)
     if (v.kind === 'dropped') entries.set(v.bonusId, { ...v });
@@ -1783,12 +1877,7 @@ function planPushed(input: PlanInput): TurnPlan {
   let plan: TurnPlan;
   for (;;) {
     const ids = new Set(allIn.map((v) => v.bonusId));
-    const focus = [...new Set([...(input.options?.focusBonusIds ?? []), ...ids])];
-    plan = planSettled({
-      ...input,
-      bonusPush: { allIn: ids, dropped: new Set([...entries.keys()]) },
-      options: { ...input.options, ...(ids.size ? { focusBonusIds: focus } : {}) },
-    });
+    plan = planShare(withPush(input, ids, new Set([...entries.keys()])));
     const tries = allInOutcome.get(plan);
     const taken = new Set(plan.expected.captures);
     const failing = allIn.flatMap((v) => {
@@ -1838,6 +1927,26 @@ function planPushed(input: PlanInput): TurnPlan {
   }
   plan.bonusPush = push;
   return plan;
+}
+
+/** #421: per plan, the strike share its pass held out of captures (absent when none). */
+const shareOutcome = new WeakMap<TurnPlan, number>();
+
+/**
+ * #421 (owner decision, 2026-11-20): the strike share is held out of captures, ahead of comfort margins,
+ * but never at the cost of next income — when the plan without it earns more next turn (a completion the
+ * share starves), that plan stands and says why.
+ */
+function planShare(input: PlanInput): TurnPlan {
+  const plan = planSettled(input);
+  const share = shareOutcome.get(plan);
+  if (!share) return plan;
+  const without = planSettled({ ...input, options: { ...input.options, strikeShare: false } });
+  if (without.expected.nextIncome <= plan.expected.nextIncome) return plan;
+  without.rationale.push(
+    `Strike share (#421) not held this turn: holding ${share} of the income out of captures for the strike stack would lower next income from ${without.expected.nextIncome} to ${plan.expected.nextIncome} (a capture it starves completes a bonus).`,
+  );
+  return without;
 }
 
 function planSettled(input: PlanInput): TurnPlan {
@@ -1932,7 +2041,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const local = pools !== null && pools.bonuses.length > 0;
 
   // ---- 1t. threat trend, 1. defence (plan/threats.ts) ----
-  const threats = threatsPhase(pc, ps, input);
+  const threats = threatsPhase(pc, ps, input, book.valueOf);
   const { growthOf, reinforcementAt, borders, facing, borderAt } = threats;
 
   // ---- 1. holds, #172, 1h, 1b, 1c, #122 garrisons (plan/holds.ts) ----
@@ -1940,7 +2049,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const {
     acting, conceded, concedeUnaffordable, floorOrConcede, fundNearMiss, fundUnit, garrisonCompleted, heldBorders,
     heldStack, hold, holds, keepFor, kept, keptShort, leftFor, mayComplete, mayHold, noteRecent, pendingLocks, reconsider,
-    settleContested, twoStepBound, twoStepKeep, uneconomic, units, withdraw,
+    settleContested, twoStepBound, twoStepKeep, uneconomic, units, withdraw, overCap, chargeCap, concedeCapped,
   } = hd;
 
   // ---- 2. targets, 4d. frontier cost, bonus scoring, #101 (plan/targets.ts) ----
@@ -2065,7 +2174,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       return Math.max(...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
     };
     interface Candidate {
-      kind: 'hold' | 'unit' | 'complete' | 'advance' | 'stage' | 'break' | 'counter';
+      kind: 'hold' | 'unit' | 'complete' | 'advance' | 'stage' | 'break' | 'counter' | 'race';
       score: number;
       cost: number;
       id: number;
@@ -2079,11 +2188,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       owner?: number;
       /** #420: a hold sized only on the fog prior ({@link priorOnlyHold}): the evidence's figure. It ranks after every capture. */
       prior?: number;
+      /** #417: my commander's hold (rule 1k): funded ahead of the 1v1 race, as a held bonus's gate is. */
+      critical?: boolean;
+      /** #421: a stockpile spend (the strongest opponent's cheapest visible break): it runs before every other capture. */
+      spend?: boolean;
       run: () => void;
     }
-    const rank = { unit: 0, hold: 0, complete: 1, advance: 2, stage: 2, break: 3, counter: 3 } as const;
-    /** A capture that completes no bonus this turn: an advance, a two-move stage (#439), a break or a counter. */
-    const completesNothing = (c: Candidate) => c.kind === 'advance' || c.kind === 'stage' || c.kind === 'break' || c.kind === 'counter';
+    const rank = { unit: 0, hold: 0, complete: 1, advance: 2, stage: 2, race: 2, break: 3, counter: 3 } as const;
+    /** A capture that completes no bonus this turn: an advance, a two-move stage (#439), a 1v1 race (#417), a break or a counter. */
+    const completesNothing = (c: Candidate) =>
+      c.kind === 'advance' || c.kind === 'stage' || c.kind === 'race' || c.kind === 'break' || c.kind === 'counter';
     const candidates: Candidate[] = [];
     const deferred: Threatened[] = [];
     /** #215: pending holds this step conceded and unlocked, whose armies may still attack out. */
@@ -2102,8 +2216,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
      * this turn's captures may complete stays locked until they are known: rule 1c keeps it for a
      * completed bonus, and an attack out would have emptied it first.
      */
-    const concedePending = (t: Threatened, room: number) => {
-      concedeUnaffordable(t, room);
+    const concedePending = (t: Threatened, room: number, capped = false) => {
+      // #420: past the hold cap, said as such.
+      if (capped) concedeCapped(t);
+      else concedeUnaffordable(t, room);
       if (heldBorders.has(t.id)) return;
       if (mayComplete(t.id)) parked.add(t.id);
       else unlockPending(t.id);
@@ -2132,6 +2248,25 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // competes as an advance does, on the income per army of both captures.
     for (const st of stages)
       candidates.push({ kind: 'stage', score: st.net / st.cost, cost: st.cost, id: st.bonusId, value: st.net, focus: false, borders: 0, target: st.via, run: spend(() => stageTwoMove(pc, ps, st, gainWith, tryExpand)) });
+    // #417, the 1v1 race: while a static seat's land is still untaken, its cheap captures rank ahead of
+    // rule 0p.1's "expansion last" (`ahead` below); held-bonus gates and my commander's hold go first.
+    const races = oneVsOne ? raceTargets(pc, targets, captured) : [];
+    if (races.length) rationale.push(raceLine(pc, races));
+    for (const r of races)
+      candidates.push({
+        kind: 'race',
+        score: 0,
+        cost: r.cost,
+        id: r.t,
+        value: 0,
+        focus: false,
+        borders: 0,
+        target: r.t,
+        run: spend(() => {
+          if (captured.has(r.t)) return;
+          withoutTransit(pc, tgt, r.t, () => tryExpand(r.t, `races for land player ${pc.vacated.get(r.t)} left (out, no AI), ahead of the 1v1 "expansion last" rule (#417)`));
+        }),
+      });
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
     // A break is sized to land (#72): its score leaves out what holding it would need.
     const breakOption = (t: number) => {
@@ -2195,6 +2330,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const before = ps.budget;
       noteRecent(t);
       deploy(t.id, t.holdCost);
+      chargeCap(t.holdCost);
       if (!tryCapture(n, breakReason(b), { from: t.id, keep: avail.get(t.id)! })) {
         // Refused (R3: it would complete a bonus I cannot hold next turn): just hold.
         rationale.push(
@@ -2223,6 +2359,33 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       });
       return true;
     };
+    /** The member a break of `b` takes: its cheapest visible member (#72: a break only has to land), then the least frontier, then id. */
+    const breakOptionOf = (b: Breakable) =>
+      bonusTerritories(g, b.bonusId)
+        .filter((t) => targets.has(t))
+        .map(breakOption)
+        .sort((a, b) => a.cost - b.cost || a.scoreCost - b.scoreCost || a.t - b.t)[0];
+    // #421 (owner decision, 2026-11-20): on a stockpile (`pc.pile`) the turn spends by breaking the strongest
+    // opponent's cheapest visible bonus (every member in view: never a probable one) — ahead of every other
+    // capture, never skipped as a second front. The strongest is the highest income estimate, then id.
+    const pileBreak = (() => {
+      if (!pc.pile) return undefined;
+      const strongest = pc.estimateList
+        .filter((e) => foe(e.playerId))
+        .sort((a, b) => incomeOfPlayer(b.playerId) - incomeOfPlayer(a.playerId) || a.playerId - b.playerId)[0]?.playerId;
+      if (strongest === undefined) return undefined;
+      return breakable
+        .filter((b) => b.player === strongest && !b.probable)
+        .flatMap((b) => {
+          const o = breakOptionOf(b);
+          return o ? [{ b, o }] : [];
+        })
+        .sort((x, y) => x.o.cost - y.o.cost || y.b.value - x.b.value || x.b.bonusId - y.b.bonusId)[0];
+    })();
+    if (pileBreak)
+      rationale.push(
+        `Stockpile spend (#421): ${pc.pile!.my} armies of mine stand on the board, ${pc.pile!.turns} turns of my flat ${income} income, so the turn tries first to break the strongest opponent's cheapest visible bonus, player ${pileBreak.b.player}'s ${bonusName(pileBreak.b.bonusId)} (+${pileBreak.b.value}) through ${label(pileBreak.o.t)} (${pileBreak.o.cost} armies), before any other capture.`,
+      );
     for (const b of breakable) {
       // Its cheapest visible member (#72: a break only has to land), then the least frontier, then id.
       const options = bonusTerritories(g, b.bonusId)
@@ -2242,18 +2405,23 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         taken: false,
         why: breakReason(b),
       });
+      const spendIt = pileBreak?.b === b;
       // An FFA skips a second-front break, but only one the plan could pay for is named as
-      // skipped: an unaffordable one is dropped quietly (it could not run either way).
-      if (opensSecondFront(b, score) && !affordable(o.t)) {
+      // skipped: an unaffordable one is dropped quietly (it could not run either way). #421: never the stockpile's.
+      if (spendIt) {
+        // #421: the stockpile's break runs whatever its front.
+      } else if (opensSecondFront(b, score) && !affordable(o.t)) {
         skipOffence(o.t, 'not affordable this turn');
         continue;
       }
-      if (secondFront(b, score)) {
+      if (!spendIt && secondFront(b, score)) {
         skipOffence(o.t, `no second front in an FFA: player ${b.player} threatens no bonus of mine`);
         continue;
       }
+      const reasonOf = (r: string) => (spendIt ? `${r} — the stockpile's spend on the strongest opponent (#421)` : r);
       candidates.push({
         kind: 'break',
+        ...(spendIt ? { spend: true } : {}),
         score,
         cost: o.cost,
         id: b.bonusId,
@@ -2270,13 +2438,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
             const was = worstCase.get(o.t);
             targets.set(o.t, { ...tg, cost: o.cost });
             worstCase.set(o.t, defenceAt(o.t) + reinforcementAt(o.t));
-            if (!tryCapture(o.t, `${breakReason(b)}, sized to land against player ${b.player}'s ~${reinforcementAt(o.t)} deploy (#201: I lead this free-for-all)`)) {
+            if (!tryCapture(o.t, reasonOf(`${breakReason(b)}, sized to land against player ${b.player}'s ~${reinforcementAt(o.t)} deploy (#201: I lead this free-for-all)`))) {
               targets.set(o.t, tg);
               if (was === undefined) worstCase.delete(o.t);
               else worstCase.set(o.t, was);
               return;
             }
-          } else if (!tryCapture(o.t, breakReason(b))) return;
+          } else if (!tryCapture(o.t, reasonOf(breakReason(b)))) return;
           ps.anchor ??= moves[moves.length - 1]!.from;
           warnRetake(b, o);
         }),
@@ -2381,6 +2549,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       candidates.push({
         kind: 'hold',
         ...(prior !== null ? { prior } : {}),
+        ...(t.critical ? { critical: true } : {}),
         // A border just taken from a weak opponent is held first: conceding it hands it back.
         score: t.recentFrom !== undefined ? Infinity : t.worth / t.holdCost,
         cost: t.holdCost,
@@ -2391,7 +2560,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         run: () => {
           // Already garrisoned for a bonus this turn completed (#122).
           if (heldBorders.has(t.id)) return;
+          // #420: a hold that breaks its one threat is a capture first (its hold still counts toward the cap);
+          // any other plain hold past the total hold cap is conceded (its armies may still attack out).
           if (holdAndBreak(t)) return;
+          if (overCap(t)) return concedePending(t, roomAt(t.id), true);
           const pending =
             expansionLeft > 0 && t.worth < topValue && t.recentFrom === undefined ? Math.max(0, floor - expansionSpent) : 0;
           const room = roomAt(t.id);
@@ -2423,6 +2595,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         else concedeUnaffordable(t, room);
         return;
       }
+      if (overCap(t)) return concedeCapped(t, quiet);
       hold(t);
       heldBorders.add(t.id);
     };
@@ -2467,10 +2640,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     }
     // PLAN-TEAMS C3.4: a capture of a player my teammate attacks this turn ranks above an equal one.
     const teamFocused = (c: Candidate) => Number(c.owner !== undefined && pc.teamFocus.has(c.owner));
+    /** #417: the 1v1 race's tier: 0 a held bonus's gate or my commander's hold, 1 a race, 2 any other. */
+    const raceTier = (c: Candidate) => (c.kind === 'unit' || (c.kind === 'hold' && c.critical) ? 0 : c.kind === 'race' ? 1 : 2);
     const ahead = (a: Candidate, b: Candidate) =>
       Number(b.focus) - Number(a.focus) ||
       // #420: a hold sized only on the fog prior ranks after every capture.
       Number(a.prior !== undefined) - Number(b.prior !== undefined) ||
+      // #417, the 1v1 race: held-bonus gates and my commander's hold, then the races, then everything else.
+      (races.length ? raceTier(a) - raceTier(b) : 0) ||
       // #201: ahead, every held bonus is held for the worst case before any capture (said below).
       (holdPasses === 'worst' ? Number(b.kind === 'unit') - Number(a.kind === 'unit') : 0) ||
       (oneVsOne ? Number(a.kind === 'advance' || a.kind === 'stage') - Number(b.kind === 'advance' || b.kind === 'stage') : 0) ||
@@ -2506,6 +2683,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         const sorted = slots.map((i) => candidates[i]!).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
         slots.forEach((i, k) => (candidates[i] = sorted[k]!));
       }
+    }
+    // #421: a stockpile spend runs before every other capture; the holds keep their places.
+    if (candidates.some((c) => c.spend)) {
+      const spends = candidates.filter((c) => c.spend);
+      const rest = candidates.filter((c) => !c.spend);
+      const at = rest.findIndex((c) => c.kind !== 'hold' && c.kind !== 'unit');
+      candidates.splice(0, candidates.length, ...(at < 0 ? [...rest, ...spends] : [...rest.slice(0, at), ...spends, ...rest.slice(at)]));
     }
     // A held-bonus unit that pays for itself is funded before any capture that completes
     // no bonus (an advance or a break, unless focused): at the first such capture, every
@@ -2584,7 +2768,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // #215, rule 0p.1: an advance ranks below every hold, a contested held bonus's included
       // (#118 lets the captures go first, but in a 1v1 in contact not one that completes nothing):
       // live, a +4 bonus's one border was left to fall while 15 went to a bonus 47 armies from done.
-      if (oneVsOne && (c.kind === 'advance' || c.kind === 'stage') && !c.focus && !contestedDue) {
+      if (oneVsOne && (c.kind === 'advance' || c.kind === 'stage' || c.kind === 'race') && !c.focus && !contestedDue) {
         contestedDue = true;
         settleContested(true);
       }
@@ -2618,7 +2802,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         expansionSpent = spent;
         expansionLeft = left;
         for (const t of owed)
-          if (t.holdCost <= roomAt(t.id)) {
+          if (t.holdCost <= roomAt(t.id) && !overCap(t)) {
             rationale.push(
               `Hold ${label(t.id)} now after all: the capture that would have gone first completes no bonus and would leave too little to hold it later.`,
             );
@@ -2636,7 +2820,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     for (const t of deferred) {
       if (heldBorders.has(t.id)) continue;
       const room = roomAt(t.id);
-      if (t.holdCost > room) concedePending(t, room);
+      if (t.holdCost > room || overCap(t)) concedePending(t, room, t.holdCost <= room);
       else hold(t);
     }
     // #215 review: a parked concession is unlocked now unless this turn's captures complete a bonus
@@ -3265,6 +3449,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (u.contested && !u.conceded) for (const m of u.members) if (!heldBorders.has(m.id)) unheld.add(m.id);
   runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
   if (tgt.allInTries.size) allInOutcome.set(plan, tgt.allInTries);
+  if (pc.strikeShare > 0) shareOutcome.set(plan, pc.strikeShare);
+  // #421: on a stockpile, the contested bonuses this plan does not complete that an all-in push could (planPushed).
+  if (pc.pile && !input.stockpileAllIn) {
+    const done = new Set(plan.expected.bonusesCompleted);
+    const pushed = new Set([...(input.bonusPush?.allIn ?? []), ...(input.bonusPush?.dropped ?? [])]);
+    const ids = contestedBonuses(g, state, mineSet, foe).filter((id) => !done.has(id) && !pushed.has(id));
+    if (ids.length) pileAllInOutcome.set(plan, ids);
+  }
   // #274: a plan that walks my commander says so first.
   if (pc.commanderAt?.retreat) plan.warnings.unshift(commanderMoveWarning(pc.commanderAt.retreat, label));
   return plan;
