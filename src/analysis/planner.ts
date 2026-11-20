@@ -1734,8 +1734,16 @@ function planPushed(input: PlanInput): TurnPlan {
       return !(o?.kind === 'player' && o.playerId === input.me);
     });
   };
-  // A bonus already complete, or no longer contested, needs no push.
-  allIn = allIn.filter((v) => missingOf(v.bonusId).length > 0);
+  // A bonus already complete, or no longer contested, needs no push (#406): an all-in verdict needs a
+  // missing member another player still holds; with only neutrals left it is planned as any other bonus,
+  // neither pushed nor dropped.
+  const owners = new Map(input.board.territories.map((t) => [t.territoryId, t.owner]));
+  const contested = (bonusId: number) =>
+    missingOf(bonusId).some((t) => {
+      const o = owners.get(t);
+      return o?.kind === 'player' && o.playerId !== input.me;
+    });
+  allIn = allIn.filter((v) => missingOf(v.bonusId).length > 0 && contested(v.bonusId));
   let plan: TurnPlan;
   for (;;) {
     const ids = new Set(allIn.map((v) => v.bonusId));
