@@ -500,6 +500,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `warapp_check_plan`, for this call only (`PlanOptions.avoid`). The planner treats each like a truce's covered
   territory for T1 (`truceOf` wraps `noTarget`; `Truce.avoided` names it in the "Not attacking" line), a neutral
   included, in any format; holds are not relaxed (T2 does not apply). check_plan warns when the orders attack one.
+  #441: an avoided player's neutrals go too (`skirtedNeutrals`, wrapped into `noTarget` in the estimates phase): a
+  neutral whose only enemy neighbour is that player, or in a bonus it visibly holds over half of, unless it completes
+  a bonus of mine or its minimal capture's survivors alone would hold against the stacks beside it plus the owner's
+  deploy; a "Not taking … (#441)" line per one beside my land. No avoided player: golden unchanged.
 - **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (docs/PLAN-TEAMS.md
   section 8 B3). `priceTruce` (`src/analysis/relations.ts`, pure) diffs two plans on the exact input
   `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the
