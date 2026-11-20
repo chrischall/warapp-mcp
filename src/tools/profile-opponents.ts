@@ -133,6 +133,7 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
                       retaliate: h.retaliate,
                       retake: h.retake,
                       jab: h.jab,
+                      capacityTopUp: h.capacityTopUp,
                     },
                     defaults: HABIT_DEFAULTS,
                     turns: turns.map((t) => ({ turn: t.turn, ...t.primitives })),

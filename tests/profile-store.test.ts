@@ -159,6 +159,7 @@ describe('recordBehaviour', () => {
     const [t] = (await readProfileTurns(dir, GAME, ME, {})).get(OPP)!;
     expect(t!.primitives).toEqual(old);
     expect(t!.primitives).not.toHaveProperty('jabs');
+    expect(t!.primitives).not.toHaveProperty('topUp');
   });
 
   it('reads an unusable file as empty, drops unusable entries, and never throws', async () => {

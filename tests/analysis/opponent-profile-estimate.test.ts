@@ -36,10 +36,12 @@ describe('habit arithmetic', () => {
       retaliate: { e: 0, n: 1 },
       retake: { e: 1, n: 3 },
       jab: { e: 2, n: 5 },
+      capacityTopUp: { e: 1, n: 2 },
       turns: 6,
     };
     expect(addHabits(emptyHabits(), a)).toEqual(a);
     expect(addHabits(a, a).jab).toEqual({ e: 4, n: 10 });
+    expect(addHabits(a, a).capacityTopUp).toEqual({ e: 2, n: 4 });
     const twice = addHabits(a, a);
     expect(twice.reinforce).toEqual({ e: 2, n: 4 });
     expect(twice.stacking).toEqual({ n: 4, sum: 3, sq: 2.5 });

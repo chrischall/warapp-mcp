@@ -39,6 +39,14 @@ export interface TurnPrimitives {
    * absent in a record kept before #361 (unknown).
    */
   jabs?: number | null;
+  /**
+   * #295: my biggest stack facing it (board T) and its territories beside that stack: `true` when one of
+   * them could be taken by the stack's movable armies plus my income (my deploys) on T and none can on T+1
+   * — topped up against my strike capacity; `false` when one still can; `null` when there was no such
+   * chance or it cannot be read (orders unknown, an order or card of mine on one of them, a special unit,
+   * one not shown on both boards); absent in a record kept before #295 (unknown).
+   */
+  topUp?: boolean | null;
 }
 
 export interface ObserveInput {
@@ -331,6 +339,35 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
       }
     }
 
+    // #295: my biggest stack facing it, and whether its territories facing that stack were raised past
+    // what the stack's movable armies plus my income (my deploys this turn) could take.
+    let topUp: boolean | null = null;
+    if (orders && !airliftUnknown) {
+      let s: { id: number; armies: number } | null = null;
+      for (const id of ids) {
+        const a = seen(was.get(id));
+        if (a?.owner !== me || !neighborsOf(graph, id).some((n) => seen(was.get(n))?.owner === p)) continue;
+        if (!s || a.armies > s.armies) s = { id, armies: a.armies };
+      }
+      const facing = s ? neighborsOf(graph, s.id).filter((n) => ownsWas(n)) : [];
+      const readable = (x: number) =>
+        seen(was.get(x))?.owner === p &&
+        seen(now.get(x))?.owner === p &&
+        !untested.has(x) &&
+        !into(x).length &&
+        !sent.some((m) => m.to === x) &&
+        specialUnitStrength(visibleState(was.get(x))?.specialUnits) === 0 &&
+        specialUnitStrength(visibleState(now.get(x))?.specialUnits) === 0;
+      if (s && facing.length && facing.every(readable)) {
+        const capacity = Math.max(0, s.armies - guard) + sum(orders.deploys);
+        const takeable = (d: number) => {
+          const need = armiesToTake(d, { offensiveKillRate: off, defensiveKillRate: def });
+          return need !== null && need <= capacity;
+        };
+        if (facing.some((x) => takeable(seen(was.get(x))!.armies))) topUp = !facing.some((x) => takeable(seen(now.get(x))!.armies));
+      }
+    }
+
     // stack
     let top = 0;
     let total = 0;
@@ -346,7 +383,7 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
     }
     const stack = both >= 2 && total >= 1 ? { top, total } : null;
 
-    result.set(p, { contact, attackedMe, iAttacked, reinforce, stack, tookFromMe, lostToMe, jabs });
+    result.set(p, { contact, attackedMe, iAttacked, reinforce, stack, tookFromMe, lostToMe, jabs, topUp });
   }
   return result;
 }
@@ -363,7 +400,7 @@ export interface Size {
   sq: number;
 }
 
-export const HABIT_NAMES = ['reinforce', 'attack', 'firstStrike', 'stacking', 'retaliate', 'retake', 'jab'] as const;
+export const HABIT_NAMES = ['reinforce', 'attack', 'firstStrike', 'stacking', 'retaliate', 'retake', 'jab', 'capacityTopUp'] as const;
 export type HabitName = (typeof HABIT_NAMES)[number];
 
 /** One opponent's habits over a game. */
@@ -378,6 +415,8 @@ export interface Habits {
   retake: Rate;
   /** #361: contact turns it jabbed my borders with a single army, out of those whose borders could be read so (exact combat). */
   jab: Rate;
+  /** #295: turns it raised the territories facing my biggest stack past what it plus my income could take, out of the turns one could be. */
+  capacityTopUp: Rate;
   /** Turns observed. */
   turns: number;
 }
@@ -402,7 +441,9 @@ export interface ObservedPrimitives {
  * - `retake`: territories I took from it, an event when it took them back within two turns;
  *   counted only when both turns are observed with their captures told, or it did;
  * - `jab` (#361): turns in contact whose borders could be read for a single-army jab (exact combat), an
- *   event when one was.
+ *   event when one was;
+ * - `capacityTopUp` (#295): turns it had the chance to raise the territories facing my biggest stack past
+ *   what that stack plus my income could take, an event when it did.
  */
 export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
   const by = new Map<number, TurnPrimitives>();
@@ -417,6 +458,7 @@ export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
     retaliate: { e: 0, n: 0 },
     retake: { e: 0, n: 0 },
     jab: { e: 0, n: 0 },
+    capacityTopUp: { e: 0, n: 0 },
     turns: order.length,
   };
   /** Whether either of the next two turns says yes (`true`), both say no (`false`), or it cannot be told (`null`). */
@@ -441,6 +483,7 @@ export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
     h.reinforceExtra.sum += p.reinforce.extra;
     if (p.contact && p.attackedMe !== null) count(h.attack, p.attackedMe);
     if (p.contact && p.jabs != null) count(h.jab, p.jabs > 0);
+    if (p.topUp != null) count(h.capacityTopUp, p.topUp);
     if (p.stack && p.stack.total > 0) {
       const share = p.stack.top / p.stack.total;
       h.stacking.n++;
@@ -481,6 +524,7 @@ export const HABIT_DEFAULTS: Readonly<Record<HabitName, number>> = {
   retaliate: 0.5,
   retake: 0.4,
   jab: 0.1,
+  capacityTopUp: 0.3,
 };
 /**
  * The least opportunities (readings, for a size) a population pool needs for one habit before its
@@ -513,6 +557,7 @@ export function emptyHabits(): Habits {
     retaliate: { e: 0, n: 0 },
     retake: { e: 0, n: 0 },
     jab: { e: 0, n: 0 },
+    capacityTopUp: { e: 0, n: 0 },
     turns: 0,
   };
 }
@@ -535,6 +580,7 @@ export function addHabits(a: Habits, b: Habits, scale = 1): Habits {
     retaliate: rate(a.retaliate, b.retaliate),
     retake: rate(a.retake, b.retake),
     jab: rate(a.jab, b.jab),
+    capacityTopUp: rate(a.capacityTopUp, b.capacityTopUp),
     turns: tidy(a.turns + scale * b.turns),
   };
 }
@@ -624,10 +670,11 @@ export function estimateHabits(h: Habits, priors: EstimatePriors = {}): Record<H
     retaliate: rate('retaliate'),
     retake: rate('retake'),
     jab: rate('jab'),
+    capacityTopUp: rate('capacityTopUp'),
   };
 }
 
-export const PROFILE_LABELS = ['reinforcer', 'rarely-reinforces', 'stacker', 'spreader', 'rusher', 'turtle', 'avenger', 'retakes', 'jabber'] as const;
+export const PROFILE_LABELS = ['reinforcer', 'rarely-reinforces', 'stacker', 'spreader', 'rusher', 'turtle', 'avenger', 'retakes', 'jabber', 'tops-up'] as const;
 export type ProfileLabel = (typeof PROFILE_LABELS)[number];
 
 /** One fixed counter-play line per label the plan gives one (docs/PLAN-PROFILES.md B1; `spreader` has none). */
@@ -640,6 +687,7 @@ export const COUNTER_PLAY: Readonly<Partial<Record<ProfileLabel, string>>> = {
   avenger: 'Do not poke; strike only to cripple, and garrison the source.',
   retakes: 'A capture from it needs a garrison that survives its counter.',
   jabber: 'It jabs a border with one army a turn (one for one at 0% luck): keep an army above the hold there to refill.',
+  'tops-up': 'It raises the territory facing your biggest stack past what that stack plus your income can take: strike where it is not looking, or build past it first.',
 };
 
 /** Turns back from the one being played within which an attack on me withholds `turtle` (#264). */
@@ -690,5 +738,6 @@ export function labelsOf(e: Record<HabitName, HabitEstimate>, recent: LabelRecen
   if (sure(e.retaliate) && e.retaliate.value >= 0.6) out.push('avenger');
   if (sure(e.retake) && e.retake.value >= 0.6) out.push('retakes');
   if (sure(e.jab) && e.jab.value >= 0.5) out.push('jabber');
+  if (sure(e.capacityTopUp) && e.capacityTopUp.value >= 0.6) out.push('tops-up');
   return out;
 }

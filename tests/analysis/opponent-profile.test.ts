@@ -486,3 +486,44 @@ describe('habitsOf: jab (#361)', () => {
     expect(labelsOf(estimateHabits({ ...base, jab: { e: 2, n: 2 } }))).toEqual([]);
   });
 });
+
+describe('observeTurn: topping up against my strike capacity (#295)', () => {
+  // My biggest stack, 20 on 3, faces its 5 on 4; I deploy 5 (my income): 19 movable + 5 = 24 can take
+  // 5 defenders (8 needed) but not 20 (33 needed).
+  const deploy: MyOrders = { deploys: [{ territoryId: 3, armies: 5 }], moves: [] };
+  const prev = board([...shown, mine(3, 20), its(4, 5)]);
+
+  it('a facing territory raised past what my stack plus my income can take is an event', () => {
+    expect(of(observe(prev, board([...shown, mine(3, 25), its(4, 20)]), deploy)).topUp).toBe(true);
+  });
+
+  it('one still takeable is an opportunity without an event', () => {
+    expect(of(observe(prev, board([...shown, mine(3, 25), its(4, 10)]), deploy)).topUp).toBe(false);
+  });
+
+  it('no opportunity when it was already out of reach, I attacked it, or my orders are unknown', () => {
+    expect(of(observe(board([...shown, mine(3, 20), its(4, 30)]), board([...shown, mine(3, 25), its(4, 40)]), deploy)).topUp).toBeNull();
+    const struck: MyOrders = { deploys: [{ territoryId: 3, armies: 5 }], moves: [{ from: 3, to: 4, armies: 3 }] };
+    expect(of(observe(prev, board([...shown, mine(3, 23), its(4, 20)]), struck)).topUp).toBeNull();
+    expect(of(observe(prev, board([...shown, mine(3, 25), its(4, 20)]))).topUp).toBeNull();
+  });
+});
+
+describe('habitsOf: capacityTopUp (#295)', () => {
+  it('counts the turns it had the chance, an event when it took it', () => {
+    const h = habitsOf([
+      { turn: 3, primitives: turn({ contact: true, topUp: true }) },
+      { turn: 4, primitives: turn({ contact: true, topUp: false }) },
+      { turn: 5, primitives: turn({ contact: true, topUp: null }) },
+      // An older record, kept before #295: not read.
+      { turn: 6, primitives: turn({ contact: true }) },
+    ]);
+    expect(h.capacityTopUp).toEqual({ e: 1, n: 2 });
+  });
+
+  it('labels an opponent that tops up against my strike at the confidence bar', () => {
+    const base = habitsOf([]);
+    expect(labelsOf(estimateHabits({ ...base, capacityTopUp: { e: 6, n: 6 } }))).toEqual(['tops-up']);
+    expect(labelsOf(estimateHabits({ ...base, capacityTopUp: { e: 2, n: 2 } }))).toEqual([]);
+  });
+});

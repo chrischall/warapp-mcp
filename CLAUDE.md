@@ -1095,8 +1095,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`observeTurn` → `TurnPrimitives` per opponent: contact, `attackedMe` — `null` when it cannot be told —,
   `iAttacked`, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
   arithmetic cannot read —, `stack`, `tookFromMe` / `lostToMe`; visibility through `visibleState` / `ownerShown`)
-  and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake, jab — #361) from the
-  whole list, so re-deriving never double-counts. A territory an order only `sent` holds (percentage, Attack
+  and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake, jab — #361, capacityTopUp — #295) from the
+  whole list, so re-deriving never double-counts. #295: `topUp` reads my biggest stack facing it on board T
+  and its territories beside that stack: one takeable by the stack's movable armies plus my income (my deploys) on T and
+  none on T + 1 is an event, one still takeable an opportunity without (orders unknown, an order or card of mine on
+  one, a special unit or a territory not shown on both boards: no reading); the habit `capacityTopUp` and the label
+  `tops-up` (≥ 0.6) with its counter line follow. Inform only (P1). A territory an order only `sent` holds (percentage, Attack
   Only, Transfer Only) or my Airlift touches is never read from armies; orders cached without their card plays
   (`MyOrders.cards`, cached since A1) read nothing from armies when the game may have Airlift, and when it
   may have Gift captures from me cannot be told (`tookFromMe: null`: no retake counted, no "did not attack";
