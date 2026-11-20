@@ -1145,9 +1145,11 @@
 //     bonus gets only armies the closer ones cannot use; bonuses as close as each other keep the
 //     score order. Given `previousBoard`, a bonus advanced last turn (a member captured since) keeps
 //     priority unless another is strictly closer; the rationale lists the order and says which
-//     kept or gave way. Armies to finish count every missing member: a fogged one at its bonus's
-//     costliest visible missing member (counted as free before, the figure jumped when it came into
-//     view), named in every "N armies to finish".
+//     kept or gave way. Armies to finish count every missing member: a fogged one (#428) at its
+//     last sighting on my boards (`options.lastSeen`, unless the fog shows another owner now), else
+//     its picking-board size (#201), else — its owner hidden too — the game's neutral size
+//     (`settings.neutralArmies`), else at its bonus's costliest visible missing member (counted as
+//     free before, the figure jumped when it came into view), named in every "N armies to finish".
 //  3b. One surplus per territory (#121). A border that holds at the start of the turn (its armies
 //     beat its visible threat, rule 1) and is not conceded keeps what holds it, as my commander's
 //     territory does (rule 1k): a capture from it spends only its armies above that, plus deploys
@@ -1368,7 +1370,7 @@
 //     warning ("Breaking player … without eliminating it invites retaliation"): what it has left is
 //     likeliest aimed at whoever broke it. In a 1v1 it attacks me anyway, so no warning there.
 //     Wastelands (#167, `settings.wastelands`): a fogged missing member of a bonus is costed at the
-//     costliest visible missing member plus the expected surcharge of being a wasteland
+//     neutral size or costliest visible missing member (#428) plus the expected surcharge of being a wasteland
 //     (ceil(count ÷ the map's territories × (a wasteland's capture cost − that))), with a rationale line.
 //     #201: given `options.rememberedNeutrals` (the picking board's neutrals, which warapp_plan_picks
 //     and warapp_submit_picks' preview keep per game), a fogged missing member the picking board showed

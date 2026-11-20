@@ -1505,8 +1505,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Commit to the closest bonus (#101, rule 4f).** While no bonus is held, and in the opening
     and expansion phases, completions and advances go to the bonus fewest turns from completion
     first (equally close ones by score); a bonus advanced last turn keeps priority unless another
-    is strictly closer. "N armies to finish" counts fogged members at the bonus's costliest
-    visible missing member. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
+    is strictly closer. "N armies to finish" counts a fogged member (#428) at its last sighting on my
+    boards (`lastSeenOf` → `options.lastSeen`, cached boards only, unless the fog shows another owner now),
+    else its picking-board size (#201), else — its owner hidden too — the game's neutral size
+    (`settings.neutralArmies`: the larger of the two neutral sizes the settings give), and only without
+    any of those at the bonus's costliest visible missing member (65 finished-game plans counted every one
+    at 208). Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input
+    1020 plans, 724 orders, captures +22/−2, next income lower on 1. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
     are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or

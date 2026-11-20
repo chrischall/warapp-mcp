@@ -604,6 +604,8 @@ describe('warapp_plan_turn', () => {
       oneArmyStandsGuard: true,
       multiAttack: false,
       baseIncome: 5,
+      // #428: the game's neutral size (the larger of the fixture's 3 and 2), for a fogged bonus member.
+      neutralArmies: 3,
       // #257: the planner's own switch (idle interior armies may transfer), under its own name…
       idleTransfers: true,
       // …and the game's per-order options as GameFeed states them (the lobby fixture has both off).
@@ -1313,6 +1315,12 @@ describe('warapp_plan_turn — never stand still (#107)', () => {
 });
 
 describe('plannerSettings', () => {
+  it("#428: the game's neutral size is the larger of the two neutral sizes the settings give", () => {
+    expect(plannerSettings({ cards: [], raw: {}, initialNonDistributionArmies: 2 })).toEqual({ neutralArmies: 2 });
+    expect(plannerSettings({ cards: [], raw: {}, initialNonDistributionArmies: 2, initialNeutralsInDistribution: 4 })).toEqual({ neutralArmies: 4 });
+    expect(plannerSettings({ cards: [], raw: {}, initialNeutralsInDistribution: 3 })).toEqual({ neutralArmies: 3 });
+  });
+
   it('maps game settings; AllowTransferOnly (the per-order mode toggle) never turns transfers off', () => {
     expect(plannerSettings(undefined)).toEqual({});
     expect(

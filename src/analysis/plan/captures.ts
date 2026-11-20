@@ -1243,7 +1243,7 @@ export function bonusPasses(
         if (stepping === null) continue;
         const worth = p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`;
         const reason =
-          (stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p.fogged, p.fogEach)})`) + leadNote(t);
+          (stepping?.reason ?? `advances bonus ${bonusName(p.bonusId)} (${worth}, ${toFinish(p.cost, p)})`) + leadNote(t);
         // Only a lead step (#203) can be funded on a conceded source.
         const before = whole || !lead ? undefined : snapshot();
         const tried = before && new Map(leadTry);

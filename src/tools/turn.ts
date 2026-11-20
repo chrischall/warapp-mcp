@@ -59,6 +59,7 @@ import {
   type PlanRelation,
   type PlanInput,
 } from '../analysis/index.js';
+import { visibleState } from '../analysis/plan/shared.js';
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH, type CombatSettings, luckFraction, straightKills } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
@@ -344,6 +345,10 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   const m = commerceRules(s)?.armyCostMultiplier ?? 0;
   if (m > 0) out.armyCostMultiplier = m;
   if (s.wastelands && s.wastelands.count > 0) out.wastelands = { ...s.wastelands };
+  // #428: the game's neutral size (a fogged bonus member no board showed is costed as one): the larger
+  // of the two the settings give, since such a member may have been in the distribution or outside it.
+  const sizes = [s.initialNonDistributionArmies, s.initialNeutralsInDistribution].filter((n): n is number => n !== undefined && n >= 0);
+  if (sizes.length) out.neutralArmies = Math.max(...sizes);
   // #271 review: the first turn an opponent may play a Bomb (a bomb reads as a failed attack on my hold).
   const bombFrom = cardClock(s)?.cards.find((c) => c.card === 'Bomb')?.firstPlayableTurn.fastest;
   if (bombFrom !== undefined && bombFrom !== null) out.bombFrom = bombFrom;
@@ -359,6 +364,24 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
 }
 
 export { currentTurn, turnsCompleted } from './common.js';
+
+/**
+ * #428: each territory's last sighting on my board history (oldest first): its armies and owner (a
+ * player id, `null` for a neutral) on the newest board that showed both. Boards from GameFeed history
+ * (unverified in progress) are left out. The planner costs a fogged bonus member at it.
+ */
+export function lastSeenOf(boards: readonly TurnBoard[]): Map<number, { armies: number; owner: number | null }> {
+  const out = new Map<number, { armies: number; owner: number | null }>();
+  for (const b of boards) {
+    if (b.source === 'history') continue;
+    for (const t of b.board.territories) {
+      const v = visibleState(t);
+      if (!v || v.armies === null) continue;
+      out.set(t.territoryId, { armies: v.armies, owner: v.owner.kind === 'player' ? v.owner.playerId : null });
+    }
+  }
+  return out;
+}
 
 /** My teammates' GameFeed ids (empty outside a team game; GameFeed's team field is unverified). */
 export function friendsOf(players: readonly Player[], me: Player): Set<number> {
@@ -1904,6 +1927,7 @@ export async function livePlanSetup(
   // plan's main front, so its front forecast and the plan's front outlook are one computation.
   const outlook = gameOutlook(outlookInput);
   const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
+  const lastSeen = lastSeenOf(history.boards);
   // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
   const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
   const gameContext: PlanGameContext = {
@@ -2008,6 +2032,8 @@ export async function livePlanSetup(
       outlook: { state: outlook.state, turns: outlook.turns },
       // #201: the picking board's neutrals, so a fogged one keeps its size (wastelands).
       ...(picking?.neutrals ? { rememberedNeutrals: new Map(picking.neutrals) } : {}),
+      // #428: and a member my earlier boards showed keeps its last-seen armies.
+      ...(lastSeen.size ? { lastSeen } : {}),
       ...(goal !== undefined ? { goal } : {}),
       focusBonusIds,
       ...(opponents > 0 ? { opponents } : {}),
