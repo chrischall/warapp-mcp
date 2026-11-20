@@ -1330,7 +1330,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     tracker saw it deploy over its window; no tracked turn, no such trigger), mine ≥ `SIEGE_INCOME_LEAD` (1.8) ×
     its, or a stack of mine at the start of the turn takes a member of a bonus it visibly holds against its
     defenders plus its whole deploy. No memory between turns. `TurnPlan.siege` reports it; golden unchanged.
-    Not yet: a profile-picked siege, re-break tracking across turns, single-army jabs (#361).
+    Not yet: a profile-picked siege, re-break tracking across turns.
+  - **Single-army jabs (#361, `src/analysis/plan/jabs.ts`), at 0% luck under straight rounding only**, where one
+    army kills round(1 × the offensive rate) ≥ 1 and dies: a one-for-one trade (seen live: 75 → 74, 19 → 18). On
+    under `siege` (`PlanOptions.jabs` / plan_turn's `jabs`: `true` on, `false` off; off otherwise). After the #226
+    margin, armies still idle beyond a source's hold (`spareBeyondHold`, never a step's saving source or rule 5's
+    kept leftover; never below what holds it against two opponents together, #128, or so thin #314 would warn; the
+    strike stack only into the siege target's break members) jab enemy stacks of 2 or more, one army each, at most
+    one per stack, never one another order attacks, a `noTarget`, a #240 repulsed one or a special unit's: the
+    siege's break members cheapest break first, then members of a bonus a foe holds in full, then any stack of an
+    opponent I out-earn or out-army. `TurnPlan.jabs` reports them (`winChance` 0, never in `captures`); a 1-army
+    failed attack is no #240 evidence. Measured on the golden corpus with `jabs: true` (6253 plans): jabs on 242,
+    279 in all; no other order, capture, next income or warning changed. Golden unchanged (off by default).
+    Not yet: tracking an opponent's own jabs in its profile (`attack` with a 1-army size).
   - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
     teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
     warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus
