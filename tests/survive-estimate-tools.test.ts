@@ -84,6 +84,9 @@ describe('the headroom table (#275 a)', () => {
       [159, 25, 39, 158, false],
     ]);
     expect(p.headroom[0]!.opponent).toBe(Number(BOB.feed));
+    // #306: each row is flagged against Bob's own deploy estimate too (the one his replies are tried at).
+    const bob = p.enemyDeploy.find((e) => e.player.id === Number(BOB.feed))!;
+    for (const r of p.headroom) expect(r).toMatchObject({ opponentEstimate: bob.deploy, belowOpponentEstimate: false });
     // #275 pattern 2: each row says what a breach of it opens; both borders face Bob, nothing lies behind.
     for (const r of p.headroom) expect(r.breach).toEqual({ territories: [], income: 0 });
   });

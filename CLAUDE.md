@@ -913,7 +913,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   first order, between two, after my last — so a border my later orders drain is judged as drained; a commander walk of the plan's goes with its move, as
   in warapp_check_plan's table on the same orders), the
   bonuses it breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
-  `headroom`, and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
+  `headroom` (`headroomView`, `src/tools/survival.ts`; #306: each row flags `belowMyIncome` and, against that opponent's
+  own deploy estimate, `belowOpponentEstimate` with `opponentEstimate` — for a leader my income flags every row; the
+  compact view lists the rows that protect something first — a held bonus, bonus income behind, a breach's income,
+  `protectsSomething` — each part weakest first, so bare 1-army tiles at 0 no longer crowd out the gates), and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
   my income. A static seat (#270, `staticSeats`) gets no row: its territories are neutrals there, as the
   planner reads them (`HeadroomInput.staticSeats`; the hold diff below takes the same). Its figure is not
   #268's "falls to a deploy of less than ~D" line: that one is the planner's threat arithmetic on the
@@ -1001,7 +1004,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   not conceded by the plan; picked on the start-of-turn board, so one whose enemy stack the given orders
   capture still counts) what stands on it after the default plan's deploys and moves and after the given
   ones, on the turn simulator with no opponent order (my commander as 7, walking with the move that carries it on both sides — #274; card plays not carried out); a border
-  the given orders leave lower is named with `planLeaves`, `left`, `short`, largest first. `planLeaves` is
+  the given orders leave lower is named with `planLeaves`, `left`, `short`, largest first (the tools only from
+  `BELOW_PLAN_MIN_SHORT` (3) short: #306, one 1 or 2 short is the plan's surplus). `planLeaves` is
   everything the plan leaves there (leftover, margins, idle stacks), not the least that holds it, so a border
   named may still hold (the headroom table says what takes it). `bordersBelowPlan` (`src/tools/turn.ts`)
   makes the one extra plan per call as warapp_plan_turn makes it with no args: `livePlanSetup` with

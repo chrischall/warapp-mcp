@@ -59,6 +59,8 @@ const PLAN = [
 ];
 // The hand edit: the deploy moved to 159 and no attack.
 const EDIT = [{ kind: 'deploy', territory: 159, armies: 7 }];
+// The same, with 159 drained too: 9 of its 10 walk to 161.
+const DRAIN = [...EDIT, { kind: 'move', from: 159, to: 161, armies: 16 }];
 
 interface Below {
   territory: { id: number; name: string };
@@ -76,8 +78,11 @@ describe('given orders against the default plan (#275 pattern 3)', () => {
 
   it('warapp_submit_turn names a border the given orders leave below the plan, with the difference, and still previews', async () => {
     h = await live();
-    const text = JSON.stringify(payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: EDIT })));
-    expect(text).toMatch(/These orders leave 1 border below what the default plan leaves standing there \(#275\): territory 157 with 10 where the plan leaves 12 \(2 short\)/);
+    const text = JSON.stringify(payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: DRAIN })));
+    // #306: 157, only 2 short of the plan's 12, is the plan's surplus and is not named.
+    expect(text).toMatch(/These orders leave 1 border below what the default plan leaves standing there \(#275\): territory 159 with 1 where the plan leaves 10 \(9 short\)\./);
+    const small = JSON.stringify(payload(await h.call('warapp_submit_turn', { game_id: GAME, orders: EDIT })));
+    expect(small).not.toMatch(BELOW);
     // No board is cached for turns 1 and 2, which warapp_plan_turn would read from GameFeed's history: said.
     expect(text).toMatch(/The board cache lacks turns 1 and 2, which warapp_plan_turn reads from GameFeed's history/);
     expect(text).toMatch(/confirmToken/);
@@ -92,15 +97,10 @@ describe('given orders against the default plan (#275 pattern 3)', () => {
   it('warapp_check_plan lists each border below the plan, the largest shortfall first, and an empty list for the plan', async () => {
     h = await live();
     const edit = payload<{ belowPlan: Below[] }>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: EDIT }));
-    expect(edit.belowPlan).toEqual([{ territory: { id: 157, name: expect.any(String) }, planLeaves: 12, left: 10, short: 2 }]);
-    // Draining 159 too: 9 of its 10 walk to 161.
-    const worse = payload<{ belowPlan: Below[] }>(
-      await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [...EDIT, { kind: 'move', from: 159, to: 161, armies: 16 }] }),
-    );
-    expect(worse.belowPlan.map((b) => [b.territory.id, b.planLeaves, b.left, b.short])).toEqual([
-      [159, 10, 1, 9],
-      [157, 12, 10, 2],
-    ]);
+    // #306: 157 is 2 short of the plan's 12: the plan's surplus, not named.
+    expect(edit.belowPlan).toEqual([]);
+    const worse = payload<{ belowPlan: Below[] }>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: DRAIN }));
+    expect(worse.belowPlan.map((b) => [b.territory.id, b.planLeaves, b.left, b.short])).toEqual([[159, 10, 1, 9]]);
     const same = payload<{ belowPlan: Below[] }>(await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: PLAN }));
     expect(same.belowPlan).toEqual([]);
   });

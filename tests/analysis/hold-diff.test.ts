@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { holdsBelowPlan, type HoldDiffInput } from '../../src/analysis/hold-diff.js';
+import { BELOW_PLAN_MIN_SHORT, holdsBelowPlan, type HoldDiffInput } from '../../src/analysis/hold-diff.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
 
@@ -55,6 +55,17 @@ describe('holdsBelowPlan (#275 pattern 3)', () => {
     expect(diff({ given: { deploys: [{ territoryId: 3, armies: 2 }, { territoryId: 1, armies: 3 }], moves: [] } })).toEqual([
       { territory: 3, planLeaves: 11, left: 8, short: 3 },
     ]);
+  });
+
+  it('drops a border short by less than minShort: the plan surplus, not a real difference (#306)', () => {
+    // Deploying 3 of the 5 on 3 leaves it 2 short of the plan's 11; 2 of them leaves it 3 short.
+    const short2 = { deploys: [{ territoryId: 3, armies: 3 }, { territoryId: 1, armies: 2 }], moves: [] };
+    expect(diff({ given: short2 })).toEqual([{ territory: 3, planLeaves: 11, left: 9, short: 2 }]);
+    expect(diff({ given: short2, minShort: BELOW_PLAN_MIN_SHORT })).toEqual([]);
+    expect(BELOW_PLAN_MIN_SHORT).toBe(3);
+    expect(
+      diff({ given: { deploys: [{ territoryId: 3, armies: 2 }, { territoryId: 1, armies: 3 }], moves: [] }, minShort: BELOW_PLAN_MIN_SHORT }),
+    ).toEqual([{ territory: 3, planLeaves: 11, left: 8, short: 3 }]);
   });
 
   it('counts the armies an order sends out of the border', () => {

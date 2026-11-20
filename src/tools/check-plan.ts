@@ -762,7 +762,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         jointFalls: report.jointFalls.slice(0, LIST_MAX).map(jointView),
         ...(report.jointFalls.length > LIST_MAX ? { jointFallsMore: report.jointFalls.length - LIST_MAX } : {}),
         // #275 (a): each border's headroom, the weakest first (compact: the first few).
-        headroom: headroomView(headroom, map, income, rung === 'full', !teamsKnown),
+        headroom: headroomView(headroom, map, income, rung === 'full', !teamsKnown, (p) => estimates.find((e) => e.playerId === p)?.estimate),
         ...(rung !== 'full' && headroom.length > HEADROOM_COMPACT ? { headroomMore: headroom.length - HEADROOM_COMPACT } : {}),
         // #275 pattern 3: absent when the default plan could not be made.
         ...(belowPlan

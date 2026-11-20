@@ -186,14 +186,29 @@ export function safeHeadroom(input: HeadroomInput): HeadroomRow[] {
   }
 }
 
+/** #306: a border whose fall costs more than the tile: a held bonus, bonus income behind it, or a breach's income. */
+export const protectsSomething = (r: HeadroomRow): boolean => r.bonuses.length > 0 || r.behindIncome > 0 || r.breach.income > 0;
+
 /**
- * The headroom table as the tools show it: names beside ids, each row with whether it is below my income.
+ * The headroom table as the tools show it: names beside ids, each row with whether it is below my income
+ * and (#306, given `estimateOf`) below its opponent's own deploy estimate (`belowOpponentEstimate`, with
+ * `opponentEstimate`; absent when that opponent has none) — for a leader my income flags every row. The
+ * compact view (#306) lists the rows that protect something first (`protectsSomething`), each part weakest
+ * first, so bare 1-army tiles at headroom 0 no longer crowd out the borders that decide the turn.
  * `mayBeTeammate` (the teams unknown, `resolveTeams`' `known: false`): every row says its opponent may be a teammate.
  */
-export function headroomView(rows: readonly HeadroomRow[], map: GameMap, myIncome: number, full: boolean, mayBeTeammate = false) {
+export function headroomView(
+  rows: readonly HeadroomRow[],
+  map: GameMap,
+  myIncome: number,
+  full: boolean,
+  mayBeTeammate = false,
+  estimateOf?: (player: number) => number | undefined,
+) {
   const name = namer(map);
   const bonusName = new Map(map.bonuses.map((b) => [b.id, b.name]));
-  return rows.slice(0, full ? rows.length : HEADROOM_COMPACT).map((r) => ({
+  const shown = full ? rows : [...rows.filter(protectsSomething), ...rows.filter((r) => !protectsSomething(r))].slice(0, HEADROOM_COMPACT);
+  return shown.map((r) => ({
     territory: name(r.territory),
     armies: r.armies,
     deploy: r.deploy,
@@ -201,6 +216,9 @@ export function headroomView(rows: readonly HeadroomRow[], map: GameMap, myIncom
     from: name(r.from),
     ...(r.firstMover ? { needsFirstMove: r.firstMover === 'me' ? ('you' as const) : ('opponent' as const) } : {}),
     belowMyIncome: r.deploy !== null && r.deploy < myIncome,
+    ...((est) => (est === undefined ? {} : { opponentEstimate: est, belowOpponentEstimate: r.deploy !== null && r.deploy < est }))(
+      estimateOf?.(r.opponent),
+    ),
     bonuses: r.bonuses.map((b) => ({ id: b.id, name: bonusName.get(b.id) ?? String(b.id), value: b.value })),
     behind: r.behind.map(name),
     behindIncome: r.behindIncome,
