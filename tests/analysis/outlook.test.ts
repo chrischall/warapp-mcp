@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { gameOutlook, LIKELY_INCOME_MARGIN, OUTLOOK_RATIO, OUTLOOK_TURNS, peerPace } from '../../src/analysis/outlook.js';
+import { gameOutlook, LIKELY_INCOME_MARGIN, OUTLOOK_RATIO, OUTLOOK_TURNS, peerPace, type GameOutlook } from '../../src/analysis/outlook.js';
+import { planTurn } from '../../src/analysis/planner.js';
 import type { TurnBoard } from '../../src/analysis/opponents.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
@@ -384,6 +385,25 @@ describe('gameOutlook (#178)', () => {
         expect(last.income!.noLeadClaim).toBe(true);
         expect(o.basis).toMatch(/no lead is claimed/i);
         expect(o.basis).toMatch(/even share of the map's income/i);
+      });
+
+      it('#436: the plan reads no decided game on that thin-evidence lead: orders as with no outlook', () => {
+        const boards = turns(9, [issue(2000), issue(2000), issue(2000)]);
+        const o = gameOutlook({ graph: big, me: ME, boards, game: ffa4 });
+        const last = o.turns.at(-1)!;
+        const plan = (outlook?: Pick<GameOutlook, 'state' | 'turns'>) =>
+          planTurn({
+            graph: big,
+            board: boards.at(-1)!.board,
+            me: ME,
+            income: last.income!.mine,
+            settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true },
+            game: { players: ffa4.players, turn: last.turn },
+            options: { adapt: true, ...(outlook ? { outlook } : {}) },
+          });
+        const now = plan(o);
+        expect(now.rationale.join('\n')).not.toMatch(/Outlook \(#201\)/);
+        expect({ deploys: now.deploys, moves: now.moves }).toEqual({ deploys: plan().deploys, moves: plan().moves });
       });
 
       it('a measured opponent that drops out of view keeps its tracked pace: losing sight never reads more hopeful', () => {

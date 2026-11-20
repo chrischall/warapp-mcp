@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { gameOutlook, INCOME_AHEAD_RATIO, INCOME_BEHIND_RATIO, SURRENDER_TURNS } from '../../src/analysis/outlook.js';
+import { gameOutlook, INCOME_AHEAD_RATIO, INCOME_BEHIND_RATIO, SURRENDER_TURNS, type GameOutlook } from '../../src/analysis/outlook.js';
+import { planTurn } from '../../src/analysis/planner.js';
 import type { TurnBoard } from '../../src/analysis/opponents.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
@@ -54,6 +55,30 @@ describe('outlook incomes (#436)', () => {
     expect(o.surrenderLine).toMatchObject({ crossed: true, turnsBelow: SURRENDER_TURNS, myIncome: 5, theirIncome: 10, playerId: FOE });
     expect(o.surrenderLine!.advice).toMatch(/advice only/);
     expect(o.basis).toMatch(/Surrender line crossed/);
+  });
+
+  it('report-only: a crossed surrender line and a behind state leave the plan\'s orders as the even outlook they replace', () => {
+    const g = buildGraph(line(0, 0));
+    const boards = turns(4, [trailing(10, 10), trailing(10, 10), trailing(10, 10)]);
+    const o = gameOutlook({ graph: g, me: ME, boards, game });
+    expect(o.state).toBe('behind');
+    expect(o.surrenderLine!.crossed).toBe(true);
+    const plan = (outlook: Pick<GameOutlook, 'state' | 'turns'>) =>
+      planTurn({
+        graph: g,
+        board: boards.at(-1)!.board,
+        me: ME,
+        income: 5,
+        settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true },
+        game: { players: game.players, turn: 6 },
+        options: { adapt: true, outlook },
+      });
+    // The shape before #436: every turn even, no income lean, no surrender line.
+    const before = { state: 'even' as const, turns: o.turns.map(({ income: _i, strength: _s, bonusesInReach: _b, ...t }) => ({ ...t, state: 'even' as const })) };
+    const now = plan(o);
+    const was = plan(before);
+    expect({ deploys: now.deploys, moves: now.moves }).toEqual({ deploys: was.deploys, moves: was.moves });
+    expect(now.rationale).toEqual(was.rationale);
   });
 
   it('names the bonus in reach that would close the gap', () => {

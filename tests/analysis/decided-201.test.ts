@@ -87,6 +87,33 @@ describe('#201: the payback horizon once the game is decided', () => {
     expect(skips(p)).toBe(true);
   });
 
+  it('#436: a lead on the likely high alone under thin evidence is no decided game: the payback tests keep 10 turns', () => {
+    // The shape gameOutlook gives it now: no win claimed (noLeadClaim), the lean unknown, no `estimated`.
+    // Before #436 the same turns read winning on the likely high (the test above): the bonus no longer paid.
+    const o = outlook('even', 120, 10, 2000);
+    const income = { mine: 10, theirs: { playerId: 20, low: 2, high: 4, estimate: 2 }, ratio: { low: 2.5, high: 5, estimate: 5 }, calibrated: false, lean: 'unknown' as const, noLeadClaim: true as const };
+    const turns = o.turns.map((t) => ({ ...t, likely: { playerId: 20, high: 20, ratio: 6, source: 'tracked' as const }, income, strength: 'even' as const, state: 'unknown' as const }));
+    const p = run({ adapt: true, outlook: { state: 'unknown', turns } });
+    expect(p.rationale.join('\n')).not.toMatch(/Outlook \(#201\)/);
+    expect(skips(p)).toBe(false);
+    expect(p.deploys).toEqual(run({ adapt: true }).deploys);
+    expect(p.moves).toEqual(run({ adapt: true }).moves);
+  });
+
+  it('#436: the income states and a crossed surrender line are report-only: orders as on an even outlook', () => {
+    const even = run({ adapt: true, outlook: outlook('even', 60, 20, 30) });
+    const surrenderLine = { crossed: true, turnsBelow: 3, needed: 3, myIncome: 10, theirIncome: 30, playerId: 20, line: 20, calibrated: true, advice: 'advice only' };
+    for (const lean of ['ahead', 'behind', 'unknown'] as const) {
+      const o = outlook('even', 60, 20, 30);
+      const turns = o.turns.map((t) => ({ ...t, strength: 'even' as const, state: lean }));
+      // warapp_plan_turn hands the planner the outlook's state and turns only; handed the whole outlook, a crossed line still changes nothing.
+      const outlookWithLine = { ...o, state: lean, turns, surrenderLine } as Pick<GameOutlook, 'state' | 'turns'>;
+      const p = run({ adapt: true, outlook: outlookWithLine });
+      expect({ lean, deploys: p.deploys, moves: p.moves }).toEqual({ lean, deploys: even.deploys, moves: even.moves });
+      expect(p.rationale.join('\n')).not.toMatch(/Outlook \(#201\)|surrender/i);
+    }
+  });
+
   it('#228: losing on the estimate says so in the rationale line', () => {
     const o = outlook('losing', 20, 10, 2000);
     const turns = o.turns.map((t) => ({ ...t, likely: { playerId: 20, high: 200, ratio: 0.1, source: 'tracked' as const }, estimated: true as const }));
