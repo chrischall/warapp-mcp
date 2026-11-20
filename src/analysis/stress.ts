@@ -128,6 +128,8 @@ export interface StressInput {
    * opponent's deploy holds beyond every bonus it could hold may land anywhere ({@link enemyDeployReaching}).
    */
   perTerritoryIncome?: boolean;
+  /** #433: the game's base income, the floor of an opponent's free income under Local Deployment (default {@link DEFAULT_BASE_INCOME}). */
+  baseIncome?: number;
   /** I lead a free-for-all: any two opponents may strike one territory of mine together (#180). */
   leader?: boolean;
   /**
@@ -383,7 +385,7 @@ export function stressPlan(input: StressInput): StressReport {
   const pools = input.localDeployments ? couldHoldBonusPools(graph, input.opponents.map((o) => o.id), shownOwner) : undefined;
   const deployOn = (opp: StressOpponent, on: number): number => {
     const all = Math.max(0, Math.floor(opp.deploy));
-    return pools ? enemyDeployReaching(all, freeIncome(opp.base ?? 0, DEFAULT_BASE_INCOME, opp.card ?? 0), pools.get(opp.id) ?? [], [on], input.perTerritoryIncome === true) : all;
+    return pools ? enemyDeployReaching(all, freeIncome(opp.base ?? 0, input.baseIncome ?? DEFAULT_BASE_INCOME, opp.card ?? 0), pools.get(opp.id) ?? [], [on], input.perTerritoryIncome === true) : all;
   };
 
   /** Luck-free: `sent` armies (and a commander, when it goes along) take `t` as it stands. */

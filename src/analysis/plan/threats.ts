@@ -21,7 +21,7 @@ import {
   type EnemyDeployEstimate,
   type PlanInput,
 } from './shared.js';
-import { territoryIncome } from '../player.js';
+import { gameBaseIncome, territoryIncome } from '../player.js';
 import { simTerritories } from '../turn-sim.js';
 import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
@@ -219,7 +219,7 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
   // border faces only the free income and the pools there.
   const perTerritory = (s.bonusArmyPer ?? 0) > 0;
   /** #433: the free income's floor is the game's own base income (0 and 3 exist), not the 5 of the default. */
-  const gameBase = Math.max(0, Math.floor(s.baseIncome ?? MIN_ENEMY_DEPLOY));
+  const gameBase = gameBaseIncome(s);
   if (s.localDeployments && !custom) {
     const foes = [...new Set([...state.values()].flatMap((t) => (t.owner.kind === 'player' && foe(t.owner.playerId) ? [t.owner.playerId] : [])))].sort(byNum);
     for (const [p, pools] of couldHoldBonusPools(g, foes, (t) => {

@@ -165,6 +165,11 @@ export function armyCapPoolsUncertainty(c: ArmyCapIncome | undefined, localDeplo
 export const ARMY_CAP_BASIS =
   "the formula is verified by six live cases (2026-11-15: received 41, 49, 25, 27 and 71 where the cap bit, among them the binding case sent through warapp_submit_turn, and a room of 61 it did not bind), the cap taken on this turn's income; Reinforcement card armies are outside it (the client's guide: they are not income and always pay in full, unverified live)";
 
+/** #433: the game's own base income (`MinimumArmyBonus`; 0 and 3 exist), the default only when it does not say. One accessor for the planner and the stress test. */
+export function gameBaseIncome(settings: { baseIncome?: number; minimumArmyBonus?: number } | undefined): number {
+  return Math.max(0, Math.floor(settings?.baseIncome ?? settings?.minimumArmyBonus ?? DEFAULT_BASE_INCOME));
+}
+
 /** {@link IncomeRules} from a game's settings (the defaults when it does not say). */
 export function incomeRules(settings: Pick<GameSettings, 'minimumArmyBonus' | 'bonusArmyPer'> | undefined): IncomeRules {
   return { base: settings?.minimumArmyBonus ?? DEFAULT_BASE_INCOME, per: settings?.bonusArmyPer ?? 0 };
