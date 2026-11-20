@@ -32,7 +32,8 @@ export function plainEconomy(pc: PlanCtx, tgt: Targets, id: number, gain: number
 /**
  * Pass 3's eligibility (#125): not a player's under `balanced` (but #281's empty enemy territory), and
  * not only a member of an uneconomic bonus (but #281's denial: what it denies the opponent beside it is
- * its worth, not my bonus).
+ * its worth, not my bonus; and #417's land a static seat left, outside a negative bonus: the breach force
+ * takes it while it is up for taking).
  */
 export function plainEligible(pc: PlanCtx, tgt: Targets, id: number, enemy: boolean): boolean {
   return (
@@ -40,6 +41,8 @@ export function plainEligible(pc: PlanCtx, tgt: Targets, id: number, enemy: bool
     (tgt.economicMember.has(id) ||
       !tgt.uneconomicMember.has(id) ||
       tgt.denials.has(id) ||
+      // #417, the breach force: land a static seat left is taken while it is up for taking.
+      (pc.vacated.has(id) && !tgt.negativeMember.has(id)) ||
       (pc.territoryShare(1) > 0 && !tgt.negativeMember.has(id)))
   );
 }

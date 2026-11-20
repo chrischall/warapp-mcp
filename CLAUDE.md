@@ -878,6 +878,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   counts at `VACATED_FOG_ARMIES` defenders, never above the costliest member in view (not at the seat's
   border stack), with a "… was player N's (out, no AI) … (#417)" line. Golden: 22 of 2000 synthetic plans
   changed (rationale), 3 plans' orders: +4 captures, none lost, next income and concessions unchanged.
+  **The breach force (#417, owner decision of 2026-11-20):** a vacated territory beside mine whose armies the fog
+  hides (`fogVacated`: owner hidden, or the seat's own shown without armies; never one the fog shows a live player
+  holding) is a target at `VACATED_FOG_ARMIES` defenders (`defenceAt` reads it so, a "… is fogged and was player N's …
+  (#417)" line) instead of the fog's "no attack is planned"; pass 3 takes vacated land outside a negative bonus even
+  as a member of an uneconomic bonus (`plainEligible`); and rule 6 (and #125's staging) keeps every idle army on a
+  territory beside vacated land still untaken and cheap (`breachOf`: fogged, or costing at most `VACATED_MAX_COST`;
+  a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
+  orders (a move's reason only); captures, next income and concessions unchanged.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to

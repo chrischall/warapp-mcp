@@ -59,6 +59,7 @@ import { skirtedNeutrals, truceOf } from './relations.js';
 import { teamFocusOf } from './team.js';
 import { neutralizeSeats, staticSeats } from '../static-seats.js';
 import { commanderPlace } from './commander.js';
+import { fogVacated, VACATED_FOG_ARMIES } from './vacated.js';
 
 /**
  * The fog prior to apply (#119, {@link EnemyIncomePrior}): only when the game says the start was
@@ -564,8 +565,11 @@ function boardCtx(input: PlanInput, o: OpponentsCtx): BoardCtx {
   const uncounted = (id: number) => (state.get(id)?.specialUnits ?? []).some((u) => u.kind !== 'commander');
   const uncountedKind = (id: number) =>
     [...new Set((state.get(id)?.specialUnits ?? []).filter((u) => u.kind !== 'commander').map((u) => (u.kind === 'boss' ? 'a boss' : u.kind === 'custom' ? 'a custom unit' : 'a special unit')))].join(' and ');
-  /** What a territory defends as now: its armies plus its special units. */
-  const defenceAt = (id: number) => armiesOf(id) + unitsAt(id);
+  /**
+   * What a territory defends as now: its armies plus its special units. #417 (the breach force): land a
+   * static seat left whose armies the fog hides stands on {@link VACATED_FOG_ARMIES} at most.
+   */
+  const defenceAt = (id: number) => (fogVacated(input.vacated, state.get(id), id) ? VACATED_FOG_ARMIES : armiesOf(id)) + unitsAt(id);
 
   // ---- income change (#70): the one computation nextIncome, R3 and the negative-bonus rules use ----
   const bonusTs = new Map(g.map.bonuses.map((b) => [b.id, bonusTerritories(g, b.id)]));

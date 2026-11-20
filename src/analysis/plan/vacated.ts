@@ -22,7 +22,7 @@
 // judged by rule 4d as before. Never a truce's covered territory, one my attacks failed on (#240) or
 // one lowering income; the capture spends what stands above its source's hold, as any.
 import { neighborsOf } from '../graph.js';
-import type { BoardState } from '../../board.js';
+import type { BoardState, TerritoryState } from '../../board.js';
 import type { Captures } from './captures.js';
 import type { DeployBook } from './orders.js';
 import type { PlanCtx, PlanState } from './state.js';
@@ -96,6 +96,48 @@ export const VACATED_MAX_COST = 3;
  * its interior stands on 0-2: its border stack in view says nothing about the land behind it.
  */
 export const VACATED_FOG_ARMIES = 2;
+
+/**
+ * #417 (the breach force): `id` is land a static seat left (`vacated`) whose armies the fog hides now —
+ * owner hidden, or shown neutral (a seat's own, planned as a neutral) without its armies. It is priced at
+ * {@link VACATED_FOG_ARMIES} defenders. Never one the fog shows another player holding: that player got there first.
+ */
+export function fogVacated(vacated: ReadonlyMap<number, number> | undefined, st: TerritoryState | undefined, id: number): boolean {
+  if (!vacated?.has(id)) return false;
+  if (!st || st.owner.kind === 'unknown') return true;
+  return st.owner.kind === 'neutral' && st.armies === null;
+}
+
+/**
+ * #417 (the breach force): the land a static seat left beside `t` that is still untaken — not captured
+ * this turn, still neutral or hidden (never a live player's in view), in no negative bonus
+ * — and cheap at the 2-defender price: fogged ({@link fogVacated}), or costing at most {@link VACATED_MAX_COST}. By id.
+ */
+export function breachOf(
+  pc: Pick<PlanCtx, 'g' | 'vacated' | 'territories' | 'mineSet' | 'costAt' | 'bonusesWith'>,
+  captured: ReadonlySet<number>,
+  t: number,
+): number[] {
+  if (!pc.vacated.size) return [];
+  return neighborsOf(pc.g, t)
+    .filter((x) => {
+      if (!pc.vacated.has(x) || pc.mineSet.has(x) || captured.has(x)) return false;
+      // Never a negative bonus's member (pass 3 never takes one): nothing to race for.
+      if ((pc.bonusesWith.get(x) ?? []).some((id) => (pc.g.bonusById.get(id)?.value ?? 0) < 0)) return false;
+      const st = pc.territories.get(x);
+      if (fogVacated(pc.vacated, st, x)) return true;
+      if (st?.owner.kind !== 'neutral') return false;
+      const c = pc.costAt(x);
+      return c !== null && c <= VACATED_MAX_COST;
+    })
+    .sort((a, b) => a - b);
+}
+
+/** #417: the rationale line for a stack the breach force keeps beside land a static seat left. */
+export function breachLine(pc: Pick<PlanCtx, 'label' | 'vacated'>, t: number, n: number, land: readonly number[]): string {
+  const left = [...new Set(land.map((x) => pc.vacated.get(x)!))].sort((a, b) => a - b).map((p) => `player ${p}`).join(' and ');
+  return `Keep the ${n} idle armies on ${pc.label(t)}: the breach force beside ${land.map(pc.label).join(', ')}, land ${left} left (out, no AI), until it is taken (#417).`;
+}
 
 /** What taking a vacated territory denies the opponent beside it (#281). */
 export interface Denial {

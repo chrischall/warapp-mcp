@@ -1014,6 +1014,10 @@
 //     may fall to 0 or below; a plain capture's never goes below one army), and a member of an
 //     uneconomic bonus of mine is still eligible for it. Each denial is judged once per plan
 //     (`denialsOf`, `Targets.denials`). It spends only what stands above its source's hold (#121).
+//     #417, the breach force: land a static seat left whose armies the fog hides is a target at
+//     VACATED_FOG_ARMIES defenders (`fogVacated`, read by `defenceAt`), pass 3 takes vacated land outside
+//     a negative bonus even in an uneconomic bonus, and rule 6 keeps the idle armies beside such land still
+//     untaken and cheap (`breachOf`) until it is taken.
 //     #281, the owner's extension (2026-11-16; guard off, not under No-Split, `balanced`/`defend`):
 //     a live opponent's own territory beside mine in view at 0 (no special unit) whose owner holds
 //     no positive bonus it is in (#165 breaks those) and that was not mine on `previousBoard` (#276

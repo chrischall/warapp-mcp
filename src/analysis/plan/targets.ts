@@ -24,7 +24,7 @@ import type { Holds } from './holds.js';
 import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
-import { denialsOf, emptyEnemiesOf, VACATED_FOG_ARMIES } from './vacated.js';
+import { denialsOf, emptyEnemiesOf, fogVacated, VACATED_FOG_ARMIES } from './vacated.js';
 import { breakableBonuses, type Breakable } from './siege.js';
 import { ALL_IN_VALUE_TURNS, type AllInTry } from './bonus-attempts.js';
 
@@ -314,6 +314,18 @@ export function captureTargets(
         `${label(t)} (player ${hiddenOwner}) borders my ${sources.map(label).join(', ')} and its armies are hidden by the fog: the threat from it counts ${bound} plus its deploy, and the win chance of an attack into it is unknown, so none is planned.`,
       );
       continue;
+    }
+    // #417, the breach force: land a static seat left, hidden now, is attacked at the 2-defender price
+    // (`defenceAt` reads it so), until it is taken or the fog shows another player there.
+    if (fogVacated(pc.vacated, st, t)) {
+      const cost = costAt(t);
+      if (cost !== null) {
+        targets.set(t, { id: t, cost, enemy: false, sources });
+        rationale.push(
+          `${label(t)} is fogged and was player ${pc.vacated.get(t)}'s (out, no AI): its land behind the old border stands on ${VACATED_FOG_ARMIES} at most, so an attack into it is priced at ${VACATED_FOG_ARMIES} defenders (${cost} armies) (#417).`,
+        );
+        continue;
+      }
     }
     if (!st || st.owner.kind === 'unknown' || st.armies === null) {
       warnings.push(
