@@ -105,27 +105,8 @@ import { neutralizeSeats, staticSeats, type SeatEndRules } from './static-seats.
 import { bonusTerritories } from './bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, guaranteedKills, luckFraction, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
-import {
-  bombPossibleOn,
-  captureFloor,
-  enemyDeployEstimates,
-  failedAttackKills,
-  frontierCoverage,
-  holdLosses,
-  localFreeOn,
-  observeSigned,
-  ownerShown,
-  repelledFloor,
-  coverageText,
-  LOW_COVERAGE,
-  TRACKED_MIN_TURNS,
-  trackCoverage,
-  visibleState,
-  type FrontierCoverage,
-  type PlannerSettings,
-  type TrackCoverage,
-  type RepelledAttacks,
-} from './planner.js';
+import { bombPossibleOn, enemyDeployEstimates, localFreeOn, LOW_COVERAGE, TRACKED_MIN_TURNS, type PlannerSettings } from './planner.js';
+import { captureFloor, failedAttackKills, frontierCoverage, holdLosses, observeSigned, ownerShown, repelledFloor, coverageText, trackCoverage, visibleState, type FrontierCoverage, type TrackCoverage, type RepelledAttacks } from './plan/observe.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
 
 /** #164: a stack is large when its armies are at least this many turns of its visible income. */
