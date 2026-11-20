@@ -25,6 +25,9 @@ import {
   recordOutcome,
   recordSent,
   recordSubmission,
+  recordChat,
+  compactLog,
+  type LoggedChatMessage,
   updateDecisionLog,
 } from '../src/decision-log.js';
 import { VERSION } from '../src/version.js';
@@ -627,5 +630,49 @@ describe('capture helpers (#412 task 2)', () => {
     await recordSubmission(dir, GAME, ME, 4, { sent, orders: sent, by: 'agent' });
     expect((await readDecisionLog(dir, GAME))!.turns['4']!.override).toEqual({ by: 'agent' });
     expect(await recordSubmission(dir, GAME, ME, 5, { sent, orders: sent }, { mode: 'off' })).toBe(false);
+  });
+});
+
+describe('the chat block (#415 task 3)', () => {
+  const msg = (over: Partial<LoggedChatMessage> = {}): LoggedChatMessage => ({
+    time: '2026-11-01T10:01:00Z',
+    from: FOE,
+    channel: 'private',
+    toMe: true,
+    intents: ['truce-proposal'],
+    confidence: 'high',
+    stance: 'price',
+    ...over,
+  });
+
+  it("adds the turn's chat to its entry, merging repeats by message, and a re-plan keeps it", async () => {
+    await record(2);
+    expect(await recordChat(dir, GAME, ME, 2, [msg()])).toBe(true);
+    // The same message read again (a second plan of the turn) is one entry; a new one joins it.
+    await recordChat(dir, GAME, ME, 2, [msg(), msg({ time: '2026-11-01T10:05:00Z', intents: ['threat'], stance: 'report' })]);
+    let log = (await readDecisionLog(dir, GAME))!;
+    expect(log.turns['2']!.chat).toEqual([msg(), msg({ time: '2026-11-01T10:05:00Z', intents: ['threat'], stance: 'report' })]);
+    // Planning the turn again replaces the decision but keeps the chat read that turn.
+    await record(2, { plan: { goal: 'defend' } });
+    log = (await readDecisionLog(dir, GAME))!;
+    expect(log.turns['2']!.decision?.goal).toBe('defend');
+    expect(log.turns['2']!.chat).toHaveLength(2);
+    // Compaction keeps it (small).
+    expect(compactLog(log).turns['2']!.chat).toHaveLength(2);
+  });
+
+  it('writes nothing for a turn with no entry, an empty block, or with the log off', async () => {
+    expect(await recordChat(dir, GAME, ME, 5, [msg()])).toBe(false);
+    await record(1);
+    expect(await recordChat(dir, GAME, ME, 1, [])).toBe(false);
+    expect(await recordChat(dir, GAME, ME, 1, [msg()], { mode: 'off' })).toBe(false);
+    expect((await readDecisionLog(dir, GAME))!.turns['1']!.chat).toBeUndefined();
+  });
+
+  it('keeps ids and labels only: a stray text or name field is never written', async () => {
+    await record(1);
+    await recordChat(dir, GAME, ME, 1, [{ ...msg(), text: 'secret words', name: 'Somebody' } as unknown as LoggedChatMessage]);
+    const raw = await readFile(decisionLogPath(dir, GAME), 'utf8');
+    expect(raw).not.toMatch(/secret words|Somebody/);
   });
 });

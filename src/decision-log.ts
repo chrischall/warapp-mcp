@@ -219,6 +219,30 @@ export interface DecisionOutcome {
   eliminated: boolean;
 }
 
+/**
+ * One message from another player read on a planned turn (#415 task 3): ids and labels only — never the text or
+ * a name. `id` (a web message id) or `time` (GameFeed's) tells messages apart.
+ */
+export interface LoggedChatMessage {
+  id?: string;
+  time?: string;
+  /** The message's own turn, when the source gave one. */
+  turn?: number;
+  /** The sender's GameFeed id; null when unknown. */
+  from: number | null;
+  channel: 'public' | 'team' | 'private' | 'unknown';
+  toMe: boolean;
+  intents: string[];
+  confidence: 'high' | 'medium' | 'low';
+  /** The advised stance (absent when the sender was unknown). */
+  stance?: string;
+  /** Task 4b: whether it would block the turn. */
+  blocks?: boolean;
+}
+
+/** Chat messages kept per turn at most. */
+export const MAX_LOGGED_CHAT = 50;
+
 /** Where an observation's board came from: read live, or filled from the game's history. */
 export type ObservationSource = 'live' | 'history';
 
@@ -238,6 +262,8 @@ export interface DecisionEntry {
   truth?: TurnTruth;
   /** What this turn logged against the truth. */
   accuracy?: TurnAccuracy;
+  /** #415: the messages from other players read when the turn was planned (ids and labels only). */
+  chat?: LoggedChatMessage[];
 }
 
 export type DecisionLogStatus = 'active' | 'finished' | 'compacted';
@@ -603,10 +629,12 @@ export async function recordDecision(
       gameId,
       playerId,
       (log) => {
-        if (log.turns[String(rec.turn)]?.sent) return undefined;
+        const was = log.turns[String(rec.turn)];
+        if (was?.sent) return undefined;
         const boards = decodeBoards(log);
         boards.set(rec.turn, board);
-        const turns = { ...log.turns, [String(rec.turn)]: entry };
+        // #415: the chat read on the turn outlives a re-plan of it.
+        const turns = { ...log.turns, [String(rec.turn)]: was?.chat ? { ...entry, chat: was.chat } : entry };
         encodeBoards(turns, boards);
         return { ...log, turns };
       },
@@ -714,6 +742,66 @@ export async function recordSent(
     },
     opts,
   );
+}
+
+const CHAT_CHANNELS_LOGGED = new Set(['public', 'team', 'private', 'unknown']);
+const CONFIDENCES = new Set(['high', 'medium', 'low']);
+
+/** A chat entry as kept: only its known fields, each checked (no text, no name). */
+function keptChat(m: LoggedChatMessage): LoggedChatMessage | undefined {
+  if (!isRec(m)) return undefined;
+  const channel = CHAT_CHANNELS_LOGGED.has(m.channel) ? m.channel : 'unknown';
+  return {
+    ...(typeof m.id === 'string' && m.id.length <= 40 ? { id: m.id } : {}),
+    ...(typeof m.time === 'string' && m.time.length <= 40 ? { time: m.time } : {}),
+    ...(isInt(m.turn) ? { turn: m.turn } : {}),
+    from: isInt(m.from) ? m.from : null,
+    channel,
+    toMe: m.toMe === true,
+    intents: Array.isArray(m.intents) ? m.intents.filter((i): i is string => typeof i === 'string' && /^[a-z-]{1,30}$/.test(i)) : [],
+    confidence: CONFIDENCES.has(m.confidence) ? m.confidence : 'low',
+    ...(typeof m.stance === 'string' && /^[a-z]{1,20}$/.test(m.stance) ? { stance: m.stance } : {}),
+    ...(typeof m.blocks === 'boolean' ? { blocks: m.blocks } : {}),
+  };
+}
+
+const chatKey = (m: LoggedChatMessage) => `${m.id ?? ''}|${m.time ?? ''}|${m.from ?? ''}|${m.channel}|${m.turn ?? ''}`;
+
+/**
+ * Add the chat read on `turn` to its entry (#415): merged with what is there by message (a later reading of the
+ * same message replaces it), at most {@link MAX_LOGGED_CHAT} (the newest). Nothing when the turn has no entry or
+ * nothing is given. Ids and labels only. `true` when written. Never throws.
+ */
+export async function recordChat(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  turn: number,
+  chat: readonly LoggedChatMessage[],
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  try {
+    const kept = chat.map(keptChat).filter((m): m is LoggedChatMessage => m !== undefined);
+    if (!kept.length) return false;
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        const e = log.turns[String(turn)];
+        if (!e) return undefined;
+        const merged = new Map((e.chat ?? []).map((m) => [chatKey(m), m]));
+        for (const m of kept) {
+          merged.delete(chatKey(m));
+          merged.set(chatKey(m), m);
+        }
+        return { ...log, turns: { ...log.turns, [String(turn)]: { ...e, chat: [...merged.values()].slice(-MAX_LOGGED_CHAT) } } };
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Fill what happened after `turn`; nothing when the turn has no entry. `true` when written. Never throws. */

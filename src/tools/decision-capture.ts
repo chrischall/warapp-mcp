@@ -12,6 +12,8 @@ import type { BoardState } from '../board.js';
 import {
   decisionOutcome,
   fillOutcome,
+  type LoggedChatMessage,
+  recordChat,
   type Observation,
   recordDecision,
   recordObservations,
@@ -79,4 +81,10 @@ export async function captureObservation(ctx: Ctx, gameId: number, me: number, s
 export async function captureSent(ctx: Ctx, gameId: number, me: number, turn: number, sub: Submission): Promise<void> {
   if (!ctx.dataDir) return;
   await recordSubmission(ctx.dataDir, gameId, me, turn, sub, modeOf(ctx));
+}
+
+/** Log the chat read on a planned turn (#415: ids and labels only) beside its entry. Never throws. */
+export async function captureChat(ctx: Ctx, gameId: number, me: number, turn: number, chat: readonly LoggedChatMessage[]): Promise<void> {
+  if (!ctx.dataDir || !chat.length) return;
+  await recordChat(ctx.dataDir, gameId, me, turn, chat, modeOf(ctx));
 }
