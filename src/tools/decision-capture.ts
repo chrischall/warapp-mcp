@@ -14,6 +14,10 @@
 // already gave it, never a request), `captureGameEvent` (a pending surrender seen, my acceptance, my own
 // surrender), `captureJoin` (warapp_join_game confirmed) and `captureOpponentRead` (warapp_scout_player with
 // a game), and the pure shapers `joinContextLog` and `mySurrenderDetail`.
+//
+// #437 task 3, the picks phase: `capturePicksAdvice` (warapp_plan_picks: `picksAdviceLog`, warnings by
+// `pickWarningCode`), `capturePicksSent` (warapp_submit_picks after a send) and `capturePicksAward` (the award
+// `loadAward` reads on turn 1, once).
 import { createHash } from 'node:crypto';
 import type { HeadroomRow } from '../analysis/headroom.js';
 import type { OutlookState } from '../analysis/outlook.js';
@@ -31,6 +35,12 @@ import { policyChecks } from '../open-games.js';
 import { nameFreeSettings } from '../replay.js';
 import {
   type CheckPlanSummary,
+  type DecisionLogMode,
+  type PicksAdvice,
+  type PicksSent,
+  recordPicksAdvice,
+  recordPicksAward,
+  recordPicksSent,
   decisionLogMode,
   decisionLogOwner,
   decisionLogPath,
@@ -56,6 +66,8 @@ import {
   type Submission,
   type SubmitChecks,
 } from '../decision-log.js';
+import type { AwardReading } from '../analysis/award.js';
+import type { PickPlan } from '../analysis/picks.js';
 import type { CommanderCheck } from './commander-check.js';
 import type { LiveContext } from './live-context.js';
 
@@ -432,4 +444,126 @@ export function mySurrenderDetail(status: MySurrenderDetail['status'], log: Pick
     outlook: l?.state ?? null,
     outlookTurn: l?.turn ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// #437 task 3: the picks phase
+
+/** Picks whose score the advice log keeps, from the top of the list. */
+export const LOGGED_PICK_SCORES = 10;
+
+/** The pick advisor's warnings (and its tool's) by the start of their wording; anything else is `other`. */
+const PICK_WARNING_CODES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^Ignored pickable ids not on the map/, 'unknown-pickable'],
+  [/^Starting armies per picked territory missing/, 'assumed-pick-armies'],
+  [/^Base income missing/, 'assumed-base-income'],
+  [/^Kill rates missing/, 'assumed-kill-rates'],
+  [/^Neutral size of unpicked pickable territories missing/, 'assumed-neutrals-in'],
+  [/^Neutral size of territories outside the distribution missing/, 'assumed-neutrals-out'],
+  [/^Luck is /, 'luck'],
+  [/^Capture costs assume straight rounding/, 'rounding'],
+  [/^Local deployments are on/, 'local-deployments'],
+  [/^No compact /, 'not-compact'],
+  [/^In a 1v1 the best /, 'spread-relaxed'],
+  [/^Only \d+ pickable territor/, 'short-pickable'],
+  [/^The fallback group scores more than the primary/, 'fallback-outscores'],
+  [/^Territory limit missing/, 'assumed-territory-limit'],
+  [/^Could not tell which seat is yours/, 'team-seat-unknown'],
+];
+
+/** A pick warning's code (never its prose, which may carry ids and figures). */
+export function pickWarningCode(w: string): string {
+  return PICK_WARNING_CODES.find(([re]) => re.test(w))?.[1] ?? 'other';
+}
+
+/**
+ * The pick advisor's plan as the decision log keeps it (#437 task 3): ids, the top scores, the warnings by
+ * code (the tool's own first, each once), the award orders judged with the worst outcome, coverage and any
+ * alternative. No reason, rationale or name. Pure but for the clock.
+ */
+export function picksAdviceLog(
+  plan: Pick<PickPlan, 'picks' | 'groups' | 'award' | 'coverage' | 'alternative' | 'warnings'>,
+  a: {
+    players: number;
+    territoryLimit: number;
+    maxPicks: number;
+    spread: boolean;
+    /** The tool's own warnings, before the plan's. */
+    warnings: readonly string[];
+    team?: PicksAdvice['team'];
+    now?: number;
+  },
+): PicksAdvice {
+  const cov = (c: { share: number; covered: number; reasonable: number }) => ({ share: c.share, covered: c.covered, reasonable: c.reasonable });
+  const alt = plan.alternative;
+  return {
+    at: new Date(a.now ?? Date.now()).toISOString(),
+    players: a.players,
+    territoryLimit: a.territoryLimit,
+    maxPicks: a.maxPicks,
+    spread: a.spread,
+    list: plan.picks.map((p) => p.territoryId),
+    primary: [...plan.groups.primary.territoryIds],
+    fallback: [...plan.groups.fallback.territoryIds],
+    scores: plan.picks.slice(0, LOGGED_PICK_SCORES).map((p) => ({ territory: p.territoryId, score: p.score })),
+    groupScores: { primary: plan.groups.primary.score, fallback: plan.groups.fallback.score },
+    warnings: [...new Set([...a.warnings, ...plan.warnings].map(pickWarningCode))],
+    award: plan.award
+      ? {
+          outcomes: plan.award.outcomes,
+          // A free-for-all or 1v1 is judged by the reversing order alone (planPicks names the orders only in a team game).
+          orders: plan.award.orders ? [...plan.award.orders] : ['reversing'],
+          worst: { territories: [...plan.award.worst.territoryIds], score: plan.award.worst.score, opponentStarts: [...plan.award.worst.opponentStarts] },
+          reordered: plan.award.reordered,
+        }
+      : null,
+    coverage: cov(plan.coverage),
+    ...(alt ? { alternative: { territories: [...alt.group.territoryIds], fallback: [...alt.fallback], score: alt.group.score, coverage: cov(alt.coverage) } } : {}),
+    ...(a.team ? { team: a.team } : {}),
+  };
+}
+
+/**
+ * Keep warapp_plan_picks' summary (a re-plan replaces it), starting a log, as the account the game's log
+ * belongs to when it is seated, else the signed-in account when seated (`myInviteToken`: cached for a while,
+ * so usually no request; the advisor is read-only and plans for that seat). Nothing when neither is seated,
+ * the log is off or there is no data dir. Never throws.
+ */
+export async function capturePicksAdvice(
+  ctx: Ctx & Partial<Pick<LiveContext, 'myInviteToken'>>,
+  game: Pick<Game, 'id' | 'players'>,
+  advice: PicksAdvice,
+): Promise<void> {
+  try {
+    if (!ctx.dataDir || offMode(ctx)) return;
+    const seated = (id: number | undefined) => (id !== undefined && game.players.some((p) => p.id === id) ? id : undefined);
+    const owner = await decisionLogOwner(decisionLogPath(ctx.dataDir, game.id), game.id);
+    const me = owner !== undefined ? seated(owner) : seated(await ctx.myInviteToken?.());
+    if (me === undefined) return;
+    await recordPicksAdvice(ctx.dataDir, game.id, me, advice, modeOf(ctx));
+  } catch {
+    // Best effort.
+  }
+}
+
+/** Keep the list warapp_submit_picks sent and read back (the latest send wins), starting a log. Never throws. */
+export async function capturePicksSent(ctx: Ctx, gameId: number, me: number, sent: Omit<PicksSent, 'at'>): Promise<void> {
+  if (!ctx.dataDir) return;
+  await recordPicksSent(ctx.dataDir, gameId, me, sent, modeOf(ctx));
+}
+
+/**
+ * Keep the award `loadAward` read on turn 1 (`null`: nothing could be read), once, starting a log. Takes the
+ * data dir and mode rather than a context (loadAward has no context). Never throws.
+ */
+export async function capturePicksAward(
+  dataDir: string | undefined,
+  mode: DecisionLogMode | undefined,
+  gameId: number,
+  me: number,
+  turn: number,
+  reading: AwardReading | null,
+): Promise<void> {
+  if (!dataDir) return;
+  await recordPicksAward(dataDir, gameId, me, { turn, reading: reading ? { ...reading } : null }, mode ? { mode } : {});
 }

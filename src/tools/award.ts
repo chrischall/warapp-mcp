@@ -10,6 +10,8 @@ import { readFirstMover, resolveFirstMover, verifiedFirstMover, writeFirstMover,
 import { readPickRecord, writeAward } from '../pick-list.js';
 import { pickSettings } from './picks.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
+import type { DecisionLogMode } from '../decision-log.js';
+import { capturePicksAward } from './decision-capture.js';
 
 interface AwardContext {
   reading: AwardReading;
@@ -45,6 +47,7 @@ function uniformArmies(board: BoardState, me: number): number | null {
  * list is kept for this player, the list did not explain the start, or the first board has
  * passed unread. Reads the award (and keeps it) on turn 1; later turns reuse what was kept.
  * `write: false` reads it the same way and keeps nothing (#275 pattern 3: a write's preview).
+ * The reading kept is logged once into the game's decision log too (#437 task 3, `decisionLog` its mode).
  * Never throws.
  */
 export async function loadAward(
@@ -53,7 +56,7 @@ export async function loadAward(
   me: Player,
   board: BoardState,
   turn: number | null,
-  o: { write?: boolean } = {},
+  o: { write?: boolean; decisionLog?: DecisionLogMode } = {},
 ): Promise<AwardContext | undefined> {
   if (!dataDir || turn === null || game.players.length < 2) return undefined;
   const record = await readPickRecord(dataDir, game.id, me.id);
@@ -73,7 +76,10 @@ export async function loadAward(
     const state = new Map(board.territories.map((t) => [t.territoryId, t]));
     // A start the board shows as nobody's, mine or a neutral cannot be another player's: the list is not the one awarded from.
     if (reading?.opponentStarts.some((t) => contradicts(state.get(t), me.id))) reading = null;
-    if (o.write !== false) await writeAward(dataDir, game.id, me.id, reading);
+    if (o.write !== false) {
+      await writeAward(dataDir, game.id, me.id, reading);
+      await capturePicksAward(dataDir, o.decisionLog, game.id, me.id, turn, reading);
+    }
   }
   if (!reading) return undefined;
   const pickable = record.pickable ? { pickable: record.pickable } : {};

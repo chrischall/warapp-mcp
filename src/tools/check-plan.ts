@@ -194,7 +194,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // As warapp_plan_turn does (#166): the opponent's starts the award of picks proves stand on
       // the board the orders are tried on; the history and tracks stay what war.app showed.
       const seen = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
-      const award = await loadAward(ctx.dataDir, game, me, seen, turn);
+      const award = await loadAward(ctx.dataDir, game, me, seen, turn, { decisionLog: ctx.decisionLog });
       // #270: a player out of the game whose seat no AI plays deploys and attacks nothing: its
       // territories are neutrals here (static armies), and it is tried as no opponent.
       const seats = staticSeats(game.players, game.endRules, me.id);

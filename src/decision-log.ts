@@ -48,6 +48,12 @@
 // joining policy's checks by code); and `opponents` (per GameFeed id the turn first seen, an AI seat, and the
 // level and ranked record when warapp_scout_player read them). A log may hold only these (a lobby joined): the
 // end-of-game passes finish and compact it like any other.
+//
+// #437 task 3 (additive too): per game, `picks` — the pick advisor's summary (`advice`: ids, the top scores,
+// warning codes, the award orders judged and the worst outcome, coverage and any alternative; a re-plan
+// replaces it, `advices` counting the plans), the list warapp_submit_picks sent and war.app read back
+// (`submitted`, the latest send wins, `submits` counting them) and the award read on turn 1 (`award`, written
+// once). All ids and numbers, kept through compaction.
 import { open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type AccuracySummary, estimateOff, type LoggedTurn, type TruthResult, type TurnAccuracy, type TurnTruth } from './analysis/decision-truth.js';
@@ -399,6 +405,72 @@ export interface JoinPolicyLog {
   unchecked: string[];
 }
 
+/** The pick advisor's output, name-free (#437 task 3): territory ids, scores and codes only. */
+export interface PicksAdvice {
+  at: string;
+  players: number;
+  territoryLimit: number;
+  maxPicks: number;
+  /** The plan was asked to spread the primary (a 1v1). */
+  spread: boolean;
+  /** The list in priority order (its `submitPicks`). */
+  list: number[];
+  primary: number[];
+  fallback: number[];
+  /** The first picks of the list with their scores, in priority order. */
+  scores: { territory: number; score: number }[];
+  groupScores: { primary: number; fallback: number };
+  /** The warnings by code (`pickWarningCode`), each once, in order. */
+  warnings: string[];
+  /** The list judged by the award orders: the worst set it can yield. `null`: too many outcomes to judge. */
+  award: {
+    outcomes: number;
+    orders: ('reversing' | 'repeating')[];
+    worst: { territories: number[]; score: number; opponentStarts: number[] };
+    reordered: boolean;
+  } | null;
+  coverage: { share: number; covered: number; reasonable: number };
+  /** The coverage-first alternative, when offered. */
+  alternative?: { territories: number[]; fallback: number[]; score: number; coverage: { share: number; covered: number; reasonable: number } };
+  /** A team game: my teammates by GameFeed id, how many of their lists were read, and whether a mirrored list was offered. */
+  team?: { teammates: number[]; listsRead: number; mirrored: boolean };
+}
+
+/** The list warapp_submit_picks sent and what war.app read back (#437 task 3). */
+export interface PicksSent {
+  at: string;
+  sent: number[];
+  /** `null`: not read back (no answer, or the read failed). */
+  readBack: number[] | null;
+  verified: boolean;
+  outcome: 'confirmed' | 'unconfirmed' | 'unknown';
+}
+
+/** The award read from my kept list on turn 1 (`readAward`); `reading: null` when nothing could be read. */
+export interface PicksAward {
+  at: string;
+  turn: number;
+  reading: {
+    granted: number[];
+    unlisted: number[];
+    opponentStarts: number[];
+    teammateStarts?: number[];
+    allStartsKnown: boolean;
+    role: string | null;
+    opponentFirstAward: number | null;
+  } | null;
+}
+
+export interface PicksLog {
+  advice?: PicksAdvice;
+  /** Plans logged (a re-plan replaces `advice`). */
+  advices?: number;
+  submitted?: PicksSent;
+  /** Sends logged (a later one replaces `submitted`). */
+  submits?: number;
+  award?: PicksAward;
+}
+
 /** The lobby joined (#437): its settings key, a few readable flags and the joining policy's checks. Name-free. */
 export interface JoinContext {
   at: string;
@@ -449,6 +521,8 @@ export interface DecisionLog {
   join?: JoinContext;
   /** #437: every other seat, by GameFeed id. */
   opponents?: Record<string, OpponentSeen>;
+  /** #437 task 3: the picks phase. */
+  picks?: PicksLog;
   /** The game's estimate and outlook accuracy, once its truth is written. */
   accuracySummary?: AccuracySummary;
   /** Turns of the game the history itself lacks (never because of the finished record's cut). */
@@ -710,12 +784,13 @@ function logOf(c: unknown, gameId: number): DecisionLog | undefined {
     ...(isRec(c.seats) ? { seats: c.seats as Record<string, SeatSeen> } : {}),
     ...(isRec(c.join) ? { join: c.join as unknown as JoinContext } : {}),
     ...(isRec(c.opponents) ? { opponents: c.opponents as Record<string, OpponentSeen> } : {}),
+    ...(isRec(c.picks) ? { picks: c.picks as unknown as PicksLog } : {}),
   };
 }
 
 /** Whether a log holds anything: a turn, or per-game context (#437). */
-export const hasContent = (log: Pick<DecisionLog, 'turns' | 'events' | 'seats' | 'join' | 'opponents'>): boolean =>
-  Object.keys(log.turns).length > 0 || !!log.events?.length || !!log.join || !!log.seats || !!log.opponents;
+export const hasContent = (log: Pick<DecisionLog, 'turns' | 'events' | 'seats' | 'join' | 'opponents' | 'picks'>): boolean =>
+  Object.keys(log.turns).length > 0 || !!log.events?.length || !!log.join || !!log.seats || !!log.opponents || !!log.picks;
 
 async function readRaw(dir: string, gameId: number): Promise<Read> {
   let text: string;
@@ -1335,6 +1410,71 @@ export async function recordOpponentRead(
         }) as OpponentSeen;
         return { ...log, opponents: { ...log.opponents, [String(player)]: next } };
       },
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// #437 task 3: the picks phase
+
+/** Keep the pick advisor's summary (a re-plan replaces it), starting a log when the game has none. `true` when written. Never throws. */
+export async function recordPicksAdvice(dir: string, gameId: number, playerId: number, advice: PicksAdvice, opts: DecisionLogOptions = {}): Promise<boolean> {
+  try {
+    const kept = encodeValue(advice) as PicksAdvice;
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => ({ ...log, picks: { ...log.picks, advice: kept, advices: (log.picks?.advices ?? 0) + 1 } }),
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Keep the list warapp_submit_picks sent and read back (the latest send wins), starting a log when none. `true` when written. Never throws. */
+export async function recordPicksSent(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  sent: Omit<PicksSent, 'at'> & { now?: number },
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  try {
+    const { now, ...rest } = sent;
+    const kept = encodeValue({ at: iso(now), ...rest }) as PicksSent;
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => ({ ...log, picks: { ...log.picks, submitted: kept, submits: (log.picks?.submits ?? 0) + 1 } }),
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Keep the award read on turn 1, once (never over one kept), starting a log when none. `true` when written. Never throws. */
+export async function recordPicksAward(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  award: Omit<PicksAward, 'at'> & { now?: number },
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  try {
+    const { now, ...rest } = award;
+    const kept = encodeValue({ at: iso(now), ...rest }) as PicksAward;
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => (log.picks?.award ? undefined : { ...log, picks: { ...log.picks, award: kept } }),
       opts,
     );
   } catch {

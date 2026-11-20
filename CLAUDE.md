@@ -2117,6 +2117,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `firstSeen` turn, `ai` for an AI seat; warapp_scout_player with `game_id` adds `level`, `ranked`, `bootRatePct`,
   `readTurn` to a log that exists, as its account — no extra request; GameFeed's player carries no level). A log holding
   only these (a lobby joined) is finished and compacted like any other (`hasContent`). All kept through compaction.
+  **v2 picks phase (#437 task 3; additive, `version` stays 1):** `picks` on the log — `advice` (warapp_plan_picks,
+  `picksAdviceLog` → `capturePicksAdvice`: players, territory limit, `maxPicks`, `spread`, the list, primary and fallback
+  ids, the first `LOGGED_PICK_SCORES` = 10 picks' scores, both group scores, the warnings by code (`pickWarningCode`,
+  each once, unknown wording `other`), the award `outcomes`/`orders` judged/`worst`/`reordered` (`null` when not judged),
+  coverage numbers, the `alternative` when offered, and in a team game the teammates' ids, lists read and `mirrored`;
+  never a reason, rationale or name; a re-plan replaces it, `advices` counting; logged as the log's own account when
+  seated, else the signed-in seat by `myInviteToken` — cached, so usually no request; neither seated: nothing),
+  `submitted` (warapp_submit_picks after a send that did not throw, `capturePicksSent`: `sent`, `readBack` or `null`,
+  `verified`, `outcome`; the latest send wins, `submits` counting; a preview logs nothing) and `award` (`loadAward` on
+  turn 1 when it writes the reading, `capturePicksAward`: `turn` and the `AwardReading` or `null`; written once, never
+  over one kept). Each starts a log; a log holding only `picks` is finished and compacted like any other; kept through
+  compaction.
 - **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
   `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's

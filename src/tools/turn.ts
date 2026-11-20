@@ -1809,7 +1809,7 @@ export async function livePlanSetup(
   // pick list proves, where they are still fogged.
   const seen = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
   const write = a.award !== 'read';
-  const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn, { write });
+  const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn, { write, decisionLog: ctx.decisionLog });
   const board = award?.board ?? seen;
   const opening = openingThreat(award, game, graph, seen, turn);
   // #127: who moves first — first_mover, else a turn kept for this game alternated, else the award.
@@ -2058,7 +2058,7 @@ async function commanderCheck(
   const settings = plannerSettings(a.game.settings);
   const [history, award] = await Promise.all([
     boardHistory(ctx, a.game, a.me, a.turn, { cacheOnly: true }),
-    loadAward(ctx.dataDir, a.game, a.me, a.seen, a.turn),
+    loadAward(ctx.dataDir, a.game, a.me, a.seen, a.turn, { decisionLog: ctx.decisionLog }),
   ]);
   const opening = openingThreat(award, a.game, graph, a.seen, a.turn);
   // stressOpponents reads a static seat's territories as neutrals (#270), on its own `board` too.

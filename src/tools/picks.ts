@@ -20,6 +20,7 @@ import { mapOf } from './map.js';
 import { mapRecordFor, mapRecordView } from './past-games.js';
 import { keepPickable } from './where.js';
 import { resolveTeams } from './team-source.js';
+import { capturePicksAdvice, picksAdviceLog } from './decision-capture.js';
 
 const VIEWS = ['compact', 'full'] as const;
 /** The only GameFeed state in which territories are picked. */
@@ -225,6 +226,19 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
       const alt = plan.alternative;
       // #312 E3: what my finished games on this map say (reported only: the ranking above never reads it).
       const record = await mapRecordFor(ctx.dataDir, deps.env, game.settings?.mapId);
+      // #437 task 3: the advice into the game's decision log (ids, scores and codes; a re-plan replaces it).
+      await capturePicksAdvice(
+        ctx,
+        game,
+        picksAdviceLog(plan, {
+          players,
+          territoryLimit,
+          maxPicks,
+          spread: spread === true,
+          warnings,
+          ...(team ? { team: { teammates: team.map((p) => p.id), listsRead: mateLists.filter((l) => l !== null).length, mirrored: !!coord?.mirrored } } : {}),
+        }),
+      );
 
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, state: game.state },

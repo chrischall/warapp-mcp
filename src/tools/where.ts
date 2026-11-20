@@ -187,7 +187,7 @@ export function registerWhereTool(server: McpServer, ctx: LiveContext, deps: { e
       const boards = turn !== null ? [...history.boards, { turn, board }] : [{ turn: 0, board }];
       const about = trackGame(game.players, game.settings, map, game.endRules);
       const tracks = trackOpponents(graph, boards, me.id, settings, about);
-      const award = await loadAward(ctx.dataDir, game, me, board, turn);
+      const award = await loadAward(ctx.dataDir, game, me, board, turn, { decisionLog: ctx.decisionLog });
       const proven = new Map<number, readonly number[]>();
       if (award?.opponent && award.reading.opponentStarts.length) proven.set(award.opponent.id, award.reading.opponentStarts);
       const { candidates, prior, warnings: startWarnings } = await startKnowledge(ctx, deps.env, game, map, me.id);
