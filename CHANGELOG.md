@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.0](https://github.com/chrischall/warapp-mcp/compare/v0.6.0...v0.7.0) (2026-11-20)
+
+
+### Features
+
+* **cards:** mark the Reconnaissance play verified live, so an advised play goes into the plan's orders ([#443](https://github.com/chrischall/warapp-mcp/issues/443)) ([#462](https://github.com/chrischall/warapp-mcp/issues/462)) ([901a3e4](https://github.com/chrischall/warapp-mcp/commit/901a3e4f921fb17235df41be4f1cc4c9148df519))
+* **chat:** classify other players' chat, advise a reply, show it to the model, and gate automated replies and turn blocks (both off) ([#447](https://github.com/chrischall/warapp-mcp/issues/447)) ([e46ff34](https://github.com/chrischall/warapp-mcp/commit/e46ff34ea62fbf9c065d71407b5a1f1075e8b8c2))
+* **decisions:** log every turn's view, decision and outcome with end-of-game truth, and replay it offline ([#413](https://github.com/chrischall/warapp-mcp/issues/413)) ([d5e0c3a](https://github.com/chrischall/warapp-mcp/commit/d5e0c3aceedc0a3f6f74185316892c219db40dc4))
+* **decisions:** log timing, checks, cards, seat events, joins and picks, tag game kinds, and export games for review ([#446](https://github.com/chrischall/warapp-mcp/issues/446)) ([5e97507](https://github.com/chrischall/warapp-mcp/commit/5e97507ec7c67787d5014b80a4feb06e6b2774f1))
+* **planner:** race for vacated land with a breach force, size one full-deploy border per opponent, cap holds, and spend a stockpile ([#455](https://github.com/chrischall/warapp-mcp/issues/455)) ([7d968e1](https://github.com/chrischall/warapp-mcp/commit/7d968e178bd6740f17a693780e434d9ea3a67435))
+* **planner:** race for vacated land, stop the fog ratchet while leading, rank prior-only holds after captures, and spend a stockpile ([#450](https://github.com/chrischall/warapp-mcp/issues/450)) ([35562e4](https://github.com/chrischall/warapp-mcp/commit/35562e4a931ba36d5a0b8f8d8ff6259f3df6d2c7))
+* **planner:** raise estimates from proof and lower them gradually, cap the fog at the map winners' pace, and a clearer outlook with surrender-line advice ([#453](https://github.com/chrischall/warapp-mcp/issues/453)) ([8739262](https://github.com/chrischall/warapp-mcp/commit/87392622f39beada351b4a33e64d75da4ab38acc))
+* **planner:** value cities by income per army, stage toward them, guard the top earner, and sharper chat, card and since-last advice ([#448](https://github.com/chrischall/warapp-mcp/issues/448)) ([cb51650](https://github.com/chrischall/warapp-mcp/commit/cb51650d26e71cbea62b1a54f37ae96e3d2d6c17))
+
+
+### Bug Fixes
+
+* **cards:** Blockade and Airlift advice, spy plays once verified, commander armies in finished records, and read a counter-offer as a truce reply ([#461](https://github.com/chrischall/warapp-mcp/issues/461)) ([8fbbd98](https://github.com/chrischall/warapp-mcp/commit/8fbbd98531fba77b21e19a56fc1e44f8980d2f61))
+* **planner:** keep off a truce partner's neutrals, no Bomb advice on a player at peace, and keep the outlook state contract ([#458](https://github.com/chrischall/warapp-mcp/issues/458)) ([31a3860](https://github.com/chrischall/warapp-mcp/commit/31a386049136fd2cede97433d120d36137d256f2))
+* **planner:** read DistributionMode -1 as a limited start, full distribution without a limit, and price fogged members from what is known ([#451](https://github.com/chrischall/warapp-mcp/issues/451)) ([e44099f](https://github.com/chrischall/warapp-mcp/commit/e44099f51ad1277cd3c7e2cbb2a65faaa9e798a8))
+
 ## [0.6.0](https://github.com/chrischall/warapp-mcp/compare/v0.5.0...v0.6.0) (2026-11-20)
 
 
