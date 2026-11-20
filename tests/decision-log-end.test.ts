@@ -17,9 +17,11 @@ import {
   loggedEstimates,
   type loggedTurns,
   readDecisionLog,
+  recordDecision,
   recordTruth,
   updateDecisionLog,
 } from '../src/decision-log.js';
+import type { PlanInput, TurnPlan } from '../src/analysis/plan/shared.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -60,6 +62,7 @@ const decided = (turn: number, o: { outlook?: string; expected?: number; next?: 
       warnings: [],
       outlook: o.outlook ?? 'even',
       estimates: [{ player: FOE, estimate: 5, source: 'tracked', coverage: 0.5, thin: false }],
+      income: 5,
     },
     ...(o.next !== undefined || o.eliminated ? { next: { income: o.next ?? 5, gained: [], lost: [], capturesMade: [], capturesMissed: [], bonusesHeld: [], eliminated: !!o.eliminated } } : {}),
     ...(o.override ? { sent: { deploys: [], moves: [] }, override: { by: 'hand' } } : {}),
@@ -187,6 +190,44 @@ describe('end-of-game truth in the log (#412 task 3)', () => {
     // A narrower truth drops the truth-only entries it no longer covers.
     await recordTruth(dir, GAME, ME, () => result([2]), { mode: 'on' });
     expect(Object.keys((await readDecisionLog(dir, GAME))!.turns)).toEqual(['2']);
+  });
+
+  it('my income reads the same after compaction: the planned income (card armies out) is kept in the decision', async () => {
+    await recordDecision(dir, GAME, ME, {
+      turn: 1,
+      board: full(1),
+      input: { board: full(1), me: ME, income: 9, cardArmies: 2, turn: 1 } as unknown as PlanInput,
+      plan: decided(1).decision as unknown as TurnPlan,
+    });
+    expect((await readDecisionLog(dir, GAME))!.turns['1']!.decision!.income).toBe(7);
+  });
+
+  it('is idempotent on a compacted log: an uninteresting turn that lost its input, with no outcome on the turn before, scores the same', async () => {
+    // Turn 5 has no outcome; turn 6 planned on 8 income with 1 from cards (7 earned) and is uninteresting.
+    const log = twelve({ 5: { next: undefined } });
+    delete log.turns['5']!.next;
+    log.turns['6']!.input = { income: 8, cardArmies: 1, turn: 6 } as never;
+    // Written before the decision kept its income: compaction copies it over from the input it drops.
+    delete log.turns['6']!.decision!.income;
+    await write(log);
+    // What the scorer is handed for my income, echoed into the accuracy it writes.
+    const echo = (l: ReturnType<typeof loggedTurns>): TruthResult => ({
+      ...result([]),
+      accuracy: new Map(
+        [...l].map(([turn, lt]) => [turn, { estimates: [], outlook: { logged: lt.outlook, truth: null, right: null }, myIncome: lt.myIncome ?? -1, hiddenStacks: 0 }]),
+      ),
+    });
+    expect(await recordTruth(dir, GAME, ME, echo, { mode: 'on' })).toBe(true);
+    expect(await compactDecisionLog(dir, GAME, ME, { mode: 'on' })).toBe(true);
+    const once = await readFile(decisionLogPath(dir, GAME), 'utf8');
+    const c = (await readDecisionLog(dir, GAME))!;
+    expect(c.turns['6']!.input).toBeUndefined();
+    expect(c.turns['6']!.decision!.income).toBe(7);
+    expect(c.turns['6']!.accuracy!.myIncome).toBe(7);
+    // The pass again on the compacted log: the same file.
+    await recordTruth(dir, GAME, ME, echo, { mode: 'on' });
+    expect(await compactDecisionLog(dir, GAME, ME, { mode: 'on' })).toBe(false);
+    expect(await readFile(decisionLogPath(dir, GAME), 'utf8')).toBe(once);
   });
 
   it('starts no log for a game played without one (nor fills a truth-only one), and keeps a compacted log compacted', async () => {

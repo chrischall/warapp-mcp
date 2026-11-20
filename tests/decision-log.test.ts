@@ -122,6 +122,8 @@ describe('decision log store (#412 task 1)', () => {
     });
     // What the planner sets itself, and the graph, are not kept.
     const raw = JSON.parse(await readFile(path, 'utf8'));
+    // My income as the plan read it (card armies out) sits in the decision, which compaction never drops.
+    expect(e.decision!.income).toBe(5);
     expect(raw.turns['1'].input.graph).toBeUndefined();
     expect(raw.turns['1'].input.vacated).toBeUndefined();
     expect(raw.turns['1'].input.bonusPush).toBeUndefined();

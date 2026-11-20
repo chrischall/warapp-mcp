@@ -146,6 +146,12 @@ export interface LoggedDecision {
   outlook: OutlookState | null;
   /** Each opponent's deploy estimate the plan worked from; absent in entries written without them. */
   estimates?: LoggedEstimate[];
+  /**
+   * My income as the plan read it, card armies out (the input's `income − cardArmies`). Kept here, not
+   * only in the replay `input` compaction drops, so the end-of-game truth scores a turn the same before
+   * and after compaction. Absent in entries written without it.
+   */
+  income?: number;
 }
 
 /** One move as sent (#412): its count (a percentage when `percent`), and any option it carries. */
@@ -410,7 +416,19 @@ export function loggedEstimates(estimates: readonly EnemyDeployEstimate[]): Logg
     .map((e) => ({ player: e.playerId, estimate: e.estimate, source: e.source, coverage: e.coverage?.share ?? null, thin: !!e.thinEvidence }));
 }
 
-function decisionOf(plan: TurnPlan, outlook: OutlookState | null | undefined, estimates?: readonly EnemyDeployEstimate[]): LoggedDecision {
+/** My income as `input` gives it, card armies out; `undefined` when it holds none. */
+function earnedIncome(input: object | undefined): number | undefined {
+  const { income, cardArmies } = (input ?? {}) as { income?: unknown; cardArmies?: unknown };
+  if (typeof income !== 'number') return undefined;
+  return income - (typeof cardArmies === 'number' ? cardArmies : 0);
+}
+
+function decisionOf(
+  plan: TurnPlan,
+  outlook: OutlookState | null | undefined,
+  estimates: readonly EnemyDeployEstimate[] | undefined,
+  income: number | undefined,
+): LoggedDecision {
   return encodeValue({
     goal: plan.goal,
     profile: plan.profile,
@@ -425,6 +443,7 @@ function decisionOf(plan: TurnPlan, outlook: OutlookState | null | undefined, es
     warnings: plan.warnings,
     outlook: outlook ?? null,
     ...(estimates ? { estimates: loggedEstimates(estimates) } : {}),
+    ...(income !== undefined ? { income } : {}),
   }) as LoggedDecision;
 }
 
@@ -575,7 +594,7 @@ export async function recordDecision(
         kind: 'planned',
         input,
         planner: { version: VERSION },
-        decision: decisionOf(rec.plan, rec.outlookState, rec.estimates),
+        decision: decisionOf(rec.plan, rec.outlookState, rec.estimates, earnedIncome(rec.input)),
       },
       rec.players,
     );
@@ -868,9 +887,9 @@ export function loggedTurns(log: Pick<DecisionLog, 'turns'>): Map<number, Logged
     const e = log.turns[String(turn)]!;
     if (!e.board && !e.decision) continue;
     const board = boardAt(log, turn);
-    const input = e.input;
-    const income =
-      input && typeof input.income === 'number' ? input.income - (typeof input.cardArmies === 'number' ? input.cardArmies : 0) : log.turns[String(turn - 1)]?.next?.income ?? null;
+    // The decision's income first: compaction never drops it (an entry written before it was kept
+    // there falls back to the input; compaction copies it into the decision before dropping that).
+    const income = e.decision?.income ?? earnedIncome(e.input) ?? log.turns[String(turn - 1)]?.next?.income ?? null;
     out.set(turn, {
       ...(board ? { board } : {}),
       outlook: e.decision?.outlook ?? null,
@@ -961,14 +980,19 @@ export function interestingTurns(log: Pick<DecisionLog, 'turns'>, opts: { lost?:
   return out;
 }
 
-/** `log` compacted: every uninteresting turn's `input` dropped, everything else kept; status `compacted`. Pure. */
+/**
+ * `log` compacted: every uninteresting turn's `input` dropped, everything else kept; status `compacted`.
+ * A decision written without its `income` gets it from the input first, so the truth reads the same
+ * income after compaction as before. Pure.
+ */
 export function compactLog(log: DecisionLog, opts: { lost?: boolean } = {}): DecisionLog {
   const keep = interestingTurns(log, opts);
   const turns: Record<string, DecisionEntry> = {};
   for (const [k, e] of Object.entries(log.turns)) {
     if (e.input && !keep.has(Number(k))) {
-      const { input: _i, ...rest } = e;
-      turns[k] = rest;
+      const { input, ...rest } = e;
+      const income = earnedIncome(input);
+      turns[k] = rest.decision && rest.decision.income === undefined && income !== undefined ? { ...rest, decision: { ...rest.decision, income } } : rest;
     } else turns[k] = e;
   }
   return { ...log, status: 'compacted', turns };
@@ -1066,6 +1090,19 @@ async function headOf(path: string, gameId: number): Promise<DecisionLog | undef
   const at = head.indexOf('"turns":');
   if (at < 0) return undefined;
   return logOf(JSON.parse(`${head.slice(0, at)}"turns":{}}`), gameId);
+}
+
+/**
+ * The account a decision log at `path` belongs to, read from its head only ({@link HEAD_BYTES}: the
+ * header is written before `turns`), so a caller sorting logs by account never reads one whole.
+ * `undefined` when the head holds no header for `gameId`. Never throws.
+ */
+export async function decisionLogOwner(path: string, gameId: number): Promise<number | undefined> {
+  try {
+    return (await headOf(path, gameId))?.playerId;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Every decision log whose header reads (from the head of the file only), by game id. Never throws. */

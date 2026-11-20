@@ -203,14 +203,21 @@ export async function endOfGame(
   if (me === undefined) return { status: 'account-unknown' };
   if (seen && seen.state !== 'Finished') return { status: 'not-finished' };
   if (seen && !seen.players.some((p) => p.id === me && holdsSeat(p.state))) return { status: 'not-a-player' };
+  // #412: an exit that runs no truth or compaction for a game over still takes its decision log out of
+  // `active` (the prune never deletes an active log, and the lasting mark may already stop any later
+  // pass), dropping nothing: an `include_history` retry can still write the truth and compact.
+  const closeOnly = () => finishDecisionLogs(dataDir, [gameId], me, { mode: decisionLogModeOf(env) });
+  let read: Game | undefined;
   try {
     const salt = await playerSaltForWrite(dataDir);
     if (!salt) return { status: 'unavailable' };
     const path = finishedPath(dataDir, salt, me, gameId);
-    let read: Game | undefined;
     const result = await withPathLock(path, async (): Promise<EndOfGameResult> => {
       const state = await readFinishedState(path);
-      if (state === 'unreadable') return { status: 'record-unreadable' };
+      if (state === 'unreadable') {
+        await closeOnly();
+        return { status: 'record-unreadable' };
+      }
       if (state !== 'missing' && (!opts.retry || state.status === 'captured' || !opts.history)) return { status: 'already-processed' };
       // The one history read: the caller's, else one request, sent once (no transport retry) and never retried.
       let game: Game | undefined = opts.history;
@@ -251,6 +258,7 @@ export async function endOfGame(
         const protect = opts.protectIds ? new Set(opts.protectIds.map((id) => finishedPath(dataDir, salt, me, id))) : undefined;
         await writeFinishedRecord(dataDir, path, record, opts.keep, protect);
       } catch {
+        await closeOnly();
         return { status: 'failed' };
       }
       const processed = history && game ? await processHistory(dataDir, env, salt, me, gameId, game, history) : undefined;
@@ -269,6 +277,8 @@ export async function endOfGame(
     }
     return result;
   } catch {
+    // Shown finished (or, with no read, passed as finished by the sweep or a game-ended notice).
+    if (((read ?? seen)?.state ?? 'Finished') === 'Finished') await closeOnly();
     return { status: 'failed' };
   }
 }

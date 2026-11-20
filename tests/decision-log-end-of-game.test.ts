@@ -2,17 +2,30 @@
 // every turn gets its truth from the FULL history, every logged turn its accuracy against what it logged,
 // the game its summary, and the log is compacted. Re-running the pass changes nothing. Synthetic GameFeed
 // answers only; no war.app traffic.
-import { existsSync, mkdtempSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TerritoryState } from '../src/board.js';
 import { WarappClient } from '../src/client.js';
 import { type DecisionEntry, decisionLogPath, pruneDecisionLogs, readDecisionLog, updateDecisionLog } from '../src/decision-log.js';
 import { finishedDir, finishedPath } from '../src/finished-store.js';
-import { playerRecordSalt } from '../src/player-record-store.js';
+import { playerRecordSalt, playerSaltForWrite } from '../src/player-record-store.js';
 import { endOfGame, sweepFinished } from '../src/tools/end-of-game.js';
 import { CREDS, stubFetch } from './helpers.js';
+
+// A switch for the finished record's write: on, it fails as a full disk would.
+const failing = vi.hoisted(() => ({ write: false }));
+vi.mock('../src/finished-store.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/finished-store.js')>();
+  return {
+    ...real,
+    writeFinishedRecord: (...a: Parameters<typeof real.writeFinishedRecord>) => (failing.write ? Promise.reject(new Error('ENOSPC')) : real.writeFinishedRecord(...a)),
+  };
+});
+afterEach(() => {
+  failing.write = false;
+});
 
 const GAME = 12345679;
 const ME = 4412345677;
@@ -224,6 +237,31 @@ describe('the decision log at the end-of-game pass (#412 task 3)', () => {
     expect((await readDecisionLog(dir, GAME, ME))!.status).toBe('finished');
     expect((await readDecisionLog(dir, OTHER, ME))!.status).toBe('active');
     expect(existsSync(decisionLogPath(dir, 999))).toBe(false);
+  });
+
+  it('a pass whose record write fails still marks the log finished (whole): its lasting mark stops any later pass', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
+    await playing(dir);
+    await updateDecisionLog(dir, GAME, ME, (l) => ({ ...l, turns: { '1': planned(1, [t(1, ME, 5), t(6, FOE, 5)], 5) } }), { mode: 'on' });
+    failing.write = true;
+    expect((await pass(dir)).status).toBe('failed');
+    const log = (await readDecisionLog(dir, GAME, ME))!;
+    expect(log.status).toBe('finished');
+    expect(log.turns['1']!.input).toBeDefined();
+    expect(await pruneDecisionLogs(dir, { maxGames: 1 })).toEqual([GAME]);
+    expect((await readDecisionLog(dir, OTHER, ME))!.status).toBe('active');
+  });
+
+  it('a pass that finds its record unreadable marks the log finished (whole)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
+    await updateDecisionLog(dir, GAME, ME, (l) => ({ ...l, turns: { '1': planned(1, [t(1, ME, 5), t(6, FOE, 5)], 5) } }), { mode: 'on' });
+    const salt = (await playerSaltForWrite(dir))!;
+    mkdirSync(finishedDir(dir), { recursive: true });
+    writeFileSync(finishedPath(dir, salt, ME, GAME), 'not a record');
+    expect((await pass(dir)).status).toBe('record-unreadable');
+    const log = (await readDecisionLog(dir, GAME, ME))!;
+    expect(log.status).toBe('finished');
+    expect(log.turns['1']!.input).toBeDefined();
   });
 
   it('writes nothing with WARAPP_DECISION_LOG=off', async () => {

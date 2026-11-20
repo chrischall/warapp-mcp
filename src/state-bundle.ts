@@ -30,6 +30,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmod, link, lstat, mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
+import { decisionLogOwner } from './decision-log.js';
 import { withPathLock } from './path-lock.js';
 import { finishedGameKey } from './player-record-store.js';
 
@@ -263,8 +264,9 @@ export async function collectExport(
       continue;
     }
     if (rule.accountInside) {
-      const c = await readJson(join(dir, p));
-      if (!isRec(c) || c.playerId !== account) {
+      // A decision log names its account in its head: only the logs exported are read whole (below).
+      const owner = rule.store === 'decisions' ? await decisionLogOwner(join(dir, p), gameId!) : (await readJson(join(dir, p)).then((c) => (isRec(c) ? c.playerId : undefined)));
+      if (owner !== account) {
         otherAccountFiles++;
         continue;
       }
@@ -298,6 +300,17 @@ export async function collectExport(
     if (!bytes || used + bytes.length > budget) {
       decisionLogs = decisions.length - i;
       break;
+    }
+    // Its head named the account; the whole file must too (one that no longer parses, or names another, stays home).
+    let whole: unknown;
+    try {
+      whole = JSON.parse(bytes.toString('utf8'));
+    } catch {
+      whole = undefined;
+    }
+    if (!isRec(whole) || whole.playerId !== account) {
+      otherAccountFiles++;
+      continue;
     }
     used += bytes.length;
     files.push({ path: d.path, bytes, store: 'decisions', sha256: sha256(bytes) });

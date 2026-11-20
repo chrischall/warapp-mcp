@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { finishedGameKey } from '../src/player-record-store.js';
 import {
   applyImport,
@@ -21,6 +21,17 @@ import {
   STATE_VERSION,
   writeBundleFile,
 } from '../src/state-bundle.js';
+
+// Every whole-file read the code under test makes, by path (a head read opens the file instead).
+const wholeReads = vi.hoisted(() => [] as string[]);
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>();
+  const readFile = ((path: Parameters<typeof real.readFile>[0], ...rest: unknown[]) => {
+    wholeReads.push(String(path));
+    return (real.readFile as (...a: unknown[]) => unknown)(path, ...rest);
+  }) as typeof real.readFile;
+  return { ...real, default: { ...real, readFile }, readFile };
+});
 
 const ME = 4412345677;
 const OTHER = 7176543229;
@@ -135,6 +146,25 @@ describe('collectExport', () => {
     expect(result.leftOut.decisionLogs).toBe(3);
     // The other stores are untouched by the bound.
     expect(result.files.some((f) => f.path === 'relations/players.salt')).toBe(true);
+  });
+
+  it('tells a decision log\'s account from its head: a log past the share is never read whole (#412)', async () => {
+    const dir = localDir();
+    const pad = 'x'.repeat(4000);
+    put(dir, 'decisions/9001.json', { version: 1, gameId: 9001, playerId: ME, status: 'compacted', turns: { '1': { pad } } });
+    put(dir, 'decisions/9002.json', { version: 1, gameId: 9002, playerId: OTHER, status: 'compacted', turns: { '1': { pad } } });
+    const when = new Date(Date.UTC(2026, 0, 10));
+    utimesSync(join(dir, 'decisions/9001.json'), when, when);
+    wholeReads.length = 0;
+    const result = await collectExport(dir, { decisionBytes: 2500 });
+    expect(result.files.some((f) => f.path === 'decisions/9001.json')).toBe(false);
+    expect(result.leftOut.decisionLogs).toBe(1);
+    expect(result.leftOut.otherAccountFiles).toBe(3);
+    // Neither big log was read whole: one is another account's (its head says so), one past the share.
+    expect(wholeReads.filter((p) => p.endsWith('decisions/9001.json') || p.endsWith('decisions/9002.json'))).toEqual([]);
+    // The ones exported are read once each.
+    const kept = result.files.filter((f) => f.store === 'decisions').map((f) => f.path);
+    for (const k of kept) expect(wholeReads.filter((p) => p.endsWith(k))).toHaveLength(1);
   });
 
   it('keeps the default decision-log share far under what an import accepts', () => {
