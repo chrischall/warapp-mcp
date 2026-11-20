@@ -4,7 +4,7 @@
 import { excludedKind, gameKinds, leftTurnOf, outcomeOf, type FinishedCapture, type GameKind } from '../analysis/finished-game.js';
 import { profileFormatOf } from '../analysis/opponent-profile.js';
 import type { MyOrders } from '../analysis/opponents.js';
-import { readDecisionLog, type DecisionLog } from '../decision-log.js';
+import { readDecisionLog, type DecisionLog, type GameEvent } from '../decision-log.js';
 import { finishedPath, readFinishedRecord } from '../finished-store.js';
 import type { Game } from '../normalize.js';
 import { LOTTERY_MAX_TERRITORIES } from '../open-games.js';
@@ -16,18 +16,28 @@ export interface KeptFacts {
   log: DecisionLog | undefined;
   hasBoards: boolean;
   orders: ReadonlyMap<number, MyOrders>;
-  /** The turn being played when the log saw my seat leave (my surrender, or my seat booted or surrendered). */
+  /** The turn being played when the log saw my seat leave (my surrender once taken, or my seat booted or surrendered). */
   leftTurn: number | undefined;
 }
 
-const LEAVING: ReadonlySet<string> = new Set(['surrender-accepted', 'booted', 'my-surrender']);
+const LEAVING: ReadonlySet<string> = new Set(['surrender-accepted', 'booted']);
+
+/**
+ * Whether a logged event is my seat leaving. My own surrender counts only once war.app shows it taken
+ * (`status: 'surrendered'`): a pending one leaves the seat playing until the others accept (logged then as
+ * the seat's `surrender-accepted`), and it may be undone, so its turn is not the turn my seat left.
+ */
+function isLeaving(e: GameEvent, me: number): boolean {
+  if (e.kind === 'my-surrender') return typeof e.detail === 'object' && e.detail.status === 'surrendered' && (e.player === undefined || e.player === me);
+  return LEAVING.has(e.kind) && e.player === me;
+}
 
 export async function keptFacts(dataDir: string, gameId: number, me: number): Promise<KeptFacts> {
   const hasBoards = (await readCachedPlayer(dataDir, gameId).catch(() => undefined)) === me;
   const orders = hasBoards ? await readCachedOrders(dataDir, gameId, me).catch(() => new Map<number, MyOrders>()) : new Map<number, MyOrders>();
   const log = await readDecisionLog(dataDir, gameId, me).catch(() => undefined);
   const left = (log?.events ?? [])
-    .filter((e) => LEAVING.has(e.kind) && (e.player === me || (e.kind === 'my-surrender' && e.player === undefined)))
+    .filter((e) => isLeaving(e, me))
     .map((e) => e.turn)
     .filter((t) => Number.isInteger(t));
   return { log, hasBoards, orders, leftTurn: left.length ? Math.min(...left) : undefined };

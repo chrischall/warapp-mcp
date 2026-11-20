@@ -62,6 +62,7 @@ async function record(dir: string): Promise<Record<string, any>> {
 const json = (path: string) => JSON.parse(readFileSync(path, 'utf8'));
 
 const planned = { kind: 'planned', planner: { version: 'test' } } as unknown as DecisionEntry;
+const surrendering = (status: 'surrendered' | 'pending') => ({ status, income: null, strongest: null, outlook: null, outlookTurn: null });
 
 describe('#437 task 4: the game kinds at the end-of-game pass', () => {
   it('a game played on this build: no kind; the map entry keeps its settings key and flags', async () => {
@@ -133,5 +134,29 @@ describe('#437 task 4: the game kinds at the end-of-game pass', () => {
     expect(json(lessonsPath(dir)).entries[0].howLost).toEqual({ cause: 'surrendered', turn: 3 });
     const text = readFileSync(finishedPath(dir, (await playerRecordSalt(dir))!, ME, GAME), 'utf8');
     for (const s of [String(ME), String(FOE), 'Alpha', 'Beta', 'Named Game']) expect(text).not.toContain(s);
+  });
+
+  it('a pending surrender is not the turn my seat left: the later acceptance is, and the attacks between still count', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-kinds-'));
+    for (const turn of [2, 3]) await writeOrdersCache(dir, GAME, ME, turn, { deploys: [], moves: [{ from: 2, to: 3, armies: 1 }] });
+    await updateDecisionLog(dir, GAME, ME, (l) => ({ ...l, turns: { '2': planned } }), { mode: 'on' });
+    await recordGameEvent(dir, GAME, ME, { turn: 2, kind: 'my-surrender', detail: surrendering('pending') }, {}, { mode: 'on' });
+    await recordGameEvent(dir, GAME, ME, { turn: 3, kind: 'surrender-accepted', player: ME }, {}, { mode: 'on' });
+    expect((await pass(dir, game('SurrenderAccepted'))).status).toBe('captured');
+    const rec = await record(dir);
+    expect(rec.outcome).toMatchObject({ result: 'surrendered', leftTurn: 3 });
+    expect(rec.failedAttacks.map((f: { turn: number }) => f.turn)).toEqual([2]);
+    expect(json(lessonsPath(dir)).entries[0].howLost).toEqual({ cause: 'surrendered', turn: 3 });
+  });
+
+  it('my surrender taken at once (status surrendered) is the turn my seat left', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-kinds-'));
+    for (const turn of [2, 3]) await writeOrdersCache(dir, GAME, ME, turn, { deploys: [], moves: [{ from: 2, to: 3, armies: 1 }] });
+    await updateDecisionLog(dir, GAME, ME, (l) => ({ ...l, turns: { '2': planned } }), { mode: 'on' });
+    await recordGameEvent(dir, GAME, ME, { turn: 2, kind: 'my-surrender', detail: surrendering('surrendered') }, {}, { mode: 'on' });
+    expect((await pass(dir, game('SurrenderAccepted'))).status).toBe('captured');
+    const rec = await record(dir);
+    expect(rec.outcome).toMatchObject({ result: 'surrendered', leftTurn: 2 });
+    expect(rec.failedAttacks).toEqual([]);
   });
 });

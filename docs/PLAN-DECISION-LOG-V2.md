@@ -59,6 +59,13 @@ Tests: each written once by its tool; re-plan replaces the advisor summary.
   game's format (and LD/commanders) and say how many records matched.
 Tests for each; existing records still read.
 
+Status of "commander armies counted (not null)" — partial, needs the plan owner's call: the history value of a
+territory where a commander stands was never captured, so its count is not parsed (src/board.ts unchanged).
+What ships instead: such a territory is left out of the army sum and counted in `armiesUnread` (finished record,
+and the decision-log truth), so `armies` is a lower bound whenever `armiesUnread` is present, never null.
+Closing it fully needs one live history read of a commanders game to parse the real count; until then the
+owner either accepts the lower bound plus `armiesUnread`, or keeps this item open on #437.
+
 ## Task 5 — review export, docs
 - `scripts/review-export.mjs` (local dev script like calibrate/replay; reads `dist/`): `--data-dir`, `--out <dir>`,
   `--game <id>`; writes one JSON per game joining the decision log (boards rebuilt per turn on request with
