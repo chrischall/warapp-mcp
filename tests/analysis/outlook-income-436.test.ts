@@ -51,7 +51,10 @@ describe('outlook incomes (#436)', () => {
     const o = gameOutlook({ graph: buildGraph(line(0, 0)), me: ME, boards: turns(4, [trailing(10, 10), trailing(10, 10), trailing(10, 10)]), game });
     const last = o.turns.at(-1)!;
     expect(last.income).toMatchObject({ mine: 5, theirs: { playerId: FOE, low: 10, high: 10, estimate: 10 }, lean: 'behind' });
-    expect(o.state).toBe('behind');
+    // #454: the state keeps its contract (even on strength); the income reading is the additive `lean`.
+    expect(o.state).toBe('even');
+    expect(o.lean).toBe('behind');
+    expect(o.turns.map((t) => [t.state, t.lean])).toEqual([['even', 'behind'], ['even', 'behind'], ['even', 'behind']]);
     expect(o.surrenderLine).toMatchObject({ crossed: true, turnsBelow: SURRENDER_TURNS, myIncome: 5, theirIncome: 10, playerId: FOE });
     expect(o.surrenderLine!.advice).toMatch(/advice only/);
     expect(o.basis).toMatch(/Surrender line crossed/);
@@ -61,7 +64,8 @@ describe('outlook incomes (#436)', () => {
     const g = buildGraph(line(0, 0));
     const boards = turns(4, [trailing(10, 10), trailing(10, 10), trailing(10, 10)]);
     const o = gameOutlook({ graph: g, me: ME, boards, game });
-    expect(o.state).toBe('behind');
+    expect(o.state).toBe('even');
+    expect(o.lean).toBe('behind');
     expect(o.surrenderLine!.crossed).toBe(true);
     const plan = (outlook: Pick<GameOutlook, 'state' | 'turns'>) =>
       planTurn({
@@ -74,7 +78,7 @@ describe('outlook incomes (#436)', () => {
         options: { adapt: true, outlook },
       });
     // The shape before #436: every turn even, no income lean, no surrender line.
-    const before = { state: 'even' as const, turns: o.turns.map(({ income: _i, strength: _s, bonusesInReach: _b, ...t }) => ({ ...t, state: 'even' as const })) };
+    const before = { state: 'even' as const, turns: o.turns.map(({ income: _i, lean: _l, bonusesInReach: _b, ...t }) => ({ ...t, state: 'even' as const })) };
     const now = plan(o);
     const was = plan(before);
     expect({ deploys: now.deploys, moves: now.moves }).toEqual({ deploys: was.deploys, moves: was.moves });
@@ -95,13 +99,15 @@ describe('outlook incomes (#436)', () => {
     const g = buildGraph(line());
     const open = gameOutlook({ graph: g, me: ME, boards: turns(4, [leading(10, 10), leading(10, 10), leading(10, 10)]), game });
     expect(open.turns.at(-1)!.income!.lean).toBe('ahead');
-    expect(open.state).toBe('ahead');
+    expect(open.state).toBe('even');
+    expect(open.lean).toBe('ahead');
     const thin = gameOutlook({ graph: g, me: ME, boards: turns(4, [leadingThin(10, 10), leadingThin(10, 12), leadingThin(10, 14)]), game: { ...game, start } });
     const last = thin.turns.at(-1)!;
     expect(last.evidence!.thin).toBe(true);
     expect(last.income!.lean).toBe('unknown');
     expect(last.income!.noLeadClaim).toBe(true);
-    expect(thin.state).not.toBe('ahead');
+    expect(thin.lean).not.toBe('ahead');
+    expect(thin.state).not.toBe('winning');
     expect(thin.basis).toMatch(/no lead is claimed/i);
   });
 
@@ -185,5 +191,36 @@ describe('outlook incomes (#436)', () => {
     expect(inc.trend).toMatchObject({ mine: 0, theirs: 2 });
     expect(inc.lean).toBe('behind');
     expect(inc.byTrend).toBe(true);
+  });
+
+  it('#454: the state keeps its four values (winning, losing, even, stalemate); the income reading is the additive lean', () => {
+    const g = buildGraph(line());
+    const cases = [
+      gameOutlook({ graph: buildGraph(line(0, 0)), me: ME, boards: turns(4, [trailing(10, 10), trailing(10, 10), trailing(10, 10)]), game }),
+      gameOutlook({ graph: g, me: ME, boards: turns(4, [leading(10, 10), leading(10, 10), leading(10, 10)]), game }),
+      gameOutlook({ graph: g, me: ME, boards: turns(4, [leadingThin(10, 10), leadingThin(10, 12), leadingThin(10, 14)]), game: { ...game, start } }),
+      gameOutlook({ graph: g, me: ME, boards: turns(4, [leading(10, 10), trailing(10, 10), leading(10, 10)]), game }),
+    ];
+    const states = new Set(['winning', 'losing', 'even', 'stalemate']);
+    const leans = new Set(['ahead', 'behind', 'unknown']);
+    for (const o of cases) {
+      if (o.state !== null) expect(states.has(o.state)).toBe(true);
+      for (const t of o.turns) {
+        expect(states.has(t.state)).toBe(true);
+        // A lean only beside an even state, and never `even` itself (absent when the state already says it).
+        if (t.lean !== undefined) {
+          expect(t.state).toBe('even');
+          expect(leans.has(t.lean)).toBe(true);
+        }
+        expect(t).not.toHaveProperty('strength');
+      }
+      if (o.lean !== undefined) {
+        expect(o.state).toBe('even');
+        expect(leans.has(o.lean)).toBe(true);
+      }
+    }
+    // A run whose leans differ reports even, with no lean.
+    const mixed = cases[3]!;
+    if (mixed.state === 'even' && new Set(mixed.turns.map((t) => t.lean)).size > 1) expect(mixed.lean).toBeUndefined();
   });
 });

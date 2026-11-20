@@ -2373,7 +2373,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
-          'armies + 3 × income held over 3 turns of boards — and, #436, where that reads even, ahead/behind/even on my income against the strongest opponent\'s (its range, and its estimate calibrated on past games), or unknown when the range spans both lines or a lead rests on thin evidence; `income`, `pace` (both incomes per turn) and `surrenderLine` (advice only: my income under 2/3 of the strongest estimate for 3 turns with no bonus in reach closing the gap; never acted on) — with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; `leaning: behind` when even for 3 turns while a bonus of yours fell on each; thresholds unmeasured, so advice, not a verdict; ' +
+          'armies + 3 × income held over 3 turns of boards — and, #436, where that reads even, `lean` ahead/behind on my income against the strongest opponent\'s (its range, and its estimate calibrated on past games), or unknown when the range spans both lines or a lead rests on thin evidence; absent when the incomes read even too; `income`, `pace` (both incomes per turn) and `surrenderLine` (advice only: my income under 2/3 of the strongest estimate for 3 turns with no bonus in reach closing the gap; never acted on) — with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; `leaning: behind` when even for 3 turns while a bonus of yours fell on each; thresholds unmeasured, so advice, not a verdict; ' +
           'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
           'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
@@ -2724,6 +2724,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             input: setup.input,
             plan,
             outlookState: outlook.state,
+            ...(outlook.lean ? { outlookLean: outlook.lean } : {}),
             estimates,
             graph,
             income: income - cards.extraArmies,
@@ -3014,6 +3015,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             ? outlook
             : {
                 state: outlook.state,
+                // #454: the income lean beside an even state (additive; the state keeps its four values).
+                ...(outlook.lean ? { lean: outlook.lean } : {}),
                 basis: outlook.basis,
                 ...(outlook.evidence ? { evidence: outlook.evidence } : {}),
                 // #368: even while bonuses kept falling.

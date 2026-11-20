@@ -160,7 +160,9 @@ describe('gameOutlook (#178)', () => {
     // Turn 10's bound (15 + 9 × 20 + 15 + 3 × 15 = 255) is under my 615 ÷ 2.4, and it really could
     // hold no more than 210 then: winning that turn is sound. By turn 12 the bound no longer is, and
     // (#436) the incomes read behind: its 15 + 5 in view against my 5 + 5.
-    expect(o.turns.map((t) => t.state)).toEqual(['winning', 'behind', 'behind']);
+    // #454: the state stays even; the income reading is the lean beside it.
+    expect(o.turns.map((t) => t.state)).toEqual(['winning', 'even', 'even']);
+    expect(o.turns.map((t) => t.lean)).toEqual([undefined, 'behind', 'behind']);
     expect(o.state).toBeNull();
     expect(o.heldTurns).toBe(2);
     expect(o.basis).toMatch(/Behind for 2 of the 3 turns \(winning, behind, behind\), so no state yet/);

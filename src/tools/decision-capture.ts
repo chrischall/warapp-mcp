@@ -20,7 +20,7 @@
 // `loadAward` reads on turn 1, once).
 import { createHash } from 'node:crypto';
 import type { HeadroomRow } from '../analysis/headroom.js';
-import type { OutlookState } from '../analysis/outlook.js';
+import type { OutlookLean, OutlookState } from '../analysis/outlook.js';
 import type { stressPlan } from '../analysis/stress.js';
 import type { CommitmentWarning } from '../analysis/commitments.js';
 import type { Card } from '../cards.js';
@@ -95,6 +95,8 @@ export async function capturePlan(
     input: PlanInput;
     plan: TurnPlan;
     outlookState: OutlookState | null;
+    /** #454: the outlook's income lean beside an even state (`GameOutlook.lean`). */
+    outlookLean?: OutlookLean;
     /** The per-opponent deploy estimates the plan worked from (scored against the truth at the end, #412 task 3). */
     estimates?: readonly EnemyDeployEstimate[];
     graph: MapGraph;
@@ -120,6 +122,7 @@ export async function capturePlan(
       input: a.input,
       plan: a.plan,
       outlookState: a.outlookState,
+      ...(a.outlookLean ? { outlookLean: a.outlookLean } : {}),
       ...(a.estimates ? { estimates: a.estimates } : {}),
       players: a.players,
       ...(a.firstMover !== undefined ? { firstMover: a.firstMover } : {}),
@@ -457,6 +460,8 @@ export function mySurrenderDetail(status: MySurrenderDetail['status'], log: Pick
     income: ev?.incomes?.mine ?? null,
     strongest: top ? { player: top.playerId, income: top.income, source: top.source, thin: top.thin } : null,
     outlook: l?.state ?? null,
+    // #454: the income lean beside an even state (additive).
+    ...(l?.lean ? { outlookLean: l.lean } : {}),
     outlookTurn: l?.turn ?? null,
   };
 }

@@ -136,6 +136,13 @@ describe('decision log store (#412 task 1)', () => {
     expect(raw.turns['1'].input.board).toBeUndefined();
   });
 
+  it('#454: keeps the outlook state and, beside an even one, its income lean as an additive field', async () => {
+    await recordDecision(dir, GAME, ME, { turn: 1, board: boardOn(1), input: input(1), plan: plan(1), outlookState: 'even', outlookLean: 'behind' });
+    expect((await readDecisionLog(dir, GAME))!.turns['1']!.decision).toMatchObject({ outlook: 'even', outlookLean: 'behind' });
+    await record(2);
+    expect((await readDecisionLog(dir, GAME))!.turns['2']!.decision).not.toHaveProperty('outlookLean');
+  });
+
   it('round-trips the input: Maps, Sets and the previous board come back as given', async () => {
     await record(2);
     const log = (await readDecisionLog(dir, GAME))!;

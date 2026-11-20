@@ -8,7 +8,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { HowLost } from './analysis/how-lost.js';
-import type { GameOutlook, OutlookEvidence, OutlookState } from './analysis/outlook.js';
+import { splitReading, type GameOutlook, type OutlookEvidence, type OutlookLean, type OutlookState } from './analysis/outlook.js';
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -25,7 +25,10 @@ export interface OutlookLogTurn {
   low: number | null;
   high: number | null;
   ratio: { low: number; high: number | null };
+  /** #454: winning, losing, even or stalemate only. */
   state: OutlookState;
+  /** #454: the income lean beside an `even` state (additive); absent when the state already says it. */
+  lean?: OutlookLean;
   /** #312: the state was read on the likely high (an estimate, not a bound). Absent otherwise, and on turns logged before #312. */
   estimated?: true;
   /**
@@ -71,6 +74,8 @@ export interface OutlookLog {
   latest?: {
     turn: number;
     state: OutlookState | null;
+    /** #454: the income lean beside an `even` state (additive); absent when the state already says it. */
+    lean?: OutlookLean;
     heldTurns: number;
     basis: string;
     evidence?: LoggedEvidence;
@@ -91,10 +96,24 @@ export async function readOutlookLog(dir: string, gameId: number, playerId: numb
   try {
     const c: unknown = JSON.parse(await readFile(outlookLogPath(dir, gameId), 'utf8'));
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !isRec(c.turns)) return undefined;
-    return c as unknown as OutlookLog;
+    return contractStates(c as unknown as OutlookLog);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * #454: a log written while #453 put the income lean in the state (`ahead`, `behind`, `unknown`) reads as
+ * `even` with that lean, per turn and on the latest; every other entry is left as it is.
+ */
+function contractStates(log: OutlookLog): OutlookLog {
+  const fix = <T extends { state: OutlookState | null; lean?: OutlookLean }>(e: T): T => {
+    const { state, lean } = splitReading(e.state);
+    return lean && e.lean === undefined ? { ...e, state, lean } : e;
+  };
+  for (const [k, t] of Object.entries(log.turns)) if (isRec(t)) log.turns[k] = fix(t);
+  if (isRec(log.latest)) log.latest = fix(log.latest);
+  return log;
 }
 
 async function write(dir: string, log: OutlookLog): Promise<void> {
@@ -117,6 +136,7 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
         high: t.strongest?.high ?? null,
         ratio: t.ratio,
         state: t.state,
+        ...(t.lean ? { lean: t.lean } : {}),
         ...(t.estimated ? { estimated: true as const } : {}),
         ...(t.figures
           ? {
@@ -157,6 +177,7 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
       log.latest = {
         turn: last.turn,
         state: outlook.state,
+        ...(outlook.lean ? { lean: outlook.lean } : {}),
         heldTurns: outlook.heldTurns,
         basis: outlook.basis,
         ...(outlook.evidence ? { evidence: logged(outlook.evidence) } : {}),
@@ -179,10 +200,18 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
 export interface FinalOutlook {
   turn: number;
   state: OutlookState | null;
+  /** #454: the income lean beside an `even` state (additive); absent when the state already says it. */
+  lean?: OutlookLean;
   heldTurns: number;
   ratio?: { low: number; high: number | null };
   estimated?: true;
   thin?: true;
+}
+
+/** #454: a final outlook read back from a finished record: one written with the lean as the state reads as `even` with that lean. */
+export function contractFinalOutlook(o: FinalOutlook): FinalOutlook {
+  const { state, lean } = splitReading(o.state);
+  return lean && o.lean === undefined ? { ...o, state, lean } : o;
 }
 
 export function finalOutlookOf(log: OutlookLog): FinalOutlook | undefined {
@@ -192,6 +221,7 @@ export function finalOutlookOf(log: OutlookLog): FinalOutlook | undefined {
   return {
     turn: l.turn,
     state: l.state ?? null,
+    ...(l.lean ? { lean: l.lean } : {}),
     heldTurns: typeof l.heldTurns === 'number' ? l.heldTurns : 0,
     ...(t?.ratio ? { ratio: { low: t.ratio.low, high: t.ratio.high } } : {}),
     ...(t?.estimated ? { estimated: true as const } : {}),

@@ -41,7 +41,7 @@ import { finishedGameKey, playerKey } from './player-record-store.js';
 import { holdsSeat } from './player-states.js';
 import type { BoardState, TerritoryOwner, TerritoryState } from './board.js';
 import type { HistoryUnreadable } from './trend.js';
-import type { FinalOutlook } from './outlook-log.js';
+import { contractFinalOutlook, type FinalOutlook } from './outlook-log.js';
 import { withPathLock } from './path-lock.js';
 
 export const MAX_FINISHED_RECORDS = 500;
@@ -379,7 +379,9 @@ export async function readFinishedRecord(path: string): Promise<'missing' | 'unr
   const state = await readFinishedState(path);
   if (typeof state === 'string') return state;
   try {
-    return JSON.parse(await readFile(path, 'utf8')) as FinishedRecord;
+    const rec = JSON.parse(await readFile(path, 'utf8')) as FinishedRecord;
+    // #454: a record written with the income lean as the outlook's state reads as even with that lean.
+    return rec.outlook ? { ...rec, outlook: contractFinalOutlook(rec.outlook) } : rec;
   } catch {
     return 'unreadable';
   }

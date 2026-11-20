@@ -12,7 +12,7 @@ import { type CalibrationSample, COVERAGE_BUCKETS, CALIBRATION_HIGH, CALIBRATION
 import { turnIncomes } from './finished-game.js';
 import type { MapGraph } from './graph.js';
 import type { TrackGame } from './opponents.js';
-import { gameOutlook, OUTLOOK_TURNS, type OutlookState } from './outlook.js';
+import { gameOutlook, OUTLOOK_TURNS, readingOf, type OutlookReading } from './outlook.js';
 import { type PlannerSettings, visibleState } from './plan/shared.js';
 
 /** One opponent's true figures on the board a turn was played on. */
@@ -58,7 +58,7 @@ export interface EstimateAccuracy {
 export interface TurnAccuracy {
   estimates: EstimateAccuracy[];
   /** My outlook state as logged against the state the true figures give (`gameOutlook` on the history boards). */
-  outlook: { logged: OutlookState | null; truth: OutlookState | null; right: boolean | null };
+  outlook: { logged: OutlookReading | null; truth: OutlookReading | null; right: boolean | null };
   /** The income the "stack ≥ my income" test reads: the one logged, else my true income. */
   myIncome: number;
   /** Territories my logged board hid that held an enemy stack ≥ that income; `null` with no board logged. */
@@ -88,7 +88,8 @@ export interface AccuracySummary {
 /** What a logged entry offers the scoring: only what it logged. */
 export interface LoggedTurn {
   board?: BoardState;
-  outlook: OutlookState | null;
+  /** #454: the finer reading logged (the income lean beside an even state, else the state). */
+  outlook: OutlookReading | null;
   estimates: readonly { player: number; estimate: number; source?: string; coverage: number | null; thin: boolean }[];
   /** My income as logged that turn (card armies out), when known. */
   myIncome: number | null;
@@ -136,7 +137,7 @@ export function ratioView(ratios: readonly number[]): RatioView | null {
 }
 
 /** The outlook the true figures give on turn T: `gameOutlook` over the history boards up to T − 1, each as the turn played on it. */
-function trueOutlook(input: TruthInput, byBoard: ReadonlyMap<number, BoardState>, turn: number): OutlookState | null {
+function trueOutlook(input: TruthInput, byBoard: ReadonlyMap<number, BoardState>, turn: number): OutlookReading | null {
   const boards: { turn: number; board: BoardState }[] = [];
   // The outlook reads the latest run of consecutive turns; a few more boards than that give the tracker its window.
   for (let b = turn - 1; b >= 0 && boards.length < OUTLOOK_TURNS + 3; b--) {
@@ -146,13 +147,16 @@ function trueOutlook(input: TruthInput, byBoard: ReadonlyMap<number, BoardState>
   }
   if (!boards.length) return null;
   try {
-    return gameOutlook({
-      graph: input.graph,
-      me: input.me,
-      boards,
-      ...(input.plannerSettings ? { settings: input.plannerSettings } : {}),
-      ...(input.game ? { game: input.game } : {}),
-    }).state;
+    // #454: the finer reading, as the decision log keeps it.
+    return readingOf(
+      gameOutlook({
+        graph: input.graph,
+        me: input.me,
+        boards,
+        ...(input.plannerSettings ? { settings: input.plannerSettings } : {}),
+        ...(input.game ? { game: input.game } : {}),
+      }),
+    );
   } catch {
     return null;
   }

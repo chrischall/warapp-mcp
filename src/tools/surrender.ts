@@ -166,6 +166,8 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
           ? {
               turn: log.latest.turn,
               state: log.latest.state,
+              // #454: the income lean beside an even state (additive).
+              ...(log.latest.lean ? { lean: log.latest.lean } : {}),
               heldTurns: log.latest.heldTurns,
               basis: log.latest.basis,
               // #304: the incomes compared and each opponent's frontier read; `thin` when the state rested on little.

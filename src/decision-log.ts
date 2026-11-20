@@ -57,7 +57,7 @@
 import { open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type AccuracySummary, estimateOff, type LoggedTurn, type TruthResult, type TurnAccuracy, type TurnTruth } from './analysis/decision-truth.js';
-import type { OutlookState } from './analysis/outlook.js';
+import type { OutlookLean, OutlookReading, OutlookState } from './analysis/outlook.js';
 import type { EnemyDeployEstimate, PlanInput, TurnPlan } from './analysis/plan/shared.js';
 import type { BoardState, TerritoryState } from './board.js';
 import { writeJsonAtomic } from './map-store.js';
@@ -167,8 +167,10 @@ export interface LoggedDecision {
   cardAdvice: TurnPlan['cardAdvice'];
   rationale: string[];
   warnings: string[];
-  /** The game outlook's state on this turn (`null`: none read). */
+  /** The game outlook's state on this turn (`null`: none read). #453 wrote the income lean here for a few hours: read it through {@link decisionReading}. */
   outlook: OutlookState | null;
+  /** #454: the outlook's income lean beside an even state (additive); absent when the state already says it. */
+  outlookLean?: OutlookLean;
   /** Each opponent's deploy estimate the plan worked from; absent in entries written without them. */
   estimates?: LoggedEstimate[];
   /**
@@ -401,6 +403,8 @@ export interface MySurrenderDetail {
   /** The opponent with the highest income in that evidence. */
   strongest: { player: number; income: number; source: 'tracked' | 'visible'; thin: boolean } | null;
   outlook: OutlookState | null;
+  /** #454: the income lean beside an even state (additive); absent when the state already says it. */
+  outlookLean?: OutlookLean;
   /** The turn that outlook was logged on. */
   outlookTurn: number | null;
 }
@@ -571,6 +575,8 @@ export interface DecisionRecord {
   plannedBoard?: BoardState;
   plan: TurnPlan;
   outlookState?: OutlookState | null;
+  /** #454: the outlook's income lean beside an even state. */
+  outlookLean?: OutlookLean;
   /** The per-opponent deploy estimates the plan worked from. */
   estimates?: readonly EnemyDeployEstimate[];
   /** The game's players, for scrubbing names; only ids are ever written. */
@@ -739,6 +745,7 @@ function earnedIncome(input: object | undefined): number | undefined {
 function decisionOf(
   plan: TurnPlan,
   outlook: OutlookState | null | undefined,
+  outlookLean: OutlookLean | undefined,
   estimates: readonly EnemyDeployEstimate[] | undefined,
   income: number | undefined,
 ): LoggedDecision {
@@ -755,6 +762,7 @@ function decisionOf(
     rationale: plan.rationale,
     warnings: plan.warnings,
     outlook: outlook ?? null,
+    ...(outlookLean ? { outlookLean } : {}),
     ...(estimates ? { estimates: loggedEstimates(estimates) } : {}),
     ...(income !== undefined ? { income } : {}),
   }) as LoggedDecision;
@@ -918,7 +926,7 @@ export async function recordDecision(
         kind: 'planned',
         input,
         planner: { version: VERSION, ...(build ? { build } : {}) },
-        decision: decisionOf(rec.plan, rec.outlookState, rec.estimates, earnedIncome(rec.input)),
+        decision: decisionOf(rec.plan, rec.outlookState, rec.outlookLean, rec.estimates, earnedIncome(rec.input)),
         times: encodeValue({ plannedAt: iso(rec.now), ...rec.times }) as DecisionTimes,
         ...(rec.firstMover !== undefined ? { firstMover: rec.firstMover ? { ...rec.firstMover } : null } : {}),
         ...(rec.cards ? { cards: encodeValue(rec.cards) as LoggedCards } : {}),
@@ -1583,6 +1591,14 @@ export async function recordPicksAward(
 // ---------------------------------------------------------------------------------------------
 // The end of a game: truth, accuracy and compaction
 
+/**
+ * #454: a decision's finer outlook reading — its lean beside an even state, else its state (a decision #453 logged
+ * with the lean as the state reads alike). `null` with none.
+ */
+export function decisionReading(d: Pick<LoggedDecision, 'outlook' | 'outlookLean'> | undefined): OutlookReading | null {
+  return d?.outlookLean ?? (d?.outlook as OutlookReading | null | undefined) ?? null;
+}
+
 /** What each turn of `log` offers the truth's scoring: its board, logged outlook, estimates and income. */
 export function loggedTurns(log: Pick<DecisionLog, 'turns'>): Map<number, LoggedTurn> {
   const out = new Map<number, LoggedTurn>();
@@ -1595,7 +1611,7 @@ export function loggedTurns(log: Pick<DecisionLog, 'turns'>): Map<number, Logged
     const income = e.decision?.income ?? earnedIncome(e.input) ?? log.turns[String(turn - 1)]?.next?.income ?? null;
     out.set(turn, {
       ...(board ? { board } : {}),
-      outlook: e.decision?.outlook ?? null,
+      outlook: decisionReading(e.decision),
       estimates: e.decision?.estimates ?? [],
       myIncome: typeof income === 'number' ? income : null,
     });
@@ -1666,10 +1682,10 @@ export function interestingTurns(log: Pick<DecisionLog, 'turns'>, opts: { lost?:
   const out = new Set<number>(decided.slice(0, KEEP_FIRST));
   const lastBefore = (i: number) => decided.slice(Math.max(0, i - KEEP_BEFORE_LOSS + 1), i + 1).forEach((t) => out.add(t));
   if (opts.lost && decided.length) lastBefore(decided.length - 1);
-  let prevOutlook: OutlookState | null | undefined;
+  let prevOutlook: OutlookReading | null | undefined;
   decided.forEach((turn, i) => {
     const e = log.turns[String(turn)]!;
-    const outlook = e.decision!.outlook ?? null;
+    const outlook = decisionReading(e.decision);
     if (i > 0 && outlook !== prevOutlook) out.add(turn);
     prevOutlook = outlook;
     if (e.override) out.add(turn);

@@ -16,6 +16,7 @@ import {
   interestingTurns,
   loggedEstimates,
   type loggedTurns,
+  loggedTurns as loggedTurnsOf,
   readDecisionLog,
   recordDecision,
   recordTruth,
@@ -44,7 +45,7 @@ const t = (territoryId: number, owner: number | 'fog', armies: number | null): T
 const full = (turn: number): BoardState => ({ source: 'gamefeed', verified: true, territories: [t(1, ME, turn), t(2, 'fog', null)] });
 
 /** A decided entry: an input, a decision with the given outlook and expected next income, and its outcome. */
-const decided = (turn: number, o: { outlook?: string; expected?: number; next?: number; eliminated?: boolean; override?: boolean } = {}): DecisionEntry =>
+const decided = (turn: number, o: { outlook?: string; outlookLean?: string; expected?: number; next?: number; eliminated?: boolean; override?: boolean } = {}): DecisionEntry =>
   ({
     kind: 'planned',
     board: { kind: 'full', source: 'gamefeed', verified: true, territories: full(turn).territories },
@@ -61,6 +62,7 @@ const decided = (turn: number, o: { outlook?: string; expected?: number; next?: 
       rationale: [`Turn ${turn}.`],
       warnings: [],
       outlook: o.outlook ?? 'even',
+      ...(o.outlookLean ? { outlookLean: o.outlookLean } : {}),
       estimates: [{ player: FOE, estimate: 5, source: 'tracked', coverage: 0.5, thin: false }],
       income: 5,
     },
@@ -117,6 +119,16 @@ describe('compaction (#412 task 3, no-gaps rule (b))', () => {
     // A game lost: the last five decided turns are kept even with no elimination logged.
     const lost = twelve();
     expect([...interestingTurns(lost, { lost: true })].sort((a, b) => a - b)).toEqual([1, 2, 3, 8, 9, 10, 11, 12]);
+  });
+
+  it('#454: an income lean beside an even outlook is an outlook change too, and a decision logged with the lean as the state reads alike', () => {
+    // Turn 5 leans behind beside even (#454's additive field); turn 8 was written with `behind` as the state (#453).
+    const log = twelve({ 5: { outlookLean: 'behind' }, 8: { outlook: 'behind' } });
+    expect([...interestingTurns(log)].sort((a, b) => a - b)).toEqual([1, 2, 3, 5, 6, 8, 9]);
+    const turns = loggedTurnsOf(log);
+    expect(turns.get(5)?.outlook).toBe('behind');
+    expect(turns.get(8)?.outlook).toBe('behind');
+    expect(turns.get(6)?.outlook).toBe('even');
   });
 
   it('compacts a stored log once: the board, decision and truth of every turn survive, status compacted, idempotent', async () => {

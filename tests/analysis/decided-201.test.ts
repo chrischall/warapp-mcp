@@ -92,8 +92,8 @@ describe('#201: the payback horizon once the game is decided', () => {
     // Before #436 the same turns read winning on the likely high (the test above): the bonus no longer paid.
     const o = outlook('even', 120, 10, 2000);
     const income = { mine: 10, theirs: { playerId: 20, low: 2, high: 4, estimate: 2 }, ratio: { low: 2.5, high: 5, estimate: 5 }, calibrated: false, lean: 'unknown' as const, noLeadClaim: true as const };
-    const turns = o.turns.map((t) => ({ ...t, likely: { playerId: 20, high: 20, ratio: 6, source: 'tracked' as const }, income, strength: 'even' as const, state: 'unknown' as const }));
-    const p = run({ adapt: true, outlook: { state: 'unknown', turns } });
+    const turns = o.turns.map((t) => ({ ...t, likely: { playerId: 20, high: 20, ratio: 6, source: 'tracked' as const }, income, state: 'even' as const, lean: 'unknown' as const }));
+    const p = run({ adapt: true, outlook: { state: 'even', turns } });
     expect(p.rationale.join('\n')).not.toMatch(/Outlook \(#201\)/);
     expect(skips(p)).toBe(false);
     expect(p.deploys).toEqual(run({ adapt: true }).deploys);
@@ -105,9 +105,9 @@ describe('#201: the payback horizon once the game is decided', () => {
     const surrenderLine = { crossed: true, turnsBelow: 3, needed: 3, myIncome: 10, theirIncome: 30, playerId: 20, line: 20, calibrated: true, advice: 'advice only' };
     for (const lean of ['ahead', 'behind', 'unknown'] as const) {
       const o = outlook('even', 60, 20, 30);
-      const turns = o.turns.map((t) => ({ ...t, strength: 'even' as const, state: lean }));
+      const turns = o.turns.map((t) => ({ ...t, state: 'even' as const, lean }));
       // warapp_plan_turn hands the planner the outlook's state and turns only; handed the whole outlook, a crossed line still changes nothing.
-      const outlookWithLine = { ...o, state: lean, turns, surrenderLine } as Pick<GameOutlook, 'state' | 'turns'>;
+      const outlookWithLine = { ...o, state: 'even', lean, turns, surrenderLine } as Pick<GameOutlook, 'state' | 'turns'>;
       const p = run({ adapt: true, outlook: outlookWithLine });
       expect({ lean, deploys: p.deploys, moves: p.moves }).toEqual({ lean, deploys: even.deploys, moves: even.moves });
       expect(p.rationale.join('\n')).not.toMatch(/Outlook \(#201\)|surrender/i);
