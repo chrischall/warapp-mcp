@@ -320,12 +320,16 @@ export interface IntelAdvice {
  * on the owner shown beside the most hidden stacks next to me; Surveillance on the bonus I am completing
  * that is nearest done (then the most valuable, then ascending id), else the bonus worth the most with a
  * hidden border of mine in it; Reconnaissance on the hidden territory next to the most of mine (then the
- * most armies of mine beside it, then ascending id), else a hidden member of the bonus I am completing.
+ * most armies of mine beside it, then ascending id), else on the hidden territory behind the opponent in
+ * contact whose stacks tie down the most of my border armies ({@link pressures}: its estimate decides the
+ * most of the holds and concessions; #443) — a likely start (`likelyStarts`, the distribution mode's
+ * territories) first, then the one beside the most of its front, then ascending id — else a hidden member
+ * of the bonus I am completing.
  * `hold` says, for a card held with nothing to reveal, why it is kept. Pure; ties on ascending id.
  */
 export function intelAdvice(
   cb: CardBoard,
-  opts: { fog?: string; opponents: readonly number[]; held: ReadonlySet<IntelCard> },
+  opts: { fog?: string; opponents: readonly number[]; held: ReadonlySet<IntelCard>; likelyStarts?: ReadonlySet<number> },
 ): { advice: IntelAdvice[]; hold: string[] } {
   if (opts.fog === 'NoFog' || !opts.held.size) return { advice: [], hold: [] };
   const r = reader(cb);
@@ -403,11 +407,20 @@ export function intelAdvice(
   }
   if (opts.held.has('Reconnaissance')) {
     const x = blind[0];
+    const behind = x ? undefined : behindFront(cb, r, hidden, opts.likelyStarts);
     if (x) {
       advice.push({
         card: 'Reconnaissance',
         target: x.t,
         why: `Reconnaissance on ${x.t}: it borders ${x.next} of your territories (${x.armies} armies) and the fog hides what stands there.`,
+      });
+    } else if (behind) {
+      advice.push({
+        card: 'Reconnaissance',
+        target: behind.t,
+        why:
+          `Reconnaissance on ${behind.t}: the fog hides it behind player ${behind.player}, whose stacks tie down ${behind.armies} of your border armies, ` +
+          `so its strength there is an estimate${behind.likely ? ' (a likely start)' : ''}.`,
       });
     } else if (building[0]) {
       const t = building[0].fogged[0]!;
@@ -415,4 +428,28 @@ export function intelAdvice(
     } else nothing('Reconnaissance');
   }
   return { advice, hold };
+}
+
+/**
+ * #443: the hidden territory behind the opponent in contact whose estimate decides the most armies of my
+ * holds (the first by {@link pressures} with one): a hidden territory, not mine, beside one of its territories
+ * that border mine. A likely start first, then the one beside the most of that front, then ascending id.
+ */
+function behindFront(
+  cb: CardBoard,
+  r: ReturnType<typeof reader>,
+  hidden: (t: number) => boolean,
+  likely: ReadonlySet<number> | undefined,
+): { t: number; player: number; armies: number; likely: boolean } | undefined {
+  for (const p of pressures(cb)) {
+    if (p.armies <= 0) continue;
+    const front = new Set(p.borders.flatMap((b) => neighborsOf(cb.graph, b).filter((n) => r.ownerOf(n) === p.player)));
+    const seen = new Map<number, number>();
+    for (const f of front) for (const n of neighborsOf(cb.graph, f)) if (!r.isMine(n) && hidden(n)) seen.set(n, (seen.get(n) ?? 0) + 1);
+    const best = [...seen]
+      .map(([t, n]) => ({ t, n, likely: likely?.has(t) ?? false }))
+      .sort((a, b) => Number(b.likely) - Number(a.likely) || b.n - a.n || a.t - b.t)[0];
+    if (best) return { t: best.t, player: p.player, armies: p.armies, likely: best.likely };
+  }
+  return undefined;
 }

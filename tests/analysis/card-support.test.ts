@@ -214,6 +214,23 @@ describe('intelAdvice (G2): the spy cards only where they reveal what the plan n
     ]);
   });
 
+  it('#443: Reconnaissance behind the opponent whose stacks tie down the most of my border armies, not a far bonus member', () => {
+    // Normal fog: my border's neighbours are in view. B on 5 ties down 15 of T4's armies, A on 3 only 9.
+    const view = [fogged(1), fogged(2), a(3, 10), mine(4, 20), b(5, 20), fogged(6), neutral(7, 2)];
+    const { advice } = intelAdvice(cb(view), { fog: 'Foggy', opponents: [A, B], held: new Set<IntelCard>(['Reconnaissance']) });
+    expect(advice).toEqual([
+      { card: 'Reconnaissance', target: 6, why: expect.stringMatching(/^Reconnaissance on 6: the fog hides it behind player 30, whose stacks tie down 15 of your border armies/) },
+    ]);
+  });
+
+  it('#443: prefers a likely start behind that opponent', () => {
+    const view = [fogged(1), fogged(2), a(3, 10), mine(4, 20), neutral(5, 2), neutral(6, 2), neutral(7, 2)];
+    const held = new Set<IntelCard>(['Reconnaissance']);
+    expect(intelAdvice(cb(view), { fog: 'Foggy', opponents: [A], held }).advice[0]?.target).toBe(1);
+    const { advice } = intelAdvice(cb(view), { fog: 'Foggy', opponents: [A], held, likelyStarts: new Set([2]) });
+    expect(advice).toEqual([{ card: 'Reconnaissance', target: 2, why: expect.stringMatching(/behind player 20, .*\(a likely start\)\.$/) }]);
+  });
+
   it('holds each card, saying why, when the fog hides nothing the plan needs', () => {
     const { advice, hold } = intelAdvice(cb([mine(1, 5), mine(2, 5), mine(3, 5), neutral(4, 2), neutral(5, 2), a(6, 2), fogged(7)]), {
       fog: 'Foggy',

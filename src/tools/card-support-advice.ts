@@ -10,6 +10,7 @@ import type { TurnPlan } from '../analysis/planner.js';
 import { STRENGTH_INCOME_TURNS } from '../analysis/profile.js';
 import type { Card } from '../cards.js';
 import type { Game, Player } from '../normalize.js';
+import { dealtMode } from './map-details.js';
 
 const CARD_SPY = 2;
 const CARD_RECONNAISSANCE = 10;
@@ -147,7 +148,14 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
       .filter((p) => p.id !== me.id && !cb.friends?.has(p.id) && (p.state ?? 'Playing') === 'Playing')
       .map((p) => p.id);
     const fog = input.game.settings?.fog;
-    const intel = intelAdvice(cb, { ...(fog !== undefined ? { fog } : {}), opponents, held: new Set(intelCards.keys()) });
+    // #443: the distribution mode's territories, when the map already carries them (no read here).
+    const starts = dealtMode(input.game.settings, cb.graph.map)?.territories;
+    const intel = intelAdvice(cb, {
+      ...(fog !== undefined ? { fog } : {}),
+      opponents,
+      held: new Set(intelCards.keys()),
+      ...(starts?.length ? { likelyStarts: new Set(starts) } : {}),
+    });
     for (const a of intel.advice) {
       const id = intelCards.get(a.card)!.id;
       if (a.card === 'Spy' && a.player !== undefined) view.spy = { player: a.player, order: { kind: 'card', card: id, player: a.player } };
