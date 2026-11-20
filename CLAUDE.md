@@ -773,7 +773,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   later boards until the turn expected, #369); every other targeted card is UNVERIFIED live (Sanctions was played
   once 2026-11-18, its effect not yet checked). `TARGETED_CARD_PLAYS` (`src/protocol/methods.ts`) is the set whose
   targets are resolved; `UNVERIFIED_CARD_PLAYS` (the preview's encoding warning and the result's `cardPlayCheck`) is
-  it without Airlift (#296) and Diplomacy (#369). `warapp_submit_turn` takes their targets
+  it without Airlift (#296), Diplomacy (#369) and Reconnaissance (#443: accepted live 2026-11-20 — a turn with the play committed with no error, then withdrawn, so the reveal itself is not yet seen; an advised Reconnaissance now goes into `warapp_plan_turn`'s `orders`, #434). `warapp_submit_turn` takes their targets
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
   never gifted or airlifted to a teammate; no Spy on me or a teammate, nor on the neutral — target 0 — unless
   the game's `SpyCard.CanSpyOnNeutral`; no Diplomacy between teammates, nor naming a player out — the

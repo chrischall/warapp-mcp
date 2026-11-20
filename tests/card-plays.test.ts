@@ -125,7 +125,7 @@ interface Preview {
 }
 
 describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED live)', () => {
-  it('sends Spy, Reconnaissance, Surveillance, Airlift and Gift in their bundle phases, warning the encoding is unverified', async () => {
+  it('sends Spy, Reconnaissance, Surveillance, Airlift and Gift in their bundle phases, warning where the encoding is unverified', async () => {
     const s = server(HAND);
     const turnDone = game({ turns: '3' });
     h = await liveHarness({ feed: [game(), game(), turnDone], pages: ME_PAGE, warapp: s.warapp });
@@ -155,7 +155,8 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
     );
     const view = preview as unknown as Preview;
     const warnings = view.preview.warnings?.join('\n') ?? '';
-    expect(warnings).toMatch(/UNVERIFIED encoding: the Gift, Spy, Reconnaissance, Surveillance card plays/);
+    expect(warnings).toMatch(/UNVERIFIED encoding: the Gift, Spy, Surveillance card plays/);
+    expect(warnings).not.toMatch(/UNVERIFIED encoding:[^\n]*Reconnaissance/);
     // #296: the Airlift play was verified live 2026-11-16, so it is no longer named.
     expect(warnings).not.toMatch(/UNVERIFIED encoding:[^\n]*Airlift/);
     expect(warnings).toMatch(/Gift: territory 161 .* go to player 7176543229 before the attacks/);

@@ -304,7 +304,7 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     const hand = [card(2, 'Spy', 'a'), card(10, 'Reconnaissance', 'b'), card(11, 'Surveillance', 'c')];
     const { view, warnings } = adviseCards(input({ territories, game: ffa, hand }));
     expect(view.spy).toEqual({ player: FOE2.id, order: { kind: 'card', card: 'a'.repeat(32), player: FOE2.id } });
-    expect(view.reconnaissance).toEqual({ target: 3, order: { kind: 'card', card: 'b'.repeat(32), target: 3 } });
+    expect(view.reconnaissance).toEqual({ target: 3, inOrders: true, order: { kind: 'card', card: 'b'.repeat(32), target: 3 } });
     expect(view.surveillance).toEqual({ bonus: 101, order: { kind: 'card', card: 'c'.repeat(32), bonus: 101 } });
     expect(warnings.join('\n')).toMatch(/Spy on player 8811111299: none of its territories is in view.*Advice only, not in the orders/);
     for (const o of [view.spy!.order, view.reconnaissance!.order, view.surveillance!.order]) expect(turnOrdersArg.safeParse([o]).success).toBe(true);
@@ -313,14 +313,15 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(off.warnings.join('\n')).not.toMatch(/Spy|Reconnaissance|Surveillance/);
   });
 
-  it('#434: a spy-card play goes into the orders only once its encoding is verified live; today none is', () => {
+  it('#434: a spy-card play goes into the orders only once its encoding is verified live; today Reconnaissance is (#443)', () => {
     const fog = { territoryId: 3, owner: { kind: 'unknown' as const }, armies: null, fogLevel: 'Fogged' };
     const territories = [me(1, 5), me(2, 7), fog, neutral(4, 2), neutral(5, 2), neutral(6, 2), foe(7, 3)];
     const hand = [card(2, 'Spy', 'a'), card(10, 'Reconnaissance', 'b'), card(11, 'Surveillance', 'c')];
-    // The real set: all three unverified, so advice only and no order to add.
+    // The real set: Reconnaissance verified live (#443), Spy and Surveillance not: only its play is an order.
     const real = adviseCards(input({ territories, game: ffa, hand }));
-    expect(real.view.spy?.inOrders ?? real.view.reconnaissance?.inOrders ?? real.view.surveillance?.inOrders).toBeUndefined();
-    expect(intelOrders(real.view)).toEqual([]);
+    expect(real.view.spy?.inOrders ?? real.view.surveillance?.inOrders).toBeUndefined();
+    expect(real.view.reconnaissance?.inOrders).toBe(true);
+    expect(intelOrders(real.view)).toEqual([real.view.reconnaissance!.order]);
     // Surveillance verified (an injected set without it): its play goes into the orders, the others stay advice.
     const verified = adviseCards(input({ territories, game: ffa, hand, unverifiedPlays: new Set(['Spy', 'Reconnaissance']) }));
     expect(verified.view.surveillance).toEqual({ bonus: 101, inOrders: true, order: { kind: 'card', card: 'c'.repeat(32), bonus: 101 } });
