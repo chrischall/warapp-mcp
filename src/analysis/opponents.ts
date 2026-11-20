@@ -1277,6 +1277,8 @@ function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
     if (pattern && pattern.income > carry.income) carry = pattern;
     // #418, the over-read tripwire: on a turn with every army it could deploy in view, the carry steps
     // down at most one RISE_CAP step toward that turn's reading, never below it (nor its visible income).
+    // It steps `carry`, never `pattern`: a #271 fog-capture pattern above the stepped figure is restored by
+    // the line above on the next turn, so a pattern-set reading is lowered for that one turn only.
     if (x.accounted && carry.income > x.observed) {
       const step = Math.max(x.observed, x.visibleIncome, Math.ceil(carry.income / RISE_CAP - 1e-9));
       if (step < carry.income) {

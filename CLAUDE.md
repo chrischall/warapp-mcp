@@ -1183,7 +1183,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   off under straight rounding when it captured, no army price): the over-read tripwire steps the carry down
   at most one `RISE_CAP` step a turn (⌈carry ÷ 1.3⌉) toward that turn's reading, never below it, and the
   readings it stepped down from count at most the stepped figure in later windows (`incomeMethod`
-  `tripped`, `incomeTrip`). Measured: calibration 167 samples unchanged (on the recorded games' final
+  `tripped`, `incomeTrip`). It steps the carry the window reads, not a #271 fog-capture `pattern`: a pattern
+  above a stepped carry is restored on the next turn (`carryIncome`: `pattern.income > carry.income`), so the
+  tripwire lowers a pattern-set reading for one turn only (the pattern is evidence no quiet turn disproves; it
+  falls only with broken bonuses and the could-earn cap). Measured: calibration 167 samples unchanged (on the recorded games' final
   tracks 22 of 143 observed turns carry a capture floor, none above the reading it already had, and no
   turn is accounted); golden 5 synthetic plans' rationale and warnings (the planner's observed line raised
   by a capture floor), no order, capture, next income or concession changed;
