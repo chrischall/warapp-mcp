@@ -368,6 +368,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
           myIncome: Math.max(0, earnedIncome - Math.max(0, Math.floor(input.cardArmies ?? 0))),
           tracks: input.tracks,
           settings: s,
+          ...(input.turn !== undefined ? { turn: input.turn } : {}),
+          ...(input.siegeMemory ? { memory: input.siegeMemory } : {}),
         })
       : undefined;
   const siege = sieged && 'siege' in sieged ? sieged.siege : undefined;

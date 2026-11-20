@@ -1327,10 +1327,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (3) × a 1v1 break and never count as a second front; until the trigger its territories outside its
     breakable bonuses join `truce.noTarget` (`siegeHeld`, the #375 path); rule 0p.3c builds the strike stack
     facing it in any format. Trigger: its income ≤ `SIEGE_INCOME_DROP` (0.6) × its baseline (the most the
-    tracker saw it deploy over its window; no tracked turn, no such trigger), mine ≥ `SIEGE_INCOME_LEAD` (1.8) ×
+    tracker saw it deploy over its window, or its income on the siege's first turn when larger; neither, no such
+    trigger), mine ≥ `SIEGE_INCOME_LEAD` (1.8) ×
     its, or a stack of mine at the start of the turn takes a member of a bonus it visibly holds against its
-    defenders plus its whole deploy. No memory between turns. `TurnPlan.siege` reports it; golden unchanged.
-    Not yet: a profile-picked siege, re-break tracking across turns.
+    defenders plus its whole deploy. **Memory (`src/siege-store.ts`, `<dataDir>/siege/<gameId>-<myId>.json`, ids and
+    numbers only):** warapp_plan_turn keeps each siege turn (target, its income, mine, the bonuses the plan broke — as
+    planned) and passes it back as `PlanInput.siegeMemory`; `priorSiegeTurns` keeps only the same target's turns before
+    this one, none when the newest is more than `SIEGE_MEMORY_GAP` (3) turns back; re-planning a turn replaces it; an
+    `enemy_deploy` what-if writes nothing. `siege.memory` reports `startedTurn`, `turns`, `startIncome`,
+    `opponentIncomeTrend`, `broken` (per bonus, its turns) and `rebroken`. `TurnPlan.siege` reports it; golden unchanged.
+    Not yet: a profile-picked siege.
   - **Single-army jabs (#361, `src/analysis/plan/jabs.ts`), at 0% luck under straight rounding only**, where one
     army kills round(1 × the offensive rate) ≥ 1 and dies: a one-for-one trade (seen live: 75 → 74, 19 → 18). On
     under `siege` (`PlanOptions.jabs` / plan_turn's `jabs`: `true` on, `false` off; off otherwise). After the #226

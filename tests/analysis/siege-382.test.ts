@@ -9,6 +9,7 @@ import { buildGraph } from '../../src/analysis/graph.js';
 import type { OpponentTrack } from '../../src/analysis/opponents.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
+import { rememberSiegeTurn, type SiegeMemory } from '../../src/analysis/plan/siege.js';
 import { board, mine, neutral } from './helpers.js';
 
 const ME = 10;
@@ -70,7 +71,9 @@ const BOARD = board([
   enemy(17, 1),
 ]);
 
-const input = (o: { income?: number; tracks?: OpponentTrack[]; goal?: 'siege' | 'balanced'; siegeTarget?: number } = {}): PlanInput => ({
+const input = (
+  o: { income?: number; tracks?: OpponentTrack[]; goal?: 'siege' | 'balanced'; siegeTarget?: number; turn?: number; memory?: SiegeMemory } = {},
+): PlanInput => ({
   graph: buildGraph(MAP),
   board: BOARD,
   me: ME,
@@ -78,6 +81,8 @@ const input = (o: { income?: number; tracks?: OpponentTrack[]; goal?: 'siege' | 
   settings: STD,
   game: { players: [{ id: ME, state: 'Playing' }, { id: ENEMY, state: 'Playing' }] } as PlanInput['game'],
   ...(o.tracks ? { tracks: o.tracks } : {}),
+  ...(o.turn !== undefined ? { turn: o.turn } : {}),
+  ...(o.memory ? { siegeMemory: o.memory } : {}),
   options: { goal: o.goal ?? 'siege', ...(o.siegeTarget !== undefined ? { siegeTarget: o.siegeTarget } : {}) },
 });
 
@@ -179,5 +184,73 @@ describe('#382 siege goal', () => {
     expect(p.goal).toBe('siege');
     expect(p.siege).toBeUndefined();
     expect(p.warnings.join('\n')).toMatch(/siege_target 99/);
+  });
+
+  describe('memory across turns', () => {
+    const turn = (t: number, opponentIncome: number, breaks: number[] = []) => ({ turn: t, opponentIncome, myIncome: 10, breaks });
+
+    it('with no turn known keeps no memory', () => {
+      expect(planTurn(input()).siege!.memory).toBeUndefined();
+    });
+
+    it('the first turn of a siege starts its memory', () => {
+      const p = planTurn(input({ turn: 4 }));
+      expect(p.siege!.memory).toEqual({
+        startedTurn: 4,
+        turns: 1,
+        startIncome: 15,
+        opponentIncomeTrend: [{ turn: 4, income: 15 }],
+        broken: p.siege!.brokenThisTurn.map((b) => ({ bonusId: b.bonusId, turns: [4] })),
+        rebroken: [],
+      });
+    });
+
+    it('the income when the siege began is its baseline: the assault is released once the target falls to 0.6× it', () => {
+      const memory: SiegeMemory = { target: ENEMY, turns: [turn(2, 30, [1]), turn(3, 22, [2])] };
+      const p = planTurn(input({ turn: 4, memory }));
+      expect(p.siege).toMatchObject({ opponentIncome: 15, baseline: 30, fallenTo: 0.5, ready: true, trigger: 'income-fell' });
+      expect(p.siege!.memory).toMatchObject({
+        startedTurn: 2,
+        turns: 3,
+        startIncome: 30,
+        opponentIncomeTrend: [
+          { turn: 2, income: 30 },
+          { turn: 3, income: 22 },
+          { turn: 4, income: 15 },
+        ],
+      });
+      // B1 broken on turn 2 and again now (it was retaken in between): re-broken.
+      expect(p.siege!.brokenThisTurn.map((b) => b.bonusId)).toContain(1);
+      expect(p.siege!.memory!.broken).toContainEqual({ bonusId: 1, turns: [2, 4] });
+      expect(p.siege!.memory!.rebroken).toContain(1);
+      expect(p.rationale[0]).toMatch(/^Siege on player 20 \(#382\)/);
+      expect(p.rationale[0]).toMatch(/siege turn 3 \(since turn 2\): its income 30 → 22 → 15\./);
+    });
+
+    it('ignores the memory of another target, a stale siege, or turns not before this one', () => {
+      for (const memory of [
+        { target: 99, turns: [turn(3, 30)] },
+        { target: ENEMY, turns: [turn(1, 30)] }, // more than SIEGE_MEMORY_GAP turns ago
+        { target: ENEMY, turns: [turn(5, 30)] }, // this turn, planned again
+      ] satisfies SiegeMemory[]) {
+        const p = planTurn(input({ turn: 5, memory }));
+        expect(p.siege).toMatchObject({ baseline: 15, ready: false });
+        expect(p.siege!.memory).toMatchObject({ startedTurn: 5, turns: 1 });
+      }
+    });
+
+    it('rememberSiegeTurn appends this turn, replaces a re-planned one and restarts on a new target or a gap', () => {
+      const report = planTurn(input({ turn: 4 })).siege!;
+      const broke = report.brokenThisTurn.map((b) => b.bonusId);
+      expect(rememberSiegeTurn(undefined, 4, report)).toEqual({ target: ENEMY, turns: [{ turn: 4, opponentIncome: 15, myIncome: 10, breaks: broke }] });
+      const kept: SiegeMemory = { target: ENEMY, turns: [turn(2, 30), turn(3, 22), turn(4, 99)] };
+      expect(rememberSiegeTurn(kept, 4, report).turns.map((t) => [t.turn, t.opponentIncome])).toEqual([
+        [2, 30],
+        [3, 22],
+        [4, 15],
+      ]);
+      expect(rememberSiegeTurn({ target: 99, turns: [turn(3, 30)] }, 4, report).turns).toHaveLength(1);
+      expect(rememberSiegeTurn({ target: ENEMY, turns: [turn(0, 30)] }, 4, report).turns).toHaveLength(1);
+    });
   });
 });

@@ -150,6 +150,8 @@ import { withTeammateOrders } from '../team-orders.js';
 import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../team-cards.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
+import { readSiegeMemory, writeSiegeMemory } from '../siege-store.js';
+import { rememberSiegeTurn, type SiegeMemory } from '../analysis/plan/siege.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
@@ -1667,6 +1669,8 @@ export interface LivePlanArgs {
   siegeTarget?: number;
   /** #361: single-army jabs (`jabs`): `true` on, `false` off; default on under goal siege only. */
   jabs?: boolean;
+  /** #382: the siege's memory kept for this game (src/siege-store.ts). */
+  siegeMemory?: SiegeMemory;
 }
 
 /**
@@ -1875,6 +1879,7 @@ export async function livePlanSetup(
     ...(turn !== null ? { turn } : {}),
     game: gameContext,
     ...(tracks ? { tracks } : {}),
+    ...(a.args?.siegeMemory ? { siegeMemory: a.args.siegeMemory } : {}),
     // G2 (D3): Sanctions on another player the decoder is sure of cut its estimate read off the board.
     ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
     options: {
@@ -2274,7 +2279,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               'balanced (default): best income per army across holds, bonuses and breaking enemy bonuses; expand: take ' +
               'neutrals only; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first; ' +
               "siege: against one opponent (siege_target), fund its cheapest bonus breaks first and build one strike stack " +
-              "facing it, holding the main assault until its income falls to 0.6× its tracked baseline, mine reaches 1.8× " +
+              "facing it, holding the main assault until its income falls to 0.6× its baseline (tracked, or when the siege began), mine reaches 1.8× " +
               "its, or a stack of mine can take a member of its held bonus against its whole deploy (reported as `siege`). " +
               'A goal given here overrides the profile.',
           ),
@@ -2379,12 +2384,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #317: a surrender waiting on my acceptance (the game details; null when unreadable). Never throws.
         readPendingSurrenders(ctx, game, me),
       ]);
+      // #382: the siege's memory, kept per game while a siege runs.
+      const siegeMemory = goal === 'siege' && ctx.dataDir && turn !== null ? await readSiegeMemory(ctx.dataDir, game.id, me.id) : undefined;
       const setup = await livePlanSetup(ctx, {
         game, map, me, turn, territories, info, history, teamsKnown,
         args: {
           ...(goal !== undefined ? { goal } : {}),
           ...(goal === 'siege' && siege_target !== undefined ? { siegeTarget: siege_target } : {}),
           ...(jabs !== undefined ? { jabs } : {}),
+          ...(siegeMemory ? { siegeMemory } : {}),
           focusBonusIds,
           ...(reserve !== undefined ? { reserve } : {}),
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
@@ -2450,6 +2458,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
       // B2: what each honoured truce freed this turn and what a break would have cost (T6), for "has it
       // been useful in play?" (not a what-if plan).
+      // #382: this siege turn joins the memory (not on an enemy_deploy what-if; planning the turn again replaces it).
+      if (ctx.dataDir && turn !== null && plan.siege && enemy_deploy === undefined)
+        await writeSiegeMemory(ctx.dataDir, game.id, me.id, rememberSiegeTurn(siegeMemory, turn, plan.siege));
       const used = (plan.relations ?? []).filter((r) => r.honoured && r.agreement !== undefined);
       if (ctx.dataDir && turn !== null && !whatIf && used.length)
         await recordTruceUsage(
