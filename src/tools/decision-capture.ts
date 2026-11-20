@@ -7,7 +7,7 @@
 import type { OutlookState } from '../analysis/outlook.js';
 import { bonusTerritories } from '../analysis/bonuses.js';
 import type { MapGraph } from '../analysis/graph.js';
-import type { PlanInput, TurnPlan } from '../analysis/plan/shared.js';
+import type { EnemyDeployEstimate, PlanInput, TurnPlan } from '../analysis/plan/shared.js';
 import type { BoardState } from '../board.js';
 import {
   decisionOutcome,
@@ -42,6 +42,8 @@ export async function capturePlan(
     input: PlanInput;
     plan: TurnPlan;
     outlookState: OutlookState | null;
+    /** The per-opponent deploy estimates the plan worked from (scored against the truth at the end, #412 task 3). */
+    estimates?: readonly EnemyDeployEstimate[];
     graph: MapGraph;
     /** This turn's income, card armies out. */
     income: number;
@@ -50,7 +52,7 @@ export async function capturePlan(
 ): Promise<void> {
   if (!ctx.dataDir) return;
   const opts = modeOf(ctx);
-  await recordDecision(ctx.dataDir, a.gameId, a.me, { turn: a.turn, board: a.board, ...(a.plannedBoard ? { plannedBoard: a.plannedBoard } : {}), input: a.input, plan: a.plan, outlookState: a.outlookState, players: a.players }, opts);
+  await recordDecision(ctx.dataDir, a.gameId, a.me, { turn: a.turn, board: a.board, ...(a.plannedBoard ? { plannedBoard: a.plannedBoard } : {}), input: a.input, plan: a.plan, outlookState: a.outlookState, ...(a.estimates ? { estimates: a.estimates } : {}), players: a.players }, opts);
   if (a.turn < 2) return;
   try {
     await fillOutcome(

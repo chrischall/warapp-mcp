@@ -21,12 +21,20 @@
 // `gameId`, `playerId`, `status`) is always written before `turns`, so listing reads only the head of each
 // file (`HEAD_BYTES`), never a whole log. At most MAX_DECISION_GAMES games and MAX_DECISION_BYTES in all
 // (`pruneDecisionLogs`: the oldest finished games first, never one still running; a log is parsed whole
-// only just before it is deleted). `WARAPP_DECISION_LOG=off` writes nothing; `full` keeps every turn whole
-// (no compaction).
+// only just before it is deleted; `pruneDecisionLogs` runs after a write at most once per
+// DECISION_PRUNE_INTERVAL_MS per data dir). `WARAPP_DECISION_LOG=off` writes nothing; `full` keeps every
+// turn whole (no compaction).
+//
+// Once a game is finished (the end-of-game pass, src/tools/end-of-game.ts) every turn of the game gets its
+// `truth` from the full history and every logged turn its `accuracy` (`recordTruth`; pure part
+// src/analysis/decision-truth.ts), then the log is compacted (`compactDecisionLog`): no-gaps rule (b) —
+// every turn keeps its board, decision, sent orders, override, `next`, `truth` and `accuracy`; only the
+// replay `input` of an uninteresting turn is dropped.
 import { open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { type AccuracySummary, estimateOff, type LoggedTurn, type TruthResult, type TurnAccuracy, type TurnTruth } from './analysis/decision-truth.js';
 import type { OutlookState } from './analysis/outlook.js';
-import type { PlanInput, TurnPlan } from './analysis/plan/shared.js';
+import type { EnemyDeployEstimate, PlanInput, TurnPlan } from './analysis/plan/shared.js';
 import type { BoardState, TerritoryState } from './board.js';
 import { writeJsonAtomic } from './map-store.js';
 import { withPathLock } from './path-lock.js';
@@ -39,6 +47,8 @@ export const MAX_DECISION_GAMES = 1000;
 export const MAX_DECISION_BYTES = 500 * 1024 * 1024;
 /** A full board at least this many turns after the last full one (and at the first logged turn). */
 export const FULL_BOARD_EVERY = 10;
+/** The post-write prune runs at most once per this interval per data dir. */
+export const DECISION_PRUNE_INTERVAL_MS = 10 * 60_000;
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -61,6 +71,8 @@ export function decisionLogMode(env: Readonly<Record<string, string | undefined>
 export interface DecisionLogOptions {
   /** Default: {@link decisionLogMode} of the environment. */
   mode?: DecisionLogMode;
+  /** The caps the post-write prune applies (tests); default {@link MAX_DECISION_GAMES} / {@link MAX_DECISION_BYTES}. */
+  caps?: { maxGames?: number; maxBytes?: number };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -107,6 +119,17 @@ export type LoggedInput = Rec & { previousBoard?: StoredPreviousBoard; teammateO
 /** The keys of `PlanInput` that are not kept in {@link LoggedInput}. */
 const INPUT_DROPPED = new Set(['graph', 'board', 'vacated', 'bonusPush', 'previousBoard']);
 
+/** One opponent's deploy estimate as the plan read it (#412 task 3: scored against the truth at the end). */
+export interface LoggedEstimate {
+  player: number;
+  estimate: number;
+  source: EnemyDeployEstimate['source'];
+  /** The track's frontier coverage share (#294); `null` when unmeasured. */
+  coverage: number | null;
+  /** #368: sized on thin evidence (toward the midpoint). */
+  thin: boolean;
+}
+
 export interface LoggedDecision {
   goal: TurnPlan['goal'];
   profile: TurnPlan['profile'];
@@ -121,6 +144,8 @@ export interface LoggedDecision {
   warnings: string[];
   /** The game outlook's state on this turn (`null`: none read). */
   outlook: OutlookState | null;
+  /** Each opponent's deploy estimate the plan worked from; absent in entries written without them. */
+  estimates?: LoggedEstimate[];
 }
 
 /** One move as sent (#412): its count (a percentage when `percent`), and any option it carries. */
@@ -203,6 +228,10 @@ export interface DecisionEntry {
   sent?: LoggedSent;
   override?: DecisionOverride;
   next?: DecisionOutcome;
+  /** The end-of-game truth for this turn (#412 task 3); a turn with no other entry may hold only this. */
+  truth?: TurnTruth;
+  /** What this turn logged against the truth. */
+  accuracy?: TurnAccuracy;
 }
 
 export type DecisionLogStatus = 'active' | 'finished' | 'compacted';
@@ -213,6 +242,10 @@ export interface DecisionLog {
   playerId: number;
   status: DecisionLogStatus;
   turns: Record<string, DecisionEntry>;
+  /** The game's estimate and outlook accuracy, once its truth is written. */
+  accuracySummary?: AccuracySummary;
+  /** Turns of the game the history itself lacks (never because of the finished record's cut). */
+  truthMissing?: number[];
 }
 
 /** One planned turn as handed to {@link recordDecision}. */
@@ -229,6 +262,8 @@ export interface DecisionRecord {
   plannedBoard?: BoardState;
   plan: TurnPlan;
   outlookState?: OutlookState | null;
+  /** The per-opponent deploy estimates the plan worked from. */
+  estimates?: readonly EnemyDeployEstimate[];
   /** The game's players, for scrubbing names; only ids are ever written. */
   players?: readonly { id: number; name?: string }[];
 }
@@ -368,7 +403,14 @@ export function decodeInput(logged: LoggedInput, board: BoardState, graph: PlanI
   };
 }
 
-function decisionOf(plan: TurnPlan, outlook: OutlookState | null | undefined): LoggedDecision {
+/** The estimates as logged: ids, figures and flags only. */
+export function loggedEstimates(estimates: readonly EnemyDeployEstimate[]): LoggedEstimate[] {
+  return [...estimates]
+    .sort((a, b) => a.playerId - b.playerId)
+    .map((e) => ({ player: e.playerId, estimate: e.estimate, source: e.source, coverage: e.coverage?.share ?? null, thin: !!e.thinEvidence }));
+}
+
+function decisionOf(plan: TurnPlan, outlook: OutlookState | null | undefined, estimates?: readonly EnemyDeployEstimate[]): LoggedDecision {
   return encodeValue({
     goal: plan.goal,
     profile: plan.profile,
@@ -382,6 +424,7 @@ function decisionOf(plan: TurnPlan, outlook: OutlookState | null | undefined): L
     rationale: plan.rationale,
     warnings: plan.warnings,
     outlook: outlook ?? null,
+    ...(estimates ? { estimates: loggedEstimates(estimates) } : {}),
   }) as LoggedDecision;
 }
 
@@ -430,6 +473,8 @@ function logOf(c: unknown, gameId: number): DecisionLog | undefined {
     playerId: c.playerId,
     status,
     turns: c.turns as Record<string, DecisionEntry>,
+    ...(isRec(c.accuracySummary) ? { accuracySummary: c.accuracySummary as unknown as AccuracySummary } : {}),
+    ...(Array.isArray(c.truthMissing) ? { truthMissing: c.truthMissing.filter(isInt) } : {}),
   };
 }
 
@@ -470,7 +515,7 @@ export async function updateDecisionLog(
   if ((opts.mode ?? decisionLogMode()) === 'off') return false;
   const path = decisionLogPath(dir, gameId);
   try {
-    return await withPathLock(path, async () => {
+    const written = await withPathLock(path, async () => {
       const r = await readRaw(dir, gameId);
       if (r.kind === 'unreadable') return false;
       if (r.kind === 'log' && r.log.playerId !== playerId) return false;
@@ -483,9 +528,25 @@ export async function updateDecisionLog(
       await writeJsonAtomic(path, decisionsDir(dir), { version: DECISION_LOG_VERSION, gameId, playerId, status, turns, ...rest });
       return true;
     });
+    // Outside the lock: the prune takes each log's own lock.
+    if (written) await prunedAfterWrite(dir, opts.caps);
+    return written;
   } catch {
     return false;
   }
+}
+
+/** When each data dir's post-write prune last ran (this process). */
+const lastPrune = new Map<string, number>();
+
+/** {@link pruneDecisionLogs} at most once per {@link DECISION_PRUNE_INTERVAL_MS} per data dir. Never throws. */
+async function prunedAfterWrite(dir: string, caps: DecisionLogOptions['caps']): Promise<void> {
+  const now = Date.now();
+  const last = lastPrune.get(dir);
+  if (last !== undefined && now - last < DECISION_PRUNE_INTERVAL_MS) return;
+  lastPrune.set(dir, now);
+  if (lastPrune.size > 100) lastPrune.delete(lastPrune.keys().next().value as string);
+  await pruneDecisionLogs(dir, caps).catch(() => undefined);
 }
 
 /**
@@ -514,7 +575,7 @@ export async function recordDecision(
         kind: 'planned',
         input,
         planner: { version: VERSION },
-        decision: decisionOf(rec.plan, rec.outlookState),
+        decision: decisionOf(rec.plan, rec.outlookState, rec.estimates),
       },
       rec.players,
     );
@@ -795,6 +856,145 @@ export async function recordSubmission(
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The end of a game: truth, accuracy and compaction
+
+/** What each turn of `log` offers the truth's scoring: its board, logged outlook, estimates and income. */
+export function loggedTurns(log: Pick<DecisionLog, 'turns'>): Map<number, LoggedTurn> {
+  const out = new Map<number, LoggedTurn>();
+  for (const turn of turnKeys(log.turns)) {
+    const e = log.turns[String(turn)]!;
+    if (!e.board && !e.decision) continue;
+    const board = boardAt(log, turn);
+    const input = e.input;
+    const income =
+      input && typeof input.income === 'number' ? input.income - (typeof input.cardArmies === 'number' ? input.cardArmies : 0) : log.turns[String(turn - 1)]?.next?.income ?? null;
+    out.set(turn, {
+      ...(board ? { board } : {}),
+      outlook: e.decision?.outlook ?? null,
+      estimates: e.decision?.estimates ?? [],
+      myIncome: typeof income === 'number' ? income : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Write the end-of-game truth (no-gaps rule (c)): `make` gets what each logged turn offers and returns
+ * the truth (src/analysis/decision-truth.ts); every turn it covers gets its `truth` (a turn with no
+ * entry, a truth-only entry), every logged turn its `accuracy`, the log its `accuracySummary` and
+ * `truthMissing`, and status `finished` (a compacted log stays compacted). Starts a log for a game with
+ * none. Running it again replaces what it wrote. `true` when written. Never throws.
+ */
+export async function recordTruth(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  make: (logged: Map<number, LoggedTurn>) => TruthResult | undefined,
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  return updateDecisionLog(
+    dir,
+    gameId,
+    playerId,
+    (log) => {
+      const r = make(loggedTurns(log));
+      if (!r) return undefined;
+      const turns: Record<string, DecisionEntry> = {};
+      for (const [k, e] of Object.entries(log.turns)) {
+        const { truth: _t, accuracy: _a, ...rest } = e;
+        if (Object.keys(rest).length) turns[k] = rest;
+      }
+      for (const [turn, truth] of r.truth) turns[String(turn)] = { ...turns[String(turn)], truth: encodeValue(truth) as TurnTruth };
+      for (const [turn, accuracy] of r.accuracy) if (turns[String(turn)]) turns[String(turn)]!.accuracy = encodeValue(accuracy) as TurnAccuracy;
+      return {
+        ...log,
+        status: log.status === 'compacted' ? 'compacted' : 'finished',
+        turns,
+        accuracySummary: encodeValue(r.summary) as AccuracySummary,
+        truthMissing: [...r.missing],
+      };
+    },
+    opts,
+  );
+}
+
+/** Turns kept whole before a loss or an elimination, and from the start of the game. */
+export const KEEP_BEFORE_LOSS = 5;
+export const KEEP_FIRST = 3;
+/** Next income this far below the plan's expectation (a share of it) keeps the turn whole. */
+export const INCOME_SHORTFALL = 0.2;
+
+/**
+ * The turns whose replay input compaction keeps (#412 task 3): any override; a turn whose outlook state
+ * changed from the previous decided turn's; the {@link KEEP_BEFORE_LOSS} decided turns up to an
+ * elimination (and, with `lost`, the last ones of the game); the first {@link KEEP_FIRST} decided turns;
+ * a turn whose next income fell short of the expected by {@link INCOME_SHORTFALL} or more; a turn whose
+ * accuracy shows an estimate off by more than 1.5× or under 0.5×. Reads nothing compaction drops, so it
+ * gives the same answer before and after. Pure.
+ */
+export function interestingTurns(log: Pick<DecisionLog, 'turns'>, opts: { lost?: boolean } = {}): Set<number> {
+  const decided = turnKeys(log.turns).filter((t) => log.turns[String(t)]!.decision);
+  const out = new Set<number>(decided.slice(0, KEEP_FIRST));
+  const lastBefore = (i: number) => decided.slice(Math.max(0, i - KEEP_BEFORE_LOSS + 1), i + 1).forEach((t) => out.add(t));
+  if (opts.lost && decided.length) lastBefore(decided.length - 1);
+  let prevOutlook: OutlookState | null | undefined;
+  decided.forEach((turn, i) => {
+    const e = log.turns[String(turn)]!;
+    const outlook = e.decision!.outlook ?? null;
+    if (i > 0 && outlook !== prevOutlook) out.add(turn);
+    prevOutlook = outlook;
+    if (e.override) out.add(turn);
+    if (e.next?.eliminated) lastBefore(i);
+    const expected = e.decision!.expected?.nextIncome;
+    if (typeof expected === 'number' && expected > 0 && typeof e.next?.income === 'number' && e.next.income <= expected * (1 - INCOME_SHORTFALL)) out.add(turn);
+    if (estimateOff(e.accuracy)) out.add(turn);
+  });
+  // An entry that is not decided (sent orders only, say) keeps its override's turn too.
+  for (const t of turnKeys(log.turns)) if (log.turns[String(t)]!.override) out.add(t);
+  return out;
+}
+
+/** `log` compacted: every uninteresting turn's `input` dropped, everything else kept; status `compacted`. Pure. */
+export function compactLog(log: DecisionLog, opts: { lost?: boolean } = {}): DecisionLog {
+  const keep = interestingTurns(log, opts);
+  const turns: Record<string, DecisionEntry> = {};
+  for (const [k, e] of Object.entries(log.turns)) {
+    if (e.input && !keep.has(Number(k))) {
+      const { input: _i, ...rest } = e;
+      turns[k] = rest;
+    } else turns[k] = e;
+  }
+  return { ...log, status: 'compacted', turns };
+}
+
+/**
+ * Compact a finished game's log (no-gaps rule (b): only uninteresting turns' replay `input` goes). Under
+ * `WARAPP_DECISION_LOG=full` nothing is dropped and the log is marked `finished`. Nothing for a game with
+ * no log. Idempotent. `true` when written. Never throws.
+ */
+export async function compactDecisionLog(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  opts: DecisionLogOptions & { lost?: boolean } = {},
+): Promise<boolean> {
+  const mode = opts.mode ?? decisionLogMode();
+  return updateDecisionLog(
+    dir,
+    gameId,
+    playerId,
+    (log) => {
+      if (!Object.keys(log.turns).length) return undefined;
+      if (mode === 'full') return log.status === 'active' ? { ...log, status: 'finished' } : undefined;
+      const done = compactLog(log, opts.lost ? { lost: true } : {});
+      const dropped = Object.keys(log.turns).some((k) => log.turns[k]!.input && !done.turns[k]!.input);
+      return dropped || log.status !== 'compacted' ? done : undefined;
+    },
+    { ...opts, mode },
+  );
 }
 
 // ---------------------------------------------------------------------------------------------

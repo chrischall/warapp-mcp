@@ -17,9 +17,12 @@
 // too (`attempted`), so no trigger reads that game's history twice (P2: never retried in a loop).
 // Off with `WARAPP_PLAYER_PROFILE=off`; nothing without a data directory.
 // Profiles inform only (P1): no planner decision reads any of this. Never throws.
-import type { EnvSource } from '@chrischall/mcp-utils';
+import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { BoardState } from '../board.js';
-import { captureFinished, type FinishedCapture } from '../analysis/finished-game.js';
+import { decisionTruth } from '../analysis/decision-truth.js';
+import { captureFinished, outcomeOf, type FinishedCapture } from '../analysis/finished-game.js';
+import { compactDecisionLog, decisionLogMode, recordTruth } from '../decision-log.js';
+import { teammatesOf } from '../teams.js';
 import {
   aggregateCalibration,
   calibrationSamples,
@@ -243,6 +246,8 @@ export async function endOfGame(
         return { status: 'failed' };
       }
       const processed = history && game ? await processHistory(dataDir, env, salt, me, gameId, game, history) : undefined;
+      // #412: the decision log's truth (from the full history, before any cut) and its compaction.
+      await closeDecisionLog(dataDir, env, me, gameId, game ?? shown, history && game ? history : undefined);
       return {
         status: record.status,
         ...(record.turns ? { turns: record.turns.length } : {}),
@@ -391,6 +396,51 @@ async function processHistory(dataDir: string, env: EnvSource, salt: string, me:
     out.lessons = 'failed';
   }
   return out;
+}
+
+/**
+ * The decision log of a finished game (#412 task 3): with the history captured, every turn's truth and
+ * every logged turn's accuracy from the FULL history boards (`h.boards`, before the finished record's
+ * head/tail cut: no-gaps rule (c)); then the log is compacted (no-gaps rule (b); `full` keeps it whole).
+ * Nothing with `WARAPP_DECISION_LOG=off`. Never throws.
+ */
+async function closeDecisionLog(dataDir: string, env: EnvSource, me: number, gameId: number, game: Game | undefined, h: CapturedHistory | undefined): Promise<void> {
+  const mode = decisionLogMode({ WARAPP_DECISION_LOG: readEnvVar('WARAPP_DECISION_LOG', { env }) });
+  if (mode === 'off') return;
+  try {
+    if (h?.graph && game) {
+      const graph = h.graph;
+      const teams = await keptTeams(dataDir, game).catch(() => undefined);
+      const resolved = teams?.game ?? game;
+      const mine = resolved.players.find((p) => p.id === me);
+      const allies = new Set(mine ? teammatesOf(resolved.players, mine).map((p) => p.id) : []);
+      const opponents = resolved.players.filter((p) => p.id !== me && !allies.has(p.id)).map((p) => p.id);
+      // Every seat as still playing: a final state would read a seat out on every earlier board.
+      const asPlaying = resolved.players.map(({ state: _state, ...p }) => p);
+      await recordTruth(
+        dataDir,
+        gameId,
+        me,
+        (logged) =>
+          decisionTruth({
+            graph,
+            me,
+            opponents,
+            history: h.boards,
+            ...(game.numberOfTurns !== undefined ? { numberOfTurns: game.numberOfTurns } : {}),
+            incomeSettings: game.settings,
+            plannerSettings: plannerSettings(game.settings),
+            game: trackGame(asPlaying, game.settings, game.map),
+            logged,
+          }),
+        { mode },
+      );
+    }
+    const lost = game ? ['lost', 'surrendered', 'eliminated', 'booted'].includes(outcomeOf(game.players, me)) : false;
+    await compactDecisionLog(dataDir, gameId, me, { mode, lost });
+  } catch {
+    // Best effort.
+  }
 }
 
 /** Part C: fold the opponents' habits read off the history, as `history` (replacing a live entry). */

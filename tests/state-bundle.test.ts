@@ -60,6 +60,10 @@ function localDir(): string {
   }
   put(dir, `siege/${ACTIVE}-${ME}.json`, { v: 1 });
   put(dir, `bonus-attempts/${ACTIVE}-${ME}.json`, { v: 1 }); // #410
+  // #412: decision logs travel for finished games too; another account's (named inside) stays.
+  put(dir, `decisions/${ACTIVE}.json`, { version: 1, gameId: ACTIVE, playerId: ME, status: 'active', turns: {} });
+  put(dir, `decisions/${DONE}.json`, { version: 1, gameId: DONE, playerId: ME, status: 'compacted', turns: {} });
+  put(dir, `decisions/${UNKNOWN}.json`, { version: 1, gameId: UNKNOWN, playerId: OTHER, status: 'active', turns: {} });
   put(dir, 'bundle/known-good.json', { v: 1 });
   put(dir, 'guess-salt', 'c'.repeat(32));
   put(dir, `chat/${ACTIVE}.json`, { v: 1 });
@@ -101,9 +105,11 @@ describe('collectExport', () => {
         `teams/${ACTIVE}.json`,
         `siege/${ACTIVE}-${ME}.json`,
         `bonus-attempts/${ACTIVE}-${ME}.json`,
+        `decisions/${ACTIVE}.json`,
+        `decisions/${DONE}.json`,
       ].sort(),
     );
-    expect(result.leftOut).toEqual({ finishedGames: 1, unknownGames: 1, otherAccountFiles: 1 });
+    expect(result.leftOut).toEqual({ finishedGames: 1, unknownGames: 1, otherAccountFiles: 2 });
   });
 
   it('never includes credentials, the bundle cache, chat, maps, stats or the guess salt', async () => {
@@ -195,6 +201,14 @@ describe('decodeBundle', () => {
       j.manifest.files.push({ path, sha256: sha(body), size: body.length } as never);
     });
     expect(() => decodeBundle(other)).toThrow(/account/);
+    // #412: a decision log names its account inside the file.
+    const otherLog = repack(bytes, (j) => {
+      const path = `decisions/${UNKNOWN}.json`;
+      const body = Buffer.from(JSON.stringify({ version: 1, gameId: UNKNOWN, playerId: OTHER, status: 'active', turns: {} }));
+      j.files[path] = body.toString('base64');
+      j.manifest.files.push({ path, sha256: sha(body), size: body.length } as never);
+    });
+    expect(() => decodeBundle(otherLog)).toThrow(/account/);
   });
 
   it('never echoes file contents in an error', async () => {

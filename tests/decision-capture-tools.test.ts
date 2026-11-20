@@ -84,6 +84,9 @@ describe('decision log capture (#412 task 2)', () => {
     expect(e.decision?.deploys).toEqual(p.deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })));
     expect(e.decision?.moves.map((m) => [m.from, m.to, m.armies])).toEqual(p.moves.map((m) => [m.from.id, m.to.id, m.armies]));
     expect(rebuiltBoard(l, 3)?.territories.find((t) => t.territoryId === 135)?.armies).toBeNull();
+    // #412 task 3: the per-opponent estimates the plan worked from, ids and figures only, for the end-of-game truth.
+    expect(e.decision?.estimates?.length).toBeGreaterThan(0);
+    for (const x of e.decision!.estimates!) expect(Object.keys(x).sort()).toEqual(['coverage', 'estimate', 'player', 'source', 'thin']);
     const text = fileText();
     expect(text).not.toMatch(/\bAnn\b/);
     expect(text).not.toMatch(/\bBob\b/);

@@ -5,7 +5,8 @@
 // What travels is what war.app cannot give back: the salt behind every hashed key
 // (`relations/players.salt`; the keys also carry my account id, so a bundle is one account's), the
 // deal record and the per-game ledgers, the opponent profiles, the lessons, the map records and the
-// end-of-game records with their processed marks — and, for games still in play only, the per-game
+// end-of-game records with their processed marks, the decision logs of every game (#412: one account's
+// each, the account read from the file's `playerId`) — and, for games still in play only, the per-game
 // files the planner reads (boards, game records, outlook, picks, move order, teams, the per-game
 // profile turns, siege memory and contested-bonus attempts). Never: credentials (`.env`, `session.json`), the client bundle
 // cache, the guess salt, chat cursors, the map cache and stats (all rebuilt), nor the per-game files
@@ -63,6 +64,7 @@ export const STORES = [
   'teams',
   'siege',
   'bonusAttempts',
+  'decisions',
 ] as const;
 export type StoreName = (typeof STORES)[number];
 
@@ -75,6 +77,8 @@ interface Rule {
   game?: 'game' | 'game-account';
   /** Kept for finished games too (the ledgers), else active games only. */
   allGames?: boolean;
+  /** The file names its account inside (`playerId`), not in its name: another account's is left out. */
+  accountInside?: boolean;
 }
 
 const RULES: readonly Rule[] = [
@@ -95,6 +99,8 @@ const RULES: readonly Rule[] = [
   { store: 'siege', dir: 'siege', name: /^(\d{1,12})-(\d{1,20})\.json$/, game: 'game-account' },
   // #410: the planner's contested-bonus attempt and drop memory (#405, src/bonus-attempt-store.ts).
   { store: 'bonusAttempts', dir: 'bonus-attempts', name: /^(\d{1,12})-(\d{1,20})\.json$/, game: 'game-account' },
+  // #412: the decision log (src/decision-log.ts), one account's per game; kept for finished games too (its truth and accuracy).
+  { store: 'decisions', dir: 'decisions', name: /^(\d{1,12})\.json$/, game: 'game', allGames: true, accountInside: true },
 ];
 
 /** Top-level entries keyed by the salt: moved aside whole under `replace` when the salt changes. */
@@ -241,6 +247,13 @@ export async function collectExport(dir: string, opts: { account?: number; now?:
       otherAccountFiles++;
       continue;
     }
+    if (rule.accountInside) {
+      const c = await readJson(join(dir, p));
+      if (!isRec(c) || c.playerId !== account) {
+        otherAccountFiles++;
+        continue;
+      }
+    }
     if (gameId !== undefined && !rule.allGames) {
       const s = await statusOf(gameId);
       if (s === 'finished') {
@@ -356,10 +369,14 @@ export function decodeBundle(bytes: Uint8Array): StateBundle {
     if (sha256(body) !== f.sha256) throw new StateBundleError(`The sha256 of ${path} does not match the manifest, so nothing was imported.`);
     if (body.length !== f.size) throw new StateBundleError(`The size of ${path} does not match the manifest.`);
     if (path.endsWith('.json')) {
+      let parsedFile: unknown;
       try {
-        JSON.parse(body.toString('utf8'));
+        parsedFile = JSON.parse(body.toString('utf8'));
       } catch {
         throw new StateBundleError(`${path} is not valid JSON.`);
+      }
+      if (r.rule.accountInside && (!isRec(parsedFile) || parsedFile.playerId !== accountId)) {
+        throw new StateBundleError(`The bundle carries a file of another account (${path}).`);
       }
     }
     files.set(path, body);

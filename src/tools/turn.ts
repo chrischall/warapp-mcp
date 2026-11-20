@@ -2590,6 +2590,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             input: setup.input,
             plan,
             outlookState: outlook.state,
+            estimates,
             graph,
             income: income - cards.extraArmies,
             players: game.players,
