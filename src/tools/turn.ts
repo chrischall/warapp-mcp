@@ -2456,11 +2456,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const reads = turn !== null && teamsKnown ? await contactReads(ctx, opts.env ?? process.env, game, me, [...history.boards, { turn, board: seen }], graph, seen) : undefined;
       if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
-      // B2: what each honoured truce freed this turn and what a break would have cost (T6), for "has it
-      // been useful in play?" (not a what-if plan).
       // #382: this siege turn joins the memory (not on an enemy_deploy what-if; planning the turn again replaces it).
       if (ctx.dataDir && turn !== null && plan.siege && enemy_deploy === undefined)
         await writeSiegeMemory(ctx.dataDir, game.id, me.id, rememberSiegeTurn(siegeMemory, turn, plan.siege));
+      // B2: what each honoured truce freed this turn and what a break would have cost (T6), for "has it
+      // been useful in play?" (not a what-if plan).
       const used = (plan.relations ?? []).filter((r) => r.honoured && r.agreement !== undefined);
       if (ctx.dataDir && turn !== null && !whatIf && used.length)
         await recordTruceUsage(
@@ -2671,6 +2671,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(advised ? { orderPriority: true } : {}),
       });
       const guessOrders = guess ? guessOrdersOf(orders, guess) : undefined;
+      // #385: siege_target only means something under goal siege; say so rather than drop it silently.
+      if (siege_target !== undefined && goal !== 'siege')
+        warnings.push(`siege_target is ignored: it applies only with goal "siege" (this plan's goal is ${goal ?? 'chosen by the game profile'}).`);
       // #317: a surrender waiting on my acceptance is the first thing said, before the commander's line.
       const owedLine = surrenderOwedLine(surrenders);
       if (owedLine) warnings.unshift(owedLine);

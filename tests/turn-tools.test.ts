@@ -519,6 +519,17 @@ describe('warapp_plan_turn', () => {
     expect(readFileSync(file, 'utf8')).not.toMatch(/Ann|Bob/);
   });
 
+  it('#385: the siege goal is named as siege, and siege_target under another goal is warned about', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const siege = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'siege' }));
+    expect(siege.warnings.join('\n')).toMatch(/Goal siege was given explicitly/);
+    expect(siege.warnings.join('\n')).not.toMatch(/Goal balanced was given explicitly/);
+    const other = payload<PlanPayload>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'balanced', siege_target: Number(BOB.feed) }),
+    );
+    expect(other.warnings.join('\n')).toMatch(/siege_target is ignored/);
+  });
+
   it('focus takes bonus names or ids; reserve is held out of captures', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(
