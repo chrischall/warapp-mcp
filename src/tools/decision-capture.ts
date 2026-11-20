@@ -215,6 +215,8 @@ export function cardAdviceLog(view: object): LoggedCardAdvice[] {
   if (b) add('bomb', num(b.target) !== undefined ? [num(b.target)!] : [], typeof b.kind === 'string' ? b.kind : 'none');
   const e = rec(v.emergencyBlockade);
   if (e) add('emergencyBlockade', nums([e.territory]), 'conceded-wall', num(e.player));
+  const bk = rec(v.blockade);
+  if (bk) add('blockade', nums([bk.territory]), 'gate', num(bk.player));
   const dip = rec(v.diplomacy);
   if (dip) add('diplomacy', nums(dip.borders), dip.overTruce !== undefined ? 'over-truce' : 'border-pressure', num(dip.player));
   const s = rec(v.sanctions);

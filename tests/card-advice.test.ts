@@ -93,6 +93,40 @@ describe('adviseCards (#163)', () => {
     expect(text).toMatch(/gives up T4 and its 6 armies/);
   });
 
+  it('#434: advises my Blockade on the one gate into a held bonus the plan concedes, never on a member of it, orders unchanged', () => {
+    const bk: Card = { id: 'k'.repeat(32), type: 12, name: 'Blockade' };
+    const game = { players: [ME, FOE], settings: settings({ BlockadeCard: { ...piece, MultiplyAmount: 3 } }) };
+    const plan = { deploys: [{ territoryId: 4, armies: 2 }], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [4] };
+    const before = structuredClone(plan);
+    // A (1, 2, 3) is mine; 4 is its one gate, facing 10 on T5 (~14): 6 × 3 = 18 stops it.
+    const territories = [me(1, 2), me(2, 2), me(3, 2), me(4, 4), foe(5, 10), neutral(6, 2), neutral(7, 2)];
+    const { view, warnings } = adviseCards(input({ territories, plan, game, hand: [bk] }));
+    expect(view.blockade).toMatchObject({
+      territory: 4,
+      armies: 6,
+      wall: 18,
+      player: FOE.id,
+      reach: 14,
+      bonuses: [101],
+      order: { kind: 'card', card: bk.id, target: 4 },
+    });
+    expect(turnOrdersArg.safeParse([view.blockade!.order]).success).toBe(true);
+    const text = warnings.join('\n');
+    expect(text).toMatch(/Consider a Blockade on T4: the plan concedes it, and it is the only way into bonus A \(\+3 a turn\)/);
+    expect(text).toMatch(/Advice only, not in the orders: pass `cards.advice.blockade.order`/);
+    // Advice only: the plan's orders are unchanged.
+    expect(plan).toEqual(before);
+    // Never on a member of a bonus I hold (a real game walled its own bonus): 3 is A's, facing T4's stack.
+    const own = adviseCards(
+      input({ territories: [me(1, 2), me(2, 2), me(3, 6), foe(4, 10), neutral(5, 2), neutral(6, 2), neutral(7, 2)], game, hand: [bk], plan: { ...plan, deploys: [], conceded: [3] } }),
+    );
+    expect(own.view.blockade).toBeUndefined();
+    // No multiplier in the settings: no wall is sized, and it says so.
+    const bare = adviseCards(input({ territories, plan, hand: [bk] }));
+    expect(bare.view.blockade).toBeUndefined();
+    expect(bare.warnings.join('\n')).toMatch(/You hold a Blockade, but the game does not say its multiplier/);
+  });
+
   it('advises my Bomb with the order to play it, and no order when it says to hold the card', () => {
     const bomb: Card = { id: 'b'.repeat(32), type: 13, name: 'Bomb' };
     const plan = { deploys: [], moves: [{ from: 4, to: 5, armies: 15, kind: 'attack' as const, reason: '' }], moveSlots: ['last' as const], enemyDeploy: 5, conceded: [] };

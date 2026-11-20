@@ -2,7 +2,8 @@
 // changes a hold, a capture or a commander kill, else hold it), an opponent's Bomb (borders that
 // hold only while unbombed), an opponent's Emergency Blockade (attacks that would die against the
 // wall) and my own (a conceded border where the wall pays: what it kills plus the bonuses and
-// commander behind it the stack could reach only through it, against what I give up; #369). Pure and
+// commander behind it the stack could reach only through it, against what I give up; #369), and my
+// Blockade on the one gate into a held bonus the plan concedes (#434). Pure and
 // deterministic (ties on ascending territory id); no I/O.
 //
 // Rules (the wiki's Bomb_Card, Turn_phases, Emergency Blockade; docs/STRATEGY.md): a Bomb hits a
@@ -17,6 +18,8 @@ import type { BoardState, TerritoryState } from '../board.js';
 import { armiesToTake, COMMANDER_STRENGTH, DEFAULT_DEFENSIVE_KILL_RATE, straightKills, type KillRates } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 import { bonusTerritories } from './bonuses.js';
+import { opensBehind, type Opened } from './opens.js';
+import { ownerShown } from './plan/shared.js';
 
 export interface CardBoard {
   graph: MapGraph;
@@ -330,6 +333,70 @@ export function wallOffer(cb: CardBoard, multiplier: number, conceded: readonly 
       !best ||
       (protects.commander && !best.protects.commander) ||
       (protects.commander === best.protects.commander && worth(offer) > worth(best))
+    )
+      best = offer;
+  }
+  return best;
+}
+
+/** #434: a gate the plan concedes where my Blockade's wall stops the stack beside it. */
+interface BlockadeOffer {
+  territory: number;
+  /** My armies there once the plan's deploys and moves have run: what the card gives up. */
+  armies: number;
+  /** The wall: those armies × the multiplier. */
+  wall: number;
+  /** The strongest stack beside it, and its reach (its stacks there plus its deploy). */
+  player: number;
+  reach: number;
+  /** What losing it opens ({@link opensBehind}): the held bonuses every route from an enemy or the fog reaches only through it. */
+  opens: Opened;
+  /** My commander stands behind it. */
+  commander: boolean;
+}
+
+/**
+ * Where my Blockade card pays (#434): a border the plan concedes that is the only way into held bonuses of
+ * mine (or my commander) behind it — every route from an enemy or the fog runs through it ({@link opensBehind},
+ * #291) — when the wall (my armies there after the plan's deploys and moves, the card running at the end of the
+ * turn, × the multiplier) is more than the strongest stack beside it can take. Never on a member of a bonus I
+ * hold whole (the wall gives the territory away and breaks the bonus), never on my commander's territory. The
+ * best shields my commander, then the most income, then gives up the fewest armies, then ascending id;
+ * `undefined` when none. The wall forms only if the territory is still mine at the end of the turn: it stops
+ * the attack from the next turn on.
+ */
+export function blockadeOffer(cb: CardBoard, multiplier: number, conceded: readonly number[]): BlockadeOffer | undefined {
+  const r = reader(cb);
+  const holdings = new Set(r.ids.filter(r.isMine));
+  const inHeldBonus = (id: number) =>
+    cb.graph.map.bonuses.some((bonus) => {
+      if (bonus.value <= 0) return false;
+      const members = bonusTerritories(cb.graph, bonus.id);
+      return members.includes(id) && members.every(r.isMine);
+    });
+  // A source: an enemy's territory, or one whose owner the fog hides (anything may come from it).
+  const isSource = (x: number) => {
+    const shown = ownerShown(r.state.get(x));
+    if (!shown) return true;
+    return shown.owner.kind === 'player' && r.foe(shown.owner.playerId);
+  };
+  let best: BlockadeOffer | undefined;
+  for (const c of [...new Set(conceded)].sort((a, b) => a - b)) {
+    if (!r.isMine(c) || r.commanderOf(c, (q) => q === cb.me) || inHeldBonus(c)) continue;
+    const reach = r.reachOf(c);
+    const armies = r.after(c);
+    if (!reach || armies <= 0) continue;
+    const wall = wallOf(armies, multiplier);
+    if (r.toTake(wall) <= reach.reach) continue;
+    const opens = opensBehind(cb.graph, holdings, isSource, c, new Set());
+    const commander = opens.ids.some((y) => r.commanderOf(y, (q) => q === cb.me));
+    if (opens.income <= 0 && !commander) continue;
+    const offer: BlockadeOffer = { territory: c, armies, wall, player: reach.player, reach: reach.reach, opens, commander };
+    if (
+      !best ||
+      (commander && !best.commander) ||
+      (commander === best.commander &&
+        (opens.income > best.opens.income || (opens.income === best.opens.income && armies < best.armies)))
     )
       best = offer;
   }

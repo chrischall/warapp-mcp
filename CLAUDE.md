@@ -797,8 +797,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   of a player at peace with me (#452: a Diplomacy card in force — decoded, or the plan's T9 set — or a binding
   truce; the hold-the-card line names them as passed over), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
-  percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
-  Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only
+  percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, a
+  Gift of the members that complete a teammate's nearer bonus, and (#434, `blockadeOffer` in `card-threats.ts`) a
+  Blockade (`cards.advice.blockade`) on a border the plan concedes that is the one way into held bonuses or my commander
+  (`opensBehind`, #291), when its armies after the plan × `BlockadeCard.MultiplyAmount` stop the stack beside it —
+  never on a member of a bonus I hold (it breaks the bonus) or my commander's territory. **The spy cards (G2, `intelAdvice`)** only
   where the fog hides what the plan needs, never with fog off: Spy on an opponent out of view (else the
   owner shown beside my most hidden stacks), Surveillance on a bonus I hold half or more of with a fogged
   member (else the most valuable with a hidden border of mine), Reconnaissance on the hidden territory
