@@ -11,9 +11,21 @@ Owner decisions on the issue's open questions (2026-11-19):
   offence candidates with `taken`/`why`/`cost`/`value`, conceded, expected). No player name is ever written.
 - **Replay:** a LOCAL dev script (`scripts/replay-decisions.mjs`, like `scripts/calibrate.mjs`), never a
   tool, never run in CI; its pure logic lives in `src/analysis/` and is unit-tested.
-- **Caps:** at most `MAX_DECISION_GAMES = 200` games and `MAX_DECISION_BYTES = 50 MB` in total; oldest
+- **Caps:** at most `MAX_DECISION_GAMES = 1000` games and `MAX_DECISION_BYTES = 500 MB` in total; oldest
   *finished* games dropped first, never a game still running. `WARAPP_DECISION_LOG=off` switches capture
   off; `WARAPP_DECISION_LOG=full` skips compaction (keep everything while collecting data on purpose).
+- **No analysis gaps (owner requirement 2026-11-19).** The log exists so every game can later be analysed
+  TURN BY TURN with the true end-of-game figures — closing today's gaps (the board cache keeps only the
+  newest 10 turns; the finished record keeps only the first and last 30 history boards; turns played without
+  a plan are not recorded at all). So: (a) every turn of every game the account plays gets an entry — a
+  planned turn a full one, any other turn the server sees (a board read by any tool that writes the board
+  cache) at least an observation entry (board + what was sent if known); (b) compaction NEVER drops a turn's
+  fogged board, decision, rationale/warnings, sent orders, override, `next`, `truth` or `accuracy` — it may
+  only drop the bulky replay `input` of uninteresting turns; (c) the end-of-game truth is taken from the FULL
+  history the pass reads, before finished-store's head/tail cut, for every turn — including turns with no
+  logged entry (a `truth`-only entry), so the true course of the whole game is kept even for turns played
+  in the web client; (d) the caps above are generous on purpose; a game is only ever pruned whole, never
+  thinned below (b).
 
 Conventions every task follows (read the neighbouring stores first and match them):
 `src/outlook-log.ts`, `src/bonus-attempt-store.ts`, `src/trend.ts` (board cache), `src/finished-store.ts`,
@@ -68,6 +80,12 @@ caps/pruning order, `off` mode writes nothing.
   given) and optional `override_by: 'hand' | 'agent'`; update the tool description briefly. If no decision
   was logged for that turn, record `sent` with `override: { by: 'hand' }` only if orders came from outside
   the planner — else just `sent`.
+- Observation entries (no-gaps rule (a)): wherever the board cache is written for a turn with no entry yet
+  (`writeBoardCache` callers: warapp_track_opponents, warapp_locate_opponents, warapp_get_relations,
+  warapp_plan_turn what-ifs, and `boardHistory` when it fills missing turns from GameFeed history),
+  record an entry `{ kind: 'observed', board, source: 'live' | 'history' }` — never overwriting a planned
+  entry; a later plan of that turn upgrades it. `warapp_submit_turn` with no planned entry records
+  `sent` on the observation (or a new minimal entry).
 - Tests: tool-level tests in the style of the existing turn/submit tests (mocked bridge/feed) proving an
   entry is written, what-ifs aren't, re-plan replaces, submit records `sent` and override + reason, `next`
   gets filled. No player name appears anywhere in the written file (assert on a fixture with named players).
@@ -76,15 +94,17 @@ caps/pruning order, `off` mode writes nothing.
 
 - `compactDecisionLog`: once a game is finished (hook into the end-of-game pass in
   src/tools/end-of-game.ts, after the record is captured, and also the `warapp_my_games` sweep path that
-  runs the pass), unless `WARAPP_DECISION_LOG=full`: keep full entries for *interesting* turns — any
-  override, any turn whose outlook state changed from the previous turn, the last 5 turns before an
-  elimination/loss, the first 3 turns, turns where actual next income fell short of `expected.nextIncome`
-  by ≥ 20%; every other turn keeps only a summary (`goal`, `expected.nextIncome`, `next`, outlook state) and
-  drops `board`/`input`/`rationale`. Re-base the delta encoding so kept boards stay rebuildable. Status →
-  `compacted`. Idempotent.
+  runs the pass), unless `WARAPP_DECISION_LOG=full`: per the no-gaps rule (b), EVERY turn keeps its fogged
+  board, decision (goal, profile, orders, expected, conceded, offence, enemyDeploy), rationale, warnings,
+  sent, override, next, truth and accuracy. Only the replay `input` is dropped, and only for uninteresting
+  turns; *interesting* turns keep it — any override, any turn whose outlook state changed from the previous
+  turn, the last 5 turns before an elimination/loss, the first 3 turns, turns where actual next income fell
+  short of `expected.nextIncome` by ≥ 20%, and turns whose accuracy shows an estimate off by > 1.5× or
+  < 0.5×. Status → `compacted`. Idempotent. A test asserts no turn loses its board, decision or truth.
 - **End-of-game truth beside the estimates (owner request 2026-11-19).** When the end-of-game pass captures
   a finished game's history (src/tools/end-of-game.ts, `captured` status), BEFORE compacting, write into the
-  decision log a `truth` block per logged turn T, from the history board for that turn (the same board
+  decision log a `truth` block for EVERY turn of the game (no-gaps rule (c): read from the full history the
+  pass reads, before finished-store's head/tail cut; a turn with no entry gets a truth-only entry), from the history board for that turn (the same board
   index the #318 calibration uses: estimate on turn T vs the opponent's income on history board T − 1 — reuse
   that alignment, don't invent another): for each opponent its true income (`boardIncome`), armies,
   territories, full bonuses, and its true start-of-turn armies on every territory my logged board showed
@@ -94,8 +114,8 @@ caps/pruning order, `off` mode writes nothing.
   territories hid an enemy stack ≥ my income. Also a per-game `accuracySummary` (mean/geo-mean
   estimate÷truth, share under 0.5 / over 1.5, outlook right/wrong counts, by coverage band as #318 does).
   The truth and accuracy blocks are KEPT by compaction for every turn (they are small numbers), and the
-  summary survives pruning-to-summary. Ids/numbers only, never names. If the history has fewer boards than
-  logged turns (the head/tail cut in finished-store), fill what it has and record `truthMissing` turns.
+  summary is kept. Ids/numbers only, never names. A turn the history itself lacks is listed in
+  `truthMissing` (never because of finished-store's cut, which this must run before).
   Tests: a synthetic finished game whose history differs from the logged estimates produces the right
   ratios, outlook verdicts and summary; re-running the pass is idempotent.
 - `pruneDecisionLogs` runs after writes (like `pruneBoardCaches`), at most once per process interval.
