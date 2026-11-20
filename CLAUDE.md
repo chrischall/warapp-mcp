@@ -1327,10 +1327,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (3) × a 1v1 break and never count as a second front; until the trigger its territories outside its
     breakable bonuses join `truce.noTarget` (`siegeHeld`, the #375 path); rule 0p.3c builds the strike stack
     facing it in any format. Trigger: its income ≤ `SIEGE_INCOME_DROP` (0.6) × its baseline (the most the
-    tracker saw it deploy over its window; no tracked turn, no such trigger), mine ≥ `SIEGE_INCOME_LEAD` (1.8) ×
+    tracker saw it deploy over its window, or its income on the siege's first turn when larger; neither, no such
+    trigger), mine ≥ `SIEGE_INCOME_LEAD` (1.8) ×
     its, or a stack of mine at the start of the turn takes a member of a bonus it visibly holds against its
-    defenders plus its whole deploy. No memory between turns. `TurnPlan.siege` reports it; golden unchanged.
-    Not yet: a profile-picked siege, re-break tracking across turns, single-army jabs (#361).
+    defenders plus its whole deploy. **Memory (`src/siege-store.ts`, `<dataDir>/siege/<gameId>-<myId>.json`, ids and
+    numbers only):** warapp_plan_turn keeps each siege turn (target, its income, mine, the bonuses the plan broke — as
+    planned) and passes it back as `PlanInput.siegeMemory`; `priorSiegeTurns` keeps only the same target's turns before
+    this one, none when the newest is more than `SIEGE_MEMORY_GAP` (3) turns back; re-planning a turn replaces it; an
+    `enemy_deploy` what-if writes nothing. `siege.memory` reports `startedTurn`, `turns`, `startIncome`,
+    `opponentIncomeTrend`, `broken` (per bonus, its turns) and `rebroken`. `TurnPlan.siege` reports it; golden unchanged.
+    Not yet: a profile-picked siege, single-army jabs (#361).
   - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
     teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
     warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus
