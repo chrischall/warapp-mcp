@@ -8,6 +8,13 @@
 // #437: the per-turn additions — `capturePlan` takes the first mover, my hand, the card advice and the
 // turn's boot deadlines; `captureSent` the submit's checks; `captureCheck` warapp_check_plan's summary —
 // and the pure helpers that turn each tool's own values into the log's name-free shapes.
+//
+// #437 task 2, per game: `captureSeats` (every GameFeed game read, through `WarappClient.observeGames`: the
+// seat events and opponents first seen, as the log's own account — else the signed-in one only when a read
+// already gave it, never a request), `captureGameEvent` (a pending surrender seen, my acceptance, my own
+// surrender), `captureJoin` (warapp_join_game confirmed) and `captureOpponentRead` (warapp_scout_player with
+// a game), and the pure shapers `joinContextLog` and `mySurrenderDetail`.
+import { createHash } from 'node:crypto';
 import type { HeadroomRow } from '../analysis/headroom.js';
 import type { OutlookState } from '../analysis/outlook.js';
 import type { stressPlan } from '../analysis/stress.js';
@@ -18,9 +25,24 @@ import { bonusTerritories } from '../analysis/bonuses.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { EnemyDeployEstimate, PlanInput, TurnPlan } from '../analysis/plan/shared.js';
 import type { BoardState } from '../board.js';
+import type { OutlookLog } from '../outlook-log.js';
+import type { JoinScreen, OpenGame, PolicyCheck } from '../open-games.js';
+import { policyChecks } from '../open-games.js';
+import { nameFreeSettings } from '../replay.js';
 import {
   type CheckPlanSummary,
+  decisionLogMode,
+  decisionLogOwner,
+  decisionLogPath,
   decisionOutcome,
+  type GameEvent,
+  type JoinContext,
+  type MySurrenderDetail,
+  type OpponentRead,
+  recordGameEvent,
+  recordJoin,
+  recordOpponentRead,
+  recordSeats,
   type DecisionRecord,
   type DecisionTimes,
   fillOutcome,
@@ -37,7 +59,7 @@ import {
 import type { CommanderCheck } from './commander-check.js';
 import type { LiveContext } from './live-context.js';
 
-type Ctx = Pick<LiveContext, 'dataDir' | 'decisionLog'>;
+type Ctx = Partial<Pick<LiveContext, 'dataDir' | 'decisionLog'>>;
 const modeOf = (ctx: Ctx) => (ctx.decisionLog ? { mode: ctx.decisionLog } : {});
 
 /** Every bonus of the map with its member territories (superbonuses flattened). */
@@ -274,5 +296,140 @@ export function bootTimes(game: Pick<Game, 'lastTurnTime' | 'endRules'>): Pick<D
   return {
     turnStartedAt: new Date(start).toISOString(),
     ...(auto || direct ? { bootAt: { ...(auto ? { auto } : {}), ...(direct ? { direct } : {}) } } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// #437 task 2: per-game events and context
+
+/** The turn being played as a game read gives it: GameFeed's completed turns + 1, 0 before the first turn. */
+export const turnOfGame = (game: Pick<Game, 'numberOfTurns'>): number =>
+  game.numberOfTurns !== undefined && game.numberOfTurns >= 0 ? game.numberOfTurns + 1 : 0;
+
+const offMode = (ctx: Ctx) => (ctx.decisionLog ?? decisionLogMode()) === 'off';
+
+/** Each game's seats as last captured this process (data dir + game → signature), so an unchanged read costs nothing. */
+const seatsSeen = new Map<string, string>();
+const SEATS_SEEN_MAX = 2000;
+
+/**
+ * Diff a game read's seats into its decision log (`recordSeats`): as the account the log belongs to when it
+ * is seated, else the signed-in account when a read already gave it (`cachedInviteToken`) and the game is not
+ * over — that starts a log; never a request. A read whose seats did not change since the last capture in this
+ * process is skipped. Never throws.
+ */
+export async function captureSeats(ctx: Ctx & Partial<Pick<LiveContext, 'cachedInviteToken'>>, game: Pick<Game, 'id' | 'state' | 'players' | 'numberOfTurns'>): Promise<void> {
+  try {
+    if (!ctx.dataDir || offMode(ctx) || !game.players.length) return;
+    const sig = JSON.stringify(game.players.map((p) => [p.id, p.state ?? null, !!p.humanTurnedIntoAI, !!p.isAI]));
+    const key = `${ctx.dataDir}\0${game.id}`;
+    if (seatsSeen.get(key) === sig) return;
+    const ids = new Set(game.players.map((p) => p.id));
+    const owner = await decisionLogOwner(decisionLogPath(ctx.dataDir, game.id), game.id);
+    let me: number | undefined;
+    let create = false;
+    if (owner !== undefined) {
+      if (ids.has(owner)) me = owner;
+    } else {
+      const token = ctx.cachedInviteToken?.();
+      if (token !== undefined && ids.has(token) && game.state !== 'Finished') {
+        me = token;
+        create = true;
+      }
+    }
+    // Not mine (yet): not remembered, so a later read that knows the account captures it.
+    if (me === undefined) return;
+    await recordSeats(ctx.dataDir, game.id, me, { turn: turnOfGame(game), players: game.players, create }, modeOf(ctx));
+    if (seatsSeen.size >= SEATS_SEEN_MAX) seatsSeen.delete(seatsSeen.keys().next().value as string);
+    seatsSeen.set(key, sig);
+  } catch {
+    // Best effort.
+  }
+}
+
+/** Log one per-game event (see `recordGameEvent`), starting a log with `create`. Never throws. */
+export async function captureGameEvent(
+  ctx: Ctx,
+  gameId: number,
+  me: number,
+  ev: Omit<GameEvent, 'at'>,
+  o: { create?: boolean } = {},
+): Promise<void> {
+  if (!ctx.dataDir) return;
+  await recordGameEvent(ctx.dataDir, gameId, me, ev, o, modeOf(ctx));
+}
+
+/** Keep the lobby warapp_join_game joined. Never throws. */
+export async function captureJoin(ctx: Ctx, gameId: number, me: number, join: JoinContext): Promise<void> {
+  if (!ctx.dataDir) return;
+  await recordJoin(ctx.dataDir, gameId, me, join, modeOf(ctx));
+}
+
+/** Keep what warapp_scout_player read of an opponent in that game's log, when the game has one. Never throws. */
+export async function captureOpponentRead(ctx: Ctx, gameId: number, me: number, player: number, read: OpponentRead): Promise<void> {
+  if (!ctx.dataDir) return;
+  await recordOpponentRead(ctx.dataDir, gameId, me, player, read, modeOf(ctx));
+}
+
+/** Keys in sorted order, so one settings shape always hashes alike. */
+function stable(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(stable);
+  if (rec(v)) return Object.fromEntries(Object.keys(v as Rec).sort().map((k) => [k, stable((v as Rec)[k])]));
+  return v;
+}
+
+/** `sha256:<16 hex>` of a game's name-free settings shape (`nameFreeSettings`); `null` without settings. */
+export function settingsKey(game: Pick<Game, 'settings' | 'players' | 'name'>): string | null {
+  const s = nameFreeSettings(game);
+  return s ? `sha256:${createHash('sha256').update(JSON.stringify(stable(s))).digest('hex').slice(0, 16)}` : null;
+}
+
+/**
+ * The join context (#437): the lobby's settings key and readable flags (the open-games record's format,
+ * seats, pace and boot time; GameFeed's Local Deployment, Commanders, kill rates, luck, fog and cards when it
+ * read the lobby) and the joining policy's checks by code. Name-free. Pure but for the clock.
+ */
+export function joinContextLog(listed: OpenGame, feed: Pick<Game, 'settings' | 'players' | 'name'> | undefined, screen: JoinScreen | null | undefined, now: number = Date.now()): JoinContext {
+  const s = feed?.settings;
+  const policy = policyChecks(listed, screen);
+  const seats = listed.maxPlayers ?? listed.seats;
+  return {
+    at: new Date(now).toISOString(),
+    settingsKey: feed ? settingsKey(feed) : null,
+    flags: {
+      format: listed.teamGame ? 'team' : seats <= 2 ? '1v1' : 'ffa',
+      seats,
+      ...(listed.pace ? { pace: String(listed.pace) } : {}),
+      ...(listed.bootTimeMinutes !== undefined ? { bootMinutes: listed.bootTimeMinutes } : {}),
+      ...(s
+        ? {
+            ...(s.localDeployments !== undefined ? { localDeployments: s.localDeployments } : {}),
+            ...(s.commanders !== undefined ? { commanders: s.commanders } : {}),
+            killRates: { offence: s.offensiveKillRate ?? null, defence: s.defensiveKillRate ?? null },
+            ...(s.luckModifier !== undefined ? { luck: s.luckModifier } : {}),
+            ...(s.fog !== undefined ? { fog: s.fog } : {}),
+            cards: [...s.cards].sort(),
+          }
+        : {}),
+    },
+    policy: { passes: policy.passes, broke: policy.broke as PolicyCheck[], passed: policy.passed, unchecked: policy.unchecked },
+    ...(listed.lottery !== undefined ? { lottery: listed.lottery } : {}),
+  };
+}
+
+/**
+ * My surrender's detail (#437) from the outlook log's latest turn: my income and the strongest opponent's
+ * in its evidence, its state and turn (all `null` when nothing was logged).
+ */
+export function mySurrenderDetail(status: MySurrenderDetail['status'], log: Pick<OutlookLog, 'latest'> | undefined): MySurrenderDetail {
+  const l = log?.latest;
+  const ev = l?.evidence;
+  const top = [...(ev?.opponents ?? [])].sort((a, b) => b.income - a.income || a.playerId - b.playerId)[0];
+  return {
+    status,
+    income: ev?.incomes?.mine ?? null,
+    strongest: top ? { player: top.playerId, income: top.income, source: top.source, thin: top.thin } : null,
+    outlook: l?.state ?? null,
+    outlookTurn: l?.turn ?? null,
   };
 }

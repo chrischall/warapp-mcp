@@ -2097,6 +2097,26 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the worst reply in numbers, `harmful`/`considered`, the `atRisk` counts, `whatIf` under `enemy_deploy` or
   `known_income`; `recordCheck`, the latest run per turn wins, starting an entry when the turn has none, and a plan of
   the turn after it keeps it). The pure shapers are in `src/tools/decision-capture.ts`; compaction keeps all of them.
+  **v2 per-game additions (#437 task 2; additive, `version` stays 1):** `events` (`{ turn, kind, player?, detail?, at }`,
+  `turn` the turn being played when seen — completed + 1, 0 before turn 1 —; the newest `MAX_GAME_EVENTS` = 500 kept,
+  `eventsDropped` counting the rest; never twice for the same change): seat changes diffed against `seats` (each seat's
+  last state word and turned-AI flag, by GameFeed id; `seatEvents`: `booted`, `surrender-accepted`, `eliminated`,
+  `ended-by-vote`, `turned-ai`, any other non-`Playing`/`Invited` word as `seat-state` with the word — a non-word reads
+  `other`; at first sight a seat already out is an event too) on EVERY GameFeed game read (`WarappClient.observeGames` →
+  `captureSeats`, wired in `src/tools/index.ts`; as the log's own account when seated, else the signed-in account only
+  when a read already gave it — `LiveContext.cachedInviteToken`, never a request — and the game not `Finished`, which
+  starts a log; an unchanged read is skipped by an in-process signature); `surrender-pending` (player, `owed` /
+  `not-owed` / `unknown`) from `readPendingSurrenders` (warapp_wait_for_turn, warapp_plan_turn; warapp_my_games' list
+  read carries no GameFeed ids and logs nothing); `surrender-accepted-by-me` (warapp_accept_surrender `confirmed`); and
+  `my-surrender` (warapp_surrender `surrendered` or `pending`, `detail`: status, my income and the highest-income opponent
+  from the outlook log's latest evidence, its state and turn, `mySurrenderDetail`). `join` (warapp_join_game `confirmed`,
+  `joinContextLog`): `settingsKey` (`sha256:<16 hex>` of `nameFreeSettings`, keys sorted; `null` when GameFeed could not read
+  the lobby), `flags` (format, seats, pace, boot minutes, and from GameFeed LD, commanders, kill rates, luck, fog, cards)
+  and `policy` (`policyChecks` in `src/open-games.ts`: `broke`/`passed`/`unchecked` by code — commerce, mods,
+  custom-scenario, neutral-cost, seats, boot-time, lottery), `lottery` when marked. `opponents` (by GameFeed id:
+  `firstSeen` turn, `ai` for an AI seat; warapp_scout_player with `game_id` adds `level`, `ranked`, `bootRatePct`,
+  `readTurn` to a log that exists, as its account — no extra request; GameFeed's player carries no level). A log holding
+  only these (a lobby joined) is finished and compacted like any other (`hasContent`). All kept through compaction.
 - **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
   `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's

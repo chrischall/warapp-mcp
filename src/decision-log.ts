@@ -38,6 +38,16 @@
 // type, the advice offered by kind, target ids and a reason code, and what was played), and the `checks`
 // (the submit's commander check, weakest headroom rows, below-plan rows and chat warnings; and the latest
 // warapp_check_plan summary). All small, all kept through compaction.
+//
+// #437 task 2 (additive too): per game, `events` (`{ turn, kind, player?, detail?, at }`, at most
+// MAX_GAME_EVENTS, the newest kept and `eventsDropped` counting the rest): a seat's state change diffed against
+// the last states seen (`seats`, by GameFeed id: booted, surrender-accepted, eliminated, ended-by-vote,
+// turned-ai, any other non-playing state as `seat-state` with its word), a pending surrender seen, my acceptance
+// of one and my own surrender (with my income, the strongest opponent's income and the outlook state the outlook
+// log held then) — never twice for the same change; `join` (the lobby's settings key and readable flags and the
+// joining policy's checks by code); and `opponents` (per GameFeed id the turn first seen, an AI seat, and the
+// level and ranked record when warapp_scout_player read them). A log may hold only these (a lobby joined): the
+// end-of-game passes finish and compact it like any other.
 import { open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type AccuracySummary, estimateOff, type LoggedTurn, type TruthResult, type TurnAccuracy, type TurnTruth } from './analysis/decision-truth.js';
@@ -341,12 +351,104 @@ export interface DecisionEntry {
 
 export type DecisionLogStatus = 'active' | 'finished' | 'compacted';
 
+/** Game events kept at most per log (the newest). */
+export const MAX_GAME_EVENTS = 500;
+
+/** A seat's state change (GameFeed), named. */
+export type SeatEventKind = 'booted' | 'surrender-accepted' | 'eliminated' | 'ended-by-vote' | 'turned-ai' | 'seat-state';
+export type GameEventKind = SeatEventKind | 'surrender-pending' | 'surrender-accepted-by-me' | 'my-surrender';
+
+/** My own surrender (#437): what the outlook log held when it was confirmed. */
+export interface MySurrenderDetail {
+  /** `surrendered`: GameFeed shows it accepted; `pending`: it waits for the others. */
+  status: 'surrendered' | 'pending';
+  /** My income in the latest outlook turn's evidence (`null`: none logged). */
+  income: number | null;
+  /** The opponent with the highest income in that evidence. */
+  strongest: { player: number; income: number; source: 'tracked' | 'visible'; thin: boolean } | null;
+  outlook: OutlookState | null;
+  /** The turn that outlook was logged on. */
+  outlookTurn: number | null;
+}
+
+/**
+ * One per-game event (#437). `turn`: the turn being played when it was seen (GameFeed's completed turns + 1;
+ * 0 before the first turn), so a seat change happened on or before it. `detail`: a seat-state's word, a
+ * pending surrender's `owed` / `not-owed` / `unknown`, or my surrender's {@link MySurrenderDetail}.
+ */
+export interface GameEvent {
+  turn: number;
+  kind: GameEventKind;
+  player?: number;
+  detail?: string | MySurrenderDetail;
+  /** When it was seen (ISO). */
+  at: string;
+}
+
+/** A seat as last seen: its state word (`null`: none sent) and whether a human seat turned into an AI. */
+export interface SeatSeen {
+  state: string | null;
+  ai: boolean;
+}
+
+/** The joining policy's checks (`policyChecks`, src/open-games.ts), by code. */
+export interface JoinPolicyLog {
+  passes: boolean | null;
+  broke: string[];
+  passed: string[];
+  unchecked: string[];
+}
+
+/** The lobby joined (#437): its settings key, a few readable flags and the joining policy's checks. Name-free. */
+export interface JoinContext {
+  at: string;
+  /** `sha256:<16 hex>` of the lobby's name-free settings (`nameFreeSettings`); `null` when GameFeed could not read them. */
+  settingsKey: string | null;
+  flags: {
+    format: '1v1' | 'ffa' | 'team';
+    seats: number;
+    pace?: string;
+    bootMinutes?: number;
+    localDeployments?: boolean;
+    commanders?: boolean;
+    killRates?: { offence: number | null; defence: number | null };
+    luck?: number;
+    fog?: string;
+    /** The cards in play by name; absent when the settings were not read. */
+    cards?: string[];
+  };
+  policy: JoinPolicyLog;
+  /** #217: a lottery (`true`) or likely one (`null`); absent otherwise. */
+  lottery?: true | null;
+}
+
+/** An opponent (any other seat) as first seen, and what a tool read of it (#437). */
+export interface OpponentSeen {
+  firstSeen: number;
+  ai?: true;
+  level?: number | null;
+  ranked?: { completed: number; wins: number; games: number } | null;
+  bootRatePct?: number | null;
+  /** The turn of the read that gave the level and record. */
+  readTurn?: number;
+}
+
 export interface DecisionLog {
   version: number;
   gameId: number;
   playerId: number;
   status: DecisionLogStatus;
   turns: Record<string, DecisionEntry>;
+  /** #437: the per-game events, oldest first. */
+  events?: GameEvent[];
+  /** #437: events dropped past {@link MAX_GAME_EVENTS}. */
+  eventsDropped?: number;
+  /** #437: each seat's state as last seen, by GameFeed id. */
+  seats?: Record<string, SeatSeen>;
+  /** #437: the lobby joined. */
+  join?: JoinContext;
+  /** #437: every other seat, by GameFeed id. */
+  opponents?: Record<string, OpponentSeen>;
   /** The game's estimate and outlook accuracy, once its truth is written. */
   accuracySummary?: AccuracySummary;
   /** Turns of the game the history itself lacks (never because of the finished record's cut). */
@@ -603,8 +705,17 @@ function logOf(c: unknown, gameId: number): DecisionLog | undefined {
     turns: c.turns as Record<string, DecisionEntry>,
     ...(isRec(c.accuracySummary) ? { accuracySummary: c.accuracySummary as unknown as AccuracySummary } : {}),
     ...(Array.isArray(c.truthMissing) ? { truthMissing: c.truthMissing.filter(isInt) } : {}),
+    ...(Array.isArray(c.events) ? { events: c.events.filter(isRec) as unknown as GameEvent[] } : {}),
+    ...(isInt(c.eventsDropped) ? { eventsDropped: c.eventsDropped } : {}),
+    ...(isRec(c.seats) ? { seats: c.seats as Record<string, SeatSeen> } : {}),
+    ...(isRec(c.join) ? { join: c.join as unknown as JoinContext } : {}),
+    ...(isRec(c.opponents) ? { opponents: c.opponents as Record<string, OpponentSeen> } : {}),
   };
 }
+
+/** Whether a log holds anything: a turn, or per-game context (#437). */
+export const hasContent = (log: Pick<DecisionLog, 'turns' | 'events' | 'seats' | 'join' | 'opponents'>): boolean =>
+  Object.keys(log.turns).length > 0 || !!log.events?.length || !!log.join || !!log.seats || !!log.opponents;
 
 async function readRaw(dir: string, gameId: number): Promise<Read> {
   let text: string;
@@ -1039,6 +1150,199 @@ export async function recordCheck(
 }
 
 // ---------------------------------------------------------------------------------------------
+// #437 task 2: per-game events and context
+
+/** States in which a seat's change is no event (still in, or not yet in). */
+const QUIET_STATES: ReadonlySet<string> = new Set(['Playing', 'Invited']);
+const SEAT_KINDS: Readonly<Record<string, SeatEventKind>> = {
+  Booted: 'booted',
+  SurrenderAccepted: 'surrender-accepted',
+  Eliminated: 'eliminated',
+  EndedByVote: 'ended-by-vote',
+};
+/** A state word as kept: a plain word, else `other` (never free text). */
+const stateWord = (s: string | undefined): string | null => (s === undefined ? null : /^[A-Za-z]{1,40}$/.test(s) ? s : 'other');
+
+/** A seat as {@link seatEvents} reads it (GameFeed's player). */
+export interface SeatRead {
+  id: number;
+  state?: string | undefined;
+  isAI: boolean;
+  humanTurnedIntoAI: boolean;
+}
+
+/**
+ * The seat events between the states last seen (`was`; none: first sight, when a seat already out is an
+ * event too) and `players` now, and the states to keep (seats no longer listed kept as they were). Pure.
+ */
+export function seatEvents(
+  was: Readonly<Record<string, SeatSeen>> | undefined,
+  players: readonly SeatRead[],
+  turn: number,
+  now: number = Date.now(),
+): { events: GameEvent[]; seats: Record<string, SeatSeen> } {
+  const at = iso(now);
+  const events: GameEvent[] = [];
+  const seats: Record<string, SeatSeen> = { ...was };
+  for (const p of players) {
+    const next: SeatSeen = { state: stateWord(p.state), ai: !!p.humanTurnedIntoAI };
+    const prev = was?.[String(p.id)];
+    if (next.state !== null && next.state !== prev?.state && !QUIET_STATES.has(next.state)) {
+      const kind = SEAT_KINDS[next.state];
+      events.push(kind ? { turn, kind, player: p.id, at } : { turn, kind: 'seat-state', player: p.id, detail: next.state, at });
+    }
+    if (next.ai && !prev?.ai) events.push({ turn, kind: 'turned-ai', player: p.id, at });
+    seats[String(p.id)] = next;
+  }
+  return { events, seats };
+}
+
+/** `log` with `events` appended, the newest {@link MAX_GAME_EVENTS} kept. */
+function withEvents(log: DecisionLog, events: readonly GameEvent[]): DecisionLog {
+  if (!events.length) return log;
+  const all = [...(log.events ?? []), ...events];
+  const drop = Math.max(0, all.length - MAX_GAME_EVENTS);
+  return {
+    ...log,
+    events: all.slice(drop),
+    ...(drop || log.eventsDropped ? { eventsDropped: (log.eventsDropped ?? 0) + drop } : {}),
+  };
+}
+
+export interface SeatsRecord {
+  turn: number;
+  players: readonly SeatRead[];
+  /** Start a log when the game has none (default: only add to one that exists). */
+  create?: boolean;
+  /** The clock (epoch ms) for `at`; default now. */
+  now?: number;
+}
+
+/**
+ * Log the seat events since the states last seen, keep the states, and add every other seat not seen
+ * before to `opponents` (the turn, and `ai` for an AI seat). Writes only on a change. `true` when written.
+ * Never throws.
+ */
+export async function recordSeats(dir: string, gameId: number, playerId: number, rec: SeatsRecord, opts: DecisionLogOptions = {}): Promise<boolean> {
+  try {
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        if (!rec.create && !hasContent(log)) return undefined;
+        const { events, seats } = seatEvents(log.seats, rec.players, rec.turn, rec.now);
+        const opponents = { ...log.opponents };
+        let met = false;
+        for (const p of rec.players) {
+          if (p.id === playerId || opponents[String(p.id)]) continue;
+          opponents[String(p.id)] = { firstSeen: rec.turn, ...(p.isAI ? { ai: true as const } : {}) };
+          met = true;
+        }
+        const same = !!log.seats && JSON.stringify(seats) === JSON.stringify(log.seats);
+        if (same && !events.length && !met && hasContent(log)) return undefined;
+        return withEvents({ ...log, seats, ...(Object.keys(opponents).length ? { opponents } : {}) }, events);
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** What makes two events the same change: a kind and player, and my surrender's status. */
+const eventKey = (e: Pick<GameEvent, 'kind' | 'player' | 'detail'>) =>
+  `${e.kind}:${e.player ?? ''}:${e.kind === 'my-surrender' && typeof e.detail === 'object' ? e.detail.status : ''}`;
+
+/**
+ * Log one event (a pending surrender seen, my acceptance, my own surrender), never twice for the same
+ * change ({@link eventKey}). Starts a log only with `create`. `true` when written. Never throws.
+ */
+export async function recordGameEvent(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  ev: Omit<GameEvent, 'at'> & { now?: number },
+  o: { create?: boolean } = {},
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  try {
+    const { now, ...rest } = ev;
+    const event = encodeValue({ ...rest, at: iso(now) }) as GameEvent;
+    const key = eventKey(event);
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        if (!o.create && !hasContent(log)) return undefined;
+        if ((log.events ?? []).some((e) => eventKey(e) === key)) return undefined;
+        return withEvents(log, [event]);
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Keep the lobby joined (the latest join wins), starting a log when the game has none. `true` when written. Never throws. */
+export async function recordJoin(dir: string, gameId: number, playerId: number, join: JoinContext, opts: DecisionLogOptions = {}): Promise<boolean> {
+  try {
+    const kept = encodeValue(join) as JoinContext;
+    return await updateDecisionLog(dir, gameId, playerId, (log) => ({ ...log, join: kept }), opts);
+  } catch {
+    return false;
+  }
+}
+
+/** What a tool read of an opponent: its level, ranked record and boot rate (`null`: not shown). */
+export interface OpponentRead {
+  turn: number;
+  level: number | null;
+  ranked: { completed: number; wins: number; games: number } | null;
+  bootRatePct?: number | null;
+}
+
+/**
+ * Keep what a tool read of opponent `player` (the latest read wins) in a log that exists; a seat not seen
+ * before is first seen on the read's turn. `true` when written. Never throws.
+ */
+export async function recordOpponentRead(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  player: number,
+  read: OpponentRead,
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  if (player === playerId) return false;
+  try {
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        if (!hasContent(log)) return undefined;
+        const was = log.opponents?.[String(player)];
+        const next: OpponentSeen = encodeValue({
+          ...was,
+          firstSeen: was?.firstSeen ?? read.turn,
+          level: read.level,
+          ranked: read.ranked,
+          ...(read.bootRatePct !== undefined ? { bootRatePct: read.bootRatePct } : {}),
+          readTurn: read.turn,
+        }) as OpponentSeen;
+        return { ...log, opponents: { ...log.opponents, [String(player)]: next } };
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // The end of a game: truth, accuracy and compaction
 
 /** What each turn of `log` offers the truth's scoring: its board, logged outlook, estimates and income. */
@@ -1176,7 +1480,7 @@ export async function compactDecisionLog(
     gameId,
     playerId,
     (log) => {
-      if (!Object.keys(log.turns).length) return undefined;
+      if (!hasContent(log)) return undefined;
       if (mode === 'full') return log.status === 'active' ? { ...log, status: 'finished' } : undefined;
       const done = compactLog(log, opts.lost ? { lost: true } : {});
       const dropped = Object.keys(log.turns).some((k) => log.turns[k]!.input && !done.turns[k]!.input);
@@ -1212,7 +1516,7 @@ export async function finishDecisionLogs(
         dir,
         gameId,
         head.playerId,
-        (log) => (log.status === 'active' && Object.keys(log.turns).length ? { ...log, status: 'finished' } : undefined),
+        (log) => (log.status === 'active' && hasContent(log) ? { ...log, status: 'finished' } : undefined),
         opts,
       );
       if (written) done.push(gameId);
