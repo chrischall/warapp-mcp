@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.6.0](https://github.com/chrischall/warapp-mcp/compare/v0.5.0...v0.6.0) (2026-11-20)
+
+
+### Features
+
+* **advisor:** picks fallback ranking, headroom table ranking, opening spread warning, and jab and top-up profile habits ([#403](https://github.com/chrischall/warapp-mcp/issues/403)) ([fb29b88](https://github.com/chrischall/warapp-mcp/commit/fb29b88629811967855ac977a371cb19e6ca7651))
+* **cards:** advise when to play my own Emergency Blockade, and record Diplomacy as verified live ([#371](https://github.com/chrischall/warapp-mcp/issues/371)) ([bb71462](https://github.com/chrischall/warapp-mcp/commit/bb71462697c1eb31ceebe28d6e8c925d22ff40cc))
+* **commerce:** buy cities with warapp_submit_turn, and say where a city pays back ([#356](https://github.com/chrischall/warapp-mcp/issues/356)) ([76efefb](https://github.com/chrischall/warapp-mcp/commit/76efefbd37e4f4e43374a7f274046c7a860d6b8e))
+* **commerce:** plan Commerce games with your gold, the game's army price and the cities on the board ([#353](https://github.com/chrischall/warapp-mcp/issues/353)) ([bd83afb](https://github.com/chrischall/warapp-mcp/commit/bd83afb2ddca894c2864e805994de338f76821ca))
+* **planner:** a siege goal that breaks an opponent's cheapest bonuses and holds the assault until he is weakened ([#384](https://github.com/chrischall/warapp-mcp/issues/384)) ([12b8a52](https://github.com/chrischall/warapp-mcp/commit/12b8a528a8dc8d1aafe69eb7cfaf745885f4495b))
+* **planner:** avoid_territories and avoid_players on plan_turn and check_plan ([#381](https://github.com/chrischall/warapp-mcp/issues/381)) ([9abbbfa](https://github.com/chrischall/warapp-mcp/commit/9abbbfab410fdcb3955f2fce8938870878d44ebc))
+* **planner:** credit a gate for what its loss opens, and keep the gate behind a conceded border ([#357](https://github.com/chrischall/warapp-mcp/issues/357)) ([5b3390b](https://github.com/chrischall/warapp-mcp/commit/5b3390b088b5adbc40139b0cf453b7da157ddacf))
+* **planner:** infer who moved first from my own first-order capture ([#377](https://github.com/chrischall/warapp-mcp/issues/377)) ([c9452a2](https://github.com/chrischall/warapp-mcp/commit/c9452a249b9414f5b60c8bd322fb2240c9966dd9))
+* **planner:** report my income trend, and save toward a reachable bonus when it is flat ([#360](https://github.com/chrischall/warapp-mcp/issues/360)) ([8696346](https://github.com/chrischall/warapp-mcp/commit/869634666599516ef1ceb9d22bdcff576d3bd957))
+* **planner:** report the 1v1 gate budget, and stop opening a gate the income cannot hold ([#358](https://github.com/chrischall/warapp-mcp/issues/358)) ([b8a5f52](https://github.com/chrischall/warapp-mcp/commit/b8a5f526e98432e89fc3d36b90550b66fc20c22d))
+* **planner:** siege memory across turns: start income, turns, income trend and re-broken bonuses ([#389](https://github.com/chrischall/warapp-mcp/issues/389)) ([40bbebb](https://github.com/chrischall/warapp-mcp/commit/40bbebb5c870fc79c845decf29f3a3ec7246b664))
+* **planner:** single-army jabs at 0% luck and straight rounding, on under a siege ([#397](https://github.com/chrischall/warapp-mcp/issues/397)) ([5bc0f3f](https://github.com/chrischall/warapp-mcp/commit/5bc0f3f4fc0e60a0344255a23ef71b80da369845))
+* **planner:** the profile picks the siege whenever bonus attrition fits ([#399](https://github.com/chrischall/warapp-mcp/issues/399)) ([99a7d61](https://github.com/chrischall/warapp-mcp/commit/99a7d61ecff82141402fe603d887c935cf05cbd9))
+* **relations:** remember avoid targets and stated incomes so every plan applies them ([#392](https://github.com/chrischall/warapp-mcp/issues/392)) ([379f954](https://github.com/chrischall/warapp-mcp/commit/379f954dac7b0797b770de7e7626c8a0b867e30b))
+* **state:** export local history and import it into the hosted server, and backfill finished games faster ([#409](https://github.com/chrischall/warapp-mcp/issues/409)) ([30f0927](https://github.com/chrischall/warapp-mcp/commit/30f09276c940374e8975caf6ce7a5b74cfe3f5b3))
+
+
+### Bug Fixes
+
+* **cards:** count a team's hand against the team's limit as war.app does (V8) ([#401](https://github.com/chrischall/warapp-mcp/issues/401)) ([a7bcb13](https://github.com/chrischall/warapp-mcp/commit/a7bcb1320ea50fea8a4a0e30981355b1061b4be5))
+* **chat:** read the team and private messages GameRefresh leaves out ([#395](https://github.com/chrischall/warapp-mcp/issues/395)) ([acc4ae4](https://github.com/chrischall/warapp-mcp/commit/acc4ae47f78b3a478d9feec576ecf546f6e61b7e))
+* **chat:** send chat with the 'seen nothing' markers war.app expects, so warapp_send_chat is no longer refused ([#362](https://github.com/chrischall/warapp-mcp/issues/362)) ([32115ca](https://github.com/chrischall/warapp-mcp/commit/32115cab023f0e0cb80a1ccdf83c2d5b5e1892b0))
+* **check-plan:** rank truce-breaking replies and exposures after the real threats ([#379](https://github.com/chrischall/warapp-mcp/issues/379)) ([b71d9c0](https://github.com/chrischall/warapp-mcp/commit/b71d9c08bf4c75bd0ff3db0473eb35adf64657a9))
+* **check-plan:** report the income left after Sanctions on me ([#380](https://github.com/chrischall/warapp-mcp/issues/380)) ([1a9eec2](https://github.com/chrischall/warapp-mcp/commit/1a9eec2ed1b0d3d4cd4a6399045457a575c1e31f))
+* **deps:** bump @chrischall/mcp-utils from 3.8.1 to 3.9.0 in the production-dependencies group ([#365](https://github.com/chrischall/warapp-mcp/issues/365)) ([1bba571](https://github.com/chrischall/warapp-mcp/commit/1bba5717169beb5efde57cb2484e8f25237b4dff))
+* **deps:** bump undici from 7.30.2 to 8.12.4 in the production-majors group ([#366](https://github.com/chrischall/warapp-mcp/issues/366)) ([045ed23](https://github.com/chrischall/warapp-mcp/commit/045ed23c279d7625e7faca593261a9933c4ed822))
+* **planner:** a border kept for a bonus completed this turn keeps its garrison ([#388](https://github.com/chrischall/warapp-mcp/issues/388)) ([82cfa76](https://github.com/chrischall/warapp-mcp/commit/82cfa762773504c32cbdd70f51cec21e4f023193))
+* **planner:** capture the one stack a held bonus faces when that costs less than holding against it ([#394](https://github.com/chrischall/warapp-mcp/issues/394)) ([5f45ab1](https://github.com/chrischall/warapp-mcp/commit/5f45ab1357a950c2f6cff196b4fc1de5b011c474))
+* **planner:** fund a held bonus before a second attack sized for the same deploy ([#396](https://github.com/chrischall/warapp-mcp/issues/396)) ([1da7687](https://github.com/chrischall/warapp-mcp/commit/1da7687c9d5f3adaca607c24d82b19dbd0db1047))
+* **planner:** fund borders beside a grown enemy stack before the leftover spread ([#383](https://github.com/chrischall/warapp-mcp/issues/383)) ([c5354e7](https://github.com/chrischall/warapp-mcp/commit/c5354e770d0a104ac3b4f2cf34332c1c1940feb2))
+* **planner:** garrison the members of my bonus an enemy stack roaming inside it can reach ([#391](https://github.com/chrischall/warapp-mcp/issues/391)) ([b0cbd66](https://github.com/chrischall/warapp-mcp/commit/b0cbd660d008656e24d56e7a344066c0ac112db3))
+* **planner:** move idle stacks steadily toward the front instead of back and forth between turns ([#370](https://github.com/chrischall/warapp-mcp/issues/370)) ([20de450](https://github.com/chrischall/warapp-mcp/commit/20de450bf98d8379864b0bab9e90d1b00a1e8e07))
+* **planner:** name the siege goal in its own warning, and warn when siege_target is given without it ([#398](https://github.com/chrischall/warapp-mcp/issues/398)) ([2368509](https://github.com/chrischall/warapp-mcp/commit/2368509bb221d6386451e57d9af3bdbf5ae9de36))
+* **planner:** push a contested bonus all-in once after two failed completions, else drop it for three turns ([#405](https://github.com/chrischall/warapp-mcp/issues/405)) ([7969d95](https://github.com/chrischall/warapp-mcp/commit/7969d9561a2743884c2dfcdb2b7a55dc398944cd))
+* **planner:** push or drop a bonus only while another player still holds one of its missing members ([#408](https://github.com/chrischall/warapp-mcp/issues/408)) ([0ca92e4](https://github.com/chrischall/warapp-mcp/commit/0ca92e409e52ddefe87e56d326aa2ff8e9ba71f1))
+* **planner:** send the leftover with the captures when its stack has nothing left to attack, and document the auto-picked siege ([#402](https://github.com/chrischall/warapp-mcp/issues/402)) ([4b50712](https://github.com/chrischall/warapp-mcp/commit/4b507126e329fbf6ed0163dfd196301c6c8ab07d))
+* **planner:** size the leftover that rides a capture to its next step, and offer the rest to another capture first ([#407](https://github.com/chrischall/warapp-mcp/issues/407)) ([0b25755](https://github.com/chrischall/warapp-mcp/commit/0b2575528f322b3edc0db5e4644efe82c7d65c60))
+* **planner:** stop underestimating opponents under fog, keep the fog prior after a boot, and accept a known income ([#372](https://github.com/chrischall/warapp-mcp/issues/372)) ([896046b](https://github.com/chrischall/warapp-mcp/commit/896046b53c5401d6487b089e8f2194189cf7b326))
+* **planner:** warn when a held stack survives only by a handful ([#378](https://github.com/chrischall/warapp-mcp/issues/378)) ([dfcb97d](https://github.com/chrischall/warapp-mcp/commit/dfcb97d41482b18157c3f82a1a5c18ac7b35bb15))
+* **profile:** read the standing as behind in a 1v1 when the opponent's armies in view are 1.25x mine ([#404](https://github.com/chrischall/warapp-mcp/issues/404)) ([efbbba7](https://github.com/chrischall/warapp-mcp/commit/efbbba78718a8ce99947ee1b5a7ef0ad77ddc51e))
+* **state:** carry an active game's contested-bonus attempt memory in the state export ([#411](https://github.com/chrischall/warapp-mcp/issues/411)) ([e437b42](https://github.com/chrischall/warapp-mcp/commit/e437b424eb7ad570a168e94b520e87a70a08a98a))
+
+
+### Documentation
+
+* put the [#368](https://github.com/chrischall/warapp-mcp/issues/368) doc comments back on the declarations they describe ([#374](https://github.com/chrischall/warapp-mcp/issues/374)) ([13896b4](https://github.com/chrischall/warapp-mcp/commit/13896b44c1d6c659eeb0fc6f033104e7c3929850))
+
 ## [0.5.0](https://github.com/chrischall/warapp-mcp/compare/v0.4.0...v0.5.0) (2026-11-17)
 
 
