@@ -677,8 +677,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   attacking you hardest, not on a strong neighbour who is leaving you alone, and not when you
   are the one winning the fights; use the quiet turns for something that border would not have
   allowed. **Encoded as advice** (D2): `cards.advice.diplomacy` names the opponent whose stacks tie
-  down the most of my border armies, only when two or more are in contact, passing over a truce
-  partner the truce already covers; never auto-played. Source:
+  down the most of my border armies (the only one in contact too, outside a 1v1, #424), passing over
+  a truce partner the truce already covers; a card in force in its last turn is warned of and chained
+  first; never auto-played. Source:
   <https://war.app/Forum/141245-ais-use-blockadegiftdiplomacybomb>
 - `cards-sanctions-sign-and-timing` — Read the Sanctions percentage first: a negative one raises
   the target's income, so that card goes on yourself or a teammate. A normal one resolves at the

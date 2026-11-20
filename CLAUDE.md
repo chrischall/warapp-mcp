@@ -728,9 +728,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   moves. The preview warns the encoding is unverified and the result
   carries `cardPlayCheck`. The planner never plays them; `warapp_plan_turn`'s `cards.advice` (D2,
   `src/analysis/card-support.ts`, pure) says where they pay, each with an `order`, never added to the
-  orders: Diplomacy on the opponent whose stacks tie down the most of my border armies, only with two or
-  more in contact (a truce partner the truce already covers is passed over unless the truce is in notice
-  or leaves a border it presses uncovered; one a Diplomacy card in force covers is passed over), Sanctions
+  orders: Diplomacy on the opponent whose stacks tie down the most of my border armies (#424: the only one in
+  contact too, unless no other opponent is still playing — a 1v1 says nothing; a truce partner the truce
+  already covers is passed over unless the truce is in notice or leaves a border it presses uncovered; one a
+  Diplomacy card in force covers is passed over, unless this is that card's last turn: then it is chained
+  first, `chain: true`, and the in-effect warning says it is the last turn and to chain or ready the borders), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
   percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
   Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only
@@ -1585,6 +1587,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     bonuses), and counts toward the step; with no enemy territory in view the leftover stays on the
     territory central to what I hold (fewest hops through my land to my farthest border) rather than
     ride an expansion stack more than `CENTRE_SLACK` hops farther out whose attacks land without it.
+    #424 (`partnerFront`): when that is only because a Diplomacy card in force (T9) makes the sole opponent
+    beside me no foe, the leftover goes instead to my border facing its stacks (most at stake, then its
+    biggest stack beside it, then id), once the expansion's attacks land without it: the card's end reopens it.
     #288 (`joinsOf`, `plan/leftover.ts`): an expansion stack facing no threat and holding no commander of mine
     that has nothing left to attack once this turn's captures land (every neighbour mine or captured) sends the
     leftover with its attacks on neutrals whose targets have a step onward (equal shares, most steps onward

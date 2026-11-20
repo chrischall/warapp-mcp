@@ -525,6 +525,39 @@ export function leftoverDeploy(
         missing.some((x) => state.get(x)?.owner.kind === 'player') ? 'neutrals and weaker opponents' : 'neutrals'
       } (#303)`;
     })();
+    /** #218 (comment): the expansion stack's attacks land for sure without the leftover (under luck it raises their odds). */
+    const expansionSure = () => moves.every((m) => m.from !== expansion || m.kind !== 'attack' || (m.winChance ?? 1) >= 1);
+    /**
+     * #424: with no foe in view because a Diplomacy card in force makes the only one beside me no foe
+     * this turn, its border is still the front the card's end reopens: the leftover goes there rather
+     * than central or onto the expansion stack (live, it went to an ocean tile while the partner's
+     * stacks stood beside me). An open border of mine issuing no order beside a visible stack of an
+     * enforced partner, most at stake first, then the biggest partner stack beside it, then id. Only
+     * once the expansion stack's attacks land for sure without it, as the centre's rule.
+     */
+    const partnerFront = (): { id: number; player: number; until?: number } | undefined => {
+      if (!noFront || !pc.truce.enforced.size || (expansion !== undefined && !expansionSure())) return undefined;
+      const facing = (x: number) => {
+        let best: { player: number; armies: number } | undefined;
+        for (const n of neighborsOf(g, x)) {
+          const st = state.get(n);
+          if (captured.has(n) || st?.owner.kind !== 'player' || !pc.truce.enforced.has(st.owner.playerId)) continue;
+          const armies = st.armies ?? 0;
+          if (!best || armies > best.armies || (armies === best.armies && st.owner.playerId < best.player)) best = { player: st.owner.playerId, armies };
+        }
+        return best;
+      };
+      const pick = [...mine]
+        .filter((x) => open(x) && !orderOf(x) && roomAt(x) > 0)
+        .flatMap((x) => {
+          const f = facing(x);
+          return f ? [{ id: x, ...f }] : [];
+        })
+        .sort((a, b) => valueOf(b.id) - valueOf(a.id) || b.armies - a.armies || a.id - b.id)[0];
+      if (!pick) return undefined;
+      const until = pc.truce.given.find((r) => r.player === pick.player && r.enforced)?.enforcedUntil;
+      return { id: pick.id, player: pick.player, ...(until !== undefined ? { until } : {}) };
+    };
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
     const takenBack = reviving ? holdAfterAll() : undefined;
@@ -762,6 +795,8 @@ export function leftoverDeploy(
     let concentrating = false;
     /** #218 (comment): the leftover stays central: rule 6 keeps it there, not the armies already there. */
     let central = false;
+    /** #424: the Diplomacy partner's border the leftover keeps as the front. */
+    let peace: ReturnType<typeof partnerFront>;
     /** #226 review: the leftover defends `where` or saves there: the #226 margin leaves it. */
     let defends = false;
     /** #288: the attacks out of the expansion stack the leftover goes with (it has nothing else left to attack). */
@@ -921,6 +956,13 @@ export function leftoverDeploy(
       defends = true;
       lock = true;
       concentrating = true;
+    } else if ((peace = partnerFront()) !== undefined) {
+      where = peace.id;
+      why = `the border facing player ${peace.player}, at peace by a Diplomacy card in force${
+        peace.until !== undefined ? ` until turn ${peace.until}` : ''
+      } — no other enemy is in view, and its border is the front again once the card ends (#424)`;
+      defends = true;
+      lock = true;
     } else if (expansion !== undefined && open(expansion)) {
       // #218 (comment): with no enemy in view there is no front to go to, and a leftover riding
       // the top expansion walks deeper into one region every turn (live: 14 hops from the nearest
@@ -928,8 +970,7 @@ export function leftoverDeploy(
       // from my farthest border than the territory central to what I hold, and its attacks land
       // for sure without the leftover, the leftover stays there.
       // Only once its attacks land for sure: under luck the leftover there raises their odds.
-      const sure = moves.every((m) => m.from !== expansion || m.kind !== 'attack' || (m.winChance ?? 1) >= 1);
-      const c = noFront && sure ? centre() : undefined;
+      const c = noFront && expansionSure() ? centre() : undefined;
       if (c && c.id !== expansion && (c.ecc.get(expansion) ?? Infinity) > c.ecc.get(c.id)! + CENTRE_SLACK) {
         where = c.id;
         why = `no enemy is in view, so there is no front to go to: it stays central to what I hold (at most ${c.ecc.get(c.id)} hops from each of my borders, where the stack working on the top expansion, ${label(expansion)}, is ${c.ecc.get(expansion)} from its farthest), ready for wherever a front opens`;

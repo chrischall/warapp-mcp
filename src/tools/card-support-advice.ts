@@ -28,7 +28,7 @@ const CARD_SANCTIONS = 9;
 type CardOrder = { kind: 'card'; card: string } & Record<string, unknown>;
 
 export interface SupportView {
-  diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; order: CardOrder };
+  diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; chain?: true; order: CardOrder };
   sanctions?: { player: number; skipped?: string[]; order: CardOrder };
   airlift?: { from: number; to: number; armies: number; teammate?: number; order: CardOrder };
   gift?: { player: number; bonus: number; territories: number[]; orders: CardOrder[] };
@@ -80,6 +80,8 @@ interface SupportInput {
   cb: CardBoard;
   /** Opponents a Diplomacy card in force already keeps from me. */
   atPeace: ReadonlySet<number>;
+  /** #424: of those, the ones whose card's last turn this is (chained rather than passed over). */
+  lastTurn?: ReadonlySet<number>;
   truces: readonly TruceCover[];
 }
 
@@ -92,7 +94,9 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
 
   const dip = first(CARD_DIPLOMACY);
   if (dip) {
-    const d = diplomacyAdvice(cb, { atPeace: input.atPeace, truces: input.truces });
+    // #424: the opponents still playing (teammates out): a lone one in contact is advised outside a 1v1.
+    const opponents = input.game.players.filter((p) => p.id !== me.id && !cb.friends?.has(p.id) && (p.state ?? 'Playing') === 'Playing').length;
+    const d = diplomacyAdvice(cb, { atPeace: input.atPeace, truces: input.truces, opponents, ...(input.lastTurn ? { lastTurn: input.lastTurn } : {}) });
     if (d) {
       if (d.player !== undefined && d.pressure) {
         view.diplomacy = {
@@ -101,6 +105,7 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
           armies: d.pressure.armies,
           ...(d.overTruce ? { overTruce: d.overTruce } : {}),
           ...(d.skipped.length ? { skipped: d.skipped } : {}),
+          ...(d.chain ? { chain: true as const } : {}),
           order: { kind: 'card', card: dip.id, players: [me.id, d.player] },
         };
       }

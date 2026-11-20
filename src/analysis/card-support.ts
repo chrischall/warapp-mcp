@@ -1,5 +1,6 @@
 // Where to play the cards warapp_submit_turn can play but the planner never does (PLAN-TEAMS part D2):
-// Diplomacy on the opponent pressing me hardest when two or more are, Sanctions on the leader, Airlift
+// Diplomacy on the opponent pressing me hardest (#424: the only one in contact too, outside a 1v1; a card
+// in force in its last turn chained first), Sanctions on the leader, Airlift
 // onto a border of mine or a teammate's that falls without it, and Gift as team support (a territory
 // that completes a teammate's bonus); and (G2) Spy, Reconnaissance and Surveillance only where the fog
 // hides what the plan needs. Advice only: nothing here changes the plan or its orders. Pure and
@@ -70,25 +71,33 @@ export interface DiplomacyAdvice {
   why: string;
   /** Opponents passed over, and why (a truce that covers them, a Diplomacy card already in force). */
   skipped: string[];
+  /** #424: `player`'s card in force ends after this turn: this one chains it. */
+  chain?: true;
 }
 
 /**
- * Diplomacy on the opponent pressing me hardest, when two or more opponents are in contact (with
- * one, peace with it is peace with everyone: the card is a truce for nothing). An opponent already at
- * peace with me by a Diplomacy card in force is passed over, and so is a truce partner whose truce
- * already covers every border it touches — unless the card adds protection: the truce is in notice
- * (it ends), or the partner presses a border the truce does not cover. Either way it is said.
- * `undefined` with fewer than two opponents in contact.
+ * Diplomacy on the opponent pressing me hardest. #424: the only opponent in contact too, when the game
+ * has others (`opponents`, still playing, teammates out): peace on that front frees its whole hold — in a
+ * 1v1 (or `opponents` unknown) peace with it is peace with everyone, so nothing is said. An opponent
+ * already at peace with me by a Diplomacy card in force is passed over, unless that card's last turn is
+ * this one (`lastTurn`): then it comes first, and the card chains the peace. A truce partner whose truce
+ * already covers every border it touches is passed over too — unless the card adds protection: the truce
+ * is in notice (it ends), or the partner presses a border the truce does not cover. Either way it is
+ * said. `undefined` with no opponent in contact, or one in a 1v1.
  */
 export function diplomacyAdvice(
   cb: CardBoard,
-  opts: { atPeace?: ReadonlySet<number>; truces?: readonly TruceCover[] } = {},
+  opts: { atPeace?: ReadonlySet<number>; truces?: readonly TruceCover[]; opponents?: number; lastTurn?: ReadonlySet<number> } = {},
 ): DiplomacyAdvice | undefined {
   const all = pressures(cb);
-  if (all.length < 2) return undefined;
+  if (!all.length || (all.length === 1 && (opts.opponents ?? 1) < 2)) return undefined;
+  const chains = (player: number) => opts.atPeace?.has(player) === true && opts.lastTurn?.has(player) === true;
+  // #424: a card in its last turn is chained first; otherwise the pressure order stands.
+  const ranked = [...all].sort((a, b) => Number(chains(b.player)) - Number(chains(a.player)));
   const skipped: string[] = [];
-  for (const p of all) {
-    if (opts.atPeace?.has(p.player)) {
+  for (const p of ranked) {
+    const chain = chains(p.player);
+    if (opts.atPeace?.has(p.player) && !chain) {
       skipped.push(`player ${p.player}: a Diplomacy card between you is already in force`);
       continue;
     }
@@ -106,15 +115,28 @@ export function diplomacyAdvice(
         continue;
       }
     }
-    if (p.armies <= 0) break;
+    if (p.armies <= 0) {
+      if (chain) continue;
+      break;
+    }
     const takes = p.takes.length ? `; as the plan leaves them it can take ${p.takes.join(', ')}` : '';
+    const which =
+      all.length === 1
+        ? 'the only opponent beside you'
+        : p === all[0]
+          ? `of the ${all.length} opponents beside you it presses hardest`
+          : `one of the ${all.length} opponents beside you`;
     return {
       player: p.player,
       pressure: p,
       ...(overTruce ? { overTruce } : {}),
+      ...(chain ? { chain: true as const } : {}),
       why:
-        `Diplomacy with player ${p.player}: of the ${all.length} opponents beside you it presses hardest — your borders ${p.borders.join(', ')} ` +
-        `keep ${p.armies} armies against it alone${takes}.${overTruce ? ` Played on a truce partner because ${overTruce}.` : ''}`,
+        `Diplomacy with player ${p.player}: ${which} — your borders ${p.borders.join(', ')} ` +
+        `keep ${p.armies} armies against it alone${takes}.${overTruce ? ` Played on a truce partner because ${overTruce}.` : ''}` +
+        (chain
+          ? ` Chain it: the Diplomacy card in force with player ${p.player} ends after this turn, and a new one starts the turn after it is played, so the peace runs on unbroken.`
+          : ''),
       skipped,
     };
   }

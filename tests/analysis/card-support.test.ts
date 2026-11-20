@@ -51,8 +51,25 @@ describe('diplomacyAdvice (D2)', () => {
     expect(d.skipped).toEqual([]);
   });
 
-  it('says nothing with one opponent in contact: peace with it is peace with everyone', () => {
+  it('says nothing with one opponent in contact in a 1v1: peace with it is peace with everyone', () => {
     expect(diplomacyAdvice(cb([neutral(3, 2), mine(4, 20), b(5, 20)]))).toBeUndefined();
+    expect(diplomacyAdvice(cb([neutral(3, 2), mine(4, 20), b(5, 20)]), { opponents: 1 })).toBeUndefined();
+  });
+
+  it('#424: names the only opponent in contact when others are still in the game', () => {
+    const d = diplomacyAdvice(cb([neutral(3, 2), mine(4, 20), b(5, 20)]), { opponents: 3 })!;
+    expect(d.player).toBe(B);
+    expect(d.why).toMatch(/^Diplomacy with player 30: the only opponent beside you — your borders 4 keep 15 armies against it alone/);
+  });
+
+  it('#424: chains a card in force that ends after this turn rather than passing its player over', () => {
+    const d = diplomacyAdvice(cb(twoFronts()), { atPeace: new Set([B]), lastTurn: new Set([B]) })!;
+    expect(d.player).toBe(B);
+    expect(d.chain).toBe(true);
+    expect(d.skipped).toEqual([]);
+    expect(d.why).toMatch(/Chain it: the Diplomacy card in force with player 30 ends after this turn, and a new one starts the turn after it is played, so the peace runs on unbroken\./);
+    // A card that runs on past this turn is still passed over.
+    expect(diplomacyAdvice(cb(twoFronts()), { atPeace: new Set([B]), lastTurn: new Set() })!.player).toBe(A);
   });
 
   it('never names a truce partner already covered, and says so', () => {

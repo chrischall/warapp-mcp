@@ -158,6 +158,39 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(warnings.join('\n')).toMatch(/Passed over: player 8811111299: your truce already covers every border it presses/);
   });
 
+  it('#424: advises Diplomacy on the only opponent in contact in a free-for-all', () => {
+    const { view } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 20)], game: ffa, hand: [card(8, 'Diplomacy')] }));
+    expect(view.diplomacy).toMatchObject({ player: FOE.id, borders: [4], order: { players: [ME.id, FOE.id] } });
+  });
+
+  it('#424: warns on the last turn of a Diplomacy card in force, and advises chaining it', () => {
+    const order = (...ints: number[]) => ({
+      $type: 'warlight.shared.GameOrderPlayCardDiplomacy',
+      ...Object.fromEntries(ints.map((n, i) => [`f${i}`, n])),
+      g: 'ab'.repeat(16),
+      p: FOE_IN,
+    });
+    const info = (e: number) => ({
+      $type: 'warlight.shared.LatestGameInfo',
+      s: { $type: 'warlight.shared.GameStanding', a: [{ $type: 'warlight.shared.ActiveCard', c: order(ME_IN, FOE_IN), e }] },
+    });
+    const territories = fronts();
+    const plan = { deploys: [], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [] };
+    // e: 4 → in effect until turn 5: turn 4 is its last.
+    const last = adviseCards(input({ territories, plan, info: info(4), turn: 4, game: ffa, hand: [card(8, 'Diplomacy')] }));
+    const w = last.warnings.join('\n');
+    expect(w).toMatch(/Diplomacy is in effect between you and player 7176543229 \(until turn 5\): .*This is its last turn: from turn 5 it can attack you again — chain it: play your Diplomacy card on it this turn/);
+    expect(last.view.diplomacy).toMatchObject({ player: FOE.id, chain: true });
+    expect(w).toMatch(/Chain it: the Diplomacy card in force with player 7176543229 ends after this turn/);
+    // Without a card in hand: the warning, and the borders to ready.
+    const bare = adviseCards(input({ territories, plan, info: info(4), turn: 4, game: ffa }));
+    expect(bare.warnings.join('\n')).toMatch(/This is its last turn: from turn 5 it can attack you again — ready the borders it faces\./);
+    // Not its last turn: no warning, and the partner is passed over.
+    const early = adviseCards(input({ territories, plan, info: info(4), turn: 3, game: ffa, hand: [card(8, 'Diplomacy')] }));
+    expect(early.warnings.join('\n')).not.toMatch(/last turn/);
+    expect(early.view.diplomacy?.player).toBe(FOE2.id);
+  });
+
   it('says nothing of Diplomacy in a 1v1', () => {
     const { view } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 20)], hand: [card(8, 'Diplomacy')] }));
     expect(view.diplomacy).toBeUndefined();
