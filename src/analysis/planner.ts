@@ -468,7 +468,12 @@
 //     that I would lose all access to without it, plus (#122) its share of every other
 //     incomplete bonus containing it that I am building — value × the members I hold ÷ its
 //     size, one decimal, when every missing member is a visible neutral and finishing it passes
-//     rule 4's economy tests (PAYBACK_TURNS, WASTELAND_FACTOR) — plus the per-territory
+//     rule 4's economy tests (PAYBACK_TURNS, WASTELAND_FACTOR); #298: or when the missing members
+//     are visible neutrals and visible foe territories, one of them a foe's movable stack beside the
+//     border that arrived since `previousBoard` (taken from me, or grown there, read only where that
+//     board showed it): an enemy stack roaming inside the bonus that can reach the border. On the
+//     same economy tests over what
+//     stands there now, so the members it can reach are garrisoned — plus the per-territory
 //     income it carries (each bonus counted once). Its worth adds the armies a
 //     hold saves, in income terms (armies / PAYBACK_TURNS): a top-up that keeps a
 //     big stack is worth paying even for a small bonus (live, a 60-army border
@@ -1747,7 +1752,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   }
 
   // ---- the deploy book (plan/orders.ts): budget, guard, deploys, pools, protected value ----
-  const book = deployBook(pc, ps);
+  const book = deployBook(pc, ps, input.previousBoard);
   // #274: under No-Split my commander's walk is its territory's one order, entered before any pass plans.
   reserveCommanderMove(pc, ps);
   const {

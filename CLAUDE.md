@@ -1243,7 +1243,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Triage by protected value.** A threatened border's protected value is my complete
     bonuses containing it, plus bonuses I'd lose all access to, plus its share (value × members
     held ÷ size) of a bonus I am building — every missing member a visible neutral, finishing it
-    economic (#122) — plus per-territory income, plus (#235) the income of what its loss cuts off
+    economic (#122), or (#298) an enemy stack beside it that arrived since the previous board (took a member from me, or grew there) roams inside it, its other missing members visible neutrals or foe territories, on the same economy tests — plus per-territory income, plus (#235) the income of what its loss cuts off
     from the rest of my holdings (every part but the largest when it is a cut vertex; named in the rationale
     only with income or at least `PAYBACK_TURNS` armies), plus (#291, guard on or off) `OPENS_WEIGHT` (0.5) of the held
     bonuses its loss OPENS — my territories every route from an enemy or the fog reaches only through it
