@@ -30,6 +30,14 @@
 // src/analysis/decision-truth.ts), then the log is compacted (`compactDecisionLog`): no-gaps rule (b) —
 // every turn keeps its board, decision, sent orders, override, `next`, `truth` and `accuracy`; only the
 // replay `input` of an uninteresting turn is dropped.
+//
+// #437 (v2, additive: the `version` stays 1 and an entry written before these reads as it is): each turn
+// also carries the build beside `planner.version` (`build`: the git commit of a checkout, else a hash of the
+// bundle), its wall-clock `times` (`plannedAt`, `sentAt`, the turn's start and boot deadlines when the game
+// read gives them — this log may hold wall-clock times), the plan's `firstMover`, the `cards` (my hand by
+// type, the advice offered by kind, target ids and a reason code, and what was played), and the `checks`
+// (the submit's commander check, weakest headroom rows, below-plan rows and chat warnings; and the latest
+// warapp_check_plan summary). All small, all kept through compaction.
 import { open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type AccuracySummary, estimateOff, type LoggedTurn, type TruthResult, type TurnAccuracy, type TurnTruth } from './analysis/decision-truth.js';
@@ -38,6 +46,7 @@ import type { EnemyDeployEstimate, PlanInput, TurnPlan } from './analysis/plan/s
 import type { BoardState, TerritoryState } from './board.js';
 import { writeJsonAtomic } from './map-store.js';
 import { withPathLock } from './path-lock.js';
+import { serverBuild } from './build-id.js';
 import { VERSION } from './version.js';
 
 export const DECISION_LOG_VERSION = 1;
@@ -219,6 +228,89 @@ export interface DecisionOutcome {
   eliminated: boolean;
 }
 
+/** A turn's wall-clock times (#437), ISO: when it was planned and sent, and the start and boot deadlines the game read gave. */
+export interface DecisionTimes {
+  plannedAt?: string;
+  sentAt?: string;
+  /** GameFeed's `lastTurnTime`, read as the turn's start (UNVERIFIED, as the boot warnings say). */
+  turnStartedAt?: string;
+  /** When the game's AutoBoot boots an uncommitted seat, and when DirectBoot lets the others boot it. */
+  bootAt?: { auto?: string; direct?: string };
+}
+
+/** The plan's first mover (#437): who, and where that came from. */
+export interface LoggedFirstMover {
+  who: 'me' | 'opponent';
+  source: string;
+  verified: boolean;
+}
+
+/** One card advice the plan offered (#437): the card, its target ids and a reason code (never prose). */
+export interface LoggedCardAdvice {
+  kind: string;
+  targets: number[];
+  player?: number;
+  reason: string | null;
+  /** Order Delay: the move (1-based) it goes above. */
+  before?: number;
+}
+
+/** The turn's cards (#437): my hand by type, the advice offered (both at plan time), and what was played (at submit). */
+export interface LoggedCards {
+  hand?: { card: string; type: number; count: number }[];
+  advice?: LoggedCardAdvice[];
+  /** The card plays sent, by card name. */
+  played?: string[];
+  /** How many cards were discarded. */
+  discarded?: number;
+}
+
+/** One headroom row as logged: the smallest deploy that takes the border (`null`: none) and what it protects. */
+export interface LoggedHeadroom {
+  territory: number;
+  takeAt: number | null;
+  opponent: number;
+  from: number;
+  protects: { bonuses: number[]; behindIncome: number; breachIncome: number };
+}
+
+/** What warapp_submit_turn checked on the orders it sent (#437). */
+export interface SubmitChecks {
+  /** The commander check (`null`: not run — no Commanders, or no commander on the board). */
+  commander: { territory: number; armies: number; needs: number | null; replies: number; replyDeploy: number; accepted?: boolean } | null;
+  /** The weakest headroom rows (at most five). */
+  headroom: LoggedHeadroom[];
+  belowPlan: { territory: number; planLeaves: number; left: number; short: number }[];
+  belowPlanAgainst?: 'plan' | 'guess';
+  /** The chat commitments the orders break (ids only). */
+  chat: { kind: string; with?: number; moves: number[]; unchecked?: true }[];
+}
+
+/** warapp_check_plan's verdict on the turn (#437): the latest run wins. */
+export interface CheckPlanSummary {
+  safe: boolean | null;
+  worst: {
+    opponent: number;
+    kind: string;
+    deploy: number;
+    lost: number;
+    capturesFailed: number;
+    bonusesLost: number;
+    incomeLost: number;
+    commanderLost: boolean;
+  } | null;
+  harmful: number;
+  considered: number;
+  atRisk: { commander: number; territories: number; captures: number; bonuses: number };
+  /** Run with enemy_deploy or known_income given: a what-if, not the default sizing. */
+  whatIf?: true;
+}
+
+export interface DecisionChecks {
+  submit?: SubmitChecks;
+  checkPlan?: CheckPlanSummary;
+}
+
 /** Where an observation's board came from: read live, or filled from the game's history. */
 export type ObservationSource = 'live' | 'history';
 
@@ -229,8 +321,15 @@ export interface DecisionEntry {
   source?: ObservationSource;
   board?: StoredBoard;
   input?: LoggedInput;
-  planner?: { version: string };
+  /** `build` (#437): the git commit of a checkout, else a hash of the bundle; absent in older entries. */
+  planner?: { version: string; build?: string };
   decision?: LoggedDecision;
+  /** #437: absent in entries written before it. */
+  times?: DecisionTimes;
+  /** #437: the plan's first mover (`null`: unknown). */
+  firstMover?: LoggedFirstMover | null;
+  cards?: LoggedCards;
+  checks?: DecisionChecks;
   sent?: LoggedSent;
   override?: DecisionOverride;
   next?: DecisionOutcome;
@@ -272,7 +371,17 @@ export interface DecisionRecord {
   estimates?: readonly EnemyDeployEstimate[];
   /** The game's players, for scrubbing names; only ids are ever written. */
   players?: readonly { id: number; name?: string }[];
+  /** #437: the plan's first mover (`null`: unknown). */
+  firstMover?: LoggedFirstMover | null;
+  /** #437: my hand and the card advice offered. */
+  cards?: Pick<LoggedCards, 'hand' | 'advice'>;
+  /** #437: the turn's start and boot deadlines, when the game read gives them. */
+  times?: Pick<DecisionTimes, 'turnStartedAt' | 'bootAt'>;
+  /** The clock (epoch ms) for `plannedAt`; default now. */
+  now?: number;
 }
+
+const iso = (ms: number | undefined) => new Date(ms ?? Date.now()).toISOString();
 
 // ---------------------------------------------------------------------------------------------
 // Encoding
@@ -589,12 +698,16 @@ export async function recordDecision(
       const d = diff(board, plainBoard(rec.plannedBoard));
       if (d.changed.length || d.removed) input.plannedBoard = { source: rec.plannedBoard.source, verified: rec.plannedBoard.verified, ...d };
     }
+    const build = serverBuild();
     const entry: DecisionEntry = scrubNames(
       {
         kind: 'planned',
         input,
-        planner: { version: VERSION },
+        planner: { version: VERSION, ...(build ? { build } : {}) },
         decision: decisionOf(rec.plan, rec.outlookState, rec.estimates, earnedIncome(rec.input)),
+        times: encodeValue({ plannedAt: iso(rec.now), ...rec.times }) as DecisionTimes,
+        ...(rec.firstMover !== undefined ? { firstMover: rec.firstMover ? { ...rec.firstMover } : null } : {}),
+        ...(rec.cards ? { cards: encodeValue(rec.cards) as LoggedCards } : {}),
       },
       rec.players,
     );
@@ -603,10 +716,12 @@ export async function recordDecision(
       gameId,
       playerId,
       (log) => {
-        if (log.turns[String(rec.turn)]?.sent) return undefined;
+        const was = log.turns[String(rec.turn)];
+        if (was?.sent) return undefined;
         const boards = decodeBoards(log);
         boards.set(rec.turn, board);
-        const turns = { ...log.turns, [String(rec.turn)]: entry };
+        // #437: a warapp_check_plan run before this plan keeps its summary.
+        const turns = { ...log.turns, [String(rec.turn)]: was?.checks ? { ...entry, checks: was.checks } : entry };
         encodeBoards(turns, boards);
         return { ...log, turns };
       },
@@ -710,7 +825,8 @@ export async function recordSent(
     playerId,
     (log) => {
       const { override: _old, ...was } = log.turns[String(turn)] ?? {};
-      return { ...log, turns: { ...log.turns, [String(turn)]: { ...was, sent: kept, ...(ov ? { override: ov } : {}) } } };
+      const times = { ...was.times, sentAt: iso(undefined) };
+      return { ...log, turns: { ...log.turns, [String(turn)]: { ...was, sent: kept, times, ...(ov ? { override: ov } : {}) } } };
     },
     opts,
   );
@@ -839,7 +955,17 @@ export interface Submission {
   reason?: string;
   /** The game's players, for scrubbing names from the reason; only ids are ever written. */
   players?: readonly { id: number; name?: string }[];
+  /** #437: what the submit checked on these orders. */
+  checks?: SubmitChecks;
+  /** The clock (epoch ms) for `sentAt`; default now. */
+  now?: number;
 }
+
+/** #437: the cards a turn's sent orders played (by name) and how many they discarded. */
+const playedOf = (sent: LoggedSent): Pick<LoggedCards, 'played' | 'discarded'> => ({
+  played: (sent.cards ?? []).map((c) => c.card),
+  discarded: (sent.discards ?? []).length,
+});
 
 /**
  * Log the orders sent on `turn` (one lock: read, compare, write). Against a logged decision an override
@@ -868,7 +994,42 @@ export async function recordSubmission(
         const decided = was.decision;
         const by = decided ? (ordersDiffer(decided, sub.orders) ? (sub.by ?? 'agent') : undefined) : sub.by !== undefined || reason !== undefined ? (sub.by ?? 'hand') : undefined;
         const override: DecisionOverride | undefined = by ? { by, ...(reason !== undefined ? { reason } : {}) } : undefined;
-        return { ...log, turns: { ...log.turns, [String(turn)]: { ...was, sent: kept, ...(override ? { override } : {}) } } };
+        const times: DecisionTimes = { ...was.times, sentAt: iso(sub.now) };
+        const cards: LoggedCards = { ...was.cards, ...playedOf(kept) };
+        const checks: DecisionChecks | undefined = sub.checks ? { ...was.checks, submit: encodeValue(sub.checks) as SubmitChecks } : was.checks;
+        return {
+          ...log,
+          turns: { ...log.turns, [String(turn)]: { ...was, sent: kept, times, cards, ...(checks ? { checks } : {}), ...(override ? { override } : {}) } },
+        };
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #437: log warapp_check_plan's summary for `turn` (the latest run wins), starting an entry when the turn
+ * has none; everything else on the entry is kept. `true` when written. Never throws.
+ */
+export async function recordCheck(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  turn: number,
+  summary: CheckPlanSummary,
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  try {
+    const kept = encodeValue(summary) as CheckPlanSummary;
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        const was = log.turns[String(turn)] ?? {};
+        return { ...log, turns: { ...log.turns, [String(turn)]: { ...was, checks: { ...was.checks, checkPlan: kept } } } };
       },
       opts,
     );

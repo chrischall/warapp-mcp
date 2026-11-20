@@ -116,8 +116,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   an account or salt refusal keeps it for a retry. `warapp_backfill_history` (not confirm-gated: this server's
   state only, never war.app) runs `sweepFinished` with `limit` (default 10, max 25) and an optional `window` (at
   most `MAX_FINISHED_RECORDS`), so each game's history is still read once.
-- **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing, not the board cache
-  either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
+- **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing but its verdict to the decision log
+  (#437), not the board cache either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
   (`docs/STRATEGY.md` "Turn resolution" links each page: deploys first, then attacks and transfers
   in the zigzag, an order that moves no armies taking no slot; attack or transfer decided when the
   order runs; the guard army, which an arrived army can be and a commander cannot; each army
@@ -286,7 +286,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   a kept inferred turn; the award; a kept award turn. Disagreement is a warning; `firstMover` reports
   `{ who, source, from?, line }` (`line`: "You move first on turn N (…)"). The game history is not
   read for it (UNVERIFIED whether an in-progress `GetHistory` carries the orders in the order they ran).
-  `warapp_check_plan` writes nothing and still tries both orders unless `first_mover` is given.
+  `warapp_check_plan` writes no move order and still tries both orders unless `first_mover` is given.
 - **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`).** The `GameRefresh` read of **public** messages is
   VERIFIED LIVE 2026-11-14 (count, time, turn, sender and channel matched GameFeed `GetChat=true`); team and
   private channels, `mark_seen` / the cursor, `warapp_plan_turn`'s `chat.unread`, `chatActivity` and sending
@@ -2084,6 +2084,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   score against `next`, the estimate accuracy against the truth and `--export-fixtures`. The invariant — unchanged code
   and no scenario reproduce the logged deploys and moves — is tested from the capture (`tests/decision-replay-tools.test.ts`).
   How to run: `docs/PLAN-PROFILES.md` "Replaying the decision log". No planner decision reads the log.
+  **v2 per-turn additions (#437 task 1, `docs/PLAN-DECISION-LOG-V2.md`; additive, `version` stays 1, older entries read
+  as they are):** `planner.build` (`src/build-id.ts`, read once per process: `git:<sha>` from this package's own `.git`
+  — a worktree's `.git` file, its common dir and packed refs followed, no process spawned; never the `.git` of a project
+  it is installed inside — else `sha256:<16 hex>` of the running bundle); `times` (ISO wall-clock: `plannedAt` by
+  `recordDecision`, `sentAt` by `recordSubmission`, and from the game read `turnStartedAt` — GameFeed's `lastTurnTime`,
+  read as the turn's start, unverified — and `bootAt.auto`/`direct` from AutoBoot/DirectBoot); `firstMover` (`{ who,
+  source, verified }`, `null` unknown); `cards` (`hand`: my cards by type and count; `advice`: per card advised its kind,
+  target ids, player and a reason code, never prose, `cardAdviceLog`; `played`/`discarded` from `sent`); `checks.submit`
+  (the commander check — `null` without one — the weakest 5 headroom rows as `takeAt` and what each protects, the
+  below-plan rows and the chat commitments the orders break, by id) and `checks.checkPlan` (`warapp_check_plan`'s `safe`,
+  the worst reply in numbers, `harmful`/`considered`, the `atRisk` counts, `whatIf` under `enemy_deploy` or
+  `known_income`; `recordCheck`, the latest run per turn wins, starting an entry when the turn has none, and a plan of
+  the turn after it keeps it). The pure shapers are in `src/tools/decision-capture.ts`; compaction keeps all of them.
 - **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
   `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's
