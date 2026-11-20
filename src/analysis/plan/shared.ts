@@ -410,6 +410,11 @@ export interface PlanGameContext {
    */
   opening?: ReadonlyMap<number, number>;
   /**
+   * #419: the pace past winners set at this turn ({@link FogPace}, read from the map record by the tool): with the
+   * fog prior on, thin evidence's upper bound is the larger of the prior and it.
+   */
+  mapPace?: FogPace;
+  /**
    * GameFeed's `MoveOrder` (PLAN-TEAMS C3.6: under a cyclic order a joint capture says whose attack must
    * run first). Read only by the team report.
    */
@@ -1153,6 +1158,8 @@ export interface EnemyDeployEstimate {
     toward: number;
     weight: number;
     figure: number;
+    /** #419: the past winners' pace that set `upper` above the prior (its figure, capped and scaled as the prior). */
+    pace?: { figure: number; basis: FogPace['basis']; afterTurn: number; games: number; ratio?: number };
   } | null;
   /**
    * #235: in a free-for-all (`EnemyIncomePrior.opponents`), the cap on the prior: its visible
@@ -1207,6 +1214,25 @@ export interface EnemyDeployEstimate {
 }
 
 /**
+ * #419 (owner decision of 2026-11-20): the pace past winners set, read from my finished games' map records
+ * (src/lessons-store.ts). `map`: the median past winner's income after `afterTurn` completed turns on this map
+ * (`income`), over `games` (3 or more) of this format and settings; `format`: too few on this map, so the median
+ * of winner ÷ mine then over every map's games of this format (`ratio`), which scales my income.
+ */
+export interface FogPace {
+  basis: 'map' | 'format';
+  afterTurn: number;
+  games: number;
+  income?: number;
+  ratio?: number;
+}
+
+/** #419: the income a pace stands for, given my income. */
+export function fogPaceIncome(p: FogPace, myIncome: number): number {
+  return p.basis === 'map' ? Math.max(0, Math.floor(p.income ?? 0)) : Math.ceil(Math.max(0, myIncome) * (p.ratio ?? 0) - 1e-9);
+}
+
+/**
  * The fog prior (#119): in a 1v1 that started even (the same territories and armies each), an
  * opponent I cannot see all of — one bordering the fog — is assumed to earn at least what I earn
  * (`myIncome`, card armies out), capped at what it could earn on the board. Observed deploys are
@@ -1246,6 +1272,13 @@ export interface EnemyIncomePrior {
    * never below what is in view or tracked, never above the prior unscaled. Absent otherwise.
    */
   stated?: { players: readonly { id: number; income: number }[]; mine: number; ratio: number };
+  /**
+   * #419: the pace past winners set at this turn ({@link FogPace}): while its frontier is mostly hidden (#368's
+   * thin evidence), an opponent's upper bound is the larger of the prior and this pace (capped, scaled and
+   * only beside the fog as the prior is). It never moves the prior itself. (Not docs/PLAN-PROFILES.md E1's
+   * planned per-player `pace`.)
+   */
+  winnerPace?: FogPace;
 }
 
 /**
@@ -2558,6 +2591,11 @@ export function enemyDeployEstimates(
     // #444: incomes other players stated scale this one's prior down by their ratio to mine (never up).
     const statedRatio = prior?.stated && !prior.stated.players.some((x) => x.id === playerId) ? prior.stated.ratio : null;
     const priorFigure = priorFull !== null && statedRatio !== null ? Math.min(priorFull, Math.ceil(priorFull * statedRatio - 1e-9)) : priorFull;
+    // #419: the past winners' pace, as the prior is figured (capped, scaled, only beside the fog), when above it.
+    const paceIncome = prior?.winnerPace ? fogPaceIncome(prior.winnerPace, prior.myIncome) : null;
+    const paceFull = paceIncome !== null && fogBeside && paceIncome > priorBase ? Math.min(paceIncome, priorCap ?? couldEarn) : null;
+    const paceFigure = paceFull !== null && statedRatio !== null ? Math.min(paceFull, Math.ceil(paceFull * statedRatio - 1e-9)) : paceFull;
+    const paceTop = paceFigure !== null && priorFigure !== null && paceFigure > priorFigure ? paceFigure : null;
     // A track over enough turns replaces the single-turn observed figure (S3).
     const track = tracks?.find((t) => t.playerId === playerId);
     const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
@@ -2679,7 +2717,8 @@ export function enemyDeployEstimates(
       if (thinCoverage || rising) {
         const trend = rising ? Math.min(couldEarn, rising[2]! + Math.ceil((rising[2]! - rising[0]!) / 2 - 1e-9)) : null;
         const lower = Math.min(couldEarn, Math.max(visible, tracked, trend ?? 0));
-        const upper = Math.max(lower, Math.min(couldEarn, priorFigure ?? couldEarn));
+        // #419: the top of its range is the larger of the prior and the past winners' pace.
+        const upper = Math.max(lower, Math.min(couldEarn, paceTop ?? priorFigure ?? couldEarn));
         const midpoint = lower + Math.ceil((upper - lower) / 2 - 1e-9);
         // What the evidence gives without thin evidence (the track, or #235's prior shrunk toward it),
         // never below the lower bound: the figure meets it at LOW_COVERAGE, so it does not jump there.
@@ -2688,7 +2727,30 @@ export function enemyDeployEstimates(
         const figure = toward + Math.ceil(weight * (midpoint - toward) - 1e-9);
         // Thin coverage: the figure replaces the estimate, up or down. A rising track alone: a raise only.
         if (thinCoverage || figure > chosen)
-          thinEvidence = { coverage: coverage ? coverage.share : null, rising, tracked, prior: priorFigure, trend, lower, upper, midpoint, toward, weight, figure };
+          thinEvidence = {
+            coverage: coverage ? coverage.share : null,
+            rising,
+            tracked,
+            prior: priorFigure,
+            trend,
+            lower,
+            upper,
+            midpoint,
+            toward,
+            weight,
+            figure,
+            ...(paceTop !== null && prior?.winnerPace
+              ? {
+                  pace: {
+                    figure: paceTop,
+                    basis: prior.winnerPace.basis,
+                    afterTurn: prior.winnerPace.afterTurn,
+                    games: prior.winnerPace.games,
+                    ...(prior.winnerPace.ratio !== undefined ? { ratio: prior.winnerPace.ratio } : {}),
+                  },
+                }
+              : {}),
+          };
       }
     }
     const income = thinEvidence ? thinEvidence.figure : chosen;

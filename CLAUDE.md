@@ -974,7 +974,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   rising track read from more of its frontier only raises the estimate to the lower bound. Its own warning
   names both bounds, the midpoint and `toward`; the source reads `prior` when a prior is in the range and
   the figure lies above the lower bound, else `tracked`; the tracker's coverage note says the planner sizes
-  it toward the midpoint. **A known income (#368,
+  it toward the midpoint. **#419 (owner decision of 2026-11-20): the past winners' pace tops that range.** With
+  the fog prior on, thin evidence's upper bound is the larger of the prior (my income) and the pace past winners
+  set after the turns completed (`FogPace`, `PlanGameContext.mapPace` → `EnemyIncomePrior.winnerPace`; capped, scaled
+  by #444 and only beside the fog as the prior is; it never moves the prior or `priorBlend`): `fogPaceFor`
+  (`src/tools/past-games.ts`, in `livePlanSetup` and `stressOpponents`' callers, so check_plan and the commander
+  check read it too) gives this map's median winner over its games of this format and settings (`mapPaceAt`,
+  `MIN_PACE_GAMES` (3) or more), else my income × the median winner ÷ mine over every map's games of the format
+  (`formatPaceAt`), else none; the warning names the basis (`thinEvidence.pace`). Measured leave-one-out on the
+  calibration inputs (every record so far a loss): 27 of 164 plan estimates rose, 19 closer to truth, geoMean
+  0.600 → 0.609, over-1.5 share unchanged; golden unchanged (no input carries a pace). **A known income (#368,
   `PlanInput.knownIncome`, warapp_plan_turn's and warapp_check_plan's `known_income`, by GameFeed id)**
   replaces that opponent's estimate (`applyKnown`, after Sanctions and the army price; a Reinforcement card
   the clock adds stays on top; `EnemyDeployEstimate.known`), with a warning; `enemy_deploy` wins over it,
@@ -1345,7 +1354,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the game. (2) **The map's record** `<dataDir>/maps-record/<mapId>.json`: games, outcomes, and per game (at most
   `MAX_MAP_ENTRIES`, 50) the format, seats, result, turns, my start region (territories and every bonus they touch,
   `startRegion`), my income curve (by completed turns, at most 60 points) and income after turns 4 and 8, and each
-  winner's start region and income after turns 4 and 8 (the pace to beat); at most `MAX_MAP_RECORDS` (200) maps
+  winner's start region, income curve (#419, as mine; absent on entries kept before it) and income after turns 4
+  and 8 (the pace to beat); at most `MAX_MAP_RECORDS` (200) maps
   by last write; `mapRecordSummary` gives the medians. (3) **The lessons** `<dataDir>/lessons.json`: per format the
   games, outcomes, lost games by cause (`lessonLoss`: `howLost` on the history boards — `commander`,
   `last-territories`, `unknown` — or `surrendered`, `booted`, `still-holding`), the turn my income first went flat
@@ -1358,7 +1368,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   entry's counts stay. Both stores: keyed by `finishedGameKey`, no id, name or clock; 0600, atomic, under the path
   lock; a file that does not parse (or a malformed total) is never overwritten (`failed`).
   **Where they are read (#312 E3, `src/tools/past-games.ts`, read-only, never throws; off with profiling off or no data
-  dir; every view carries `PAST_GAMES_NOTE` and none is a planner input — P1, the golden corpus is unchanged):**
+  dir; every view carries `PAST_GAMES_NOTE` and none is a planner input — P1, the golden corpus is unchanged — save
+  #419's fog pace, `fogPaceFor`, above under thin evidence):**
   `warapp_plan_picks`' `mapRecord` (when the map has a game: games, outcomes, `myStarts` — my results per bonus my start
   touched (`mapRecordStarts`), `inPrimary` when this primary touches it — `winnerStarts`, and `pace.afterTurn4/8`: the
   medians of the winners' and my income; compact lists the first `MAP_RECORD_COMPACT` (8) bonuses; `unreadable` when the

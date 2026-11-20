@@ -116,7 +116,7 @@ import { confidentHabits, counterOf, neighboursOf, readOpponents, type OpponentR
 import { mapOf } from './map.js';
 import { PACE_TURNS } from '../analysis/game-lessons.js';
 import { profileFormatOf } from '../analysis/opponent-profile.js';
-import { mapMatchOf, mapRecordFor, paceView } from './past-games.js';
+import { fogPaceFor, mapMatchOf, mapRecordFor, paceView } from './past-games.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
 import {
@@ -1836,6 +1836,8 @@ export async function livePlanSetup(
     award?: boolean | 'read';
     /** Whether the teams are known (`resolveTeams`); false: the #275 tripwire reads nothing. Default true. */
     teamsKnown?: boolean;
+    /** #419: where `WARAPP_PLAYER_PROFILE` is read for the fog pace; default the process environment. */
+    env?: EnvSource;
   },
 ) {
   const { game, map, me, turn, territories, info, history } = a;
@@ -1930,6 +1932,14 @@ export async function livePlanSetup(
   const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
   // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
   const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
+  // #419: the pace past winners set on this map (else in this format) at this turn: thin evidence's upper bound.
+  const mapPace = await fogPaceFor(
+    ctx.dataDir,
+    a.env,
+    game.settings?.mapId ?? map.id,
+    mapMatchOf(profileFormatOf(game.players), game.settings),
+    turn === null ? null : turn - 1,
+  );
   const gameContext: PlanGameContext = {
     players: game.players.map((p) => ({
       id: p.id,
@@ -1952,6 +1962,7 @@ export async function livePlanSetup(
     ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
     // #166: the opponent's opening simulated from the starts the award proved, as the prior.
     ...(opening ? { opening } : {}),
+    ...(mapPace ? { mapPace } : {}),
     // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
     ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
   };
@@ -2106,6 +2117,8 @@ async function commanderCheck(
     loadAward(ctx.dataDir, a.game, a.me, a.seen, a.turn, { decisionLog: ctx.decisionLog }),
   ]);
   const opening = openingThreat(award, a.game, graph, a.seen, a.turn);
+  // #419: the past winners' pace, as the plan reads it.
+  const mapPace = await fogPaceFor(ctx.dataDir, undefined, a.game.settings?.mapId ?? a.map.id, mapMatchOf(profileFormatOf(a.game.players), a.game.settings), a.turn === null ? null : a.turn - 1);
   // stressOpponents reads a static seat's territories as neutrals (#270), on its own `board` too.
   const so = stressOpponents({
     graph,
@@ -2121,6 +2134,7 @@ async function commanderCheck(
     hand: a.hand,
     info: a.info,
     ...(opening ? { opening } : {}),
+    ...(mapPace ? { mapPace } : {}),
   });
   // #275: an untrusted opponent's reply is sized at least at the figure its tripwire gave it, as
   // warapp_check_plan's stress test tries it (read only: warapp_plan_turn keeps the marks).
@@ -2560,6 +2574,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const siegeMemory = (goal === undefined || goal === 'siege') && ctx.dataDir && turn !== null ? await readSiegeMemory(ctx.dataDir, game.id, me.id) : undefined;
       const setup = await livePlanSetup(ctx, {
         game, map, me, turn, territories, info, history, teamsKnown,
+        ...(opts.env ? { env: opts.env } : {}),
         args: {
           ...(goal !== undefined ? { goal } : {}),
           ...(goal === 'siege' && siege_target !== undefined ? { siegeTarget: siege_target } : {}),

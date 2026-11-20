@@ -98,6 +98,8 @@ function fogPrior(
       ...(opponents > 1 || out.length ? { format: 'ffa' as const, opponents } : {}),
       ...(out.length ? { out } : {}),
       ...(ctx.opening ? { opening: ctx.opening } : {}),
+      // #419: the past winners' pace, thin evidence's upper bound when above the prior.
+      ...(ctx.mapPace ? { winnerPace: ctx.mapPace } : {}),
     },
   };
 }

@@ -355,6 +355,10 @@
 //     its lower bound (visible, tracked, a rising trend's next step) and its upper bound (the fog prior,
 //     else what it could earn), moved toward the lower bound as the coverage nears LOW_COVERAGE
 //     (`thinEvidence`); the warning names both bounds. Unmeasured.
+//     #419 (owner decision of 2026-11-20): with the fog prior on, that upper bound is the larger of the
+//     prior and the pace past winners set at this turn (`PlanGameContext.mapPace`, `FogPace`: this map's
+//     median winner over 3+ games of the format and settings, else my income × the format's median winner ÷
+//     mine), capped and scaled as the prior; the warning names the basis (`thinEvidence.pace`).
 //     In a 1v1 too, so it trades #119's prior back toward tracked figures #119 found 2-3x low:
 //     PRIOR_EVIDENCE_TURNS (4) is unmeasured against a finished 1v1.
 //     #164, exact income: under a fog setting that shows every owner (`OWNERS_SHOWN_FOG`: No, Light

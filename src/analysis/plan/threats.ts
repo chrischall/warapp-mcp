@@ -1061,10 +1061,17 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
               : t.lower === t.tracked
                 ? `~${t.lower} (the tracked figure)`
                 : `~${t.lower} (its visible income; the tracked ~${t.tracked})`;
+          // #419: the upper bound's basis: the past winners' pace (map or format), the prior, or what it could earn.
+          const upperIs =
+            t.pace && t.upper === t.pace.figure
+              ? t.pace.basis === 'map'
+                ? `the median past winner's income after turn ${t.pace.afterTurn} on this map, ${t.pace.games} games of this format and settings (#419)`
+                : `my income × ${t.pace.ratio}, the median past winner's pace against mine after turn ${t.pace.afterTurn} in this format, ${t.pace.games} games (fewer than 3 on this map) (#419)`
+              : t.prior !== null && t.upper === Math.min(e.couldEarn, t.prior)
+                ? 'the fog prior, not shrunk toward the track'
+                : 'the most it could earn';
           const sized = thin
-            ? `it is sized between the lower bound ${lowerIs} and the upper bound ~${t.upper} (${
-                t.prior !== null && t.upper === Math.min(e.couldEarn, t.prior) ? 'the fog prior, not shrunk toward the track' : 'the most it could earn'
-              }): the midpoint ~${t.midpoint}, moved toward what the evidence gives, ~${t.toward}, as more of its frontier is read (${Math.round(t.weight * 100)}% of the way from that to the midpoint)`
+            ? `it is sized between the lower bound ${lowerIs} and the upper bound ~${t.upper} (${upperIs}): the midpoint ~${t.midpoint}, moved toward what the evidence gives, ~${t.toward}, as more of its frontier is read (${Math.round(t.weight * 100)}% of the way from that to the midpoint)`
             : `its lower bound is ${lowerIs.startsWith('~') ? lowerIs.slice(1) : lowerIs}, read from enough of its frontier to plan on it`;
           warnings.push(`Enemy deploy estimate for player ${p}: ~${income} (thin evidence: ${why.join(' and ')}, so ${sized})${withCard}; it could deploy more.`);
           continue;

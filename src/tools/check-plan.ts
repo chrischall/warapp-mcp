@@ -9,7 +9,9 @@ import { z } from 'zod';
 import { stressPlan, type StressDodge, type StressExposure, type StressJoint, type StressReply } from '../analysis/stress.js';
 import { neutralizeSeats, seatTerritories, staticSeats } from '../analysis/static-seats.js';
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
+import { profileFormatOf } from '../analysis/opponent-profile.js';
 import { handOwners } from './card-advice.js';
+import { fogPaceFor, mapMatchOf } from './past-games.js';
 import { sanctionMyIncome } from './card-effects.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand, type Card } from '../cards.js';
 import { claimedCardUses, claimedCardWarning, teamCardClaims, teamHandLeft, unclaimedFirst } from '../team-cards.js';
@@ -201,6 +203,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const board = neutralizeSeats(award?.board ?? seen, seats);
       const opening = openingThreat(award, game, graph, seen, turn);
       const settings = plannerSettings(game.settings);
+      // #419: the past winners' pace, as warapp_plan_turn reads it (thin evidence's upper bound).
+      const mapPace = await fogPaceFor(ctx.dataDir, undefined, game.settings?.mapId ?? map.id, mapMatchOf(profileFormatOf(game.players), game.settings), turn === null ? null : turn - 1);
 
       const deploys: { territoryId: number; armies: number }[] = [];
       const moves: SimOrder[] = [];
@@ -311,6 +315,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         hand,
         info,
         ...(opening ? { opening } : {}),
+        ...(mapPace ? { mapPace } : {}),
         ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
         // #444: the stated incomes scale the other opponents' prior, as warapp_plan_turn has them.
         ...(intel.knownIncome?.length ? { known: intel.knownIncome } : {}),
