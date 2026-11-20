@@ -116,10 +116,16 @@ describe('the breach force (#417)', () => {
   });
 
   it('taken though it sits in a bonus not worth completing (its member is still up for taking)', () => {
-    //   9 ─ 8 ─ 3 ─ 1 ─ 4 ─ 5, 1 ─ 6: bonus B700 (+1) = 4, 6; 6 a neutral of 40 makes it uneconomic.
-    const gb = buildGraph(makeMap([1, 3, 4, 5, 6, 8, 9], [[9, 8], [8, 3], [3, 1], [1, 4], [4, 5], [1, 6]], [[700, 1, [4, 6]]]));
-    const b = board([mine(1, 12), mine(3, 1), fogged(4), fogged(5), neutral(6, 40), mine(8, 20), held(9, 3, A)]);
-    const p = planTurn(input({ graph: gb, board: b }));
+    //   11 ─ 9 ─ 8 ─ 3 ─ 1 ─ 4 ─ 5, 1 ─ 6: bonus B700 (+1) = 4, 6; 6 a neutral of 40 makes it uneconomic.
+    // Player 40 on T11 keeps it a free-for-all, so the 1v1 race (#417) does not take T4: pass 3 must
+    // (`plainEligible`'s vacated clause; without it T4 is skipped as an uneconomic bonus's member).
+    const gb = buildGraph(
+      makeMap([1, 3, 4, 5, 6, 8, 9, 11], [[9, 8], [8, 3], [3, 1], [1, 4], [4, 5], [1, 6], [9, 11]], [[700, 1, [4, 6]]]),
+    );
+    const b = board([mine(1, 12), mine(3, 1), fogged(4), fogged(5), neutral(6, 40), mine(8, 20), held(9, 3, A), held(11, 6, 40)]);
+    const p = planTurn(input({ graph: gb, board: b, game: { players: [...players, { id: 40, state: 'Playing' }], turn: 14 } }));
+    expect(text(p)).toMatch(/Skip bonus B700 \(#700\): uneconomic/);
+    expect(text(p)).not.toMatch(/1v1 race for vacated land/);
     expect(attacksOn(p, 4)).toEqual([expect.objectContaining({ from: 1, armies: 3 })]);
   });
 
