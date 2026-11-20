@@ -146,6 +146,35 @@ describe('guard off (1): a second line inside a held bonus near a big stack (#27
     const p = plan(LINE, b, settings(false, { noSplit: true }), 8);
     expect(p.rationale.join('\n')).not.toContain('Second line (#276)');
   });
+
+  // #421: the strike share holds back captures only. On a flat income of 6 in contact (a 1v1, adapting),
+  // 1 of it is the share; T4 on 10 facing 16 takes 4 of the 6 to hold, and the second line still owes 2
+  // (T1 and T2 both empty). Both are paid: the share never comes out of the second line's shortfall.
+  it('keeps its exact need ahead of the #421 strike share', () => {
+    const b = board([mine(1, 0), mine(2, 0), mine(3, 6), mine(4, 10), enemy(5, 16), enemy(6, 50)]);
+    const run = (flat: boolean) =>
+      planTurn({
+        graph: buildGraph(LINE),
+        board: b,
+        me: ME,
+        income: 6,
+        settings: settings(false),
+        game: { players: [{ id: ME }, { id: ENEMY }], turn: 9 },
+        turn: 9,
+        ...(flat ? { incomeHistory: [5, 6, 7, 8].map((turn) => ({ turn, income: 6 })) } : {}),
+        options: { adapt: true, enemyDeploy: 5 },
+      });
+    const without = run(false);
+    const p = run(true);
+    expect(p.rationale.join('\n')).toMatch(/Strike share \(#421\): 1 of my flat 6 income/);
+    expect(dep(without, 1)).toBe(1);
+    expect(dep(without, 2)).toBe(1);
+    expect(dep(p, 1)).toBe(1);
+    expect(dep(p, 2)).toBe(1);
+    expect(dep(p, 4)).toBe(dep(without, 4));
+    expect(p.warnings.join('\n')).not.toContain('Second line (#276)');
+    valid(LINE, b, settings(false), 6, p);
+  });
 });
 
 // (2) A raid one step deeper, and (3) a free retake.
