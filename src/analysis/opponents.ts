@@ -1552,13 +1552,6 @@ export function incomeJumpText(j: IncomeJump, income: number, earlier: readonly 
 }
 
 /**
- * Per opponent: its observed deploys turn by turn, an income estimate, the armies that must be
- * in the fog and the bonuses that could explain an income gap. Those visible on the newest
- * board come first (by id); given `game`, every other opponent still playing follows (by id),
- * with its received lower bound (#94). `boards` are my views of the same game, any order; only
- * consecutive turns are compared. See the module comment for the rules.
- */
-/**
  * #420: the most armies one of `playerId`'s stacks beside my land grew over one turn (board `before` →
  * `after`): each territory its own on both boards, shown with its armies on both (`visibleState`), and
  * next to a territory of mine on `before`; a stack that shrank or stood still reads 0. `undefined` when
@@ -1580,6 +1573,13 @@ export function borderTopUp(g: MapGraph, before: BoardState, after: BoardState, 
   return most;
 }
 
+/**
+ * Per opponent: its observed deploys turn by turn, an income estimate, the armies that must be
+ * in the fog and the bonuses that could explain an income gap. Those visible on the newest
+ * board come first (by id); given `game`, every other opponent still playing follows (by id),
+ * with its received lower bound (#94). `boards` are my views of the same game, any order; only
+ * consecutive turns are compared. See the module comment for the rules.
+ */
 export function trackOpponents(
   g: MapGraph,
   boards: readonly TurnBoard[],

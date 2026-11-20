@@ -92,7 +92,11 @@ function seatOut(
   const entry = Number.isFinite(loggedTurn) ? log!.turns[String(loggedTurn)] : undefined;
   const head = `${byState.line} The last turn played here was turn ${turn}`;
   if (!entry) return { result, ...byState, turn, line: `${head}; no outlook was logged for it.` };
-  const held = log!.latest && log!.latest.turn === loggedTurn && log!.latest.state !== null ? { state: log!.latest.state, turns: log!.latest.heldTurns } : undefined;
+  const latest = log!.latest;
+  const held =
+    latest && latest.turn === loggedTurn && latest.state !== null
+      ? { state: latest.state, ...(latest.lean ? { lean: latest.lean } : {}), turns: latest.heldTurns }
+      : undefined;
   const f = entry.figures;
   const s = f?.strongest;
   const who = s
@@ -103,11 +107,13 @@ function seatOut(
   const outlook = {
     turn: loggedTurn,
     state: entry.state,
+    // #454: the income lean beside an even state (additive).
+    ...(entry.lean ? { lean: entry.lean } : {}),
     ...(held ? { held } : {}),
     ...(f ? { mine: f.mine } : {}),
     ...(s ? { strongest: { id: s.playerId, ...(s.team !== undefined ? { team: s.team } : {}), name: who, armies: s.armies, income: s.income } } : {}),
   };
-  const read = `${loggedTurn === turn ? 'its outlook' : `the last outlook logged (turn ${loggedTurn})`} read ${entry.state}${held ? ` (held ${held.turns} turn${held.turns === 1 ? '' : 's'})` : ''}`;
+  const read = `${loggedTurn === turn ? 'its outlook' : `the last outlook logged (turn ${loggedTurn})`} read ${entry.lean ? `${entry.state}, leaning ${entry.lean} on the incomes` : entry.state}${held ? ` (held ${held.turns} turn${held.turns === 1 ? '' : 's'})` : ''}`;
   const figures = !f
     ? ' (the armies and income behind it were not logged then)'
     : `: my income ${f.mine.income} and ${f.mine.armies} armies${s ? ` against ${who}'s ${s.income} and ${s.armies} in view` : ', no opponent in view'}`;

@@ -554,6 +554,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   neutral whose only enemy neighbour is that player, or in a bonus it visibly holds over half of, unless it completes
   a bonus of mine or its minimal capture's survivors alone would hold against the stacks beside it plus the owner's
   deploy; a "Not taking … (#441)" line per one beside my land. No avoided player: golden unchanged.
+  #457: a truce partner's neutrals go the same way while an agreement (not only a card) with it is active or in
+  notice, in any format it binds (`Truce.keptWith`, passed to `skirtedNeutrals` as `truce`; the partner counts as an
+  enemy neighbour even when a card makes it no foe): skipped unless the capture completes a bonus of mine — holding
+  next turn is no exemption, since to the partner it reads as a breach either way (`Skirt.truce`) — with a "Not
+  taking … (#457)" line saying to raise it with the partner. A neutral the final orders do take beside a partner's
+  land gets a warning that it "may read as a breach to player P" (`warnTruceNeutrals`, after `finishPlan`). No
+  relations in the golden corpus: all 6253 plans (2000 synthetic + every suite input) byte-identical.
 - **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (docs/PLAN-TEAMS.md
   section 8 B3). `priceTruce` (`src/analysis/relations.ts`, pure) diffs two plans on the exact input
   `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the
@@ -786,7 +793,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   already covers is passed over unless the truce is in notice or leaves a border it presses uncovered; one a
   Diplomacy card in force covers is passed over, unless this is that card's last turn: then it is chained
   first, `chain: true`, and the in-effect warning says it is the last turn and to chain or ready the borders — in a 1v1 only to ready them,
-  `diplomacyOpponents` gating both), Sanctions
+  `diplomacyOpponents` gating both), a Bomb (`bombAdvice`, `src/analysis/card-threats.ts`) never on a territory
+  of a player at peace with me (#452: a Diplomacy card in force — decoded, or the plan's T9 set — or a binding
+  truce; the hold-the-card line names them as passed over), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
   percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
   Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only
@@ -2218,12 +2227,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   range's `low`); when only the calibrated estimate reads behind the lean is `unknown` (`calibratedOnly`). In-sample
   replay (10 lost games, 100 turns): truly-even turns past the crossed line 5/25 → 1/25, truly-behind 42/75 → 29/75,
   games crossed 10 → 9 of 10 (`MIN_CALIBRATION_SAMPLES` stays unmeasured). No lead is claimed at low coverage (any `evidence.thin`): `ahead` reads `unknown`, and a win on
-  the likely high alone is not read (`noLeadClaim`; a win on the bound still is). The lean replaces `even` as the
-  state (winning, losing, stalemate keep their tests; the planner reads only winning and losing), so the state can
-  read `ahead`, `behind`, `unknown`; the chat standing maps them. A turn whose lean replaced `even` carries
-  `strength: 'even'`, and turns even on strength are one run for the hold whatever their leans: the run reports its
-  lean when every turn judged read it, else `even` (a slide reading even, behind, behind holds `even`, and #368's
-  lean behind still reads). `GameOutlook.pace` is the pace line (both incomes
+  the likely high alone is not read (`noLeadClaim`; a win on the bound still is). **#454: the state keeps its four
+  values** (winning, losing, even, stalemate — the tool contract, as #321 kept the chat source's; the planner reads
+  only winning and losing): a lean beside an `even` state is the additive `lean` (`ahead`/`behind`/`unknown`, absent
+  when the state already says it), per outlook turn and on `GameOutlook` — plan_turn's compact and full outlook, the
+  outlook log (per turn and `latest`), `finalOutlookOf`, the surrender preview, how-lost, `MySurrenderDetail`
+  (`outlookLean`) and the decision log (`outlookLean`) carry it. The mapping is exact (a lean only ever replaced an
+  even state), and the internal readers use the finer `readingOf` (lean, else state): the chat standing, the
+  decision log's compaction and truth/accuracy. A log, decision or finished record #453 wrote with the lean as the
+  state reads as `even` with that lean (`splitReading`, on read). Turns even on strength are one run for the hold
+  whatever their leans: the run's `lean` is set when every turn judged read it, else plain `even` (a slide reading
+  even, behind, behind holds `even`, and #368's lean behind still reads). `GameOutlook.pace` is the pace line (both incomes
   and their change per turn) and `surrenderLine` — ADVICE ONLY, the server never acts on it — is present while my
   income is under ⅔ of the strongest estimate, `crossed` after `SURRENDER_TURNS` (3) turns running with no bonus in
   reach closing the gap (`bonusesInReach`: every missing member beside my land, its visible defenders below my

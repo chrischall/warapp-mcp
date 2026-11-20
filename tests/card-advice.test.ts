@@ -105,6 +105,35 @@ describe('adviseCards (#163)', () => {
     expect(turnOrdersArg.safeParse([view.bomb!.order]).success).toBe(true);
   });
 
+  it('#452: never advises a Bomb on a player a Diplomacy card in force or a binding truce keeps at peace with me', () => {
+    const bomb: Card = { id: 'b'.repeat(32), type: 13, name: 'Bomb' };
+    const plan = { deploys: [], moves: [{ from: 4, to: 5, armies: 15, kind: 'attack' as const, reason: '' }], moveSlots: ['last' as const], enemyDeploy: 5, conceded: [] };
+    const territories = [neutral(3, 2), me(4, 20), foe(5, 8), neutral(6, 2)];
+    // Unprotected, T5 is the Bomb's target (the test above).
+    expect(adviseCards(input({ territories, plan, hand: [bomb] })).view.bomb).toMatchObject({ target: 5 });
+    const diplomacy = {
+      $type: 'warlight.shared.LatestGameInfo',
+      s: {
+        $type: 'warlight.shared.GameStanding',
+        a: [{ $type: 'warlight.shared.ActiveCard', c: { $type: 'warlight.shared.GameOrderPlayCardDiplomacy', f0: ME_IN, f1: FOE_IN, g: 'ab'.repeat(16), p: FOE_IN }, e: 4 }],
+      },
+    };
+    const held = (over: Partial<CardAdviceInput>) => {
+      const { view, warnings } = adviseCards(input({ territories, plan, hand: [bomb], ...over }));
+      expect(view.bomb).toMatchObject({ target: null });
+      expect(view.bomb).not.toHaveProperty('order');
+      const w = warnings.join('\n');
+      expect(w).not.toMatch(/Bomb T5/);
+      expect(w).toMatch(/Hold the Bomb: .*Player 7176543229 is passed over: you are at peace with it/);
+    };
+    // A Diplomacy card in force, read from the board.
+    held({ info: diplomacy });
+    // The plan's T9 enforced set alone (the decoder sure of the card).
+    held({ enforced: new Set([FOE.id]) });
+    // A binding truce (in notice) whose covered territories do not even name T5: the partner is at peace with me.
+    held({ truces: [{ player: FOE.id, state: 'notice', coveredMine: [4], endsTurn: 6 }] });
+  });
+
   it('reads Diplomacy and Sanctions in effect: attacks on a protected player do nothing, Sanctions cut my income', () => {
     const order = (kind: string, ...ints: number[]) => ({
       $type: `warlight.shared.GameOrderPlayCard${kind}`,

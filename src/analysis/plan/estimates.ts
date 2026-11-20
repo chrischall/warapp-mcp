@@ -427,8 +427,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   const withSiege: typeof truce = held
     ? { ...truce, siegeHeld: (t: number) => heldLand.has(t), noTarget: (t: number) => truce.noTarget(t) || heldLand.has(t) }
     : truce;
-  // #441: the neutrals an avoided player is visibly collecting are no targets either.
-  const skirted = skirtedNeutrals({ ...input, board }, { foe, deployOf, settings: s });
+  // #441: the neutrals an avoided player is visibly collecting are no targets either; #457: nor a truce partner's.
+  const skirted = skirtedNeutrals({ ...input, board }, { foe, deployOf, settings: s, ...(truce.keptWith ? { truce: truce.keptWith } : {}) });
   const truceNow: typeof truce = skirted.size
     ? {
         ...withSiege,
@@ -968,12 +968,16 @@ export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
     rationale.push(
       `Multi-attack is on: the plan does not chain its own attacks from captured territories, but an enemy stack's chain — a capture, then the survivors on from it, through territories not mine — counts as a threat to the territory of mine, or the capture, it reaches (luck-free, at most ${CHAIN_MAX_STEPS} attacks deep).`,
     );
-  // #441: a neutral skipped for an avoided player, beside my land (one the plan could reach this turn).
+  // #441: a neutral skipped for an avoided player, beside my land (one the plan could reach this turn); #457: or a truce partner.
   for (const [n, k] of ctx.truce.skirted ?? [])
-    if (neighborsOf(ctx.g, n).some((x) => ctx.mineSet.has(x)))
+    if (neighborsOf(ctx.g, n).some((x) => ctx.mineSet.has(x))) {
+      const why = k.why === 'stack' ? `its only enemy neighbour is player ${k.player}` : `it sits in a bonus player ${k.player} visibly holds most of`;
       rationale.push(
-        `Not taking ${ctx.label(n)}: ${k.why === 'stack' ? `its only enemy neighbour is player ${k.player}` : `it sits in a bonus player ${k.player} visibly holds most of`}, whom the plan avoids, and its capture would not hold next turn, so taking it would only provoke that player (#441).`,
+        k.truce
+          ? `Not taking ${ctx.label(n)}: ${why}, with whom a truce binds you, and taking it may read as a breach to player ${k.player} — raise it with player ${k.player} instead (it is taken only when it completes a bonus of mine) (#457).`
+          : `Not taking ${ctx.label(n)}: ${why}, whom the plan avoids, and its capture would not hold next turn, so taking it would only provoke that player (#441).`,
       );
+    }
   if (noSplit) {
     rationale.push(
       'No-Split: each territory issues at most one attack or transfer this turn, and it sends the whole stack (every army there, this turn\'s deploys included, less the guard); a territory that would split keeps its first (best) order, and one that must hold issues none.',

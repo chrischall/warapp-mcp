@@ -45,9 +45,9 @@ export function standingFromOutlook(log: OutlookLog | undefined): ChatStandingRe
     const latest = log?.latest;
     if (!log || !latest || typeof latest.turn !== 'number') return null;
     const t = log.turns?.[String(latest.turn)];
-    const state = latest.state ?? t?.state ?? null;
+    // #436 / #454: the income lean (beside an even state, or — in a log #453 wrote — in it) reads ahead, behind or unknown.
+    const state: string | null = latest.state ? (latest.lean ?? latest.state) : (t?.lean ?? t?.state ?? null);
     if (!state) return null;
-    // #436: the income lean reads ahead, behind or unknown where the strength ratio read even.
     const standing =
       state === 'winning' || state === 'ahead' ? 'ahead' : state === 'losing' || state === 'behind' ? 'behind' : state === 'unknown' ? 'unknown' : 'even';
     const figures = t?.figures;

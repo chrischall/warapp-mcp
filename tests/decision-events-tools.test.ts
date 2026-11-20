@@ -136,7 +136,8 @@ describe('mySurrenderDetail (#437 task 2)', () => {
     expect(mySurrenderDetail('pending', undefined)).toEqual({ status: 'pending', income: null, strongest: null, outlook: null, outlookTurn: null });
     const latest = {
       turn: 7,
-      state: 'behind' as const,
+      state: 'even' as const,
+      lean: 'behind' as const,
       heldTurns: 3,
       basis: 'x',
       evidence: {
@@ -152,7 +153,8 @@ describe('mySurrenderDetail (#437 task 2)', () => {
       status: 'surrendered',
       income: 9,
       strongest: { player: 5, income: 30, source: 'tracked', thin: false },
-      outlook: 'behind',
+      outlook: 'even',
+      outlookLean: 'behind',
       outlookTurn: 7,
     });
   });

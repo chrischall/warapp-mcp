@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { GameOutlook } from '../src/analysis/outlook.js';
-import { finalOutlookOf, outlookLogPath, readOutlookLog, recordFinalResult, recordOutlook, recordResult } from '../src/outlook-log.js';
+import { contractFinalOutlook, finalOutlookOf, outlookLogPath, readOutlookLog, recordFinalResult, recordOutlook, recordResult } from '../src/outlook-log.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -48,7 +48,8 @@ describe('outlook log (#178)', () => {
   });
 
   it('#436: keeps each turn\'s incomes and lean, and the surrender line on the latest (figures only)', async () => {
-    const o = outlook(7, 'behind');
+    const o = outlook(7, 'even');
+    o.lean = 'behind';
     o.turns[0] = {
       ...o.turns[0]!,
       income: {
@@ -58,7 +59,8 @@ describe('outlook log (#178)', () => {
         calibrated: true,
         lean: 'behind',
       },
-      state: 'behind',
+      state: 'even',
+      lean: 'behind',
     };
     o.surrenderLine = {
       crossed: true,
@@ -75,6 +77,39 @@ describe('outlook log (#178)', () => {
     const log = await readOutlookLog(dir, 7001, 1001);
     expect(log?.turns['7']?.income).toEqual({ mine: 5, low: 9, high: 14, estimate: 12, lean: 'behind', calibrated: true });
     expect(log?.latest?.surrenderLine).toEqual({ crossed: true, turnsBelow: 3, line: 8 });
+    // #454: the state keeps its four values; the income reading is the additive `lean`, per turn and on the latest.
+    expect(log?.turns['7']).toMatchObject({ state: 'even', lean: 'behind' });
+    expect(log?.latest).toMatchObject({ state: 'even', lean: 'behind' });
+    expect(finalOutlookOf(log!)).toMatchObject({ state: 'even', lean: 'behind' });
+  });
+
+  it('#454: reads a log written with ahead, behind or unknown as the state (#453, a few hours) as even with that lean', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(join(dir, 'outlook'), { recursive: true });
+    const old = {
+      gameId: 7003,
+      playerId: 1001,
+      turns: {
+        '5': { mine: 40, low: 20, high: 30, ratio: { low: 1.33, high: 2 }, state: 'behind' },
+        '6': { mine: 40, low: 20, high: 30, ratio: { low: 1.33, high: 2 }, state: 'unknown' },
+        '7': { mine: 40, low: 20, high: 30, ratio: { low: 1.33, high: 2 }, state: 'stalemate' },
+      },
+      latest: { turn: 6, state: 'ahead', heldTurns: 3, basis: 'b' },
+    };
+    await writeFile(outlookLogPath(dir, 7003), JSON.stringify(old));
+    const log = (await readOutlookLog(dir, 7003, 1001))!;
+    expect(log.turns['5']).toMatchObject({ state: 'even', lean: 'behind' });
+    expect(log.turns['6']).toMatchObject({ state: 'even', lean: 'unknown' });
+    expect(log.turns['7']).toEqual(old.turns['7']);
+    expect(log.latest).toMatchObject({ state: 'even', lean: 'ahead' });
+    expect(finalOutlookOf(log)).toMatchObject({ turn: 6, state: 'even', lean: 'ahead' });
+    // A finished record's final outlook #453 wrote reads alike; a contract one is left as it is.
+    expect(contractFinalOutlook({ turn: 6, state: 'unknown' as never, heldTurns: 3 })).toEqual({ turn: 6, state: 'even', lean: 'unknown', heldTurns: 3 });
+    expect(contractFinalOutlook({ turn: 6, state: 'losing', heldTurns: 3 })).toEqual({ turn: 6, state: 'losing', heldTurns: 3 });
+    // Rewritten in the new shape on the next record.
+    await recordOutlook(dir, 7003, 1001, outlook(8, 'even'));
+    const raw = JSON.parse(await readFile(outlookLogPath(dir, 7003), 'utf8')) as { turns: Record<string, { state: string; lean?: string }> };
+    expect(raw.turns['5']).toMatchObject({ state: 'even', lean: 'behind' });
   });
 
   it('#283: keeps each turn\'s armies and income, mine and the strongest side\'s, with its id (name-free)', async () => {
@@ -158,15 +193,19 @@ describe('outlook log (#178)', () => {
 describe('#436: the chat standing read from the outlook log', () => {
   it('maps the income lean: ahead and behind as the standing, unknown as unknown', async () => {
     const { standingFromOutlook } = await import('../src/tools/chat-advice.js');
-    const log = (state: GameOutlook['state']) => ({
+    const log = (state: GameOutlook['state'], lean?: GameOutlook['lean']) => ({
       gameId: 1,
       playerId: 2,
-      turns: { '5': { mine: 40, low: 20, high: 30, ratio: { low: 1.33, high: 2 }, state: state ?? 'even' } },
-      latest: { turn: 5, state, heldTurns: 3, basis: '' },
+      turns: { '5': { mine: 40, low: 20, high: 30, ratio: { low: 1.33, high: 2 }, state: state ?? 'even', ...(lean ? { lean } : {}) } },
+      latest: { turn: 5, state, ...(lean ? { lean } : {}), heldTurns: 3, basis: '' },
     });
-    expect(standingFromOutlook(log('ahead'))?.standing).toBe('ahead');
-    expect(standingFromOutlook(log('behind'))?.standing).toBe('behind');
-    expect(standingFromOutlook(log('unknown'))?.standing).toBe('unknown');
+    // #454: the lean rides beside an even state.
+    expect(standingFromOutlook(log('even', 'ahead'))?.standing).toBe('ahead');
+    expect(standingFromOutlook(log('even', 'behind'))?.standing).toBe('behind');
+    expect(standingFromOutlook(log('even', 'unknown'))?.standing).toBe('unknown');
+    expect(standingFromOutlook(log('even'))?.standing).toBe('even');
     expect(standingFromOutlook(log('stalemate'))?.standing).toBe('even');
+    // A log written with the lean as the state (#453) still reads.
+    expect(standingFromOutlook(log('behind' as GameOutlook['state']))?.standing).toBe('behind');
   });
 });
