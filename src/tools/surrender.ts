@@ -15,6 +15,8 @@ import { gameIdArg, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from '
 import { noBrowserNote } from './session.js';
 import { mintMeta } from './hints.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
+import { captureGameEvent, mySurrenderDetail, turnOfGame } from './decision-capture.js';
+import type { MySurrenderDetail } from '../decision-log.js';
 import { defineGatedWrite, mySeat, refuse, requireMe, requirePlaying, sendAndVerify, worded } from './write-kit.js';
 
 const PLAYING = 'Playing';
@@ -39,6 +41,8 @@ interface SurrenderState {
    * `null` when the setting is unread and more than two players are in (it may be needed).
    */
   acceptanceNeeded: boolean | null;
+  /** #437: the turn and what the outlook log held at the preview, for the decision log's event. */
+  logged?: { turn: number; detail: Omit<MySurrenderDetail, 'status'> };
 }
 
 /** #178: opponents close to a boot are listed when the nearest boot is this close (a day). */
@@ -212,13 +216,20 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
               untrusted: UNTRUSTED_PREVIEW_NOTE,
             },
           },
-          state: { gameId, name, me, undo: takeBack, acceptanceNeeded: acceptance.needed } satisfies SurrenderState,
+          state: {
+            gameId,
+            name,
+            me,
+            undo: takeBack,
+            acceptanceNeeded: acceptance.needed,
+            logged: { turn: turnOfGame(game), detail: (({ status: _s, ...rest }) => rest)(mySurrenderDetail('pending', log)) },
+          } satisfies SurrenderState,
         };
       },
-      async execute({ gameId, name, me, undo, acceptanceNeeded }: SurrenderState) {
+      async execute({ gameId, name, me, undo, acceptanceNeeded, logged }: SurrenderState) {
         await requireApprovedAccount(ctx, writeAccount(me));
         const game = { id: gameId, name };
-        return sendAndVerify({
+        const result = await sendAndVerify({
           send: async () => {
             await ctx.rpc.call('Surrender', Method.Surrender, (w) => writeSurrenderParams(w, { gameId, surrender: !undo }));
           },
@@ -281,6 +292,11 @@ export function registerSurrenderTool(server: McpServer, ctx: LiveContext): void
             };
           },
         });
+        // #437: my surrender, once war.app shows it taken (accepted, or pending the others), into the decision log.
+        if (!undo && logged && (result.status === 'surrendered' || result.status === 'pending')) {
+          await captureGameEvent(ctx, gameId, me, { turn: logged.turn, kind: 'my-surrender', detail: { status: result.status, ...logged.detail } }, { create: true });
+        }
+        return result;
       },
     },
   );

@@ -3,6 +3,7 @@ import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Writer } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { OPEN_GAMES_URL } from '../src/open-games.js';
+import { readDecisionLog } from '../src/decision-log.js';
 import { UNTRUSTED_PREVIEW_NOTE } from '../src/tools/common.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { encodeStartupBytes } from '../src/join-color.js';
@@ -233,6 +234,33 @@ describe('warapp_join_game', () => {
     expect(s.sent).toEqual([{ gameId: 3001, colour: 5, team: -1, slot: false, modHook: false, left: 0 }]);
     expect(p).toMatchObject({ status: 'joined', game: { id: 3001, name: 'Plain FFA' } });
     expect(p.outcome).toBe('confirmed');
+  });
+
+  it('#437: keeps the join context in the decision log once confirmed: settings key, flags and the policy checks by code', async () => {
+    const s = joinServer();
+    h = await harness({ warapp: s.warapp, feed: [feedGame(3001, true)] });
+    expect(payload(await confirmed('warapp_join_game', { game_id: 3001 })).outcome).toBe('confirmed');
+    const log = (await readDecisionLog(h.dataDir, 3001))!;
+    expect(log.playerId).toBe(Number(ME.feed));
+    expect(log.join).toEqual({
+      at: expect.any(String),
+      settingsKey: expect.stringMatching(/^sha256:[0-9a-f]{16}$/),
+      flags: expect.objectContaining({ format: 'ffa', seats: 3, killRates: expect.any(Object), cards: expect.any(Array) }),
+      policy: {
+        passes: expect.anything(),
+        broke: expect.any(Array),
+        passed: expect.arrayContaining(['commerce', 'mods', 'custom-scenario', 'seats']),
+        unchecked: expect.any(Array),
+      },
+    });
+    expect(JSON.stringify(log)).not.toMatch(/Plain FFA|\bHost\b|\bMe\b/);
+  });
+
+  it('#437: an unconfirmed join keeps no join context', async () => {
+    const s = joinServer(undefined, { [Method.GetMyGames]: () => ({ body: (w) => w.bool(false) }) });
+    h = await harness({ warapp: s.warapp, feed: [feedGame(3001, false)] });
+    await confirmed('warapp_join_game', { game_id: 3001 });
+    expect((await readDecisionLog(h.dataDir, 3001))?.join).toBeUndefined();
   });
 
   it('says the join is unconfirmed when neither GameFeed nor my games lists the account', async () => {

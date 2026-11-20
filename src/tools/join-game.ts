@@ -20,6 +20,9 @@ import {
 import { WarappServerError } from '../protocol/rpc.js';
 import { gameIdArg, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { noBrowserNote } from './session.js';
+import { captureJoin, joinContextLog } from './decision-capture.js';
+import type { JoinContext } from '../decision-log.js';
+import type { Game } from '../normalize.js';
 import { mintMeta } from './hints.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
@@ -71,6 +74,8 @@ interface JoinState {
   color: number;
   /** The account the plan checked and the gate bound (its GameFeed id). */
   account: string;
+  /** #437: the lobby's join context, kept in the decision log once the join is confirmed. */
+  join?: JoinContext;
 }
 
 /** The open game `gameId`, refused when it cannot (or should not) be joined. */
@@ -189,13 +194,13 @@ function joinColor(
  * The lobby's screen from its GameFeed settings (#132): the open-games record carries no neutral
  * sizes or fog, GameFeed does. Best effort — a failed read leaves the preview without a screen.
  */
-async function lobbyScreen(ctx: LiveContext, gameId: number): Promise<{ screen: JoinScreen | null; gaps: string[]; note?: string }> {
+async function lobbyScreen(ctx: LiveContext, gameId: number): Promise<{ screen: JoinScreen | null; gaps: string[]; note?: string; game?: Game }> {
   try {
     const game = await ctx.client.getGame(gameId, { settings: true, map: false });
     const { screen, gaps } = feedScreen(game.settings ?? { cards: [], raw: {} });
     return screen
-      ? { screen, gaps }
-      : { screen: null, gaps, note: "GameFeed's settings name no neutral size, so the neutral-cost screen was skipped." };
+      ? { screen, gaps, game }
+      : { screen: null, gaps, game, note: "GameFeed's settings name no neutral size, so the neutral-cost screen was skipped." };
   } catch (e) {
     return {
       screen: null,
@@ -343,10 +348,11 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
             team,
             color,
             account: String(token),
+            join: joinContextLog(game, screened.game, screened.screen),
           } satisfies JoinState,
         };
       },
-      async execute({ gameId, name, url, team, color, account }: JoinState) {
+      async execute({ gameId, name, url, team, color, account, join }: JoinState) {
         await requireApprovedAccount(ctx, account);
         const game = { id: gameId, name, url };
         let vacationEnded = false;
@@ -360,7 +366,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
             'war.app accepted the join, but neither GameFeed nor your games list shows you in the game yet, so ' +
             'this could not confirm it. Check warapp_my_games shortly.',
         });
-        return sendAndVerify({
+        const result = await sendAndVerify({
           send: async () => {
             const env = await ctx.rpc.call('AcceptOpenSeat', Method.AcceptOpenSeat, (w) =>
               writeAcceptOpenSeatParams(w, { gameId, team, color }),
@@ -386,6 +392,9 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
           unreadable: () => notShown(),
           classify: (seated) => (seated ? { status: 'joined' as const, outcome: 'confirmed' as const, game, ...extra() } : notShown()),
         });
+        // #437: the lobby joined, once confirmed, into the game's decision log (name-free).
+        if (result.outcome === 'confirmed' && join) await captureJoin(ctx, gameId, Number(account), join);
+        return result;
       },
     },
   );

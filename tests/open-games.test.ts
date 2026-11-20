@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Reader, Writer } from '../src/protocol/codec.js';
 import type { ReadBudget } from '../src/protocol/interp.js';
 import { WarappBundle } from '../src/protocol/bundle.js';
-import { feedScreen, filterOpenGames, joiningPolicy, GAME_INFO, GUARD_OFF_RULE, lotteryOf, LOTTERY_MAX_TERRITORIES, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, OpenGamesFormatError, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
+import { feedScreen, filterOpenGames, joiningPolicy, policyChecks, GAME_INFO, GUARD_OFF_RULE, lotteryOf, LOTTERY_MAX_TERRITORIES, markJoined, MAX_OPEN_GAMES, OPEN_GAMES_URL, OpenGamesFormatError, parseOpenGamesPage, type OpenGame } from '../src/open-games.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { MY_GAMES_BUNDLE, writeGameInfo, type SyntheticGame } from './protocol/my-games-bundle.js';
 
@@ -686,6 +686,18 @@ describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
     seats: 2, teamGame: false, mapId: 1, entryFeeCoins: 0, prizeCoins: 0, rules: [], plannerGaps: [], ...over,
   });
   const cheap = { cheapestNeutral: 2, armiesToTake: 3, baseIncome: 5, turnsOfBaseIncome: 0.6, passes: true };
+
+  it('#437: policyChecks gives the same verdict by code: broken, passed and unchecked', () => {
+    expect(policyChecks(plain(), cheap)).toEqual({
+      passes: true,
+      broke: [],
+      passed: ['commerce', 'mods', 'custom-scenario', 'neutral-cost', 'seats', 'boot-time', 'lottery'],
+      unchecked: [],
+    });
+    const r = policyChecks(plain({ rules: ['Mods'], seats: 6, lottery: null }));
+    expect(r).toEqual({ passes: false, broke: ['mods', 'seats', 'lottery'], passed: ['commerce', 'custom-scenario', 'boot-time'], unchecked: ['neutral-cost'] });
+    expect(policyChecks(plain()).passes).toBeNull();
+  });
 
   it('a 1v1 with a day\'s boot and cheap neutrals passes', () => {
     expect(joiningPolicy(plain(), cheap)).toEqual({ passes: true, breaks: [] });

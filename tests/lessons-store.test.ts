@@ -17,6 +17,8 @@ import {
   readLessons,
   readMapRecord,
   recordLessons,
+  recordLessonsExcluded,
+  recordMapExcluded,
   recordMapGame,
   type LessonEntry,
   type MapEntry,
@@ -224,5 +226,103 @@ describe('the read-only views (#312 E3)', () => {
       },
       calibration: { 'under-25': { n: 4, mean: 0.5, geoMean: 0.46, low: 0.5, high: 0 } },
     });
+  });
+});
+
+describe('#437: lottery and no-show games counted apart', () => {
+  it('the map record keeps them out of its games and entries, counted once each, and takes back a game counted before', async () => {
+    const dir = tmp();
+    await recordMapGame(dir, 9, mapEntry(1));
+    await recordMapGame(dir, 9, mapEntry(2, { result: 'won' }));
+    expect(await recordMapExcluded(dir, 9, key(3), 'lottery')).toBe('excluded');
+    expect(await recordMapExcluded(dir, 9, key(3), 'lottery')).toBe('excluded');
+    // Game 2 was counted, then read as a no-show: its share comes out.
+    expect(await recordMapExcluded(dir, 9, key(2), 'no-show')).toBe('excluded');
+    const rec = await readMapRecord(dir, 9);
+    if (rec === 'unreadable') throw new Error('unreadable');
+    expect(rec.games).toBe(1);
+    expect(rec.outcomes).toEqual({ eliminated: 1 });
+    expect(rec.entries.map((e) => e.key)).toEqual([key(1)]);
+    expect(rec.excluded).toEqual({ lottery: 1, noShow: 1, keys: [{ key: key(3), kind: 'lottery' }, { key: key(2), kind: 'no-show' }] });
+    expect(mapRecordSummary(rec).excluded).toEqual({ lottery: 1, noShow: 1 });
+    // Counted again later (read as a normal game): out of the excluded counts.
+    await recordMapGame(dir, 9, mapEntry(3));
+    const again = await readMapRecord(dir, 9);
+    if (again === 'unreadable') throw new Error('unreadable');
+    expect(again.excluded).toEqual({ lottery: 0, noShow: 1, keys: [{ key: key(2), kind: 'no-show' }] });
+    expect(again.games).toBe(2);
+  });
+
+  it('the lessons keep them out of every total, counted once each, and take back a game counted before', async () => {
+    const dir = tmp();
+    await recordLessons(dir, lesson(1));
+    await recordLessons(dir, lesson(2, { result: 'won', howLost: null }));
+    expect(await recordLessonsExcluded(dir, key(2), 'lottery')).toBe('excluded');
+    expect(await recordLessonsExcluded(dir, key(4), 'no-show')).toBe('excluded');
+    expect(await recordLessonsExcluded(dir, key(4), 'no-show')).toBe('excluded');
+    const file = await readLessons(dir);
+    if (file === 'unreadable') throw new Error('unreadable');
+    expect(file.byFormat.ffa).toMatchObject({ games: 1, outcomes: { eliminated: 1 } });
+    expect(file.entries.map((e) => e.key)).toEqual([key(1)]);
+    expect(file.excluded).toEqual({ lottery: 1, noShow: 1, keys: [{ key: key(2), kind: 'lottery' }, { key: key(4), kind: 'no-show' }] });
+    expect(lessonsSummary(file)).toMatchObject({ games: 1, excluded: { lottery: 1, noShow: 1 } });
+  });
+
+  it('a malformed excluded block makes the store unreadable (never overwritten); old files without it still read', async () => {
+    const dir = tmp();
+    writeFileSync(lessonsPath(dir), JSON.stringify({ version: 1, byFormat: {}, entries: [], excluded: { lottery: 'x' } }));
+    expect(await readLessons(dir)).toBe('unreadable');
+    expect(await recordLessonsExcluded(dir, key(1), 'lottery')).toBe('failed');
+    const old = tmp();
+    writeFileSync(lessonsPath(old), JSON.stringify({ version: 1, byFormat: {}, entries: [] }));
+    expect(await readLessons(old)).toEqual({ version: 1, byFormat: {}, entries: [] });
+  });
+
+  it('entries keep their kinds and settings', async () => {
+    const dir = tmp();
+    await recordMapGame(dir, 4, mapEntry(1, { kinds: ['team'], settings: { key: 'sha256:0123456789abcdef', localDeployments: true, commanders: false } }));
+    await recordLessons(dir, lesson(1, { kinds: ['legacy'] }));
+    const rec = await readMapRecord(dir, 4);
+    const file = await readLessons(dir);
+    if (rec === 'unreadable' || file === 'unreadable') throw new Error('unreadable');
+    expect(rec.entries[0]).toMatchObject({ kinds: ['team'], settings: { key: 'sha256:0123456789abcdef', localDeployments: true, commanders: false } });
+    expect(file.entries[0]!.kinds).toEqual(['legacy']);
+  });
+});
+
+describe('#437: the map record filtered by the game\'s format and settings', () => {
+  const rec = {
+    version: 1 as const,
+    mapId: 7,
+    games: 4,
+    outcomes: { eliminated: 2, won: 2 },
+    entries: [
+      mapEntry(1, { format: 'ffa', seats: 4, winners: [{ territories: [6], bonuses: [200], income4: 20, income8: 40 }] }),
+      mapEntry(2, { format: 'team', seats: 4, result: 'won', winners: [{ territories: [1], bonuses: [100], income4: 6, income8: 10 }], settings: { key: null, localDeployments: true, commanders: false } }),
+      mapEntry(3, { format: 'team', seats: 4, result: 'won', winners: [{ territories: [1], bonuses: [300], income4: 8, income8: 12 }], settings: { key: null, localDeployments: false } }),
+      mapEntry(4, { format: 'team', seats: 4, winners: [{ territories: [1], bonuses: [400], income4: 10, income8: 14 }] }),
+    ],
+  };
+  it('without a filter: every entry, as before', () => {
+    expect(mapRecordSummary(rec)).toEqual({
+      games: 4,
+      outcomes: { eliminated: 2, won: 2 },
+      pace: { winners: { income4: 9, income8: 13 }, mine: { income4: 8, income8: 9 } },
+    });
+  });
+  it('by format: only that format\'s entries, with how many matched', () => {
+    const s = mapRecordSummary(rec, { format: 'team' });
+    expect(s).toEqual({
+      games: 3,
+      outcomes: { won: 2, eliminated: 1 },
+      pace: { winners: { income4: 8, income8: 12 }, mine: { income4: 8, income8: 9 } },
+      matched: { by: { format: 'team' }, entries: 3, of: 4, settingsUnknown: 0 },
+    });
+  });
+  it('by Local Deployment and Commanders too: an entry that kept no such flag matches, counted as unknown', () => {
+    const s = mapRecordSummary(rec, { format: 'team', localDeployments: true, commanders: false });
+    expect(s.matched).toEqual({ by: { format: 'team', localDeployments: true, commanders: false }, entries: 2, of: 4, settingsUnknown: 1 });
+    expect(s.games).toBe(2);
+    expect(mapRecordStarts(rec, { format: 'team', localDeployments: true }).winners.map((w) => w.bonusId)).toEqual([100, 400]);
   });
 });

@@ -268,6 +268,8 @@ export class WarappClient {
   readonly #env: EnvSource | undefined;
   readonly #cache: MapCache;
   readonly #dataDir: (() => string | undefined) | undefined;
+  /** #437: called with every game read (the decision log's seat capture); never fails a read. */
+  readonly #gameObservers: ((game: Game) => unknown)[] = [];
   readonly #api: ApiClient;
   /** The same client with no retry, for a request that must go out at most once (`noRetry`). */
   readonly #apiOnce: ApiClient;
@@ -400,7 +402,19 @@ export class WarappClient {
     }
     // #302: what came instead of a history that does not read, by key name only.
     if (opts.history) game.feedKeys = safeKeys(Object.keys(body));
+    for (const observe of this.#gameObservers) {
+      try {
+        await observe(game);
+      } catch {
+        // An observer never fails the read.
+      }
+    }
     return game;
+  }
+
+  /** #437: call `fn` with every game this client reads (awaited, its failures swallowed). */
+  observeGames(fn: (game: Game) => unknown): void {
+    this.#gameObservers.push(fn);
   }
 
   /** Keep the territories read for a map's distribution modes (#328) on the cached map and in the store. */

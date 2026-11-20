@@ -2,7 +2,7 @@
 // warapp_submit_turn takes) is carried out on the live board against the single replies each
 // opponent could make with its estimated deploy, and the replies that cost something are
 // reported, worst first (src/analysis/stress.ts, on the turn resolver src/analysis/turn-sim.ts).
-// Read-only on war.app, and it writes nothing: not the board cache either.
+// Read-only on war.app, and it writes nothing but its verdict to the decision log (#437): not the board cache.
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -43,6 +43,7 @@ import { resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
 import { COMMANDER_SIZING, commanderCheckOn } from './commander-check.js';
+import { captureCheck, checkPlanLog } from './decision-capture.js';
 import type { CardPlayKind } from '../protocol/methods.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -193,7 +194,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // As warapp_plan_turn does (#166): the opponent's starts the award of picks proves stand on
       // the board the orders are tried on; the history and tracks stay what war.app showed.
       const seen = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
-      const award = await loadAward(ctx.dataDir, game, me, seen, turn);
+      const award = await loadAward(ctx.dataDir, game, me, seen, turn, { decisionLog: ctx.decisionLog });
       // #270: a player out of the game whose seat no AI plays deploys and attacks nothing: its
       // territories are neutrals here (static armies), and it is tried as no opponent.
       const seats = staticSeats(game.players, game.endRules, me.id);
@@ -406,6 +407,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         cardTargets,
       });
       const guard = checked?.safety;
+      // #437: the decision log keeps this check's verdict for the turn (the latest run wins). Writes only the
+      // log, never the board cache. A what-if (enemy_deploy or known_income given) is marked so.
+      if (turn !== null)
+        await captureCheck(ctx, game.id, me.id, turn, checkPlanLog(report, { whatIf: enemy_deploy !== undefined || known_income !== undefined }));
 
       const name = namer(map);
       const playerName = new Map(game.players.map((p) => [p.id, p.name]));

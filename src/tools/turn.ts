@@ -112,7 +112,8 @@ import { recordProfile } from './profile-hook.js';
 import { confidentHabits, counterOf, neighboursOf, readOpponents, type OpponentRead } from './profile-reads.js';
 import { mapOf } from './map.js';
 import { PACE_TURNS } from '../analysis/game-lessons.js';
-import { mapRecordFor, paceView } from './past-games.js';
+import { profileFormatOf } from '../analysis/opponent-profile.js';
+import { mapMatchOf, mapRecordFor, paceView } from './past-games.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
 import {
@@ -141,8 +142,8 @@ import { cardArmyCeiling, cardClock } from '../strategy/card-clock.js';
 import { hasCostlyBonus, noteContext, notesFor } from '../strategy/notes.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
-import { capturePlan, captureObservation, captureSent } from './decision-capture.js';
-import { scrubNames, type LoggedSent, type SentOrders } from '../decision-log.js';
+import { bootTimes, capturePlan, captureObservation, captureSent, cardAdviceLog, handLog, submitChecksLog } from './decision-capture.js';
+import { scrubNames, type LoggedSent, type SentOrders, type SubmitChecks } from '../decision-log.js';
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
@@ -444,6 +445,8 @@ interface TurnState {
   commanderRisk?: CommanderRisk;
   /** #412: who chose orders that differ from the plan, and why (names already scrubbed), for the decision log. */
   override?: { by?: 'hand' | 'agent'; reason?: string };
+  /** #437: what the preview checked on these orders, for the decision log. */
+  checks?: SubmitChecks;
 }
 
 /**
@@ -1807,7 +1810,7 @@ export async function livePlanSetup(
   // pick list proves, where they are still fogged.
   const seen = withTeammateOrders(boardStateFromLive(territories, me, game.players), info, me, game.players);
   const write = a.award !== 'read';
-  const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn, { write });
+  const award = a.award === false ? undefined : await loadAward(ctx.dataDir, game, me, seen, turn, { write, decisionLog: ctx.decisionLog });
   const board = award?.board ?? seen;
   const opening = openingThreat(award, game, graph, seen, turn);
   // #127: who moves first — first_mover, else a turn kept for this game alternated, else the award.
@@ -2056,7 +2059,7 @@ async function commanderCheck(
   const settings = plannerSettings(a.game.settings);
   const [history, award] = await Promise.all([
     boardHistory(ctx, a.game, a.me, a.turn, { cacheOnly: true }),
-    loadAward(ctx.dataDir, a.game, a.me, a.seen, a.turn),
+    loadAward(ctx.dataDir, a.game, a.me, a.seen, a.turn, { decisionLog: ctx.decisionLog }),
   ]);
   const opening = openingThreat(award, a.game, graph, a.seen, a.turn);
   // stressOpponents reads a static seat's territories as neutrals (#270), on its own `board` too.
@@ -2576,26 +2579,6 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const reads = turn !== null && teamsKnown ? await contactReads(ctx, opts.env ?? process.env, game, me, [...history.boards, { turn, board: seen }], graph, seen) : undefined;
       if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
-      // #412: the decision log — this turn's decision (a what-if plan is only an observation of the board,
-      // never the turn's decision), and the previous turn's outcome from this board and income.
-      if (ctx.dataDir && turn !== null) {
-        if (whatIf) await captureObservation(ctx, game.id, me.id, [{ turn, board: seen, source: 'live' }]);
-        else
-          await capturePlan(ctx, {
-            gameId: game.id,
-            me: me.id,
-            turn,
-            board: seen,
-            plannedBoard: setup.input.board,
-            input: setup.input,
-            plan,
-            outlookState: outlook.state,
-            estimates,
-            graph,
-            income: income - cards.extraArmies,
-            players: game.players,
-          });
-      }
       // #382: this siege turn joins the memory (not on an enemy_deploy what-if; planning the turn again replaces it).
       if (ctx.dataDir && turn !== null && plan.siege && enemy_deploy === undefined)
         await writeSiegeMemory(ctx.dataDir, game.id, me.id, rememberSiegeTurn(siegeMemory, turn, plan.siege));
@@ -2641,6 +2624,30 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             ...(sanction.applied ? { sanctionsApplied: true } : {}),
           })
         : { view: {}, warnings: [] };
+      // #412: the decision log — this turn's decision (a what-if plan is only an observation of the board,
+      // never the turn's decision), and the previous turn's outcome from this board and income.
+      if (ctx.dataDir && turn !== null) {
+        if (whatIf) await captureObservation(ctx, game.id, me.id, [{ turn, board: seen, source: 'live' }]);
+        else
+          await capturePlan(ctx, {
+            gameId: game.id,
+            me: me.id,
+            turn,
+            board: seen,
+            plannedBoard: setup.input.board,
+            input: setup.input,
+            plan,
+            outlookState: outlook.state,
+            estimates,
+            graph,
+            income: income - cards.extraArmies,
+            players: game.players,
+            // #437: who the plan takes to move first, my hand and the card advice, the turn's boot deadlines.
+            firstMover: mover.firstMover !== undefined ? { who: mover.firstMover, source: mover.view?.source ?? 'unknown', verified: mover.verified === true } : null,
+            cards: { hand: handLog(myCards), advice: cardAdviceLog(advice.view) },
+            times: bootTimes(game),
+          });
+      }
       // B4: the planner does not read what my chat messages promised (words change no estimate), so a
       // plan that breaks a commitment still in force says so here; warapp_submit_turn warns again.
       const promised = turn !== null ? await promiseWarnings(ctx, { game, me, turn, graph, board: seen, moves: plan.moves }) : [];
@@ -2832,7 +2839,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const paceRecord = PACE_TURNS.includes(turnsCompleted(game) as (typeof PACE_TURNS)[number])
         ? await mapRecordFor(ctx.dataDir, opts.env, game.settings?.mapId)
         : undefined;
-      const pace = paceRecord && paceRecord !== 'unreadable' ? paceView(paceRecord, turnsCompleted(game), myIncome) : undefined;
+      const pace = paceRecord && paceRecord !== 'unreadable' ? paceView(paceRecord, turnsCompleted(game), myIncome, mapMatchOf(profileFormatOf(game.players), game.settings)) : undefined;
 
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, turn: currentTurn(game) },
@@ -3722,36 +3729,37 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(m.commander ? { withCommander: true } : {}),
           ...(m.attackTeammates ? { attackTeammates: true } : {}),
         }));
-        warnings.push(
-          ...headroomWarnings(
-            safeHeadroom({
-              graph: graphOf(map),
-              board,
-              // #270: a static seat deploys nothing; its territories are neutrals here.
-              staticSeats: staticSeats(game.players, game.endRules, me.id),
-              me: me.id,
-              deploys: givenDeploys,
-              moves: givenMoves,
-              settings: plannerSettings(game.settings),
-              ...(subTeams ? { teams: subTeams } : {}),
-              ...(plays.some((p) => p.kind === 'OrderPriority') ? { orderPriority: true } : {}),
-            }),
-            modelled,
-            !teamsKnown,
-          ),
-        );
+        const headroomRows = safeHeadroom({
+          graph: graphOf(map),
+          board,
+          // #270: a static seat deploys nothing; its territories are neutrals here.
+          staticSeats: staticSeats(game.players, game.endRules, me.id),
+          me: me.id,
+          deploys: givenDeploys,
+          moves: givenMoves,
+          settings: plannerSettings(game.settings),
+          ...(subTeams ? { teams: subTeams } : {}),
+          ...(plays.some((p) => p.kind === 'OrderPriority') ? { orderPriority: true } : {}),
+        });
+        warnings.push(...headroomWarnings(headroomRows, modelled, !teamsKnown));
         // #275 pattern 3: a border these orders leave below what the default plan leaves there (one plan, a warning).
-        const belowPlan = belowPlanWarning(
-          await bordersBelowPlan(ctx, {
-            game, map, me, turn: turnNumber, territories, info, teamsKnown,
-            // The board cache alone (warapp_plan_turn writes it each turn): no GameFeed request is added here.
-            // A turn it lacks, which warapp_plan_turn would read from GameFeed's history, is named in the warning.
-            history: await boardHistory(ctx, game, me, turnNumber, { cacheOnly: true }),
-            cacheOnly: true,
-            given: { deploys: givenDeploys, moves: givenMoves },
-          }),
-        );
+        const belowRows = await bordersBelowPlan(ctx, {
+          game, map, me, turn: turnNumber, territories, info, teamsKnown,
+          // The board cache alone (warapp_plan_turn writes it each turn): no GameFeed request is added here.
+          // A turn it lacks, which warapp_plan_turn would read from GameFeed's history, is named in the warning.
+          history: await boardHistory(ctx, game, me, turnNumber, { cacheOnly: true }),
+          cacheOnly: true,
+          given: { deploys: givenDeploys, moves: givenMoves },
+        });
+        const belowPlan = belowPlanWarning(belowRows);
         if (belowPlan) warnings.push(belowPlan);
+        // #437: what was checked on these orders, for the decision log (ids and numbers only).
+        const checks = submitChecksLog({
+          commander: commanderChecked ? { ...commanderChecked, ...(commanderRisk && accept_commander_risk === true ? { accepted: true } : {}) } : undefined,
+          headroom: headroomRows,
+          belowPlan: belowRows,
+          chat: promises,
+        });
         if (purchase) warnings.push(purchase.note);
         // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
         const standInNote = standInLine(standInOf(ctx));
@@ -3843,6 +3851,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             ...(unverifiedPlays.length ? { cardPlayCheck: cardPlayCheck(unverifiedPlays) } : {}),
             ...(breaks.length ? { breaks: breaks.map((b) => b.agreement) } : {}),
             ...(commanderRisk ? { commanderRisk: commanderRisk.risk } : {}),
+            checks,
             ...(override_reason !== undefined || override_by !== undefined
               ? {
                   override: {
@@ -3882,6 +3891,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               orders: sentOrdersOf(st.orders),
               ...(st.override?.by !== undefined ? { by: st.override.by } : {}),
               ...(st.override?.reason !== undefined ? { reason: st.override.reason } : {}),
+              ...(st.checks ? { checks: st.checks } : {}),
             });
           },
           // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.

@@ -32,7 +32,7 @@
 // switches the pass off (nothing read or written).
 import { readdir, readFile, stat, unlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { FinishedCapture, FinishedOutcome, PlayerTurn } from './analysis/finished-game.js';
+import type { FinishedCapture, FinishedOutcome, GameKind, PlayerTurn } from './analysis/finished-game.js';
 import { profileFormatOf, type ProfileFormat } from './analysis/opponent-profile.js';
 import { writeJsonAtomic } from './map-store.js';
 import type { Game } from './normalize.js';
@@ -89,7 +89,13 @@ export interface FinishedRecord {
   /** My key among `players`. */
   me: string;
   players?: { key: string; ai: boolean; turnedAI?: true; team?: number; state?: string }[];
-  outcome?: { result: FinishedOutcome; turn: number | null; outTurn: number | null; winners: string[] };
+  /** `leftTurn` (#437): the turn being played when my seat left (absent on records kept before it). */
+  outcome?: { result: FinishedOutcome; turn: number | null; outTurn: number | null; leftTurn?: number | null; winners: string[] };
+  /**
+   * #437: the game's kinds (`gameKinds`: lottery, no-show, legacy, team); absent on records kept before them.
+   * A lottery or no-show game is counted apart in the lessons and the map record, and folds no profile.
+   */
+  kinds?: GameKind[];
   /**
    * #312: the final outlook line this server logged for the game (`<dataDir>/outlook/<gameId>.json`,
    * `finalOutlookOf`): state, turn, held turns, ratio, estimated / thin flags; no id, no words. Absent
@@ -264,6 +270,8 @@ export interface RecordParts {
   outlook?: FinalOutlook | undefined;
   /** The history's boards (owners by GameFeed id), kept only with `captured`. */
   boards?: readonly { turn: number; board: BoardState }[] | undefined;
+  /** #437: the game's kinds. */
+  kinds?: GameKind[] | undefined;
 }
 
 /** The stored record: every player id replaced by its `playerKey`. Pure. */
@@ -301,6 +309,7 @@ export function finishedRecordOf(p: RecordParts): FinishedRecord {
         }
       : {}),
     ...(c ? { outcome: { ...c.outcome, winners: c.outcome.winners.map(key) } } : {}),
+    ...(p.kinds ? { kinds: p.kinds } : {}),
     ...(p.outlook ? { outlook: p.outlook } : {}),
     ...(p.picks !== undefined ? { picks: p.picks } : {}),
     ...(h ? { starts: keyed(h.starts) } : {}),

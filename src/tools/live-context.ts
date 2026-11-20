@@ -50,6 +50,11 @@ export interface LiveContext {
   myIdentity: (opts?: { fresh?: boolean }) => Promise<{ token: number; inGameId: number } | undefined>;
   /** Discard the cached signed-in account (a session was linked: it may be another account). */
   forgetIdentity: () => void;
+  /**
+   * #437: the signed-in account's token when a read within {@link IDENTITY_TTL_MS} already gave it, else
+   * `undefined` — never a request (the decision log's seat capture uses it on every game read).
+   */
+  cachedInviteToken?: () => number | undefined;
   /** GET a war.app page as text through the signed-in tab. */
   fetchPage: (url: string) => Promise<string>;
   /** Where state that survives a restart lives (bundle cache, last planned boards); none: nothing is cached. */
@@ -297,6 +302,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
       cached = undefined;
       settled = started;
     },
+    cachedInviteToken: () => (cached && now() - cached.at < IDENTITY_TTL_MS ? Number(cached.token) : undefined),
     fetchPage: fetchText,
     dataDir: dir,
     decisionLog: decisionLogMode(opts.env ?? process.env),

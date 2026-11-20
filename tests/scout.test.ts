@@ -4,6 +4,7 @@ import { ANCHOR_CASES } from './scout-cases.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { emptyHabits } from '../src/analysis/opponent-profile.js';
 import { foldGame } from '../src/profile-store.js';
+import { readDecisionLog, recordSeats } from '../src/decision-log.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -303,6 +304,23 @@ describe('warapp_scout_player', () => {
     expect(h.bridge.requests.map((r) => `${r.method} ${r.path}`).sort()).toEqual(
       [`GET https://war.app/Profile?p=${BOB.token}`, `GET https://war.app/CommonGames?p=${BOB.token}`].sort(),
     );
+  });
+
+  it('#437: keeps the level, ranked record and boot rate read in that game\'s decision log, by id, when it has one', async () => {
+    h = await liveHarness({ feed: [gameWithBob()], pages: PAGES });
+    const me = Number((lobbyFixture().players as Array<{ id: string }>)[0]!.id);
+    await recordSeats(h.dataDir, GAME, me, { turn: 0, players: [{ id: me, state: 'Playing', isAI: false, humanTurnedIntoAI: false }], create: true });
+    await h.call('warapp_scout_player', { game_id: GAME, player: 'bob' });
+    const log = (await readDecisionLog(h.dataDir, GAME))!;
+    expect(log.opponents![BOB.token]).toMatchObject({ level: 55, ranked: { completed: 1582, wins: 485, games: 1582 }, bootRatePct: 14 });
+    expect(JSON.stringify(log)).not.toMatch(/Bob|Springfield/);
+  });
+
+  it('#437: starts no decision log for a game without one, and asks for nothing more', async () => {
+    h = await liveHarness({ feed: [gameWithBob()], pages: PAGES });
+    await h.call('warapp_scout_player', { game_id: GAME, player: 'bob' });
+    expect(await readDecisionLog(h.dataDir, GAME)).toBeUndefined();
+    expect(h.calls).toHaveLength(1);
   });
 
   it('scouts by a raw invite token without a game', async () => {
