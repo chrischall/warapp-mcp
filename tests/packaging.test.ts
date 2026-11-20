@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestHarness, type TestHarness } from '@chrischall/mcp-utils/test';
 import { registerAllTools } from '../src/tools/index.js';
 import { PRESSURE_FACTOR } from '../src/analysis/planner.js';
+import { MAX_DECISION_GAMES } from '../src/decision-log.js';
 
 /**
  * Things that otherwise fail only once a tag exists: provenance needs
@@ -760,5 +761,44 @@ describe('packaging for in-app notifications and read marks (#311, N1)', () => {
       expect(section.toLowerCase(), flag).toContain(flag);
     }
     expect(section).toMatch(/0-based/);
+  });
+});
+
+describe('packaging for the decision log (#412)', () => {
+  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const section = (() => {
+    const start = readme.indexOf('## Decision log');
+    return start === -1 ? '' : readme.slice(start, readme.indexOf('\n## ', start + 1));
+  })();
+
+  it('README has a Decision log section: what is kept, the env switch, the caps and the replay script', () => {
+    expect(section).not.toBe('');
+    expect(section).toContain('WARAPP_DECISION_LOG');
+    expect(section).toContain('WARAPP_DECISION_LOG=off');
+    expect(section).toContain('WARAPP_DECISION_LOG=full');
+    expect(section).toContain(String(MAX_DECISION_GAMES));
+    expect(section).toContain('500 MB');
+    expect(section).toContain('scripts/replay-decisions.mjs');
+    expect(section).toContain('decisions/<gameId>.json');
+  });
+
+  it('README lists WARAPP_DECISION_LOG among the variables and the new warapp_submit_turn inputs', () => {
+    const vars = readme.slice(readme.indexOf('| Variable |'), readme.indexOf('The server starts without credentials'));
+    expect(vars).toContain('`WARAPP_DECISION_LOG`');
+    const row = readme.split('\n').find((l) => l.startsWith('| `warapp_submit_turn` |')) ?? '';
+    expect(row).toContain('override_reason');
+    expect(row).toContain('override_by');
+  });
+
+  it('CLAUDE.md has a decision log bullet and names the new submit inputs', () => {
+    const start = claude.indexOf('- **The decision log (#412');
+    expect(start).toBeGreaterThan(-1);
+    const bullet = claude.slice(start, claude.indexOf('\n- **', start + 1));
+    for (const s of ['src/decision-log.ts', 'WARAPP_DECISION_LOG', 'compactDecisionLog', 'MAX_DECISION_GAMES', 'scripts/replay-decisions.mjs', 'warapp_submit_turn']) {
+      expect(bullet, s).toContain(s);
+    }
+    const submit = claude.slice(claude.indexOf('- **Turn submission (`warapp_submit_turn`)'), claude.indexOf('- **Turn submission (`warapp_submit_turn`)') + 6000);
+    expect(submit).toContain('override_reason');
   });
 });

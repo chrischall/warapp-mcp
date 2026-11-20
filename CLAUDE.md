@@ -101,7 +101,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `lessons.json`, `maps-record/`, `finished/` (processed marks included), and for games still in play only
   (finished: an end-of-game record or processed mark, else a game record saying `Finished`; no record and no
   mark: unknown, left out) the boards, game records, outlook, picks, move order, teams, per-game profile turns and
-  siege memory and contested-bonus attempts. Never credentials, the bundle cache, the guess salt, chat cursors, maps or stats. The account is
+  siege memory and contested-bonus attempts; and every game's decision log, finished games too (#412: newest first up to
+  `MAX_EXPORT_DECISION_BYTES`, the rest counted in `leftOut.decisionLogs`). Never credentials, the bundle cache, the guess salt, chat cursors, maps or stats. The account is
   `--account`, else the one the board caches' `playerId` names, else the one the per-account file names name.
   The CLI prints counts and sizes only. Hosted (only with mcp-host's blob store, `blobStoreFromEnv`),
   `warapp_upload_slots` mints a signed PUT (`mintUploadSlot`) and `warapp_import_state` (confirm-gated, the
@@ -650,6 +651,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `attack_teammates`, checked in `src/tools/order-options.ts`) are each refused unless the game
   allows it (`AllowTransferOnly`, `AllowAttackOnly`, `AllowPercentageAttacks`, `Commanders`, a
   teammate); their encoding follows the client bundle, golden-pinned but UNVERIFIED live.
+  The optional `override_reason` (≤ 500 chars, names scrubbed) and `override_by` (`'hand' | 'agent'`) change nothing
+  sent: after a confirmed send they go into the decision log (#412, below) beside the turn's plan, only when the
+  orders differ from it.
 - **Special units (`src/live.ts`, #61).** An `Armies` record ends with its special units
   (Commander, Boss1–4, CustomSpecialUnit), each dispatched on a byte tag; every unit class
   ends with the shared fields GUID, owner (in-game id), so the owner is the LAST field and the
@@ -2044,6 +2048,42 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   inputs from the data directory alone: `{ game, settings, map, playerId, boards, orders }`
   (`undefined` without a settings record; `map` absent when the store evicted it).
 
+- **The decision log (#412, `src/decision-log.ts`; design record `docs/PLAN-DECISIONS-412.md`).** Per game, one
+  account's entry for every turn it plays, at `<dataDir>/decisions/<gameId>.json` (`{ version: 1, gameId, playerId,
+  status: 'active' | 'finished' | 'compacted', turns }`), name-free (player ids and the map's own names; every player
+  name the game carries is scrubbed from every string, `override_reason` included). A turn `warapp_plan_turn` planned
+  (not a what-if: an explicit `goal` or `enemy_deploy`, as the board cache's rule) is a full entry: the fogged board
+  (delta-encoded against the previous logged turn, a full board at the first logged turn and every `FULL_BOARD_EVERY` =
+  10; `boardAt` rebuilds any turn), the planner's replay `input` (what the map store, the settings record and the board
+  cannot give back; `encodeInput`/`decodeInput`), `planner.version`, the `decision` (goal, profile, deploys, moves,
+  expected, conceded, offence, enemyDeploy, card advice, the logged estimates, the `rationale` and `warnings` lines verbatim, outlook state), and
+  `next` (actual income, captures/holds, bonuses, eliminated) filled when the following turn is planned. Every other
+  turn the server sees gets an observation entry (`kind: 'observed'`, `source: 'live' | 'history'`) wherever the board
+  cache is written (`src/tools/decision-capture.ts` `captureObservation`: track/locate/profile opponents, get_relations,
+  plan_turn what-ifs and `boardHistory`'s history fill); it never overwrites a planned entry, and a later plan upgrades
+  it. `warapp_submit_turn` records `sent` after a confirmed send (`captureSent`, where `writeOrdersCache` runs) and an
+  `override` (`by: 'agent'` by default, or the caller's `override_by`, with `override_reason` ≤ 500 chars) only when the
+  orders differ from the logged decision (`ordersDiffer`); with no plan logged it records `sent` on the observation
+  (or a minimal entry). Once a game is finished the end-of-game pass (src/tools/end-of-game.ts, after the record is
+  captured) writes every turn's `truth` from the FULL history, before finished-store's head/tail cut (a turn with no
+  entry gets a truth-only entry, a turn the history lacks is listed in `truthMissing`; no log is started for a game
+  with none), each logged turn's `accuracy` and the game's `accuracySummary` (`recordTruth`, pure part
+  `src/analysis/decision-truth.ts`, #318's alignment), then `compactDecisionLog` — which never drops a board, decision,
+  rationale/warnings, sent, override, `next`, `truth` or `accuracy`, only the replay `input` of uninteresting turns
+  (interesting: an override, an outlook change, the first `KEEP_FIRST` = 3, the last `KEEP_BEFORE_LOSS` = 5 before an
+  elimination or loss, next income ≥ 20% short of expected, an estimate off by > 1.5× or < 0.5×). A pass that captured
+  no history, or none run (`WARAPP_PLAYER_PROFILE=off`), marks the log `finished` uncompacted (`finishDecisionLogs`).
+  Caps: `MAX_DECISION_GAMES` = 1000 games and `MAX_DECISION_BYTES` = 500 MB (`pruneDecisionLogs`, after a write at most
+  once per `DECISION_PRUNE_INTERVAL_MS`: oldest finished games first, a game only ever whole, never one still running;
+  listing reads only each file's head). `WARAPP_DECISION_LOG=off` writes nothing; `full` skips compaction. 0600 in
+  0700, atomic under the path lock, best effort; a file that does not parse or carries another `version` is never
+  overwritten, listed or pruned. The state bundle carries it (`decisions`, finished games too, newest first up to
+  `MAX_EXPORT_DECISION_BYTES` = 16 MiB, the rest counted in `leftOut.decisionLogs`). Offline replay is the LOCAL dev
+  script `scripts/replay-decisions.mjs` (never a tool, never in CI; pure part `src/analysis/decision-replay.ts`): it
+  re-plans every turn whose input was kept, under an optional scenario, and reports identical/different orders, a
+  score against `next`, the estimate accuracy against the truth and `--export-fixtures`. The invariant — unchanged code
+  and no scenario reproduce the logged deploys and moves — is tested from the capture (`tests/decision-replay-tools.test.ts`).
+  How to run: `docs/PLAN-PROFILES.md` "Replaying the decision log". No planner decision reads the log.
 - **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
   `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's
