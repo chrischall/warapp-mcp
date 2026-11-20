@@ -5,7 +5,8 @@
 // What travels is what war.app cannot give back: the salt behind every hashed key
 // (`relations/players.salt`; the keys also carry my account id, so a bundle is one account's), the
 // deal record and the per-game ledgers, the opponent profiles, the lessons, the map records and the
-// end-of-game records with their processed marks — and, for games still in play only, the per-game
+// end-of-game records with their processed marks, the decision logs of every game (#412: one account's
+// each, the account read from the file's `playerId`; newest first up to MAX_EXPORT_DECISION_BYTES) — and, for games still in play only, the per-game
 // files the planner reads (boards, game records, outlook, picks, move order, teams, the per-game
 // profile turns, siege memory and contested-bonus attempts). Never: credentials (`.env`, `session.json`), the client bundle
 // cache, the guess salt, chat cursors, the map cache and stats (all rebuilt), nor the per-game files
@@ -29,6 +30,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmod, link, lstat, mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
+import { decisionLogOwner } from './decision-log.js';
 import { withPathLock } from './path-lock.js';
 import { finishedGameKey } from './player-record-store.js';
 
@@ -38,6 +40,13 @@ export const STATE_VERSION = 1;
 export const MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
 /** The largest bundle unpacked (a gzip bomb stops here). */
 export const MAX_UNPACKED_BYTES = 256 * 1024 * 1024;
+/**
+ * #412: the decision logs a bundle carries at most (raw bytes, newest first; the rest are counted as left
+ * out). Their store may hold far more (src/decision-log.ts MAX_DECISION_BYTES), and base64 inside the
+ * bundle's JSON is 4/3 of that: this keeps them, even incompressible, under {@link MAX_BUNDLE_BYTES} and a
+ * quarter of {@link MAX_UNPACKED_BYTES}, so they can never make a bundle the import refuses.
+ */
+export const MAX_EXPORT_DECISION_BYTES = 16 * 1024 * 1024;
 /** Where `replace` moves the old stores. */
 export const BACKUP_DIR = 'state-backups';
 
@@ -63,6 +72,7 @@ export const STORES = [
   'teams',
   'siege',
   'bonusAttempts',
+  'decisions',
 ] as const;
 export type StoreName = (typeof STORES)[number];
 
@@ -75,6 +85,8 @@ interface Rule {
   game?: 'game' | 'game-account';
   /** Kept for finished games too (the ledgers), else active games only. */
   allGames?: boolean;
+  /** The file names its account inside (`playerId`), not in its name: another account's is left out. */
+  accountInside?: boolean;
 }
 
 const RULES: readonly Rule[] = [
@@ -95,6 +107,8 @@ const RULES: readonly Rule[] = [
   { store: 'siege', dir: 'siege', name: /^(\d{1,12})-(\d{1,20})\.json$/, game: 'game-account' },
   // #410: the planner's contested-bonus attempt and drop memory (#405, src/bonus-attempt-store.ts).
   { store: 'bonusAttempts', dir: 'bonus-attempts', name: /^(\d{1,12})-(\d{1,20})\.json$/, game: 'game-account' },
+  // #412: the decision log (src/decision-log.ts), one account's per game; kept for finished games too (its truth and accuracy).
+  { store: 'decisions', dir: 'decisions', name: /^(\d{1,12})\.json$/, game: 'game', allGames: true, accountInside: true },
 ];
 
 /** Top-level entries keyed by the salt: moved aside whole under `replace` when the salt changes. */
@@ -141,8 +155,11 @@ export interface Manifest {
 export interface ExportResult {
   manifest: Manifest;
   files: { path: string; bytes: Buffer; store: StoreName; sha256: string }[];
-  /** What was left out: per-game files of finished games and of games of unknown state (counted by game), other accounts' files. */
-  leftOut: { finishedGames: number; unknownGames: number; otherAccountFiles: number };
+  /**
+   * What was left out: per-game files of finished games and of games of unknown state (counted by game),
+   * other accounts' files, and the older decision logs past {@link MAX_EXPORT_DECISION_BYTES}.
+   */
+  leftOut: { finishedGames: number; unknownGames: number; otherAccountFiles: number; decisionLogs: number };
 }
 
 const sha256 = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
@@ -179,7 +196,10 @@ async function candidates(dir: string): Promise<string[]> {
  * Collect the export of `dir` for one account (`account`, else the one account the per-account files
  * name). Throws {@link StateBundleError} when there is no valid salt or the account cannot be told.
  */
-export async function collectExport(dir: string, opts: { account?: number; now?: Date } = {}): Promise<ExportResult> {
+export async function collectExport(
+  dir: string,
+  opts: { account?: number; now?: Date; /** The decision-log share (tests); default {@link MAX_EXPORT_DECISION_BYTES}. */ decisionBytes?: number } = {},
+): Promise<ExportResult> {
   const saltText = await readFile(join(dir, SALT_PATH), 'utf8').catch(() => undefined);
   const salt = saltText?.trim();
   if (!salt || !SALT.test(salt)) {
@@ -235,11 +255,21 @@ export async function collectExport(dir: string, opts: { account?: number; now?:
   const finishedGames = new Set<number>();
   const unknownGames = new Set<number>();
   let otherAccountFiles = 0;
+  // #412: the decision logs, weighed after the walk: newest first, up to their share.
+  const decisions: { path: string; size: number; mtimeMs: number }[] = [];
   for (const p of paths) {
     const { rule, gameId, account: a } = ruleOf(p)!;
     if (a !== undefined && a !== account) {
       otherAccountFiles++;
       continue;
+    }
+    if (rule.accountInside) {
+      // A decision log names its account in its head: only the logs exported are read whole (below).
+      const owner = rule.store === 'decisions' ? await decisionLogOwner(join(dir, p), gameId!) : (await readJson(join(dir, p)).then((c) => (isRec(c) ? c.playerId : undefined)));
+      if (owner !== account) {
+        otherAccountFiles++;
+        continue;
+      }
     }
     if (gameId !== undefined && !rule.allGames) {
       const s = await statusOf(gameId);
@@ -252,9 +282,40 @@ export async function collectExport(dir: string, opts: { account?: number; now?:
         continue;
       }
     }
+    if (rule.store === 'decisions') {
+      const st = await lstat(join(dir, p)).catch(() => undefined);
+      if (st) decisions.push({ path: p, size: st.size, mtimeMs: st.mtimeMs });
+      continue;
+    }
     const bytes = await readFile(join(dir, p));
     files.push({ path: p, bytes, store: rule.store, sha256: sha256(bytes) });
   }
+  const budget = opts.decisionBytes ?? MAX_EXPORT_DECISION_BYTES;
+  let used = 0;
+  let decisionLogs = 0;
+  decisions.sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path));
+  for (const [i, d] of decisions.entries()) {
+    const bytes = used + d.size <= budget ? await readFile(join(dir, d.path)) : undefined;
+    // Past the share (or grown past it since): this one and every older one stay home.
+    if (!bytes || used + bytes.length > budget) {
+      decisionLogs = decisions.length - i;
+      break;
+    }
+    // Its head named the account; the whole file must too (one that no longer parses, or names another, stays home).
+    let whole: unknown;
+    try {
+      whole = JSON.parse(bytes.toString('utf8'));
+    } catch {
+      whole = undefined;
+    }
+    if (!isRec(whole) || whole.playerId !== account) {
+      otherAccountFiles++;
+      continue;
+    }
+    used += bytes.length;
+    files.push({ path: d.path, bytes, store: 'decisions', sha256: sha256(bytes) });
+  }
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return {
     manifest: {
       format: STATE_FORMAT,
@@ -264,7 +325,7 @@ export async function collectExport(dir: string, opts: { account?: number; now?:
       files: files.map((f) => ({ path: f.path, sha256: f.sha256, size: f.bytes.length })),
     },
     files,
-    leftOut: { finishedGames: finishedGames.size, unknownGames: unknownGames.size, otherAccountFiles },
+    leftOut: { finishedGames: finishedGames.size, unknownGames: unknownGames.size, otherAccountFiles, decisionLogs },
   };
 }
 
@@ -356,10 +417,14 @@ export function decodeBundle(bytes: Uint8Array): StateBundle {
     if (sha256(body) !== f.sha256) throw new StateBundleError(`The sha256 of ${path} does not match the manifest, so nothing was imported.`);
     if (body.length !== f.size) throw new StateBundleError(`The size of ${path} does not match the manifest.`);
     if (path.endsWith('.json')) {
+      let parsedFile: unknown;
       try {
-        JSON.parse(body.toString('utf8'));
+        parsedFile = JSON.parse(body.toString('utf8'));
       } catch {
         throw new StateBundleError(`${path} is not valid JSON.`);
+      }
+      if (r.rule.accountInside && (!isRec(parsedFile) || parsedFile.playerId !== accountId)) {
+        throw new StateBundleError(`The bundle carries a file of another account (${path}).`);
       }
     }
     files.set(path, body);

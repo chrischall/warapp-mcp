@@ -65,6 +65,12 @@
           "description": "Opponent profiling: counts of what each opponent did on the turns your boards showed (gameplay only, no names or chat), kept per game, and folded name-free (salted-hash keys) into counts across finished games. On by default; set off to turn it off.",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "WARAPP_DECISION_LOG",
+          "description": "A per-game log of each turn's view, the plan, the orders sent and, once the game ends, the true figures (player ids and numbers, no names or chat), for offline review and replay. On by default; set off to turn it off, or full to keep every turn uncompacted.",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

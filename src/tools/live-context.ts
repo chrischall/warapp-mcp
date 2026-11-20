@@ -4,6 +4,7 @@
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
 import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
+import { type DecisionLogMode, decisionLogMode } from '../decision-log.js';
 import { inGameId, LiveBoardFormatError, readLatestGameInfo, standingFromInfo, type ClassReader, type LiveTerritory } from '../live.js';
 import type { Game } from '../normalize.js';
 import { BUNDLE_FETCH_TIMEOUT_MS, BUNDLE_MAX_BYTES, BundleProvider, type DecoderReport, type StandInWindow } from '../protocol/bundle.js';
@@ -53,6 +54,8 @@ export interface LiveContext {
   fetchPage: (url: string) => Promise<string>;
   /** Where state that survives a restart lives (bundle cache, last planned boards); none: nothing is cached. */
   dataDir?: string;
+  /** The decision log's mode (#412, `WARAPP_DECISION_LOG`); absent: read from the process environment. */
+  decisionLog?: DecisionLogMode;
   /** A hosted child (src/hosted.ts): no session is ever linked there, so no hint suggests linking one. */
   hosted?: boolean;
   /** A hosted child signed in by mcp-host (a captured WARAPP_AUTH_TOKEN, #333): hints point at its "Sign in". */
@@ -296,6 +299,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     },
     fetchPage: fetchText,
     dataDir: dir,
+    decisionLog: decisionLogMode(opts.env ?? process.env),
     hosted: isHosted(opts.env ?? process.env),
     hostSignIn: hostedSession(opts.env ?? process.env) !== null,
     client: opts.client,

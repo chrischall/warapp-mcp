@@ -39,7 +39,8 @@
         "WARAPP_SESSION_FILE": "${user_config.session_file}",
         "WARAPP_ENV_FILE": "${user_config.env_file}",
         "WARAPP_PLAYER_RECORD": "${user_config.player_record}",
-        "WARAPP_PLAYER_PROFILE": "${user_config.player_profile}"
+        "WARAPP_PLAYER_PROFILE": "${user_config.player_profile}",
+        "WARAPP_DECISION_LOG": "${user_config.decision_log}"
       }
     }
   },
@@ -91,6 +92,12 @@
       "type": "string",
       "title": "Opponent profiles (optional)",
       "description": "Counts of what each opponent did on the turns your boards showed (gameplay only, no names or chat), kept per game to profile its habits, and folded name-free (salted-hash keys) into counts across finished games. On by default; 'off' turns it off.",
+      "required": false
+    },
+    "decision_log": {
+      "type": "string",
+      "title": "Decision log (optional)",
+      "description": "A per-game log of each turn's view, the plan, the orders sent and, once the game ends, the true figures (player ids and numbers, no names or chat), for offline review and replay. On by default; 'off' turns it off, 'full' keeps every turn uncompacted.",
       "required": false
     }
   },

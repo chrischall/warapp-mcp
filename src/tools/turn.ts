@@ -141,6 +141,8 @@ import { cardArmyCeiling, cardClock } from '../strategy/card-clock.js';
 import { hasCostlyBonus, noteContext, notesFor } from '../strategy/notes.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
+import { capturePlan, captureObservation, captureSent } from './decision-capture.js';
+import { scrubNames, type LoggedSent, type SentOrders } from '../decision-log.js';
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
@@ -440,6 +442,8 @@ interface TurnState {
   breaks?: string[];
   /** #274: the commander risk accepted with `accept_commander_risk`, recorded in the result. */
   commanderRisk?: CommanderRisk;
+  /** #412: who chose orders that differ from the plan, and why (names already scrubbed), for the decision log. */
+  override?: { by?: 'hand' | 'agent'; reason?: string };
 }
 
 /**
@@ -1430,6 +1434,77 @@ export function myOrdersOf(orders: readonly TurnOrder[]): MyOrders {
   };
 }
 
+/**
+ * The deploys and every move of a sent turn, for comparing with the decision log's plan (#412): a
+ * percentage or mode move is `exact: false` (never the planner's).
+ */
+export function sentOrdersOf(orders: readonly TurnOrder[]): SentOrders {
+  return {
+    deploys: orders.flatMap((o) => (o.kind === 'deploy' ? [{ territoryId: o.territoryId, armies: o.armies }] : [])),
+    moves: orders.flatMap((o) =>
+      o.kind === 'move'
+        ? [
+            {
+              from: o.from,
+              to: o.to,
+              armies: o.armies,
+              ...(o.byPercent || (o.mode !== undefined && o.mode !== AttackTransferMode.AttackTransfer) ? { exact: false } : {}),
+              ...(o.commander ? { commander: true } : {}),
+            },
+          ]
+        : [],
+    ),
+  };
+}
+
+/**
+ * Every order of a sent turn, for the decision log (#412): unlike {@link myOrdersOf}, a percentage or
+ * mode move keeps its count and options, and card plays (with their targets), discards and purchases
+ * are all kept. Ids and counts only: a commander is a flag, never its unit id.
+ */
+export function loggedSentOf(orders: readonly TurnOrder[]): LoggedSent {
+  return {
+    deploys: orders.flatMap((o) => (o.kind === 'deploy' ? [{ territoryId: o.territoryId, armies: o.armies }] : [])),
+    moves: orders.flatMap((o) =>
+      o.kind === 'move'
+        ? [
+            {
+              from: o.from,
+              to: o.to,
+              armies: o.armies,
+              ...(o.byPercent ? { percent: true as const } : {}),
+              ...(o.mode === AttackTransferMode.Attack ? { mode: 'attack-only' as const } : {}),
+              ...(o.mode === AttackTransferMode.Transfer ? { mode: 'transfer-only' as const } : {}),
+              ...(o.attackTeammates ? { attackTeammates: true as const } : {}),
+              ...(o.commander ? { commander: true as const } : {}),
+            },
+          ]
+        : [],
+    ),
+    cards: orders.flatMap((o) =>
+      o.kind === 'card'
+        ? [
+            {
+              card: o.card,
+              cardId: o.cardId,
+              ...(o.target !== undefined ? { target: o.target } : {}),
+              ...(o.player !== undefined ? { player: o.player } : {}),
+              ...(o.players !== undefined ? { players: o.players } : {}),
+              ...(o.bonus !== undefined ? { bonus: o.bonus } : {}),
+              ...(o.from !== undefined ? { from: o.from } : {}),
+              ...(o.to !== undefined ? { to: o.to } : {}),
+              ...(o.armies !== undefined ? { armies: o.armies } : {}),
+              ...(o.commander ? { commander: true as const } : {}),
+              ...(o.beforeMove !== undefined ? { beforeMove: o.beforeMove } : {}),
+            },
+          ]
+        : [],
+    ),
+    discards: orders.flatMap((o) => (o.kind === 'discard' ? [o.cardId] : [])),
+    purchases: orders.flatMap((o) => (o.kind === 'purchase' ? o.cities.map((c) => ({ territoryId: c.territoryId, count: c.count })) : [])),
+  };
+}
+
 /** Earlier turns that, when all cached, make the GameFeed history read unnecessary. */
 const TREND_TURNS = 2;
 
@@ -1470,6 +1545,14 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
         const board = boardFromHistory(withHistory.history, k - 1, game.players, withHistory.numberOfTurns !== undefined ? { numberOfTurns: withHistory.numberOfTurns } : {});
         if (board) byTurn.set(k, { source: 'history', board });
       }
+      // #412 no-gaps rule (a): the turns filled from history join the decision log as observations
+      // (never over a planned entry or a board already logged).
+      await captureObservation(
+        ctx,
+        game.id,
+        me.id,
+        [...byTurn].flatMap(([t, b]) => (b.source === 'history' ? [{ turn: t, board: b.board, source: 'history' as const }] : [])),
+      );
     } catch {
       // History is optional: the cache stands.
     }
@@ -2493,6 +2576,26 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const reads = turn !== null && teamsKnown ? await contactReads(ctx, opts.env ?? process.env, game, me, [...history.boards, { turn, board: seen }], graph, seen) : undefined;
       if (ctx.dataDir && turn !== null) await writeGameRecord(ctx.dataDir, game);
       if (ctx.dataDir && turn !== null) await recordOutlook(ctx.dataDir, game.id, me.id, outlook);
+      // #412: the decision log — this turn's decision (a what-if plan is only an observation of the board,
+      // never the turn's decision), and the previous turn's outcome from this board and income.
+      if (ctx.dataDir && turn !== null) {
+        if (whatIf) await captureObservation(ctx, game.id, me.id, [{ turn, board: seen, source: 'live' }]);
+        else
+          await capturePlan(ctx, {
+            gameId: game.id,
+            me: me.id,
+            turn,
+            board: seen,
+            plannedBoard: setup.input.board,
+            input: setup.input,
+            plan,
+            outlookState: outlook.state,
+            estimates,
+            graph,
+            income: income - cards.extraArmies,
+            players: game.players,
+          });
+      }
       // #382: this siege turn joins the memory (not on an enemy_deploy what-if; planning the turn again replaces it).
       if (ctx.dataDir && turn !== null && plan.siege && enemy_deploy === undefined)
         await writeSiegeMemory(ctx.dataDir, game.id, me.id, rememberSiegeTurn(siegeMemory, turn, plan.siege));
@@ -3095,6 +3198,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       }));
     },
   );
+  /** The longest `override_reason` warapp_submit_turn keeps (#412). */
+  const MAX_OVERRIDE_REASON = 500;
   const submitSchema = z.object({
     game_id: gameIdArg,
     player: playerArg,
@@ -3130,6 +3235,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'Only in a Commanders game, when the orders leave your commander takeable by a single-deploy reply (the refusal ' +
           'says so and names the armies that would hold): true submits them anyway, and the result records the risk ' +
           'taken (`commanderRiskAccepted`). Losing the commander loses the game: ask the owner first.',
+      ),
+    override_reason: z
+      .string()
+      .max(MAX_OVERRIDE_REASON)
+      .optional()
+      .describe(
+        'Why these orders differ from warapp_plan_turn\'s for this turn, when they do (at most 500 characters): kept as given, ' +
+          'names scrubbed, in this server\'s decision log beside the plan, for later review — only when the orders differ ' +
+          'from the logged plan (orders that match it drop the reason and `override_by`). Changes nothing sent.',
+      ),
+    override_by: z
+      .enum(['hand', 'agent'])
+      .optional()
+      .describe(
+        "Who chose orders that differ from the plan: 'agent' (the default when they differ) or 'hand' (the owner, or orders " +
+          'entered outside the planner). Decision log only; changes nothing sent.',
       ),
 
     cities: z
@@ -3197,7 +3318,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'free-for-all (each reply sized at the larger of its estimate and your income, on the live board; your Airlifts counted, ' +
         'after the deploys and before the moves) are refused with the armies that would hold, and so is a Blockade or Gift ' +
         'of a territory your commander stands on before or after the orders, unless `accept_commander_risk` ' +
-        'is true (the result then records `commanderRiskAccepted`). Always sent as ' +
+        'is true (the result then records `commanderRiskAccepted`). The orders sent are kept in this server\'s decision log ' +
+        'beside the turn\'s plan; when they differ from it, `override_reason` (and `override_by`) say why. Always sent as ' +
         'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
         `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
@@ -3208,7 +3330,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         openWorld: true,
       }),
       inputSchema: submitSchema,
-      async plan({ game_id, player, orders, income: givenIncome, break_agreement, accept_commander_risk, cities }) {
+      async plan({ game_id, player, orders, income: givenIncome, break_agreement, accept_commander_risk, cities, override_reason, override_by }) {
         const feed = await ctx.client.getGame(parseGameId(game_id), { settings: true });
         requireTurnPhase(feed);
         // The bridge always acts as the signed-in account: an explicit `player` naming anyone
@@ -3721,6 +3843,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             ...(unverifiedPlays.length ? { cardPlayCheck: cardPlayCheck(unverifiedPlays) } : {}),
             ...(breaks.length ? { breaks: breaks.map((b) => b.agreement) } : {}),
             ...(commanderRisk ? { commanderRisk: commanderRisk.risk } : {}),
+            ...(override_reason !== undefined || override_by !== undefined
+              ? {
+                  override: {
+                    ...(override_by !== undefined ? { by: override_by } : {}),
+                    ...(override_reason !== undefined ? { reason: scrubNames(override_reason, game.players) } : {}),
+                  },
+                }
+              : {}),
           } satisfies TurnState,
         };
       },
@@ -3746,6 +3876,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             );
             // Sent: keep my deploys and moves for opponent tracking (#119). Best effort, never throws.
             if (ctx.dataDir) await writeOrdersCache(ctx.dataDir, st.gameId, st.feedPlayerId, st.turnNumber, myOrdersOf(st.orders));
+            // #412: the decision log keeps what was sent, and an override when it differs from the plan.
+            await captureSent(ctx, st.gameId, st.feedPlayerId, st.turnNumber, {
+              sent: loggedSentOf(st.orders),
+              orders: sentOrdersOf(st.orders),
+              ...(st.override?.by !== undefined ? { by: st.override.by } : {}),
+              ...(st.override?.reason !== undefined ? { reason: st.override.reason } : {}),
+            });
           },
           // war.app refused them (e.g. 11: deploys ≠ income; 208: the turn already advanced): nothing committed.
           refused: (e) => {

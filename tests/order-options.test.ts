@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { checkMoveOptions, type OptionMove } from '../src/tools/order-options.js';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
 import { AttackTransferMode, Method, writeSendOrdersParams } from '../src/protocol/methods.js';
-import { myOrdersOf } from '../src/tools/turn.js';
+import { loggedSentOf, myOrdersOf } from '../src/tools/turn.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
 import type { LiveTerritory } from '../src/live.js';
@@ -444,5 +444,57 @@ describe('myOrdersOf: what opponent tracking reads of my sent turn (#165)', () =
     ]);
     expect(r.cards).toEqual([{ card: 'Airlift', from: 1, to: 3 }, { card: 'Gift', target: 2 }, { card: 'Reinforcement' }]);
     expect(myOrdersOf([{ kind: 'deploy', territoryId: 1, armies: 3 }]).cards).toEqual([]);
+  });
+});
+
+describe('loggedSentOf: the decision log\'s copy of a sent turn (#412)', () => {
+  it('keeps every order: deploys, every move with its count, percentage and mode, card plays with their targets, discards and purchases', () => {
+    const commander = { id: '0123456789abcdef0123456789abcdef', owner: 7 };
+    const r = loggedSentOf([
+      { kind: 'card', card: 'Reinforcement', cardId: 'c1' },
+      { kind: 'deploy', territoryId: 1, armies: 3 },
+      { kind: 'move', from: 1, to: 3, armies: 4 },
+      { kind: 'move', from: 1, to: 2, armies: 2, mode: AttackTransferMode.Transfer },
+      { kind: 'move', from: 2, to: 1, armies: 2, mode: AttackTransferMode.Attack, attackTeammates: true },
+      { kind: 'move', from: 1, to: 5, armies: 100, byPercent: true, commander },
+      { kind: 'move', from: 4, to: 5, armies: 6, mode: AttackTransferMode.AttackTransfer },
+      { kind: 'card', card: 'Airlift', cardId: 'c2', from: 1, to: 3, armies: 4, commander },
+      { kind: 'card', card: 'Gift', cardId: 'c3', target: 2, player: 9 },
+      { kind: 'card', card: 'Diplomacy', cardId: 'c4', players: [7, 9] },
+      { kind: 'card', card: 'Surveillance', cardId: 'c5', bonus: 11 },
+      { kind: 'card', card: 'OrderDelay', cardId: 'c6', beforeMove: 1 },
+      { kind: 'discard', cardId: 'c7' },
+      { kind: 'purchase', cities: [{ territoryId: 1, count: 2 }] },
+    ]);
+    expect(r).toEqual({
+      deploys: [{ territoryId: 1, armies: 3 }],
+      moves: [
+        { from: 1, to: 3, armies: 4 },
+        { from: 1, to: 2, armies: 2, mode: 'transfer-only' },
+        { from: 2, to: 1, armies: 2, mode: 'attack-only', attackTeammates: true },
+        { from: 1, to: 5, armies: 100, percent: true, commander: true },
+        { from: 4, to: 5, armies: 6 },
+      ],
+      cards: [
+        { card: 'Reinforcement', cardId: 'c1' },
+        { card: 'Airlift', cardId: 'c2', from: 1, to: 3, armies: 4, commander: true },
+        { card: 'Gift', cardId: 'c3', target: 2, player: 9 },
+        { card: 'Diplomacy', cardId: 'c4', players: [7, 9] },
+        { card: 'Surveillance', cardId: 'c5', bonus: 11 },
+        { card: 'OrderDelay', cardId: 'c6', beforeMove: 1 },
+      ],
+      discards: ['c7'],
+      purchases: [{ territoryId: 1, count: 2 }],
+    });
+  });
+
+  it('lists no card, discard or purchase as empty lists', () => {
+    expect(loggedSentOf([{ kind: 'deploy', territoryId: 1, armies: 3 }])).toEqual({
+      deploys: [{ territoryId: 1, armies: 3 }],
+      moves: [],
+      cards: [],
+      discards: [],
+      purchases: [],
+    });
   });
 });

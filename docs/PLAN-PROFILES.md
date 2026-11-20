@@ -186,6 +186,42 @@ notification in `warapp_get_notifications`. Let those run, then run the harness.
   not take in the replay keeps its replayed state; card plays are left out; with luck or weighted
   rounding a battle is resolved at its expectation (counted as inexact).
 
+### Replaying the decision log (#412): `scripts/replay-decisions.mjs`
+
+A local dev script beside the calibration harness: not a tool, not run in CI, no request made. It reads
+each game's decision log (`<dataDir>/decisions/<gameId>.json`, `src/decision-log.ts`), the game's settings
+record and the stored map (`loadReplay`, `src/replay.ts`), rebuilds every logged turn's planner input that
+compaction kept (`decodeInput` on the entry's board), plans it again and compares it with the logged
+decision. Its pure parts are `src/analysis/decision-replay.ts` (tested in `tests/analysis/decision-replay.test.ts`;
+the invariant — with unchanged code and no scenario a logged turn replays to its logged deploys and moves — is
+also tested end to end from `warapp_plan_turn`'s capture in `tests/decision-replay-tools.test.ts`).
+
+```sh
+npm run build                                          # tsc emits dist/**, which the script imports
+node scripts/replay-decisions.mjs                      # every game; aggregates only (no id or name)
+node scripts/replay-decisions.mjs --goal defend --enemy-deploy 12
+node scripts/replay-decisions.mjs --scenario scenario.json --json   # per-turn detail
+node scripts/replay-decisions.mjs --accuracy           # only the estimate accuracy
+node scripts/replay-decisions.mjs --export-fixtures <dir>
+node scripts/replay-decisions.mjs --help
+```
+
+- **Scenario** (`--scenario` JSON, `--goal`, `--enemy-deploy` win over the file): `goal`, `enemyDeploy`,
+  `estimates` (`[{ player, income }]`, replacing those opponents' estimates as `known_income` does),
+  `options` (any `PlanOptions`) and `settings` (any `PlannerSettings`), merged over the logged input.
+- **Per turn:** identical deploys and moves or not, the logged vs new goal and expected next income, and a
+  score against what happened next (`next`): did the logged next income and captures hold; each of the new
+  plan's captures `backed` (I held it next turn anyway), `failed` (the logged plan tried it and lost it) or
+  `untested`. A turn whose input compaction dropped, or whose map is gone from the map store, is counted as
+  skipped, never planned. Aggregates: turns compared, share identical, differences by logged goal.
+- **Estimate accuracy** (`--accuracy`, also printed by default): from the end-of-game `truth`/`accuracy`
+  blocks, estimate ÷ true income by coverage band and estimate source, per game and overall, and the
+  outlook right/wrong; beside it the replayed estimates (under the scenario: `estimatesOf`, the planner's
+  own `planEnemyEstimates` call; under `enemyDeploy` every opponent at that figure) against the same truth.
+- **Fixtures** (`--export-fixtures <dir>`): each interesting turn (compaction's rule, `interestingTurns`)
+  as `game-<id>-turn-<turn>.json`: the rebuilt full board, the kept input, the logged decision, sent orders,
+  override, `next`, truth and accuracy — ids and numbers only, as the log is.
+
 ## 8. Part A — the in-game read
 
 ### A1. Observing (`src/analysis/opponent-profile.ts`, pure)
