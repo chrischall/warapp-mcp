@@ -304,7 +304,8 @@ describe('behind on armies: no trade below even', () => {
 
   it('behind on armies (20 against 30): it is not, and the rationale says why', () => {
     const p = plan(20);
-    expect(p.profile.standing).toBe('even');
+    // #287: in a 1v1, 30 in view against my 20 (1.5×) reads behind, whatever the incomes.
+    expect(p.profile.standing).toBe('behind');
     expect(attacks(p)).toEqual([]);
     expect(why(p)).toMatch(/Behind on armies \(20 visible against player 20's 30\)/);
     expect(why(p)).toMatch(/Not attacking T5 \(#5\): the combined capture loses 11 armies for the 10 it kills, a trade below even while behind on armies/);

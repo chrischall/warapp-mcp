@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, guardCase, type ProfileInput } from '../../src/analysis/profile.js';
+import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, guardCase, OUTNUMBERED_RATIO, type ProfileInput } from '../../src/analysis/profile.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
 
@@ -294,11 +294,34 @@ describe('gameProfile: standing', () => {
     const outnumbered = (theirs: number) =>
       board([mine(1, 5), mine(2, 5), mine(3, 5), enemy(4, theirs, 20), enemy(5, 1, 20), enemy(6, 1, 20), neutral(7, 2), neutral(8, 2)]);
 
-    it(`never ahead while my visible armies are below ${BEHIND_RATIO}× the opponent's`, () => {
-      // Income 10 against ~5 reads ahead; 15 armies against 22 is not.
+    it(`in a 1v1, behind, not ahead or even, while the opponent's visible armies are ${OUTNUMBERED_RATIO}× mine or more (#287)`, () => {
+      // Income 10 against ~5 reads ahead; 15 armies against 22 (1.47×) is behind.
       const p = gameProfile(base({ board: outnumbered(20), income: 10 }));
+      expect(p.format).toBe('1v1');
+      expect(p.standing).toBe('behind');
+      expect(p.standingSource).toBe('visible');
+      expect(p.notes.join(' ')).toMatch(/Standing behind, not ahead \(#287\): player 20's 22 visible armies are at least 1\.25× my 15/);
+      // Even on the incomes (10 against ~10): 15 against 19 (1.27×) is behind too.
+      const even = gameProfile(base({ board: outnumbered(17), income: 10, estimates: [{ playerId: 20, estimate: 10 }] }));
+      expect(even.standing).toBe('behind');
+      expect(even.notes.join(' ')).toMatch(/Standing behind, not even \(#287\): player 20's 19 visible armies are at least 1\.25× my 15/);
+      // Just under 1.25× (18 against 15, 1.2×) keeps the income comparison.
+      expect(gameProfile(base({ board: outnumbered(16), income: 10, estimates: [{ playerId: 20, estimate: 10 }] })).standing).toBe('even');
+      // Exactly 1.25× (15 against 12) is behind: the threshold is inclusive.
+      const at = board([mine(1, 4), mine(2, 4), mine(3, 4), enemy(4, 13, 20), enemy(5, 1, 20), enemy(6, 1, 20), neutral(7, 2), neutral(8, 2)]);
+      expect(gameProfile(base({ board: at, income: 10, estimates: [{ playerId: 20, estimate: 10 }] })).standing).toBe('behind');
+    });
+
+    it(`in a free-for-all, ${OUTNUMBERED_RATIO}× in view changes nothing (#287 is 1v1 only: #167's clear leader stays)`, () => {
+      const ffa = [{ id: ME }, { id: 20 }, { id: 30 }];
+      // Income 10 against ~5 reads ahead; 15 armies against 22 is below 0.8×: even, as before.
+      const p = gameProfile(base({ board: outnumbered(20), income: 10, players: ffa }));
+      expect(p.format).toBe('ffa');
       expect(p.standing).toBe('even');
       expect(p.notes.join(' ')).toMatch(/my 15 visible armies are below 0\.8× player 20's 22/);
+      expect(p.notes.join(' ')).not.toMatch(/#287/);
+      // Even on the incomes, 19 against 15 stays even.
+      expect(gameProfile(base({ board: outnumbered(17), income: 10, estimates: [{ playerId: 20, estimate: 10 }], players: ffa })).standing).toBe('even');
     });
 
     it('behind when its visible armies are more than twice mine, whatever the incomes', () => {

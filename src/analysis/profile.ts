@@ -17,6 +17,11 @@ export const AHEAD_RATIO = 1.25;
 /** Behind when my income is at most this many times the strongest opponent's estimated income. */
 export const BEHIND_RATIO = 0.8;
 /**
+ * #287 (1v1 only, the owner's choice): behind, not ahead or even, when the opponent's armies in view are at
+ * least this many times mine (what it shows is the least it has). The reciprocal of {@link BEHIND_RATIO}.
+ */
+export const OUTNUMBERED_RATIO = 1.25;
+/**
  * A player's strength in a free-for-all ranking (#167): its visible armies plus this many turns of
  * its income — what it can field over the next few turns.
  */
@@ -446,6 +451,14 @@ export function gameProfile(input: ProfileInput): GameProfile {
       );
       standing = 'behind';
       standingSource ??= 'visible';
+    } else if (format === '1v1' && (standing === 'ahead' || standing === 'even') && theirArmies >= OUTNUMBERED_RATIO * sideArmies) {
+      // #287 (owner, 1v1 only): outnumbered by a quarter or more in view is no even game, whatever the incomes.
+      // Not in a free-for-all: a clear leader above me (#167) would always read behind and the profile defend.
+      notes.push(
+        `Standing behind, not ${standing} (#287): ${theirsText} visible armies are at least ${OUTNUMBERED_RATIO}× ${mineText}, and what it shows is the least it has.`,
+      );
+      standing = 'behind';
+      standingSource ??= 'visible';
     } else if (standing === 'ahead' && sideArmies < BEHIND_RATIO * theirArmies) {
       notes.push(
         `Not ahead: the income comparison says so, but ${mineText} visible armies are below ${BEHIND_RATIO}× ${theirsText} in view. Standing even.`,
@@ -455,8 +468,7 @@ export function gameProfile(input: ProfileInput): GameProfile {
   }
 
   // #275 (b): an observation broke an opponent's estimate: what it really earns is unknown and above it,
-  // so the game is not even. Only a running tripwire does this: reading `behind` on armies in view alone
-  // (an opponent's ≥ 1.25 × mine, no tripwire) is not part of #275 — it is deferred to #287.
+  // so the game is not even (armies in view alone at OUTNUMBERED_RATIO × mine are #287's 1v1 rule above).
   if (standing === 'even') {
     const running = enemies.filter((e) => untrustedFigure.has(e.playerId)).map((e) => e.playerId).sort((a, b) => a - b);
     if (running.length) {
