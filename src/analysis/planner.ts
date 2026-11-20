@@ -989,7 +989,7 @@
 //     would then exceed the next income and the start-of-turn hold cost (in rule 4e's
 //     contact/late fallback it is a cost instead, #114); a warning ("Frontier grows faster than
 //     income") names it, and also fires when the plan's frontier ends so. #281: never a territory a
-//     static seat left (rule 0s) that costs at most VACATED_MAX_COST and borders a live opponent's
+//     static seat left (rule 0s) that costs at most VACATED_MAX_COST (3, #417: what 2 defenders cost) and borders a live opponent's
 //     stack able to take it with what stands there (`denialOf`): that border comes either way, so
 //     it is let through, a line ("Take … though it faces player …") says so, and pass 3 ranks it by
 //     capture cost plus the frontier without its own hold need, less the denial (1 + PAYBACK_TURNS ×
@@ -1382,7 +1382,11 @@
 //     and warapp_submit_picks' preview keep per game), a fogged missing member the picking board showed
 //     as a neutral (and whose owner the fog does not show as a player now) is costed at that size
 //     instead, never attacked, with a rationale line ("… fogged now, was a neutral of N on the picking
-//     board (#201)").
+//     board (#201)"). #417: a fogged member a static seat left (`BoardCtx.vacated`: shown owner-only as
+//     its, or fogged now and the seat's on `previousBoard`) is costed at VACATED_FOG_ARMIES (2)
+//     defenders, never above the costliest member in view (its border stack says nothing about the
+//     land behind it), with a "… was player N's (out, no AI) … (#417)" line; it raises no other fogged
+//     member's figure and gets no wasteland surcharge.
 //  7. Move order (#127; every goal, last). Orders zigzag — the first mover's 1st, the other's
 //     1st and 2nd, the first mover's 2nd and 3rd, … — so `moves` is scheduled
 //     (`scheduleMoves`, src/analysis/schedule.ts), earliest first: the one order Order Priority
@@ -1704,6 +1708,10 @@ function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>
   const vacated = new Map(input.vacated);
   for (const t of input.board.territories)
     if (t.owner.kind === 'player' && seats.has(t.owner.playerId)) vacated.set(t.territoryId, t.owner.playerId);
+  // #417: and the fogged ones the previous board showed a seat holding.
+  const fogged = new Set(input.board.territories.filter((t) => t.owner.kind === 'unknown').map((t) => t.territoryId));
+  for (const t of input.previousBoard?.territories ?? [])
+    if (fogged.has(t.territoryId) && t.owner.kind === 'player' && seats.has(t.owner.playerId)) vacated.set(t.territoryId, t.owner.playerId);
   return {
     ...input,
     ...(vacated.size ? { vacated } : {}),

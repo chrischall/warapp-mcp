@@ -31,8 +31,17 @@ import type { Targets } from './targets.js';
 /** The end of every empty enemy capture's reason (#281, the owner's extension): tests and sweeps match on it. */
 export const CHEAP_EXPANSION = 'cheap expansion (#281)';
 
-/** A vacated territory costing at most this many armies to take is cheap enough to deny (#281). */
-export const VACATED_MAX_COST = 2;
+/**
+ * A vacated territory costing at most this many armies to take is cheap enough to deny (#281). #417:
+ * raised from 2 to 3, what {@link VACATED_FOG_ARMIES} defenders cost at the default settings.
+ */
+export const VACATED_MAX_COST = 3;
+
+/**
+ * #417: the defenders a static seat's fogged territory is costed at. A seat deploys on its borders, so
+ * its interior stands on 0-2: its border stack in view says nothing about the land behind it.
+ */
+export const VACATED_FOG_ARMIES = 2;
 
 /** What taking a vacated territory denies the opponent beside it (#281). */
 export interface Denial {

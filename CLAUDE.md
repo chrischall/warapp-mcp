@@ -849,7 +849,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   wasteland, no hold beside them, never the standing or the strike stack's direction. Never me or a
   teammate. The board cache keeps what war.app showed. #281: the planner keeps which neutrals a seat
   left (`PlanInput.vacated` → `BoardCtx.vacated`, set by `planTurn`); one costing at most
-  `VACATED_MAX_COST` (2) beside a live stack that can take it with what stands there
+  `VACATED_MAX_COST` (3; #417 raised it from 2 to what `VACATED_FOG_ARMIES` (2) defenders cost) beside a live stack that can take it with what stands there
   (`denialOf`, `src/analysis/plan/vacated.ts`) comes either way, so rule 4d never refuses it on its hold
   cost alone, pass 3 ranks it without that hold need and credits the denial (1 + payback × the bonus
   progress it gives that opponent: it can outrank every plain capture, and a member of my uneconomic
@@ -868,7 +868,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   its check (`outgrows`), so rule 4e's non-contact fallback applies it too. No #281 capture (a denial or
   an empty enemy territory) is sourced from the territory my commander walks from (#282: all that stands
   there is its transit hold, `commanderTransitFrom` / `notFromTransit`); a commander that stays keeps its
-  worst-case hold through `keepOf`, as from any capture.
+  worst-case hold through `keepOf`, as from any capture. #417: `vacated` also takes the territories fogged
+  now that `previousBoard` showed a seat holding, and in "N armies to finish" a fogged member a seat left
+  counts at `VACATED_FOG_ARMIES` defenders, never above the costliest member in view (not at the seat's
+  border stack), with a "… was player N's (out, no AI) … (#417)" line. Golden: 22 of 2000 synthetic plans
+  changed (rationale), 3 plans' orders: +4 captures, none lost, next income and concessions unchanged.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
