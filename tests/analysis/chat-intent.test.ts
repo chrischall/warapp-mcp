@@ -639,3 +639,73 @@ describe('classifyMessage: review 6', () => {
     });
   });
 });
+
+describe('classifyMessage: review 7', () => {
+  describe('a conditional or temporal clause about the truce gives no notice', () => {
+    const wordings = [
+      'if the truce is over tell me',
+      'if our truce is broken i will retaliate',
+      'once the nap is over we can fight',
+      'let me know when the truce ends',
+      'unless the truce is over',
+      'until the truce is over i wont attack',
+      'after the truce ends lets fight',
+      'before the truce expires lets talk',
+      'whether the truce is over or not',
+    ];
+    cases('truce-end-notice', [], wordings);
+    for (const t of wordings) {
+      it(`${JSON.stringify(t)} is no truce proposal or high-confidence intent of any truce kind`, () => {
+        const r = classifyMessage(t, CTX);
+        expect(r.intents).not.toContain('truce-proposal');
+        expect(r.intents).not.toContain('truce-accept');
+      });
+    }
+    it('still reads a plain end stated beside it', () => {
+      expect(classifyMessage('the truce is over', CTX).strengths['truce-end-notice']).toBe('high');
+      expect(classifyMessage('when is the truce over?', CTX).intents).toEqual(['question-other']);
+    });
+    it('keeps the threat in a conditional', () => {
+      expect(intents('when the truce ends i will attack you')).toContain('threat');
+      expect(intents('when the truce ends i will attack you')).not.toContain('truce-end-notice');
+    });
+  });
+
+  describe('restating the agreed end turn is a reminder, not notice', () => {
+    for (const t of ['our truce expires on turn 10 as agreed', 'remember our truce ends turn 10']) {
+      it(`${JSON.stringify(t)} is at most a medium truce-end-notice and accepts nothing`, () => {
+        const r = classifyMessage(t, CTX);
+        expect(r.strengths['truce-end-notice']).not.toBe('high');
+        expect(r.intents).not.toContain('truce-accept');
+      });
+    }
+    it('an end with no agreed turn restated is still notice', () => {
+      expect(classifyMessage('our truce ends turn 10', CTX).strengths['truce-end-notice']).toBe('high');
+    });
+  });
+
+  describe('a breach report or a statement is no proposal', () => {
+    cases('truce-proposal', [], [
+      'you broke our truce!',
+      'Redcrane broke the truce',
+      'we are at peace now with Green Owl',
+      'peace and love',
+      'in peace times',
+      'ally with me against Redcrane',
+    ]);
+    for (const t of ['you broke our truce!', 'Redcrane broke the truce']) {
+      it(`${JSON.stringify(t)} reports a break at medium`, () => {
+        expect(classifyMessage(t, CTX).strengths['truce-end-notice']).toBe('medium');
+      });
+    }
+    cases('truce-end-notice', [], ['i never broke the truce', 'you didnt break the truce']);
+    cases('coordination-ask', ['ally with me against Redcrane', 'lets ally against the leader'], []);
+    cases('truce-proposal', ['lets make peace', 'peace?', 'want an alliance?'], []);
+  });
+
+  describe('lesser misses', () => {
+    cases('truce-decline', ['no deal'], []);
+    cases('threat', ['you attack me again and its war', 'attack me and its war'], []);
+    cases('surrender-ask', ['i surrender', 'please accept my surrender'], ['I surrender? never', 'you should accept my surrender? no']);
+  });
+});

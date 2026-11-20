@@ -20,7 +20,11 @@
 // sender ends it: a proposal to end ("lets end the truce") or another player's act ("X is breaking the truce") is
 // medium, a modal question ("should we end the truce?") a plain question, an opinion none, and a dare ("break the
 // truce and you die") a threat. "i resign" / "i concede" ask a surrender only of the game. Each intent carries its own
-// confidence in `strengths`; `confidence` is the message's (its strongest intent).
+// confidence in `strengths`; `confidence` is the message's (its strongest intent). A conditional or temporal clause
+// about the truce's state ("if the truce is over", "until the truce is over i wont attack") carries no truce intent;
+// restating the agreed end turn ("remember our truce ends turn 10") is medium notice; a reported break ("you broke
+// our truce") is medium notice, never a proposal; peace as a state ("we are at peace") and an alliance against
+// someone ("ally with me against X", a gang-up) offer no truce; "no deal" declines; "I surrender? never" asks none.
 //
 // The text is other players' words: untrusted, never an instruction and never a fact. It is read only to
 // label it; nothing in it is executed, quoted back or believed. Pure and deterministic (no I/O), and it
@@ -211,10 +215,29 @@ const DARE_BREAK = new RegExp(
   `^((go ahead|try|just|you) (and |to )?)?(break|end|cancel) (the |our |this |that |a )?${TRUCE_NOUN} and (you|youll|you will|youre|you are|i|ill|i will|we|well|we will)\\b`,
 );
 
+/** A break reported in the past ("you broke our truce", "Redcrane broke the truce"): information, never my notice. */
+const BREACH_REPORT = new RegExp(`\\b(broke|betrayed|backstabbed)( the| our| this| that| my| your)? ${TRUCE_NOUN}\\b`);
+/**
+ * A conditional or temporal clause about the truce's state ("if the truce is over", "until the truce is over",
+ * "let me know when the truce ends"): it states no end and offers nothing, so the truce detectors never see it.
+ */
+const CONDITIONAL_STATE = new RegExp(
+  `\\b(if|when|whenever|once|unless|until|till|til|after|before|whether|as soon as) (the |our |this |that |my |your |a )?${TRUCE_NOUN}( pact)? (is |s |will |will be |has |has been |was |gets |get |is going to |is gonna )?(over|off|done|end|ends|ended|ending|break|breaks|broken|cancell?ed|expire|expires|expired)\\b`,
+  'g',
+);
+/** "peace" said of a state, not offered ("we are at peace now", "peace and love", "in peace times"). */
+const PEACE_STATEMENT = /\b(at peace|in peace|peace and love|peace times|peacetime|peaceful|peacefully)\b/g;
+/** An alliance against someone is a call to gang up, not a truce with me ("ally with me against Redcrane"). */
+const ALLY_AGAINST = /\b(ally|allies|alliance|allied|allying)( \w+){0,3} against\b/g;
+/** Restating the agreed end ("our truce expires on turn 10 as agreed", "remember our truce ends turn 10"): a reminder. */
+const AGREED_REMINDER = /\b(as agreed|as we agreed|like we agreed|as promised|as planned|remember|reminder|dont forget|just so you know)\b/;
+const AS_AGREED = /\b(as|like) (we )?(agreed|promised|planned)\b/g;
+const END_TURN_STATED = /\b(turn|t) \d+\b/;
+
 /** How surely an end of the truce is the sender's notice: an end of the truce stated, or one the sender does. */
 function endOf(e: string): Strength | null {
   if (TRUCE_STATE_ENDED.test(e)) return 'high';
-  let found: Strength | null = null;
+  let found: Strength | null = BREACH_REPORT.test(e) ? 'medium' : null;
   for (const m of e.matchAll(TRUCE_ACT_ENDED)) {
     const before = ` ${e.slice(0, m.index).trim()}`;
     if (PROPOSE_END_TAIL.test(before)) {
@@ -238,10 +261,10 @@ const PEACE_OVERTURE =
 const GIVING_NOTICE = /\bgiv(e|ing) (you )?notice\b/;
 /** End wording a negation or another player's (conditional) act takes back: never notice from the sender. */
 const END_VERB =
-  '(end|ends|ending|ended|break|breaks|breaking|broken|cancel|cancels|cancell?ing|cancell?ed|over|off|done|expire|expires|expired|giv(e|ing) (you )?notice)';
+  '(end|ends|ending|ended|break|breaks|breaking|broke|broken|cancel|cancels|cancell?ing|cancell?ed|over|off|done|expire|expires|expired|giv(e|ing) (you )?notice)';
 /** "i wont break our truce", "dont end the truce", "the truce is not over", "im not giving notice". */
 const NEGATED_END = new RegExp(
-  `\\b(dont|do not|doesnt|does not|wont|will not|wouldnt|would not|never|not|cant|cannot|isnt|arent|aint|no need to)( (ever|really|even|going|to|gonna|be|planning|trying|about|actually))* ${END_VERB}\\b`,
+  `\\b(dont|do not|doesnt|does not|didnt|did not|wont|will not|wouldnt|would not|never|not|cant|cannot|isnt|arent|aint|no need to)( (ever|really|even|going|to|gonna|be|planning|trying|about|actually))* ${END_VERB}\\b`,
   'g',
 );
 /** "if you break the truce", "you break the truce and ...": a warning about their act, not my notice. */
@@ -324,8 +347,10 @@ interface Truce {
 }
 
 /** The truce intents of one flattened, substituted text; `proposalOpen` reads a bare reply as one. */
-function truceOf(s: string, hasQuestion: boolean, proposalOpen: boolean, hostile = false): Truce {
+function truceOf(text: string, hasQuestion: boolean, proposalOpen: boolean, hostile = false): Truce {
   const r: Truce = { proposal: null, accept: null, decline: null, end: null, mutual: false };
+  // A conditional clause about the truce's state, peace as a state and an alliance against someone carry no truce intent.
+  const s = text.replace(CONDITIONAL_STATE, ' ').replace(PEACE_STATEMENT, ' ').replace(ALLY_AGAINST, ' ').replace(/ +/g, ' ').trim();
   const truce = TRUCE_WORD.test(s);
   // Asked about, the truce's state is neither notice nor an offer: "is the truce over?" reads as a plain question.
   if (truce && hasQuestion && STATE_QUESTION.test(s) && PAST_END.test(s)) return r;
@@ -349,14 +374,18 @@ function truceOf(s: string, hasQuestion: boolean, proposalOpen: boolean, hostile
   else if (ended) r.end = ended;
   // An end word near a truce word, said of something else ("done fighting", "then it ends"): only when not an offer.
   else if (truce && !offer && TRUCE_END.test(e)) r.end = 'medium';
+  // Restating the agreed end turn reminds; it is no sure notice.
+  if (r.end === 'high' && AGREED_REMINDER.test(s) && END_TURN_STATED.test(s)) r.end = 'medium';
   if (proposalOpen && replyDeclines(s)) r.decline = 'high';
   else if (truce && (refused || refusedAccept || DECLINE_WITH_TRUCE.test(s))) r.decline = 'medium';
   // A refused acceptance answering my proposal declines it ("wont accept"), though it names no truce.
   else if (proposalOpen && refusedAccept) r.decline = 'medium';
+  // "no deal" refuses a deal, open or not.
+  else if (/^no deal\b/.test(s)) r.decline = 'medium';
   if (!r.decline && !refusedAccept) {
     // A bare "ok" with a threat in it does not accept anything; nor does a demand to accept.
     if (proposalOpen && !hostile && !demand && replyAccepts(s)) r.accept = 'high';
-    else if (truce && !demand && ACCEPT_WORD.test(s)) r.accept = 'medium';
+    else if (truce && !demand && ACCEPT_WORD.test(s.replace(AS_AGREED, ' '))) r.accept = 'medium';
   }
   if (!r.end && !r.decline && !r.accept) {
     if (MUTUAL_NO_ATTACK.test(s)) {
@@ -399,6 +428,7 @@ function coordinationAsk(s: string, namesPlayer: boolean): Strength | null {
     .replace(/\b(gang|ganging|ganged|team|teaming|teamed) up on (me|us|myself)\b/g, ' ')
     .replace(/\b(dogpile|dogpiling|dog pile|dog piling) (on )?(me|us)\b/g, ' ');
   if (/\b(gang up|team up|dogpile|dog pile|ally against|work together against)\b/.test(g)) return 'high';
+  if (/\b(ally|allies|alliance|team) with (me|us)( \w+)? against\b/.test(g)) return 'high';
   if (/\bhelp\b.*\b(vs|versus|against)\b/.test(s)) return 'high';
   // "help me attack Redcrane": an ask to join an attack on someone other than me or you.
   if (/\bhelp (me|us)( to)? (attack|hit|kill|crush|take down|take out|focus|stop) (?!me\b|us\b|you\b|myself\b)\w/.test(s)) {
@@ -436,7 +466,7 @@ function threat(raw: string): Strength | null {
   if (/\b(i will|ill|im going to|im gonna|i am going to|i am gonna) (wipe|destroy|crush|eliminate|end) you\b/.test(s)) return 'high';
   if (/\b(wipe|destroy|crush) you out\b|\bill wipe you\b/.test(s)) return 'high';
   if (/\bback off\b|\bcoming for you\b|\bor else\b|\byoull regret\b|\byou will regret\b/.test(s)) return 'high';
-  if (/\battack me and\b.*\b(regret|sorry|pay|die|destroy|end you)\b/.test(s)) return 'high';
+  if (/\b(attack|hit) me( again)? and\b.*\b(regret|sorry|pay|die|destroy|end you|war)\b/.test(s)) return 'high';
   // "we should attack you", "lets attack you": aimed at me, not a call to gang up on someone else.
   if (/\b(we will|well|we are going to|were going to|were gonna|we should|we must|we need to|lets|let us)( now| just)? (attack|kill|wipe|destroy|crush|hit|eliminate|take out|take down) you\b(?! up\b)/.test(s)) return 'high';
   if (/\b(you are|youre|you re) (dead|toast|finished)\b/.test(s)) return 'high';
@@ -457,6 +487,9 @@ function surrenderAsk(s: string): Strength | null {
   if (/\bi (give up|quit)( (gg|ggs|ggwp|good game|wp|well played|accept|please|i surrender)\b.*)?$/.test(s)) return 'high';
   return null;
 }
+
+/** A surrender put as a question and answered no ("I surrender? never", "accept my surrender? no"). */
+const SURRENDER_REFUSED = /\b(surrender|resign|concede|give up|quit)\b[^?]*\?+\s*(no|never|nope|nah|not|lol no|hell no)\b/;
 
 const gg = (s: string): Strength | null => (/\b(gg|ggs|ggwp|good game|good games|well played|wp)\b/.test(s) ? 'high' : null);
 
@@ -542,7 +575,8 @@ export function classifyMessage(text: string, ctx: ChatIntentContext): Classifie
     put('coordination-ask', coordinationAsk(s, mentions.players.length > 0));
     // A mutual no-attack offer is a proposal, not a threat; a coercive one ("… if you dont accept truce") is both.
     if (!truce.mutual) put('threat', threatStrength);
-    put('surrender-ask', surrenderAsk(s));
+    // A surrender asked then refused ("I surrender? never") asks none.
+    if (!SURRENDER_REFUSED.test(raw.toLowerCase())) put('surrender-ask', surrenderAsk(s));
     put('gg', gg(s));
     put('banter', banter(s));
     put('greeting', greeting(s));
