@@ -106,7 +106,12 @@
 //     Otherwise in a 1v1 (a primary of one pick, or of five or more), among the equally
 //     scored compact fallbacks found at its hop limit, the one farthest from the primary
 //     (fewest hops between the two groups, maximised) wins, so one counter-pick cannot reach
-//     both. A fallback that still outscores the primary is warned about. A list longer than
+//     both. #289: a first fallback tier of the primary's size that is one compact cluster
+//     and, scored alone as the primary is (nothing taken), beats it becomes the primary (the
+//     seeded greedy search missed it), once; the fallback is then built again. A fallback that
+//     still outscores the primary (its score is with the primary taken) is warned about, and the
+//     warning says why the primary stays first: an answering tier is granted whole only if every
+//     primary pick is lost, a spread one breaks the one-cluster rule. A list longer than
 //     twice the limit (war.app's client allows players × territories per player,
 //     `clientPickLimits`) runs in fallback tiers of the primary's size, each built as a group
 //     with the primary and the earlier tiers taken; the fallback group's score, bonuses
@@ -1425,7 +1430,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       `Only ${pickable.length} pickable territor${pickable.length === 1 ? 'y' : 'ies'} for a limit of ${limit}: the list has no full fallback.`,
     );
   const primary = buildGroup(firstView, pickable, primarySize, 'primary');
-  const rest = pickable.filter((t) => !primary.includes(t));
+  let rest = pickable.filter((t) => !primary.includes(t));
   // Commanders (#129): the first pick awarded carries the commander, so the primary's safest
   // pick goes first — the fewest other pickable territories (where other players may start)
   // within COMPACT_DISTANCE hops, then the fewest neighbours outside the primary, then score.
@@ -1615,6 +1620,32 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     };
   };
 
+  // #289: the fallback is scored with the primary taken, so its group score and the primary's
+  // are on one footing only when both are scored alone. A first tier of the primary's size
+  // that is one compact cluster and, scored alone, beats the primary is a better group the
+  // seeded search missed (greedy growth from its seeds reached into the primary): it becomes
+  // the primary, and the fallback is built again for it. Once only.
+  let promoted: { was: number; now: number } | null = null;
+  {
+    const tier = listed.tiers[0] ?? [];
+    const was = round2(simScore(primary, []));
+    const now = round2(simScore(tier, []));
+    if (!spread && tier.length > 1 && tier.length === primary.length && spreadOf(tier).link <= COMPACT_DISTANCE && now > was) {
+      const byFirst = (a: number, b: number) => firstView.of.get(b)!.score - firstView.of.get(a)!.score || a - b;
+      primary.splice(0, primary.length, ...[...tier].sort(byFirst));
+      rest = pickable.filter((t) => !primary.includes(t));
+      if (relaxedTo.delete('primary')) {
+        for (let i = warnings.length - 1; i >= 0; i--) if (warnings[i]!.startsWith('No compact primary group')) warnings.splice(i, 1);
+      }
+      if (s.commanders) {
+        ({ pick: commanderPick, exposure: commanderExposure } = safestOf(primary));
+        primary.splice(0, primary.length, commanderPick, ...primary.filter((t) => t !== commanderPick));
+      }
+      listed = buildFallback(primary);
+      promoted = { was, now };
+    }
+  }
+
   // The award order (#129): a list is judged by the sets it can actually yield. The worst
   // outcome is scored with the other players holding the picks it implies they took; the
   // primary's order is changed only when another order raises that worst outcome.
@@ -1783,18 +1814,37 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     primary: groupOf(primary, NO_TAKEN),
     fallback: { ...groupOf(firstTier, firstFallbackView.taken), territoryIds: fallback },
   };
-  if (groups.fallback.score > groups.primary.score)
-    warnings.push(
-      `The fallback group scores more than the primary (${groups.fallback.score} vs ${groups.primary.score}): the primary keeps to ` +
-        (players > 2
-          ? `one compact cluster, since with ${players} players spread picks are likely contested.`
-          : spread
-            ? `within ${SPREAD_DISTANCE} hops unless spreading scores ${SPREAD_RELAX_GAIN}× as much.`
-            : answerSets
-              ? 'one compact cluster, so the start has one front; each fallback pick is listed for the outcomes in which a pick above it is lost.'
-              : 'one compact cluster, so the start has one front; the fallback covers a counter-pick.') +
-        ' Weigh the trade before submitting.',
+  if (promoted)
+    rationale.push(
+      `The seeded search's primary scored ${promoted.was}; the first fallback group, one compact cluster of as many picks, ` +
+        `scores ${promoted.now} on the same footing (each alone, nothing taken), so it is the primary now and the fallback was built again for it (#289).`,
     );
+  if (groups.fallback.score > groups.primary.score) {
+    // #289: say why the primary still ranks first. The fallback's score is with the primary
+    // taken (it is granted only then); a compact tier that beat the primary alone was promoted
+    // above, so what is left is a fallback the primary's rules keep out of first place.
+    const alone = round2(simScore(firstTier, []));
+    const link = spreadOf(firstTier).link;
+    const tierCompact = link <= COMPACT_DISTANCE;
+    const steps = Number.isFinite(link) ? `${link} hops` : 'any distance (some are not connected)';
+    const reason = answerSets
+      ? 'the primary is one compact cluster, so the start has one front; each fallback pick is chosen for the outcomes in which a pick above it is lost, ' +
+        'and the fallback picks are granted together only if every primary pick is lost' +
+        (tierCompact ? '' : ` (nor are they one cluster: they link up only in steps of up to ${steps})`) +
+        ', so its joint score is not a start this list can choose'
+      : spread
+        ? `the primary keeps within ${SPREAD_DISTANCE} hops unless spreading scores ${SPREAD_RELAX_GAIN}× as much`
+        : !tierCompact
+          ? `the fallback is not one compact cluster (its picks link up only in steps of up to ${steps}) and the primary keeps to one, ` +
+            (players > 2
+              ? `since with ${players} players spread picks are likely contested`
+              : 'so the start has one front; the fallback covers a counter-pick')
+          : `scored alone, as the primary is, the fallback makes ${alone}, not more than the primary: the gap comes from scoring it with the primary taken`;
+    warnings.push(
+      `The fallback group scores more than the primary (${groups.fallback.score} vs ${groups.primary.score}; the fallback is scored with the primary taken, ` +
+        `since it is granted only then, and makes ${alone} alone). The primary stays first: ${reason}. Weigh the trade before submitting.`,
+    );
+  }
   if (commanderPick !== null)
     rationale.push(
       `Commanders are on: the first pick awarded carries the commander, so the primary's safest pick (${terrName(commanderPick)}: ` +

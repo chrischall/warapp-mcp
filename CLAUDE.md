@@ -216,7 +216,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   survives only behind `spread: true`. The rationale reports real hop
   distances and never calls a group compact unless it is one such cluster. The primary is the best-scoring
   group any of the best seeds grows, and the fallback is scored with the primary taken (it is granted only
-  then); a list past twice the limit (the client allows players × territories per player,
+  then); a first fallback tier of the primary's size that is one compact cluster and, scored alone, beats the
+  primary becomes the primary (#289: the seeded greedy search missed it), and a fallback that still outscores it
+  is warned about with the reason the primary stays first (an answering tier is granted whole only if every
+  primary pick is lost; a spread one breaks the one-cluster rule); a list past twice the limit (the client allows players × territories per player,
   `clientPickLimits`, docs/WARAPP-API.md) runs in tiers of the primary's size. The list is judged by the award
   order (rounds in a reversing move order, each player getting their best free pick: `pickOutcomes`), reporting
   the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
