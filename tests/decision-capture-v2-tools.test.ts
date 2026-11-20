@@ -9,7 +9,7 @@ import { Method } from '../src/protocol/methods.js';
 import { decisionLogPath, readDecisionLog } from '../src/decision-log.js';
 import { serverBuild } from '../src/build-id.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
-import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -50,6 +50,22 @@ const board = (territories: SyntheticTerritory[]) => () =>
   ({ body: (w) => writeLatestGameInfo(w, territories, [ANN.inGame]) }) satisfies Partial<ReplyFrame>;
 const server = (territories: SyntheticTerritory[] = BOARD) =>
   routes({ [Method.GetLatestGameInfo]: board(territories), [Method.SendOrders]: () => ({ body: (w) => w.bool(true).bool(false) }) });
+
+// Synthetic card GUIDs. Ann holds a Reinforcement (5 armies), a Bomb and a Spy; Bob holds an Airlift, which
+// is not Ann's and must never reach her logged hand.
+const R1 = '0123456789abcdef0123456789abcdef';
+const BM = '9a9a9a9a8b8b8b8b7c7c7c7c6d6d6d6d';
+const SP = '12121212343434345656565678787878';
+const AL = '55555555666666667777777788888888';
+const ANN_HAND: SyntheticCard[] = [{ id: R1, type: 1, armies: 5 }, { id: BM, type: 13 }, { id: SP, type: 2 }];
+const withHands = () =>
+  routes({
+    [Method.GetLatestGameInfo]: () =>
+      ({
+        body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], { [ANN.inGame]: ANN_HAND, [BOB.inGame]: [{ id: AL, type: 6 }] }),
+      }) satisfies Partial<ReplyFrame>,
+    [Method.SendOrders]: () => ({ body: (w) => w.bool(true).bool(false) }),
+  });
 
 interface PlanPayload {
   goal: string;
@@ -117,11 +133,65 @@ describe('decision log v2 capture (#437 task 1)', () => {
     const c = e.checks?.submit;
     // No Commanders in the fixture: no commander check.
     expect(c?.commander).toBeNull();
-    expect(Array.isArray(c?.headroom)).toBe(true);
-    expect(c!.headroom.length).toBeLessThanOrEqual(5);
-    for (const r of c!.headroom) expect(Object.keys(r).sort()).toEqual(['from', 'opponent', 'protects', 'takeAt', 'territory']);
+    // Bob's 158 borders Ann's 159 and 161: one row each, the weakest (lowest takeAt) first, ids only.
+    // (Two rows here: the cap at the weakest 5 is proven by the headroomLog helper test.)
+    const bob = Number(BOB.feed);
+    const none = { bonuses: [], behindIncome: 0, breachIncome: 0 };
+    expect(c?.headroom).toEqual([
+      { territory: 161, takeAt: 0, opponent: bob, from: 158, protects: none },
+      { territory: 159, takeAt: 12, opponent: bob, from: 158, protects: none },
+    ]);
     expect(c?.belowPlan).toEqual([]);
     expect(c?.chat).toEqual([]);
+    expect(fileText()).not.toMatch(/\b(Ann|Bob)\b/);
+  });
+
+  it('warapp_plan_turn logs my hand by type and the card advice offered (kind, target ids, reason code)', async () => {
+    // A team game: Bob is Ann's teammate, so the team's hand holds his Airlift too, yet it is not Ann's card.
+    const teams = (game('2').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    h = await liveHarness({ feed: [game('2', { players: teams })], warapp: withHands() });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const e = (await log())!.turns['3']!;
+    // Ann's three cards, by type; her teammate's Airlift is not in her hand.
+    expect(e.cards?.hand).toEqual([
+      { card: 'Bomb', type: 13, count: 1 },
+      { card: 'Reinforcement', type: 1, count: 1 },
+      { card: 'Spy', type: 2, count: 1 },
+    ]);
+    const bomb = e.cards?.advice?.find((a) => a.kind === 'bomb');
+    expect(bomb).toEqual({ kind: 'bomb', targets: expect.any(Array), reason: expect.any(String) });
+    for (const t of bomb!.targets) expect(t).toEqual(expect.any(Number));
+    // A reason code, never the advice's prose.
+    expect(bomb!.reason).toMatch(/^[a-z-]+$/);
+    expect(fileText()).not.toMatch(/\b(Ann|Bob)\b/);
+  });
+
+  it('warapp_plan_turn logs a known first mover as who, source and verified', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: server() });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', first_mover: 'opponent' });
+    const e = (await log())!.turns['3']!;
+    expect(e.firstMover).toEqual({ who: 'opponent', source: 'explicit', verified: true });
+    expect(fileText()).not.toMatch(/\b(Ann|Bob)\b/);
+  });
+
+  it('warapp_submit_turn logs the cards its orders played (by name) and how many they discarded', async () => {
+    h = await liveHarness({ feed: [game('2')], pages: ME_PAGE, warapp: withHands() });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    // The plan plays the Reinforcement and deploys its armies; the orders add a discard of the Spy.
+    expect(p.orders).toContainEqual({ kind: 'card', card: R1 });
+    const deployed = p.deploys.reduce((s, d) => s + d.armies, 0);
+    const orders = [
+      { kind: 'card', card: R1 },
+      { kind: 'discard', card: SP },
+      { kind: 'deploy', territory: 159, armies: deployed },
+    ];
+    const r = await submit({ game_id: GAME, player: 'Ann', orders });
+    expect(r.isError).toBeFalsy();
+    const e = (await log())!.turns['3']!;
+    expect(e.cards).toMatchObject({ played: ['Reinforcement'], discarded: 1 });
+    expect(e.cards?.discarded).toBeGreaterThanOrEqual(1);
+    // The plan-time hand survives the submit.
+    expect(e.cards?.hand?.map((c) => c.card)).toEqual(['Bomb', 'Reinforcement', 'Spy']);
     expect(fileText()).not.toMatch(/\b(Ann|Bob)\b/);
   });
 });
