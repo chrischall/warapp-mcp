@@ -113,6 +113,13 @@ env:
       Opponent profiles: gameplay counts per game and across games (name-free,
       keyed by the same salted hash; owner decision P4, on by default, hosted
       as well). Set off to switch it off.
+  - name: WARAPP_DECISION_LOG
+    required: false
+    help: >-
+      The per-game decision log (each turn's view, plan, orders sent and, once
+      the game ends, the true figures; ids and numbers, no names). On by
+      default, hosted as well. Set off to switch it off, or full to keep every
+      turn uncompacted.
   - name: WARAPP_SESSION_FILE
     required: false
     help: >-
