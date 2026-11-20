@@ -175,13 +175,14 @@ describe("an enemy commander counts in the expected attack (#128)", () => {
 });
 
 describe('a hold deferred for the expansion share is not then conceded (#128)', () => {
+  // #420: the total hold cap is off here (`holdCap: false`): these test #128's deferral, not the cap.
   // enemy 3 (51) - 1 (30) - 2 (1) - 5 6 (neutral +4) - 7 - 8 (a third player). Income 5: the hold
   // of 1 costs 4, the expansion share is 2, and the advance toward the +4 completes nothing.
   const g = buildGraph(makeMap([1, 2, 3, 5, 6, 7, 8], [[3, 1], [1, 2], [2, 5], [5, 6], [6, 7], [7, 8]], [[102, 4, [5, 6]]]));
   const b = board([mine(1, 30), mine(2, 1), player(3, 51, 20), neutral(5, 2), neutral(6, 2), neutral(7, 2), player(8, 3, 30)]);
   const players = [{ id: ME }, { id: 20 }, { id: 30 }];
   it('holds the 30-stack rather than advancing and withdrawing it', () => {
-    const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, game: { players, turn: 9 }, options: { adapt: true } });
+    const plan = planTurn({ graph: g, board: b, me: ME, income: 5, settings: STD, game: { players, turn: 9 }, options: { adapt: true, holdCap: false } });
     expect(plan.conceded).toEqual([]);
     expect(deployedTo(plan, 1)).toBeGreaterThanOrEqual(4);
     expect(plan.moves.filter((m) => m.from === 1)).toEqual([]);
@@ -201,7 +202,7 @@ describe('a hold deferred for the expansion share is not then conceded (#128)', 
       mine(1, 30), mine(2, 1), player(3, 51, 20), neutral(5, 2), neutral(6, 2), neutral(7, 2), player(8, 3, 30),
       mine(21, 30), player(23, 51, 20), mine(31, 30), player(33, 54, 20),
     ]);
-    const plan = planTurn({ graph: g2, board: b2, me: ME, income: 14, settings: STD, game: { players, turn: 9 }, options: { adapt: true } });
+    const plan = planTurn({ graph: g2, board: b2, me: ME, income: 14, settings: STD, game: { players, turn: 9 }, options: { adapt: true, holdCap: false } });
     expect(plan.conceded).toEqual([]);
     expect(deployedTo(plan, 1)).toBeGreaterThanOrEqual(4);
     expect(deployedTo(plan, 21)).toBeGreaterThanOrEqual(4);

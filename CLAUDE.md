@@ -966,7 +966,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   against a finished 1v1. #420 (`priorOnlyHold`, `plan/holds.ts`): a single-border hold under `balanced` that
   only the prior makes needed (no usable track; the border holds against its one opponent's stacks plus
   base + visible bonuses / an observed deploy / a clock card; plain borders only) ranks after every capture
-  in rule 4a's greedy step, with a "(#420)" line when it passed one; held-bonus units and evidence-sized holds keep their rank. **Frontier coverage (#294).** Each observed turn carries `coverage`
+  in rule 4a's greedy step, with a "(#420)" line when it passed one; held-bonus units and evidence-sized holds keep their rank. **The total hold cap (#420, owner decision of 2026-11-20, `holdCapOf` in `plan/holds.ts`):** plain holds take at
+  most `HOLD_CAP_EVEN` (50%) of my income when even or ahead, `HOLD_CAP_BEHIND` (70%) when the profile reads me behind
+  (rounded down); a held bonus's own gate (rule 1h's units, `hold(m, true)`) and my commander's hold are funded first,
+  outside it, and count nothing. A plain hold past it (rule 1a's `defend` triage, rule 4a's greedy hold, `singleNow` /
+  `singleLate`, a deferred hold) is conceded with "… cannot be held within the hold cap (#420: …): conceded"; rule 4a's
+  hold-and-break runs before the check, as a capture, and counts toward it. The leftover's revival ("Hold … after
+  all") can still hold a capped border with what the captures leave; a strike stack takes it instead when the leftover
+  builds one. Off under a `defend` goal the caller gave and with `PlanOptions.holdCap: false` (the tests of earlier hold
+  rules use it). Golden: 67 of 6253 plans, 47 in their orders: captures +25/−3, next income up on 7 and lower on none,
+  45 more concessions and 1 fewer. **Frontier coverage (#294).** Each observed turn carries `coverage`
   (`frontierCoverage`, pure, in `src/analysis/plan/shared.ts`): its territories in view with a neighbour
   not its own, plus every territory beside them whose owner is hidden (it could hold it: the "~M"), read
   when in view with armies on both boards, and the positive bonuses it could hold with a hidden member;

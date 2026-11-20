@@ -289,6 +289,11 @@ export interface PlanOptions {
    * plan/commander.ts off). Default: it walks toward safety when it should.
    */
   commanderWalks?: boolean;
+  /**
+   * #420: `false` turns the total hold cap off (plain holds take whatever they need, as before it). Default:
+   * plain holds take at most half my income, 70% when behind. Tests of earlier hold rules use it.
+   */
+  holdCap?: boolean;
   /** #382: `false` keeps the profile from picking the siege (adapting with no goal). Default: it picks it when it fits. */
   siegeAuto?: boolean;
   /**

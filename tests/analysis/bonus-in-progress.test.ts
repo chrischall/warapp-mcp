@@ -64,7 +64,8 @@ describe('#122 (a): a member of the bonus being advanced is valued, not conceded
     income: 5,
     settings: RATES,
     game: { players, turn: 6 },
-    options: { adapt: true },
+    // #420: the total hold cap off: these test an earlier hold rule, not the cap.
+    options: { holdCap: false, adapt: true },
   });
 
   it('keeps T32 and deploys what holds it', () => {
@@ -216,7 +217,8 @@ describe('#122 (c): in the opening a start is not stripped when its top-up is le
     income: 5,
     settings: { ...RATES, oneArmyStandsGuard: false },
     game: { players, turn: 1 },
-    options: { adapt: true },
+    // #420: the total hold cap off: these test an earlier hold rule, not the cap.
+    options: { holdCap: false, adapt: true },
   });
 
   it('holds two of the three starts the income can cover, not none', () => {

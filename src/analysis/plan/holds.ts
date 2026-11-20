@@ -55,6 +55,24 @@ export function priorOnlyHold(pc: PlanCtx, b: Border, t: Threatened): number | n
   return take !== null && take > b.movable + Math.max(evidence, b.growth) ? evidence : null;
 }
 
+/** #420: the share of my income plain holds may take when even or ahead. */
+export const HOLD_CAP_EVEN = 0.5;
+/** #420: the share of my income plain holds may take when behind. */
+export const HOLD_CAP_BEHIND = 0.7;
+
+/**
+ * #420 (owner decision of 2026-11-20, "Total hold cap"): the armies plain holds may take this turn —
+ * {@link HOLD_CAP_BEHIND} of my income when the profile reads me behind, else {@link HOLD_CAP_EVEN}
+ * (rounded down) — or `null` under a `defend` goal the caller gave (`goal` defend while not adapting) or
+ * with `options.holdCap: false`.
+ */
+export function holdCapOf(pc: PlanCtx): { armies: number; share: number; behind: boolean } | null {
+  if (pc.opts.holdCap === false || (pc.goal === 'defend' && !pc.auto)) return null;
+  const behind = pc.profile.standing === 'behind';
+  const share = behind ? HOLD_CAP_BEHIND : HOLD_CAP_EVEN;
+  return { armies: Math.floor(share * pc.income), share, behind };
+}
+
 /** A territory of mine with a threat next to it (rule 1): what it has, what it faces, what holding it costs. */
 export interface Threatened {
   id: number;
@@ -685,7 +703,30 @@ export function holdOrConcede(
   const heldStack = (t: Threatened) => `${t.have + t.holdCost} armies${t.units ? ' and my commander' : ''}`;
   /** The borders a hold deployed to, by the player threatening them (for the #69 rationale). */
   const heldAgainst = new Map<number, Set<number>>();
-  const hold = (t: Threatened) => {
+  /**
+   * #420 (owner decision of 2026-11-20, "Total hold cap"): plain holds take at most
+   * {@link HOLD_CAP_EVEN} of my income when even or ahead, {@link HOLD_CAP_BEHIND} when behind (the
+   * profile's standing). A held bonus's own gate (rule 1h's units, `gate`) and my commander's hold are
+   * funded first, outside the cap, and do not count toward it. Not under a `defend` goal the caller gave.
+   */
+  const holdCap = holdCapOf(pc);
+  let capSpent = 0;
+  /** #420: a plain hold of `t` would take the holds past the cap. */
+  const overCap = (t: Threatened) => holdCap !== null && !t.critical && capSpent + t.holdCost > holdCap.armies;
+  /** #420: what a plain hold deployed outside {@link hold} (rule 4a's hold-and-break) takes of the cap. */
+  const chargeCap = (armies: number) => {
+    capSpent += armies;
+  };
+  /** #420: `t` is conceded for the cap (said unless `quiet`); its line reads like rule 1a's, so a revival lifts it. */
+  const concedeCapped = (t: Threatened, quiet = false) => {
+    conceded.add(t.id);
+    if (quiet || !holdCap) return;
+    warnings.push(
+      `${label(t.id)} cannot be held within the hold cap (#420: plain holds take at most ${holdCap.armies} of my ${pc.income} income, ${holdCap.share * 100}% ${holdCap.behind ? 'when behind' : 'when even or ahead'}; ${capSpent} already go to holds, and it needs ${t.holdCost}, protects +${t.value}): conceded`,
+    );
+  };
+  const hold = (t: Threatened, gate = false) => {
+    if (!gate && !t.critical) capSpent += t.holdCost;
     noteRecent(t);
     deploy(t.id, t.holdCost);
     locked.add(t.id);
@@ -695,7 +736,7 @@ export function holdOrConcede(
       `Deploy ${t.holdCost + (t.given ?? 0)} to ${label(t.id)} so it holds (protects +${t.value}): ${heldStack(t)} need ${toTake(t.have + t.units + t.holdCost)} to take, above the ~${t.threat} threat.`,
     );
   };
-  return { threatWarnings, assessThreats, acting, concedeUnaffordable, noteRecent, heldStack, heldAgainst, hold };
+  return { threatWarnings, assessThreats, acting, concedeUnaffordable, noteRecent, heldStack, heldAgainst, hold, overCap, chargeCap, concedeCapped };
 }
 
 /** Rule 1h (#51): every bonus I hold in full with a threatened border is one unit, held whole or conceded. */
@@ -864,7 +905,8 @@ export function heldBonusUnits(
     let rest = cost;
     for (const m of todo) {
       rest -= m.holdCost;
-      if (!each?.(m, rest)) hold(m);
+      // #420: a held bonus's own gate, outside the hold cap.
+      if (!each?.(m, rest)) hold(m, true);
       heldBorders.add(m.id);
     }
     return true;
@@ -959,7 +1001,7 @@ export function floorTier(
     });
   const {
     uneconomic, acting, concedeUnaffordable, heldStack, hold, heldBorders, commanderHeld, buildUnits, unitBorders,
-    concedeUnit, leftFor, fundUnit, fundNearMiss,
+    concedeUnit, leftFor, fundUnit, fundNearMiss, overCap, concedeCapped,
   } = prev;
   // ---- 1h. floor tier and one shared deploy (#118) ----
   // One enemy deploy lands on one target. Sizing every border of a held bonus for the whole of
@@ -1096,6 +1138,7 @@ export function floorTier(
       else concedeUnaffordable(t, room);
       return;
     }
+    if (overCap(t)) return concedeCapped(t, quiet);
     hold(t);
     heldBorders.add(t.id);
   };
@@ -1453,6 +1496,7 @@ export function floorTier(
         else concedeUnaffordable(t, left);
         return;
       }
+      if (acting && overCap(t)) return concedeCapped(t, quiet);
       triageBudget -= t.holdCost;
       if (acting) {
         hold(t);

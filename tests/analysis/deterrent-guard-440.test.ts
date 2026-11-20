@@ -76,7 +76,8 @@ describe('a deterrent guard on the territory with the most income at stake (#440
   });
 
   it('a border that falls is held first; the guard gets only what is left', () => {
-    const p = plan(8, field([mine(2, 18)]), { income: 4 });
+    // #420: the hold cap off (3 of 4 is past half): this tests #440's order, not the cap.
+    const p = plan(8, field([mine(2, 18)]), { income: 4, options: { holdCap: false } });
     expect(deployOn(p, 2)).toBe(3);
     expect(deployOn(p, 1)).toBe(1);
     expect(deployOn(p, 3)).toBe(0);

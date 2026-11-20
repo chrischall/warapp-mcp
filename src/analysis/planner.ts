@@ -495,6 +495,15 @@
 //     (fully visible, fewer territories than mine, deploy below my income) that
 //     threatens it now is never conceded economically (the rationale says so once its
 //     hold is deployed); under `balanced` its hold goes first.
+//  #420 (owner decision of 2026-11-20, "Total hold cap", `holdCapOf` in plan/holds.ts): plain holds
+//     take at most HOLD_CAP_EVEN (50%) of my income when even or ahead and HOLD_CAP_BEHIND (70%) when
+//     the profile reads me behind (rounded down). A held bonus's own gate (rule 1h's units) and my
+//     commander's hold (rule 1k) are funded first, outside it, and count nothing toward it. A plain hold
+//     past it — rule 1a's `defend` triage, rule 4a's greedy hold, a unit member judged alone, a deferred
+//     hold — is conceded with a "cannot be held within the hold cap (#420 …)" line (its armies may still
+//     attack out); a hold that breaks its one threat (rule 4a's hold-and-break) runs first, as a capture,
+//     and counts. The leftover's revival may still hold a capped border after all. Off under a `defend`
+//     goal the caller gave, and with `options.holdCap: false` (tests of earlier hold rules use it).
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
 //     of my complete bonuses containing it, plus incomplete bonuses containing it
 //     that I would lose all access to without it, plus (#122) its share of every other
@@ -1958,7 +1967,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const {
     acting, conceded, concedeUnaffordable, floorOrConcede, fundNearMiss, fundUnit, garrisonCompleted, heldBorders,
     heldStack, hold, holds, keepFor, kept, keptShort, leftFor, mayComplete, mayHold, noteRecent, pendingLocks, reconsider,
-    settleContested, twoStepBound, twoStepKeep, uneconomic, units, withdraw,
+    settleContested, twoStepBound, twoStepKeep, uneconomic, units, withdraw, overCap, chargeCap, concedeCapped,
   } = hd;
 
   // ---- 2. targets, 4d. frontier cost, bonus scoring, #101 (plan/targets.ts) ----
@@ -2123,8 +2132,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
      * this turn's captures may complete stays locked until they are known: rule 1c keeps it for a
      * completed bonus, and an attack out would have emptied it first.
      */
-    const concedePending = (t: Threatened, room: number) => {
-      concedeUnaffordable(t, room);
+    const concedePending = (t: Threatened, room: number, capped = false) => {
+      // #420: past the hold cap, said as such.
+      if (capped) concedeCapped(t);
+      else concedeUnaffordable(t, room);
       if (heldBorders.has(t.id)) return;
       if (mayComplete(t.id)) parked.add(t.id);
       else unlockPending(t.id);
@@ -2235,6 +2246,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const before = ps.budget;
       noteRecent(t);
       deploy(t.id, t.holdCost);
+      chargeCap(t.holdCost);
       if (!tryCapture(n, breakReason(b), { from: t.id, keep: avail.get(t.id)! })) {
         // Refused (R3: it would complete a bonus I cannot hold next turn): just hold.
         rationale.push(
@@ -2432,7 +2444,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         run: () => {
           // Already garrisoned for a bonus this turn completed (#122).
           if (heldBorders.has(t.id)) return;
+          // #420: a hold that breaks its one threat is a capture first (its hold still counts toward the cap);
+          // any other plain hold past the total hold cap is conceded (its armies may still attack out).
           if (holdAndBreak(t)) return;
+          if (overCap(t)) return concedePending(t, roomAt(t.id), true);
           const pending =
             expansionLeft > 0 && t.worth < topValue && t.recentFrom === undefined ? Math.max(0, floor - expansionSpent) : 0;
           const room = roomAt(t.id);
@@ -2464,6 +2479,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         else concedeUnaffordable(t, room);
         return;
       }
+      if (overCap(t)) return concedeCapped(t, quiet);
       hold(t);
       heldBorders.add(t.id);
     };
@@ -2663,7 +2679,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         expansionSpent = spent;
         expansionLeft = left;
         for (const t of owed)
-          if (t.holdCost <= roomAt(t.id)) {
+          if (t.holdCost <= roomAt(t.id) && !overCap(t)) {
             rationale.push(
               `Hold ${label(t.id)} now after all: the capture that would have gone first completes no bonus and would leave too little to hold it later.`,
             );
@@ -2681,7 +2697,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     for (const t of deferred) {
       if (heldBorders.has(t.id)) continue;
       const room = roomAt(t.id);
-      if (t.holdCost > room) concedePending(t, room);
+      if (t.holdCost > room || overCap(t)) concedePending(t, room, t.holdCost <= room);
       else hold(t);
     }
     // #215 review: a parked concession is unlocked now unless this turn's captures complete a bonus

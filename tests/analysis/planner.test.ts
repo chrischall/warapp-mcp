@@ -1370,7 +1370,8 @@ describe('planTurn — border value after this turn\'s captures (R2)', () => {
     it(`(${goal}) completes the bonus AND keeps the bordering member it protects`, () => {
       expect(armiesToTake(4, STD)).toBe(6);
       expect(armiesToTake(7, STD)).toBe(11);
-      const p = planTurn({ graph: g, board: at(4, 2), me: ME, income: 5, settings: STD, options: { goal } });
+      // #420: the hold cap off: this tests R2's kept member, not the cap.
+      const p = planTurn({ graph: g, board: at(4, 2), me: ME, income: 5, settings: STD, options: { goal, holdCap: false } });
       expect(p.expected.bonusesCompleted).toEqual([801]);
       expect(attacks(p)).toEqual([expect.objectContaining({ from: 3, to: 4, armies: 3 })]);
       // T1 is kept: not conceded, never withdrawn from, and garrisoned so it holds.
