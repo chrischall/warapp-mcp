@@ -81,7 +81,9 @@ describe('outlook incomes (#436)', () => {
   });
 
   it('reads unknown when the calibrated range spans both thresholds', () => {
-    const g = buildGraph(line());
+    // A +20 bonus on the fogged T5 lets the foe earn up to 30 a turn, so ÷ 0.3 stays under its could-earn cap.
+    const map = line();
+    const g = buildGraph({ ...map, bonuses: [...map.bonuses, { id: 4, name: 'Pass', value: 20, territoryIds: [5], bonusIds: [] }] });
     const boards = turns(4, [leadingThin(10, 10), leadingThin(10, 12), leadingThin(10, 14)]);
     const plain = gameOutlook({ graph: g, me: ME, boards, game: { ...game, start } });
     const low = plain.turns.at(-1)!.income!.theirs.low;
@@ -96,6 +98,21 @@ describe('outlook incomes (#436)', () => {
     // A band with too few samples is not used.
     const few = gameOutlook({ graph: g, me: ME, boards, game: { ...game, start }, calibration: { '25-50': { geoMean: 0.3, n: 2 } } });
     expect(few.turns.at(-1)!.income!.calibrated).toBe(false);
+  });
+
+  it('never lets the calibrated estimate or the top of the range pass what the opponent could earn', () => {
+    // The foe could hold T5–T8 at most: 4 territories (5) + East (+5) = 10 a turn. Its tracked 5 ÷ 0.1 would read 50.
+    const g = buildGraph(line());
+    const boards = turns(4, [leadingThin(10, 10), leadingThin(10, 12), leadingThin(10, 14)]);
+    const plain = gameOutlook({ graph: g, me: ME, boards, game: { ...game, start } });
+    expect(plain.turns.at(-1)!.income!.theirs.low).toBe(5);
+    const o = gameOutlook({ graph: g, me: ME, boards, game: { ...game, start }, calibration: { '25-50': { geoMean: 0.1, n: 20 } } });
+    const inc = o.turns.at(-1)!.income!;
+    expect(inc.calibrated).toBe(true);
+    expect(inc.theirs).toMatchObject({ low: 5, estimate: 10, high: 10 });
+    // My 10 against a could-earn 10 is not behind, and no surrender line is crossed on an unreachable income.
+    expect(inc.lean).not.toBe('behind');
+    expect(o.surrenderLine?.crossed ?? false).toBe(false);
   });
 
   it('gives a pace line: both incomes and their change per turn', () => {

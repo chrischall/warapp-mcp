@@ -607,13 +607,14 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         const low = a + k * income;
         const seen = { armies: a, income };
         const none = { likely: undefined as number | undefined, source: undefined as LikelySource | undefined, why: undefined as PriorWhy | undefined };
-        if (open) return { playerId, low, high: low as number | null, seen, paceIncome: income, ...none };
+        if (open) return { playerId, low, high: low as number | null, seen, paceIncome: income, capIncome: income, ...none };
+        // #436: the most it could earn this turn (never below what it visibly earns): no income estimate exceeds it.
+        const cap = Math.max(income, turnCap(turn, playerId));
         if (start === null || likelyStart === null || cardsBound === undefined)
-          return { playerId, low, high: null, seen, paceIncome: Math.max(income, turnCap(turn, playerId)), ...none };
+          return { playerId, low, high: null, seen, paceIncome: cap, capIncome: cap, ...none };
         // Each turn's could-earn cap: from that turn's board when I have it, else the ceiling.
         let received = start;
         for (let t = 1; t <= turn; t++) received += turnCap(t, playerId);
-        const cap = Math.max(income, turnCap(turn, playerId));
         // Cards: what the clock lets it have played by now, and over the next k turns.
         const now = cardsBound ? cardArmiesBy(cardsBound, turn) : 0;
         const ahead = cardsBound ? cardArmiesBy(cardsBound, turn + k) - now : 0;
@@ -644,7 +645,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
           Math.max(a, likelyReceived + now, since) + k * Math.max(income, last?.income ?? 0, Math.min(cap, pace)) + ahead;
         // #436: the most it likely earns a turn, as the likely high counts it.
         const paceIncome = Math.max(income, last?.income ?? 0, Math.min(cap, pace));
-        return { playerId, low, high, seen, paceIncome, likely: Math.min(high, Math.max(low, likely)), source, why };
+        return { playerId, low, high, seen, paceIncome, capIncome: cap, likely: Math.min(high, Math.max(low, likely)), source, why };
       });
     // PLAN-TEAMS C3: an enemy team is one side, its figures summed; elsewhere a side is a player.
     const teamOf = (p: number) => {
@@ -846,8 +847,11 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       const row = evidenceRows.find((x) => x.playerId === r.playerId)!;
       const low = row.income;
       const factor = tr?.income != null ? calibrationFor(tr.coverage?.share ?? null) : undefined;
-      const estimate = open ? low : factor !== undefined ? Math.max(r.seen.income, Math.round(tr!.income! / factor)) : low;
-      const high = open ? low : Math.max(estimate, low, row.thin ? r.paceIncome : low);
+      // The calibrated estimate and the top of the range never pass what it could earn this turn (`capIncome`, the
+      // bound `paceIncome` keeps to): dividing a low-coverage reading by ~0.3 must not read an income it cannot reach.
+      const capped = (n: number) => Math.min(Math.max(r.capIncome, low), n);
+      const estimate = open ? low : factor !== undefined ? capped(Math.max(r.seen.income, Math.round(tr!.income! / factor))) : low;
+      const high = open ? low : capped(Math.max(estimate, low, row.thin ? r.paceIncome : low));
       const t = teamOf(r.playerId);
       const key = t === undefined ? `p${r.playerId}` : `t${t}`;
       const side = incomeSides.get(key);

@@ -2124,7 +2124,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `low`) and its estimate (the tracked figure ÷ past games' estimate ÷ truth in its coverage band, `calibration`
   from lessons.json through `outlookCalibrationFor` in `src/tools/past-games.ts`: this format's band with
   `MIN_CALIBRATION_SAMPLES` (5) or more, else every format's; never below its visible income; uncalibrated, the
-  tracked figure). Its `lean`: `unknown` when the range spans both lines (`INCOME_BEHIND_RATIO` ⅔ and
+  tracked figure; the estimate and `high` never above what it could earn that turn — `capIncome`, the could-earn
+  bound `paceIncome` keeps to, or `low` when that is higher — since ÷ ~0.3 at low coverage can read an income it cannot
+  reach). Its `lean`: `unknown` when the range spans both lines (`INCOME_BEHIND_RATIO` ⅔ and
   `INCOME_AHEAD_RATIO` 1.5), `behind`/`ahead` when the whole range, else the estimate, is past one, else `even`
   unless each side's change per turn over the turns judged (`trend`), one turn on, crosses a line the ratio heads
   to (`byTrend`). No lead is claimed at low coverage (any `evidence.thin`): `ahead` reads `unknown`, and a win on
