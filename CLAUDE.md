@@ -1021,9 +1021,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   labels the cut reading — "reads up to +N if the armies that arrived beside the fog were deploys …;
   the estimate keeps ~T (tracked) because a stack walking in is not income" — and suggests
   `warapp_check_plan`'s `enemy_deploy` to test it (`EnemyDeployEstimate.newestCut`); the planner reads
-  that turn with the track's own bound, so its observed line agrees with the track. Each border
-  is sized for its opponent's whole deploy: that is its worst case (the opponent picks where to
-  land), not a double count.
+  that turn with the track's own bound, so its observed line agrees with the track. **One border per
+  opponent takes its whole deploy (#420, owner decision of 2026-11-20):** the opponent picks where to
+  land, but deploys its income in one place, so only its single most valuable border of mine (protected
+  value, then its movable armies beside it, then id) is sized for its whole deploy; each of its other
+  borders of mine is sized at its stacks beside it plus its largest top-up seen — `OpponentTrack.topUp`, the
+  most one of its stacks beside my land grew in one turn (`borderTopUp`, `ObservedTurn.topUp`; live boards
+  only, never a GameFeed history board) — never above the whole deploy (`oneBorder` in `plan/threats.ts`,
+  read by `forceAt`; a "Player N deploys its ~D in one place (#420)" line). Not without a top-up seen (no
+  track: every border keeps the whole deploy), under `enemyDeploy`, on my commander's territory, for an
+  untrusted estimate (#275) there, or for an opponent beside a single border of mine. Golden: 49 of 6253
+  plans changed, 16 in their orders (captures +3/−7, next income unchanged on all, concessions 6 fewer
+  and 3 more).
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
   border's threat to movable + max(that opponent's deploy, growth). `warapp_plan_turn` gets it from
   `<dataDir>/boards/<gameId>.json` first — the verified live boards written after each plan or

@@ -90,9 +90,9 @@ export type ThreatSources = ReturnType<typeof threatSources>;
 export type ThreatForces = ReturnType<typeof threatForces>;
 
 /** Read the threats against my territories, and state them. */
-export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput) {
+export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput, valueOf: (t: number) => number) {
   const src = threatSources(pc, ps, input);
-  const forces = threatForces(pc, ps, src);
+  const forces = threatForces(pc, ps, src, valueOf);
   const { borders, facing, borderAt, safeAtStart } = borderThreats(pc, ps, input, src, forces);
   const {
     growthOf, deployReaching, reinforcementAt, holdArmies, bombSized, hiddenFoe, hiddenMovable, hiddenPool,
@@ -399,6 +399,13 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
       );
     }
   }
+  /**
+   * #420: each opponent's largest top-up seen (its track's `topUp`: the most one of its stacks beside my
+   * land grew in one turn). None under an explicit `enemyDeploy` (the caller's figure stands as given).
+   */
+  const topUpOf = new Map<number, number>();
+  if (!custom)
+    for (const tr of input.tracks ?? []) if (foe(tr.playerId) && typeof tr.topUp === 'number') topUpOf.set(tr.playerId, tr.topUp);
   return {
     growthOf,
     teamOf,
@@ -412,11 +419,12 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
     hiddenMovable,
     hiddenPool,
     lostAt,
+    topUpOf,
   };
 }
 
 /** What each opponent can bring against one territory: its stacks, its deploy, its Multi-Attack chains (#199). */
-export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
+export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, valueOf: (t: number) => number) {
   const { g, board, s, foe, territories: state, mineSet, unitsAt, guard, rates, toTake, ffaLeader, untrustedAt } = pc;
   const { captured } = ps;
   /**
@@ -565,6 +573,40 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
     return byPlayer;
   };
   /**
+   * #420 (owner decision of 2026-11-20, "One opponent's deploy"): an opponent deploys its income in one
+   * place, so its full deploy sizes only its single most valuable border of mine (by protected value —
+   * `valueOf` —, then its movable armies beside it, then id); each other border of mine its stacks face is
+   * sized at those stacks plus its largest top-up seen (`topUpOf`), never above the full deploy. `capAt`:
+   * by my territory, the players capped there and the figure; `primary`: each such player's full border.
+   * Not on my commander's territory (rule 1k's worst case), nor for an untrusted estimate (#275) at that
+   * border, a player with no top-up seen, or one facing a single border of mine. Judged on the board as
+   * it stands (no territory gone) and built once.
+   */
+  let oneBorderMemo: { capAt: Map<number, Map<number, number>>; primary: Map<number, number> } | undefined;
+  const oneBorder = () => {
+    if (oneBorderMemo) return oneBorderMemo;
+    oneBorderMemo = { capAt: new Map(), primary: new Map() };
+    if (!src.topUpOf.size) return oneBorderMemo;
+    const facing = new Map<number, { t: number; movable: number }[]>();
+    for (const t of [...pc.mine].sort(byNum))
+      for (const [player, p] of stacksAt(t, () => false, false)) {
+        if (!src.topUpOf.has(player)) continue;
+        facing.set(player, [...(facing.get(player) ?? []), { t, movable: p.stacks.reduce((n, x) => n + x.movable, 0) }]);
+      }
+    for (const [player, list] of [...facing].sort((a, b) => a[0] - b[0])) {
+      if (list.length < 2) continue;
+      const ranked = [...list].sort((a, b) => valueOf(b.t) - valueOf(a.t) || b.movable - a.movable || a.t - b.t);
+      oneBorderMemo.primary.set(player, ranked[0]!.t);
+      for (const { t } of ranked.slice(1)) {
+        if (pc.myCommanders.has(t) || untrustedAt(player, t) > 0) continue;
+        const m = oneBorderMemo.capAt.get(t) ?? new Map<number, number>();
+        m.set(player, src.topUpOf.get(player)!);
+        oneBorderMemo.capAt.set(t, m);
+      }
+    }
+    return oneBorderMemo;
+  };
+  /**
    * #199: the force of a Multi-Attack chain onto my `t`: its player's, its armies all of it (the
    * deploy that reaches its stack is already inside them), no growth or separate deploy.
    */
@@ -594,10 +636,13 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
       .map(([player, p]) => {
         // #275 (b): a held bonus's border is sized for an untrusted estimate's figure, never below the estimate
         // (#293: under Local Deployment, what of that figure can reach these stacks).
-        const deploy =
+        const full =
           truced === player
             ? 0
             : deployReaching(player, [...p.stacks.map((x) => x.id), ...(p.behind ?? [])], Math.max(pc.deployOf(player), untrustedAt(player, t)));
+        // #420: off its most valuable border, the stack plus its largest top-up seen.
+        const cap = oneBorder().capAt.get(t)?.get(player);
+        const deploy = cap !== undefined ? Math.min(full, cap) : full;
         const growth = truced === player ? 0 : p.growth;
         const movable = p.stacks.reduce((n, x) => n + x.movable, 0);
         const add = Math.max(deploy, growth);
@@ -696,6 +741,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources) {
     return out;
   };
   return {
+    oneBorder,
     chainAt,
     stacksAt,
     forceAt,
@@ -818,6 +864,24 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
       const w = b.commanderWorst;
       rationale.push(
         `My commander's territory ${label(t)} is held against the worst case (#274), ~${b.threat}: ${w.players.length > 1 ? `players ${w.players.join(' and ')}` : `player ${w.players[0]}`}'s whole deploy, ~${w.deploy} (never below my own income), plus the ${w.stacks} movable armies ${w.players.length > 1 ? 'they have' : 'it has'} within two moves of it.`,
+      );
+    }
+  }
+  // #420: say where one opponent's full deploy is sized, and which borders take its top-up instead.
+  {
+    const { capAt, primary } = forces.oneBorder();
+    for (const [player, top] of [...primary].sort((a, b) => a[0] - b[0])) {
+      // The deploy its most valuable border is sized for (under Local Deployment, what reaches it).
+      const at = borders.get(top);
+      const full = at && at.player === player && !at.chain && !at.commanderWorst ? at.deploy : pc.deployOf(player);
+      const rest = [...capAt]
+        .filter(([t, m]) => borders.has(t) && m.has(player) && m.get(player)! < full)
+        .map(([t]) => t)
+        .sort(byNum);
+      if (!rest.length) continue;
+      const one = rest.length === 1;
+      rationale.push(
+        `Player ${player} deploys its ~${full} in one place (#420): its full deploy is sized only on its most valuable border, ${label(top)}; ${rest.map(label).join(', ')} ${one ? 'is' : 'are'} sized at its stack beside ${one ? 'it' : 'them'} plus its largest top-up seen, +${capAt.get(rest[0]!)!.get(player)} (the most one of its stacks beside my land grew in a turn).`,
       );
     }
   }

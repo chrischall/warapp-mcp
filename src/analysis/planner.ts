@@ -252,6 +252,14 @@
 //     per-territory income, plus what the estimate holds beyond every such pool, with a
 //     warning). An enemy commander counts in
 //     the expected attack too (rule 1h's near miss, kept garrisons).
+//     #420 (owner decision of 2026-11-20, "One opponent's deploy"): an opponent deploys its income in
+//     one place, so its full deploy sizes only its single most valuable border of mine (by protected
+//     value, then its movable armies beside it, then id); its other borders of mine are sized at its
+//     stacks beside them plus its largest top-up seen (`OpponentTrack.topUp`: the most one of its
+//     stacks beside my land grew in one turn on the tracker's live boards), never above the full deploy
+//     (`oneBorder` in plan/threats.ts, read by `forceAt`), with a "deploys its ~D in one place (#420)"
+//     line. Not with no top-up seen (no track), under `enemyDeploy`, on my commander's territory, for an
+//     untrusted estimate (#275) there, or for an opponent facing a single border of mine.
 //     enemyDeploy is estimated per opponent (`enemyDeployEstimates`): base
 //     income (the larger of MinimumArmyBonus and, with BonusArmyPer on, its
 //     visible territories / BonusArmyPer) plus the bonuses that player
@@ -1940,7 +1948,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const local = pools !== null && pools.bonuses.length > 0;
 
   // ---- 1t. threat trend, 1. defence (plan/threats.ts) ----
-  const threats = threatsPhase(pc, ps, input);
+  const threats = threatsPhase(pc, ps, input, book.valueOf);
   const { growthOf, reinforcementAt, borders, facing, borderAt } = threats;
 
   // ---- 1. holds, #172, 1h, 1b, 1c, #122 garrisons (plan/holds.ts) ----

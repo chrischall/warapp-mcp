@@ -28,9 +28,9 @@ describe('plan/orders and plan/threats (#133)', { timeout: SEEDED_LOOP_TIMEOUT }
         continue;
       }
       const opening = state.rationale.length + state.warnings.length;
-      deployBook(ctx, state);
+      const book = deployBook(ctx, state);
       expect(state.budget).toBeLessThanOrEqual(ctx.income);
-      threatsPhase(ctx, state, input);
+      threatsPhase(ctx, state, input, book.valueOf);
       const plan = planner.planTurn(input);
       expect(plan.rationale.slice(0, state.rationale.length)).toEqual(state.rationale);
       expect(phaseWarnings(plan.warnings).slice(0, state.warnings.length)).toEqual(state.warnings);
@@ -47,13 +47,15 @@ describe('plan/orders and plan/threats (#133)', { timeout: SEEDED_LOOP_TIMEOUT }
       const state = newPlanState();
       noteEstimates(ctx, state);
       if (!ctx.mine.length) continue;
-      deployBook(ctx, state);
-      const threats = threatsPhase(ctx, state, input);
+      const book = deployBook(ctx, state);
+      const threats = threatsPhase(ctx, state, input, book.valueOf);
       for (const [id, b] of threats.borders) {
         expect(b.id).toBe(id);
         expect(ctx.mineSet.has(id)).toBe(true);
         expect(ctx.foe(b.player)).toBe(true);
-        expect(b.threat).toBeGreaterThan(0);
+        // #420: a border off its opponent's most valuable one is sized at its stack plus its largest top-up
+        // seen, which can both be 0 (a guard-only stack that never grew).
+        expect(b.threat).toBeGreaterThanOrEqual(0);
         borders++;
       }
     }
@@ -71,7 +73,7 @@ describe('plan/holds (#133)', { timeout: SEEDED_LOOP_TIMEOUT }, () => {
       noteEstimates(ctx, state);
       if (!ctx.mine.length) continue;
       const book = deployBook(ctx, state);
-      const threats = threatsPhase(ctx, state, input);
+      const threats = threatsPhase(ctx, state, input, book.valueOf);
       const before = {
         rationale: [...state.rationale],
         warnings: [...state.warnings],
