@@ -3,6 +3,7 @@
 // opponent could make with its estimated deploy, and the replies that cost something are
 // reported, worst first (src/analysis/stress.ts, on the turn resolver src/analysis/turn-sim.ts).
 // Read-only on war.app, and it writes nothing but its verdict to the decision log (#437): not the board cache.
+import { gameBaseIncome } from '../analysis/player.js';
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -388,7 +389,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(teams.size ? { teams } : {}),
         ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         orderPriority,
-        ...(settings.localDeployments ? { localDeployments: true } : {}),
+        ...(settings.localDeployments ? { localDeployments: true, baseIncome: gameBaseIncome(settings) } : {}),
         ...(settings.localDeployments && (settings.bonusArmyPer ?? 0) > 0 ? { perTerritoryIncome: true } : {}),
         leader,
         ...(binding.length ? { truces: binding.map((r) => ({ player: r.player, covered: r.coveredMine })) } : {}),
