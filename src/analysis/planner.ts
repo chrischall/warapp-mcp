@@ -199,6 +199,11 @@
 //          income every turn, breaks the opponent's biggest stack beside it soonest (its owner
 //          deploying there every turn), when that is not the border holding the most armies and
 //          breaks sooner than it ("Strike stack on … (#201): no border can strike this turn; …").
+//          #421: outside a 1v1 (not a siege, not No-Split, not `defend`), a stockpile on a flat income —
+//          my armies in view at least STOCKPILE_TURNS turns of my income while `incomeTrend` is flat —
+//          builds the same stack facing the opponent beside me whose visible armies mine outnumber
+//          STOCKPILE_LEAD× (fewest first, then id; never an income estimate), never on my commander's
+//          territory, and spends it as above ("Stockpile (#421): …").
 //       3d. Decided (#201): given `options.outlook` (#178) reporting winning or losing, the game is
 //          decided, and every payback test (PAYBACK_TURNS everywhere it appears in these rules)
 //          counts the turns it has left instead: the loser's strength over the winner's income a

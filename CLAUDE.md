@@ -1741,6 +1741,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     flat history on every plan of turn ≥ 5 it fired on 25 of 6,253 and changed orders on 7, no capture lost, next
     income never lower, no concession added. A completion that takes an opponent's member only reaches it where
     rule 5 already saves toward such a step.
+  - **A stockpile on a flat income is spent (#421).** Outside a 1v1 (no siege, adapting, not `defend`, not
+    No-Split), when `incomeTrend` is flat and my armies in view are at least `STOCKPILE_TURNS` (4) turns of income,
+    rule 0p.3c builds the strike stack facing the opponent beside me whose visible armies mine outnumber
+    `STOCKPILE_LEAD` (2)× (fewest first; visible armies only, never an income estimate; never on my commander's
+    territory): the leftover goes to it ahead of comfort margins and #102 spends it as in a 1v1, with a
+    "Stockpile (#421)" rationale line (`chooseStrikeStack`, `stackFacing`, `plan/strike.ts`). The golden corpus
+    carries no income history, so it is byte-identical; with a flat history injected on its 1,839 plans of turn
+    ≥ 5, 7 changed orders: 2 captures gained, none lost, next income never lower, no concession, warnings 1 added
+    and 1 removed. Left for later: a fixed share of income for the stack, breaks and all-in completions.
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and
