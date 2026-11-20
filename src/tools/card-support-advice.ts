@@ -10,6 +10,7 @@ import type { TurnPlan } from '../analysis/planner.js';
 import { STRENGTH_INCOME_TURNS } from '../analysis/profile.js';
 import type { Card } from '../cards.js';
 import type { Game, Player } from '../normalize.js';
+import { dealtMode } from './map-details.js';
 
 const CARD_SPY = 2;
 const CARD_RECONNAISSANCE = 10;
@@ -27,7 +28,7 @@ const CARD_SANCTIONS = 9;
 type CardOrder = { kind: 'card'; card: string } & Record<string, unknown>;
 
 export interface SupportView {
-  diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; order: CardOrder };
+  diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; chain?: true; order: CardOrder };
   sanctions?: { player: number; skipped?: string[]; order: CardOrder };
   airlift?: { from: number; to: number; armies: number; teammate?: number; order: CardOrder };
   gift?: { player: number; bonus: number; territories: number[]; orders: CardOrder[] };
@@ -79,7 +80,17 @@ interface SupportInput {
   cb: CardBoard;
   /** Opponents a Diplomacy card in force already keeps from me. */
   atPeace: ReadonlySet<number>;
+  /** #424: of those, the ones whose card's last turn this is (chained rather than passed over). */
+  lastTurn?: ReadonlySet<number>;
   truces: readonly TruceCover[];
+}
+
+/**
+ * #424: the opponents still playing (teammates out). A lone one in contact is advised Diplomacy only
+ * outside a 1v1 (2 or more), and the last-turn warning offers a chain only then too.
+ */
+export function diplomacyOpponents(game: SupportInput['game'], me: number, friends?: ReadonlySet<number>): number {
+  return game.players.filter((p) => p.id !== me && !friends?.has(p.id) && (p.state ?? 'Playing') === 'Playing').length;
 }
 
 /** The D2 advice for the cards in `cards`: a view and one warning per card advised. */
@@ -91,7 +102,8 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
 
   const dip = first(CARD_DIPLOMACY);
   if (dip) {
-    const d = diplomacyAdvice(cb, { atPeace: input.atPeace, truces: input.truces });
+    const opponents = diplomacyOpponents(input.game, me.id, cb.friends);
+    const d = diplomacyAdvice(cb, { atPeace: input.atPeace, truces: input.truces, opponents, ...(input.lastTurn ? { lastTurn: input.lastTurn } : {}) });
     if (d) {
       if (d.player !== undefined && d.pressure) {
         view.diplomacy = {
@@ -100,6 +112,7 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
           armies: d.pressure.armies,
           ...(d.overTruce ? { overTruce: d.overTruce } : {}),
           ...(d.skipped.length ? { skipped: d.skipped } : {}),
+          ...(d.chain ? { chain: true as const } : {}),
           order: { kind: 'card', card: dip.id, players: [me.id, d.player] },
         };
       }
@@ -147,7 +160,14 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
       .filter((p) => p.id !== me.id && !cb.friends?.has(p.id) && (p.state ?? 'Playing') === 'Playing')
       .map((p) => p.id);
     const fog = input.game.settings?.fog;
-    const intel = intelAdvice(cb, { ...(fog !== undefined ? { fog } : {}), opponents, held: new Set(intelCards.keys()) });
+    // #443: the distribution mode's territories, when the map already carries them (no read here).
+    const starts = dealtMode(input.game.settings, cb.graph.map)?.territories;
+    const intel = intelAdvice(cb, {
+      ...(fog !== undefined ? { fog } : {}),
+      opponents,
+      held: new Set(intelCards.keys()),
+      ...(starts?.length ? { likelyStarts: new Set(starts) } : {}),
+    });
     for (const a of intel.advice) {
       const id = intelCards.get(a.card)!.id;
       if (a.card === 'Spy' && a.player !== undefined) view.spy = { player: a.player, order: { kind: 'card', card: id, player: a.player } };

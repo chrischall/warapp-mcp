@@ -1142,12 +1142,17 @@
 //     this income (armies to finish, counting the members I hold, over the income — and never
 //     fewer than its depth, #125: the farthest missing member's distance from what I hold, since
 //     a capture's armies attack no further this turn; "N turns (N layers deep)"), so a farther
-//     bonus gets only armies the closer ones cannot use; bonuses as close as each other keep the
-//     score order. Given `previousBoard`, a bonus advanced last turn (a member captured since) keeps
-//     priority unless another is strictly closer; the rationale lists the order and says which
-//     kept or gave way. Armies to finish count every missing member: a fogged one at its bonus's
+//     bonus gets only armies the closer ones cannot use; bonuses as close as each other go by the
+//     income per army of every bonus their capture completes (#438: each bonus whose missing members
+//     are all among its own, net values summed, over the score's cost; a "complete together" line
+//     names it when another as close competes), then — given `previousBoard` — a bonus advanced last
+//     turn (a member captured since), then the score order; the rationale lists the order and says
+//     which advanced bonus kept or gave way. Armies to finish count every missing member: a fogged one at its bonus's
 //     costliest visible missing member (counted as free before, the figure jumped when it came into
-//     view), named in every "N armies to finish".
+//     view), named in every "N armies to finish". #439 (plan/two-move.ts): a single-territory bonus of
+//     at least TWO_MOVE_MIN_VALUE two moves away through a visible neutral is a two-turn completion
+//     (cost: that neutral plus the territory); the neutral in between is a `stage` candidate under
+//     `balanced` (net over both costs, ranked as an advance), else taken before the advances.
 //  3b. One surplus per territory (#121). A border that holds at the start of the turn (its armies
 //     beat its visible threat, rule 1) and is not conceded keeps what holds it, as my commander's
 //     territory does (rule 1k): a capture from it spends only its armies above that, plus deploys
@@ -1185,7 +1190,10 @@
 //     first, only that one lands before the opponent's first; when I am known to move first, the
 //     warning is "holds only if my first order is …"). The warning names why the leftover made no
 //     deploy there (too little left, Local Deployment, No-Split sending the stack with its order)
-//     only when that was the reason. Then it goes to the held
+//     only when that was the reason. #440: before the margins below, the territory with the most
+//     protected value that carries a single-territory bonus of at least DETERRENT_MIN_VALUE
+//     (DETERRENT_VALUE_RATIO × the borders' most, an opponent within two steps) gets a deterrent guard: taking it needs more than
+//     COMFORT_MARGIN × that opponent's deploy (plan/leftover.ts `deterrentGuard`). Then it goes to the held
 //     border with the highest protected value still short of COMFORT_MARGIN × its threat (counting
 //     armies withdrawn into it) — but first (#121), when it would go to such margins (no strike stack;
 //     #215 review: judged and run before the worse-order deploys above), a conceded border the leftover can make hold is held after all, from what is left once
@@ -1604,6 +1612,7 @@ import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
+import { stageTwoMove, twoMoveStages } from './plan/two-move.js';
 import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
@@ -1920,6 +1929,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- R3, No-Split, capture helper, 3a. combined, passes 1 and 2 (plan/captures.ts) ----
   const caps = capturesPhase(pc, ps, pass, book, threats, hd, tgt);
   const { strikes, worstCase, defendersAt, tryCapture, snapshot, complete, tryExpand, advance } = caps;
+  /** #439: single-territory bonuses two moves away, each with its neutral in between. */
+  const stages = twoMoveStages(pc, tgt);
 
   // ---- 1e. finish off an opponent, 1s. strike an enemy commander, #165 guard-off breaks (plan/strike.ts) ----
   const { struck } = strikesPhase(pc, ps, book, threats, hd, tgt, caps);
@@ -2027,7 +2038,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       return Math.max(...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
     };
     interface Candidate {
-      kind: 'hold' | 'unit' | 'complete' | 'advance' | 'break' | 'counter';
+      kind: 'hold' | 'unit' | 'complete' | 'advance' | 'stage' | 'break' | 'counter';
       score: number;
       cost: number;
       id: number;
@@ -2041,7 +2052,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       owner?: number;
       run: () => void;
     }
-    const rank = { unit: 0, hold: 0, complete: 1, advance: 2, break: 3, counter: 3 } as const;
+    const rank = { unit: 0, hold: 0, complete: 1, advance: 2, stage: 2, break: 3, counter: 3 } as const;
+    /** A capture that completes no bonus this turn: an advance, a two-move stage (#439), a break or a counter. */
+    const completesNothing = (c: Candidate) => c.kind === 'advance' || c.kind === 'stage' || c.kind === 'break' || c.kind === 'counter';
     const candidates: Candidate[] = [];
     const deferred: Threatened[] = [];
     /** #215: pending holds this step conceded and unlocked, whose armies may still attack out. */
@@ -2086,6 +2099,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         candidates.push({ kind: 'complete', score, cost: p.cost, id: p.bonusId, value: p.net, focus: p.focus, borders: p.borders, run: spend(() => complete(p)) });
       candidates.push({ kind: 'advance', score, cost: p.cost, id: p.bonusId, value: p.net, focus: p.focus, borders: p.borders, run: spend(() => advance(p)) });
     }
+    // #439: a single-territory bonus two moves away is a two-turn completion: its neutral in between
+    // competes as an advance does, on the income per army of both captures.
+    for (const st of stages)
+      candidates.push({ kind: 'stage', score: st.net / st.cost, cost: st.cost, id: st.bonusId, value: st.net, focus: false, borders: 0, target: st.via, run: spend(() => stageTwoMove(pc, ps, st, gainWith, tryExpand)) });
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
     // A break is sized to land (#72): its score leaves out what holding it would need.
     const breakOption = (t: number) => {
@@ -2264,7 +2281,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     }
     expansionLeft = candidates.length;
     // Under rule 0p.1 an advance never outranks a hold, so it never defers one either.
-    topValue = Math.max(0, ...candidates.filter((c) => !(oneVsOne && c.kind === 'advance')).map((c) => c.value));
+    topValue = Math.max(0, ...candidates.filter((c) => c.kind !== 'stage' && !(oneVsOne && c.kind === 'advance')).map((c) => c.value));
     let floor = expansionLeft ? Math.ceil(MIN_EXPANSION_SHARE * income) : 0;
     // #167: a multi-turn view of the main front. Adapting in contact, the expansion share stands only
     // when the front is no worse than a stand-off without those armies: my biggest stack facing the
@@ -2421,7 +2438,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       Number(b.focus) - Number(a.focus) ||
       // #201: ahead, every held bonus is held for the worst case before any capture (said below).
       (holdPasses === 'worst' ? Number(b.kind === 'unit') - Number(a.kind === 'unit') : 0) ||
-      (oneVsOne ? Number(a.kind === 'advance') - Number(b.kind === 'advance') : 0) ||
+      (oneVsOne ? Number(a.kind === 'advance' || a.kind === 'stage') - Number(b.kind === 'advance' || b.kind === 'stage') : 0) ||
       b.score - a.score;
     const after = (a: Candidate, b: Candidate) =>
       a.cost - b.cost || a.borders - b.borders || rank[a.kind] - rank[b.kind] || a.id - b.id;
@@ -2523,11 +2540,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // #215, rule 0p.1: an advance ranks below every hold, a contested held bonus's included
       // (#118 lets the captures go first, but in a 1v1 in contact not one that completes nothing):
       // live, a +4 bonus's one border was left to fall while 15 went to a bonus 47 armies from done.
-      if (oneVsOne && c.kind === 'advance' && !c.focus && !contestedDue) {
+      if (oneVsOne && (c.kind === 'advance' || c.kind === 'stage') && !c.focus && !contestedDue) {
         contestedDue = true;
         settleContested(true);
       }
-      if ((c.kind === 'advance' || c.kind === 'break' || c.kind === 'counter') && !c.focus && !unitsDue) {
+      if (completesNothing(c) && !c.focus && !unitsDue) {
         unitsDue = true;
         // Those waiting for the expansion share outscore everything still to run.
         for (const u of waiting.splice(0)) fundOrConcede(u);
@@ -2544,7 +2561,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // completes nothing: when this one leaves too little for a hold still waiting, it is undone,
       // the waiting holds are funded first, and it runs again on what is left (if it still fits).
       const owed = deferred.filter((t) => !heldBorders.has(t.id) && !conceded.has(t.id));
-      if ((c.kind === 'advance' || c.kind === 'break' || c.kind === 'counter') && !c.focus && owed.length) {
+      if (completesNothing(c) && !c.focus && owed.length) {
         const restore = snapshot();
         const spent = expansionSpent;
         const left = expansionLeft;
@@ -2610,6 +2627,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       complete(p);
       garrisonCompleted();
     }
+    // #439: the neutral in between toward a single-territory bonus two moves away, before any advance.
+    if (goal !== 'complete-bonus')
+      for (const st of stages) {
+        stageTwoMove(pc, ps, st, gainWith, tryExpand);
+        garrisonCompleted();
+      }
     for (const p of byCloseness) {
       advance(p);
       garrisonCompleted();

@@ -1,5 +1,6 @@
 // Where to play the cards warapp_submit_turn can play but the planner never does (PLAN-TEAMS part D2):
-// Diplomacy on the opponent pressing me hardest when two or more are, Sanctions on the leader, Airlift
+// Diplomacy on the opponent pressing me hardest (#424: the only one in contact too, outside a 1v1; a card
+// in force in its last turn chained first), Sanctions on the leader, Airlift
 // onto a border of mine or a teammate's that falls without it, and Gift as team support (a territory
 // that completes a teammate's bonus); and (G2) Spy, Reconnaissance and Surveillance only where the fog
 // hides what the plan needs. Advice only: nothing here changes the plan or its orders. Pure and
@@ -70,25 +71,33 @@ export interface DiplomacyAdvice {
   why: string;
   /** Opponents passed over, and why (a truce that covers them, a Diplomacy card already in force). */
   skipped: string[];
+  /** #424: `player`'s card in force ends after this turn: this one chains it. */
+  chain?: true;
 }
 
 /**
- * Diplomacy on the opponent pressing me hardest, when two or more opponents are in contact (with
- * one, peace with it is peace with everyone: the card is a truce for nothing). An opponent already at
- * peace with me by a Diplomacy card in force is passed over, and so is a truce partner whose truce
- * already covers every border it touches — unless the card adds protection: the truce is in notice
- * (it ends), or the partner presses a border the truce does not cover. Either way it is said.
- * `undefined` with fewer than two opponents in contact.
+ * Diplomacy on the opponent pressing me hardest. #424: the only opponent in contact too, when the game
+ * has others (`opponents`, still playing, teammates out): peace on that front frees its whole hold — in a
+ * 1v1 (or `opponents` unknown) peace with it is peace with everyone, so nothing is said. An opponent
+ * already at peace with me by a Diplomacy card in force is passed over, unless that card's last turn is
+ * this one (`lastTurn`): then it comes first, and the card chains the peace. A truce partner whose truce
+ * already covers every border it touches is passed over too — unless the card adds protection: the truce
+ * is in notice (it ends), or the partner presses a border the truce does not cover. Either way it is
+ * said. `undefined` with no opponent in contact, or one in a 1v1.
  */
 export function diplomacyAdvice(
   cb: CardBoard,
-  opts: { atPeace?: ReadonlySet<number>; truces?: readonly TruceCover[] } = {},
+  opts: { atPeace?: ReadonlySet<number>; truces?: readonly TruceCover[]; opponents?: number; lastTurn?: ReadonlySet<number> } = {},
 ): DiplomacyAdvice | undefined {
   const all = pressures(cb);
-  if (all.length < 2) return undefined;
+  if (!all.length || (all.length === 1 && (opts.opponents ?? 1) < 2)) return undefined;
+  const chains = (player: number) => opts.atPeace?.has(player) === true && opts.lastTurn?.has(player) === true;
+  // #424: a card in its last turn is chained first; otherwise the pressure order stands.
+  const ranked = [...all].sort((a, b) => Number(chains(b.player)) - Number(chains(a.player)));
   const skipped: string[] = [];
-  for (const p of all) {
-    if (opts.atPeace?.has(p.player)) {
+  for (const p of ranked) {
+    const chain = chains(p.player);
+    if (opts.atPeace?.has(p.player) && !chain) {
       skipped.push(`player ${p.player}: a Diplomacy card between you is already in force`);
       continue;
     }
@@ -106,15 +115,28 @@ export function diplomacyAdvice(
         continue;
       }
     }
-    if (p.armies <= 0) break;
+    if (p.armies <= 0) {
+      if (chain) continue;
+      break;
+    }
     const takes = p.takes.length ? `; as the plan leaves them it can take ${p.takes.join(', ')}` : '';
+    const which =
+      all.length === 1
+        ? 'the only opponent beside you'
+        : p === all[0]
+          ? `of the ${all.length} opponents beside you it presses hardest`
+          : `one of the ${all.length} opponents beside you`;
     return {
       player: p.player,
       pressure: p,
       ...(overTruce ? { overTruce } : {}),
+      ...(chain ? { chain: true as const } : {}),
       why:
-        `Diplomacy with player ${p.player}: of the ${all.length} opponents beside you it presses hardest — your borders ${p.borders.join(', ')} ` +
-        `keep ${p.armies} armies against it alone${takes}.${overTruce ? ` Played on a truce partner because ${overTruce}.` : ''}`,
+        `Diplomacy with player ${p.player}: ${which} — your borders ${p.borders.join(', ')} ` +
+        `keep ${p.armies} armies against it alone${takes}.${overTruce ? ` Played on a truce partner because ${overTruce}.` : ''}` +
+        (chain
+          ? ` Chain it: the Diplomacy card in force with player ${p.player} ends after this turn, and a new one starts the turn after it is played, so the peace runs on unbroken.`
+          : ''),
       skipped,
     };
   }
@@ -320,12 +342,16 @@ export interface IntelAdvice {
  * on the owner shown beside the most hidden stacks next to me; Surveillance on the bonus I am completing
  * that is nearest done (then the most valuable, then ascending id), else the bonus worth the most with a
  * hidden border of mine in it; Reconnaissance on the hidden territory next to the most of mine (then the
- * most armies of mine beside it, then ascending id), else a hidden member of the bonus I am completing.
+ * most armies of mine beside it, then ascending id), else on the hidden territory behind the opponent in
+ * contact whose stacks tie down the most of my border armies ({@link pressures}: its estimate decides the
+ * most of the holds and concessions; #443) — a likely start (`likelyStarts`, the distribution mode's
+ * territories) first, then the one beside the most of its front, then ascending id — else a hidden member
+ * of the bonus I am completing.
  * `hold` says, for a card held with nothing to reveal, why it is kept. Pure; ties on ascending id.
  */
 export function intelAdvice(
   cb: CardBoard,
-  opts: { fog?: string; opponents: readonly number[]; held: ReadonlySet<IntelCard> },
+  opts: { fog?: string; opponents: readonly number[]; held: ReadonlySet<IntelCard>; likelyStarts?: ReadonlySet<number> },
 ): { advice: IntelAdvice[]; hold: string[] } {
   if (opts.fog === 'NoFog' || !opts.held.size) return { advice: [], hold: [] };
   const r = reader(cb);
@@ -403,11 +429,20 @@ export function intelAdvice(
   }
   if (opts.held.has('Reconnaissance')) {
     const x = blind[0];
+    const behind = x ? undefined : behindFront(cb, r, hidden, opts.likelyStarts);
     if (x) {
       advice.push({
         card: 'Reconnaissance',
         target: x.t,
         why: `Reconnaissance on ${x.t}: it borders ${x.next} of your territories (${x.armies} armies) and the fog hides what stands there.`,
+      });
+    } else if (behind) {
+      advice.push({
+        card: 'Reconnaissance',
+        target: behind.t,
+        why:
+          `Reconnaissance on ${behind.t}: the fog hides it behind player ${behind.player}, whose stacks tie down ${behind.armies} of your border armies, ` +
+          `so its strength there is an estimate${behind.likely ? ' (a likely start)' : ''}.`,
       });
     } else if (building[0]) {
       const t = building[0].fogged[0]!;
@@ -415,4 +450,28 @@ export function intelAdvice(
     } else nothing('Reconnaissance');
   }
   return { advice, hold };
+}
+
+/**
+ * #443: the hidden territory behind the opponent in contact whose estimate decides the most armies of my
+ * holds (the first by {@link pressures} with one): a hidden territory, not mine, beside one of its territories
+ * that border mine. A likely start first, then the one beside the most of that front, then ascending id.
+ */
+function behindFront(
+  cb: CardBoard,
+  r: ReturnType<typeof reader>,
+  hidden: (t: number) => boolean,
+  likely: ReadonlySet<number> | undefined,
+): { t: number; player: number; armies: number; likely: boolean } | undefined {
+  for (const p of pressures(cb)) {
+    if (p.armies <= 0) continue;
+    const front = new Set(p.borders.flatMap((b) => neighborsOf(cb.graph, b).filter((n) => r.ownerOf(n) === p.player)));
+    const seen = new Map<number, number>();
+    for (const f of front) for (const n of neighborsOf(cb.graph, f)) if (!r.isMine(n) && hidden(n)) seen.set(n, (seen.get(n) ?? 0) + 1);
+    const best = [...seen]
+      .map(([t, n]) => ({ t, n, likely: likely?.has(t) ?? false }))
+      .sort((a, b) => Number(b.likely) - Number(a.likely) || b.n - a.n || a.t - b.t)[0];
+    if (best) return { t: best.t, player: p.player, armies: p.armies, likely: best.likely };
+  }
+  return undefined;
 }

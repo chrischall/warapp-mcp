@@ -51,8 +51,35 @@ describe('diplomacyAdvice (D2)', () => {
     expect(d.skipped).toEqual([]);
   });
 
-  it('says nothing with one opponent in contact: peace with it is peace with everyone', () => {
+  it('says nothing with one opponent in contact in a 1v1: peace with it is peace with everyone', () => {
     expect(diplomacyAdvice(cb([neutral(3, 2), mine(4, 20), b(5, 20)]))).toBeUndefined();
+    expect(diplomacyAdvice(cb([neutral(3, 2), mine(4, 20), b(5, 20)]), { opponents: 1 })).toBeUndefined();
+  });
+
+  it('#424: names the only opponent in contact when others are still in the game', () => {
+    const d = diplomacyAdvice(cb([neutral(3, 2), mine(4, 20), b(5, 20)]), { opponents: 3 })!;
+    expect(d.player).toBe(B);
+    expect(d.why).toMatch(/^Diplomacy with player 30: the only opponent beside you — your borders 4 keep 15 armies against it alone/);
+  });
+
+  it('#424: chains a card in force that ends after this turn rather than passing its player over', () => {
+    const d = diplomacyAdvice(cb(twoFronts()), { atPeace: new Set([B]), lastTurn: new Set([B]) })!;
+    expect(d.player).toBe(B);
+    expect(d.chain).toBe(true);
+    expect(d.skipped).toEqual([]);
+    expect(d.why).toMatch(/Chain it: the Diplomacy card in force with player 30 ends after this turn, and a new one starts the turn after it is played, so the peace runs on unbroken\./);
+    // A card that runs on past this turn is still passed over.
+    expect(diplomacyAdvice(cb(twoFronts()), { atPeace: new Set([B]), lastTurn: new Set() })!.player).toBe(A);
+  });
+
+  it('#424: report-only — the advice leaves the plan\'s orders unchanged', () => {
+    const orders = () => ({ deploys: [{ territoryId: 4, armies: 3 }], moves: [{ from: 4, to: 6, armies: 2, kind: 'attack' as const }] });
+    const board1 = cb([neutral(3, 2), mine(4, 20), b(5, 20), neutral(6, 2)], orders());
+    const board2 = cb(twoFronts(), orders());
+    diplomacyAdvice(board1, { opponents: 3 });
+    diplomacyAdvice(board2, { atPeace: new Set([B]), lastTurn: new Set([B]) });
+    expect({ deploys: board1.deploys, moves: board1.moves }).toEqual(orders());
+    expect({ deploys: board2.deploys, moves: board2.moves }).toEqual(orders());
   });
 
   it('never names a truce partner already covered, and says so', () => {
@@ -212,6 +239,32 @@ describe('intelAdvice (G2): the spy cards only where they reveal what the plan n
       { card: 'Spy', player: B, why: expect.stringMatching(/^Spy on player 30: the fog hides the armies on its territory beside yours/) },
       { card: 'Surveillance', bonus: 104, why: expect.stringMatching(/^Surveillance on bonus 104 \(\+4\)/) },
     ]);
+  });
+
+  it('#443: Reconnaissance behind the opponent whose stacks tie down the most of my border armies, not a far bonus member', () => {
+    // Normal fog: my border's neighbours are in view. B on 5 ties down 15 of T4's armies, A on 3 only 9.
+    const view = [fogged(1), fogged(2), a(3, 10), mine(4, 20), b(5, 20), fogged(6), neutral(7, 2)];
+    const { advice } = intelAdvice(cb(view), { fog: 'Foggy', opponents: [A, B], held: new Set<IntelCard>(['Reconnaissance']) });
+    expect(advice).toEqual([
+      { card: 'Reconnaissance', target: 6, why: expect.stringMatching(/^Reconnaissance on 6: the fog hides it behind player 30, whose stacks tie down 15 of your border armies/) },
+    ]);
+  });
+
+  it('#443: prefers a likely start behind that opponent', () => {
+    const view = [fogged(1), fogged(2), a(3, 10), mine(4, 20), neutral(5, 2), neutral(6, 2), neutral(7, 2)];
+    const held = new Set<IntelCard>(['Reconnaissance']);
+    expect(intelAdvice(cb(view), { fog: 'Foggy', opponents: [A], held }).advice[0]?.target).toBe(1);
+    const { advice } = intelAdvice(cb(view), { fog: 'Foggy', opponents: [A], held, likelyStarts: new Set([2]) });
+    expect(advice).toEqual([{ card: 'Reconnaissance', target: 2, why: expect.stringMatching(/behind player 20, .*\(a likely start\)\.$/) }]);
+  });
+
+  it('#443: report-only — the Reconnaissance advice leaves the plan\'s orders unchanged', () => {
+    const orders = () => ({ deploys: [{ territoryId: 4, armies: 3 }], moves: [{ from: 4, to: 7, armies: 2, kind: 'attack' as const }] });
+    const view = [fogged(1), fogged(2), a(3, 10), mine(4, 20), b(5, 20), fogged(6), neutral(7, 2)];
+    const board1 = cb(view, orders());
+    const { advice } = intelAdvice(board1, { fog: 'Foggy', opponents: [A, B], held: new Set<IntelCard>(['Reconnaissance']), likelyStarts: new Set([6]) });
+    expect(advice).toHaveLength(1);
+    expect({ deploys: board1.deploys, moves: board1.moves }).toEqual(orders());
   });
 
   it('holds each card, saying why, when the fog hides nothing the plan needs', () => {

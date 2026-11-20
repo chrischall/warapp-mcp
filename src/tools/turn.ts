@@ -147,7 +147,7 @@ import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { bootTimes, captureChat, capturePlan, captureObservation, captureSent, cardAdviceLog, handLog, submitChecksLog } from './decision-capture.js';
 import { chatTruces } from '../analysis/chat-read.js';
-import { scrubNames, type LoggedChatMessage, type LoggedSent, type SentOrders, type SubmitChecks } from '../decision-log.js';
+import { readDecisionLog, scrubNames, type LoggedChatMessage, type LoggedSent, type SentOrders, type SubmitChecks } from '../decision-log.js';
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
@@ -1589,6 +1589,18 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
  * the previous turn's plan expected, and naming the bonuses broken and territories lost since the
  * previous board. `full` adds the figures and the lists by id and name beside the line.
  */
+/**
+ * #442: the captures the decision log's plan of `turn` expected, kept to the targets of the moves sent that
+ * turn when they were logged (a capture the orders sent did not try is no failed attack). Never throws.
+ */
+async function previousCaptures(dir: string, gameId: number, me: number, turn: number): Promise<number[] | undefined> {
+  const e = (await readDecisionLog(dir, gameId, me))?.turns[String(turn)];
+  const caps = e?.decision?.expected?.captures;
+  if (!Array.isArray(caps)) return undefined;
+  const sent = e?.sent?.moves;
+  return sent ? caps.filter((id) => sent.some((m) => m.to === id)) : [...caps];
+}
+
 function sinceLastView(
   s: SinceLast,
   previousTurn: number,
@@ -1613,7 +1625,13 @@ function sinceLastView(
           : `${inc}, as expected ${when}.`;
   const broken = s.bonusesBroken ?? [];
   const lost = s.territoriesLost ?? [];
+  const missed = s.capturesMissed ?? [];
   const parts = [
+    ...missed.map((t) =>
+      t.to === null
+        ? `the capture of ${name(t.territoryId).name} (#${t.territoryId}) failed`
+        : `the capture of ${name(t.territoryId).name} (#${t.territoryId}) failed: ${player(t.to).name} holds it${t.fresh ? ' — your attack hit their fresh capture' : ''}`,
+    ),
     ...(broken.length
       ? [`${broken.length === 1 ? 'bonus' : 'bonuses'} broken — ${broken.map((b) => `${bonus(b.bonusId)} (+${b.value})`).join(', ')}`]
       : []),
@@ -1639,6 +1657,7 @@ function sinceLastView(
       ? {
           bonusesBroken: broken.map((b) => ({ id: b.bonusId, name: bonus(b.bonusId), value: b.value })),
           territoriesLost: lost.map((t) => ({ ...name(t.territoryId), to: t.to !== null ? player(t.to) : null })),
+          ...(missed.length ? { capturesMissed: missed.map((t) => ({ ...name(t.territoryId), to: t.to !== null ? player(t.to) : null, ...(t.fresh ? { fresh: true } : {}) })) } : {}),
         }
       : {}),
     line,
@@ -2352,7 +2371,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'the first warning. ' +
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
-          'and the bonuses broken and territories lost since the previous board. ' +
+          'and the bonuses broken and territories lost since the previous board, and each capture that plan expected and did ' +
+          "not make, with the player who now holds it (your attack hit that player's fresh capture). " +
           '`headroom` lists, weakest first, each border of yours with the smallest single deploy by a neighbouring opponent that ' +
           'takes it after the plan\'s orders (carried out on the turn simulator, both move orders unless the first mover is known), ' +
           'whether that is below your income, and what falls with it (the bonuses it breaks, the territories behind it and their ' +
@@ -2574,6 +2594,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               expected: expectedNow,
               expectedTurn: turn - 1,
               armyCap: setup.incomeCap,
+              expectedCaptures: ctx.dataDir && turn !== null ? await previousCaptures(ctx.dataDir, game.id, me.id, turn - 1) : undefined,
             })
           : undefined;
       // A what-if plan (an explicit goal or enemy_deploy) keeps the board but not its expected income:

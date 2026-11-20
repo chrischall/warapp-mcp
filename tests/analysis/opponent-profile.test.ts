@@ -247,6 +247,18 @@ describe('observeTurn: attackedMe, contact, captures', () => {
     expect(of(observe(prev, now, plain)).attackedMe).toBe(false);
   });
 
+  it('an attack onto a neutral it took first counts as my attack on it (#442)', () => {
+    const prev = board([...shown, mine(3, 10), neutral(4, 2), its(5, 6)]);
+    const now = board([...shown, mine(3, 7), its(4, 3), its(5, 1)]);
+    expect(of(observe(prev, now, attack(3, 4, 4))).iAttacked).toBe(true);
+    // Still neutral (my attack simply failed), or a Transfer Only order: no attack on it.
+    expect(of(observe(prev, board([...shown, mine(3, 7), neutral(4, 1), its(5, 6)]), attack(3, 4, 4))).iAttacked).toBe(false);
+    expect(of(observe(prev, now, { deploys: [], moves: [], sent: [{ from: 3, to: 4, transferOnly: true }] })).iAttacked).toBe(false);
+    // A territory of mine it took is its attack on me, not mine on it, even with a transfer of mine into it.
+    const minePrev = board([...shown, mine(3, 10), mine(4, 2), its(5, 6)]);
+    expect(of(observe(minePrev, now, { deploys: [], moves: [{ from: 3, to: 4, armies: 3 }] })).iAttacked).toBe(false);
+  });
+
   it('an Attack Only order onto its territory counts as my attack, a Transfer Only one does not', () => {
     const prev = board([...shown, mine(3, 10), its(4, 2)]);
     const now = board([...shown, mine(3, 6), its(4, 2)]);

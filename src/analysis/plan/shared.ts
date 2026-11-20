@@ -1176,6 +1176,14 @@ export interface EnemyDeployEstimate {
   armyPrice?: { gold: number; multiplier: number };
   /** #368: the income the user supplied for it (`PlanInput.knownIncome`), and the estimate's income it replaced. */
   known?: { income: number; was: number };
+  /**
+   * #444: its prior scaled by the incomes other players stated (`EnemyIncomePrior.stated`): `full` the
+   * prior unscaled, `scaled` the figure `prior` now holds. With no usable track (#368's midpoint, applied
+   * to an untracked opponent while the scale applies) and the scaled prior above what is in view
+   * (`lower`: its visible or observed figure), it is sized at `midpoint`, the middle (rounded up);
+   * `midpoint` is `null` otherwise. Absent when nothing was scaled.
+   */
+  stated?: { full: number; scaled: number; lower: number; midpoint: number | null };
 }
 
 /**
@@ -1212,6 +1220,12 @@ export interface EnemyIncomePrior {
    * so a player out no longer turns the prior off. Absent with none.
    */
   out?: readonly { id: number; state: string }[];
+  /**
+   * #444: the incomes stated in chat (`known_income`) applied this turn — players in view — whose mean
+   * is below `mine` (`myIncome`): every other opponent's prior is scaled by `ratio` (their mean ÷ mine),
+   * never below what is in view or tracked, never above the prior unscaled. Absent otherwise.
+   */
+  stated?: { players: readonly { id: number; income: number }[]; mine: number; ratio: number };
 }
 
 /**
@@ -2373,7 +2387,10 @@ export function enemyDeployEstimates(
       prior && k > 0
         ? Math.min(couldEarn, territoryIncome(held + Math.ceil((couldHold - held) / k), minimum, per) + possibleOwn + Math.ceil((possible - possibleOwn) / k))
         : null;
-    const priorFigure = prior && fogBeside ? Math.min(Math.max(0, Math.floor(priorBase!)), priorCap ?? couldEarn) : null;
+    const priorFull = prior && fogBeside ? Math.min(Math.max(0, Math.floor(priorBase!)), priorCap ?? couldEarn) : null;
+    // #444: incomes other players stated scale this one's prior down by their ratio to mine (never up).
+    const statedRatio = prior?.stated && !prior.stated.players.some((x) => x.id === playerId) ? prior.stated.ratio : null;
+    const priorFigure = priorFull !== null && statedRatio !== null ? Math.min(priorFull, Math.ceil(priorFull * statedRatio - 1e-9)) : priorFull;
     // A track over enough turns replaces the single-turn observed figure (S3).
     const track = tracks?.find((t) => t.playerId === playerId);
     const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
@@ -2395,7 +2412,7 @@ export function enemyDeployEstimates(
       ? observeDeploy(g, board, previous, playerId, settings, {
           me,
           guard: (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
-          expected: Math.max(visible, trackBound ?? tracked ?? priorFigure ?? 0),
+          expected: Math.max(visible, trackBound ?? tracked ?? priorFull ?? 0),
           most: couldEarn,
           // #293: under Local Deployment, growth beside the fog outside every bonus it could hold is
           // deploy only up to its free income.
@@ -2463,7 +2480,10 @@ export function enemyDeployEstimates(
       exact !== null ? 'exact' : priorUsed !== null && priorUsed > seen ? 'prior' : seenSource;
     // #294: what its tracked figure was read from (#368: while that is little, thin evidence below).
     const coverage = usable ? trackCoverage(usable.turns.filter((x) => usable.incomeTurns.includes(x.from))) : null;
-    const chosen = source === 'exact' ? exact! : source === 'prior' ? priorUsed! : seen;
+    // #444: an untracked opponent whose prior a stated income scaled: #368's midpoint between what is in
+    // view (or observed) and that prior.
+    const statedMid = statedRatio !== null && source === 'prior' && !usable ? seen + Math.ceil((priorUsed! - seen) / 2 - 1e-9) : null;
+    const chosen = source === 'exact' ? exact! : source === 'prior' ? (statedMid ?? priorUsed!) : seen;
     // #368 (owner decision of 2026-11-19: on a hidden opponent, choose the middle until we learn
     // otherwise): thin evidence — its tracked figure read from under LOW_COVERAGE of its frontier —
     // sizes it for the midpoint between the lower bound (what is in view or tracked, raised to the
@@ -2560,6 +2580,7 @@ export function enemyDeployEstimates(
       exact,
       card,
       cardPlayed,
+      ...(priorFull !== null && priorFigure! < priorFull ? { stated: { full: priorFull, scaled: priorFigure!, lower: seen, midpoint: statedMid } } : {}),
     };
   });
 }

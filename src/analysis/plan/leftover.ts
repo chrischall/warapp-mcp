@@ -4,7 +4,8 @@
 // each member of a bonus this turn's captures complete that falls to the enemy beside it (#265), to
 // the borders that fall without the armies withdrawn into them unless I am known to move first
 // (#215), to the borders short of their hold before the strike stack, then to the strike
-// stack, the short borders' comfortable margins (#218: the rest on the step's source when it
+// stack, the territory with the most income at stake as a deterrent guard (#440), the short borders'
+// comfortable margins (#218: the rest on the step's source when it
 // defends as well; #268: else spread over the borders facing one opponent for equal headroom
 // over its deploy), the step it saves toward, the expansion stack (#218: with no front in view,
 // the territory central to what I hold instead when the stack lies far from it; #288: with the
@@ -24,6 +25,10 @@ import { COMFORT_MARGIN, type PlannedMove } from './shared.js';
 
 /** #218 (comment): hops the expansion stack may lie farther from my farthest border than the centre before the leftover stays central. */
 export const CENTRE_SLACK = 1;
+/** #440: the least protected value of the territory a deterrent guard goes to. */
+export const DETERRENT_MIN_VALUE = 5;
+/** #440: how many times the most any border being topped up protects that territory must protect. */
+export const DETERRENT_VALUE_RATIO = 2;
 import { knownFirst, lateArrivals, lateNet, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';
@@ -520,6 +525,39 @@ export function leftoverDeploy(
         missing.some((x) => state.get(x)?.owner.kind === 'player') ? 'neutrals and weaker opponents' : 'neutrals'
       } (#303)`;
     })();
+    /** #218 (comment): the expansion stack's attacks land for sure without the leftover (under luck it raises their odds). */
+    const expansionSure = () => moves.every((m) => m.from !== expansion || m.kind !== 'attack' || (m.winChance ?? 1) >= 1);
+    /**
+     * #424: with no foe in view because a Diplomacy card in force makes the only one beside me no foe
+     * this turn, its border is still the front the card's end reopens: the leftover goes there rather
+     * than central or onto the expansion stack (live, it went to an ocean tile while the partner's
+     * stacks stood beside me). An open border of mine issuing no order beside a visible stack of an
+     * enforced partner, most at stake first, then the biggest partner stack beside it, then id. Only
+     * once the expansion stack's attacks land for sure without it, as the centre's rule.
+     */
+    const partnerFront = (): { id: number; player: number; until?: number } | undefined => {
+      if (!noFront || !pc.truce.enforced.size || (expansion !== undefined && !expansionSure())) return undefined;
+      const facing = (x: number) => {
+        let best: { player: number; armies: number } | undefined;
+        for (const n of neighborsOf(g, x)) {
+          const st = state.get(n);
+          if (captured.has(n) || st?.owner.kind !== 'player' || !pc.truce.enforced.has(st.owner.playerId)) continue;
+          const armies = st.armies ?? 0;
+          if (!best || armies > best.armies || (armies === best.armies && st.owner.playerId < best.player)) best = { player: st.owner.playerId, armies };
+        }
+        return best;
+      };
+      const pick = [...mine]
+        .filter((x) => open(x) && !orderOf(x) && roomAt(x) > 0)
+        .flatMap((x) => {
+          const f = facing(x);
+          return f ? [{ id: x, ...f }] : [];
+        })
+        .sort((a, b) => valueOf(b.id) - valueOf(a.id) || b.armies - a.armies || a.id - b.id)[0];
+      if (!pick) return undefined;
+      const until = pc.truce.given.find((r) => r.player === pick.player && r.enforced)?.enforcedUntil;
+      return { id: pick.id, player: pick.player, ...(until !== undefined ? { until } : {}) };
+    };
     const biggest = (ids: number[]) =>
       [...ids].sort((a, b) => armiesOf(b) + (deployed.get(b) ?? 0) - (armiesOf(a) + (deployed.get(a) ?? 0)) || a - b)[0];
     const takenBack = reviving ? holdAfterAll() : undefined;
@@ -687,6 +725,82 @@ export function leftoverDeploy(
         );
       }
     };
+    /**
+     * #440: before the leftover tops up a border that already holds, or one a recorded truce covers (T2),
+     * the territory with the most income at stake that carries a single-territory bonus of at least
+     * DETERRENT_MIN_VALUE gets a deterrent guard. Live (a large FFA), the +8
+     * territory that was the hub of nine pair bonuses ended on 3 while 15 armies topped up two low-value
+     * borders. That territory (open, issuing no order, not itself a border being topped up) must protect
+     * at least DETERRENT_MIN_VALUE and DETERRENT_VALUE_RATIO × the most any border being topped up
+     * protects, with an opponent within two steps; it gets armies until taking it needs more than
+     * COMFORT_MARGIN × a casual attack (the largest deploy estimate of those opponents, or its own
+     * threat when it is a border). The borders that would fall keep what makes them hold (a truce-covered
+     * one excepted: the truce covers it). Its armies then stay (`locked`: rule 6 moves none out), and so do
+     * they when it already needs more than that to take and gets no deploy.
+     */
+    const deterrentGuard = (bs: readonly Border[]) => {
+      const relaxed = (id: number) => ps.truce?.relaxed.has(id) ?? false;
+      const holdNeed = (b: Border) => {
+        let d = 0;
+        while (d < ps.budget) {
+          const take = toTake(stays(b.id) + d + unitsAt(b.id));
+          if (take === null || take > b.threat) break;
+          d++;
+        }
+        return d;
+      };
+      const reserve = bs.filter((b) => !relaxed(b.id)).reduce((sum, b) => sum + holdNeed(b), 0);
+      // A territory that carries a large single-territory bonus of its own (a city, a capital), not
+      // any member of a held bonus: the issue's case, and the golden corpus's churn stays small.
+      const carries = (x: number) =>
+        [...g.bonusById.values()].some((b) => b.value >= DETERRENT_MIN_VALUE && bonusTerritories(g, b.id).length === 1 && bonusTerritories(g, b.id)[0] === x);
+      const hub = [...mine]
+        .filter((x) => open(x) && !orderOf(x) && carries(x))
+        .sort((a, b) => valueOf(b) - valueOf(a) || a - b)[0];
+      if (hub === undefined || bs.some((b) => b.id === hub)) return;
+      const value = valueOf(hub);
+      const top = Math.max(0, ...bs.map((b) => valueOf(b.id)));
+      if (value < DETERRENT_MIN_VALUE || value < DETERRENT_VALUE_RATIO * top) return;
+      const near = new Set([hub, ...neighborsOf(g, hub)].flatMap((x) => [x, ...neighborsOf(g, x)]));
+      const foes = [...new Set([...near].flatMap((x) => {
+        const st = state.get(x);
+        return !captured.has(x) && st?.owner.kind === 'player' && pc.foe(st.owner.playerId) ? [st.owner.playerId] : [];
+      }))].sort((a, b) => a - b);
+      if (!foes.length) return;
+      const casual = Math.max(...foes.map((p) => pc.deployOf(p)), borders.get(hub)?.threat ?? 0);
+      const bar = COMFORT_MARGIN * casual;
+      const most = Math.min(roomAt(hub), ps.budget - reserve);
+      let d = 0;
+      while (d < most) {
+        const take = toTake(stays(hub) + d + unitsAt(hub));
+        if (take === null || take > bar) break;
+        d++;
+      }
+      const against = `${COMFORT_MARGIN} × the ~${casual} ${
+        borders.has(hub) && casual === borders.get(hub)!.threat ? 'threat beside it' : `deploy of player ${foes.length === 1 ? foes[0] : foes.join(' or ')} within two steps`
+      }`;
+      if (d <= 0) {
+        // Already at its bar: it needs no deploy, but its armies still stay (rule 6 would otherwise
+        // walk them to the front and leave a stronger capital weaker than a topped-up one).
+        const at = stays(hub) + unitsAt(hub);
+        const take = toTake(at);
+        if (take !== null && take <= bar) return;
+        locked.add(hub);
+        rationale.push(
+          `${label(hub)} keeps its ${at} armies as a deterrent guard (#440): it has the most income at stake (protects +${value}, the borders being topped up at most +${top}), and they ${
+            take === null ? 'cannot be taken' : `need ${take} to take`
+          }, more than ${against}, so none move to the front.`,
+        );
+        return;
+      }
+      deploy(hub, d);
+      locked.add(hub);
+      keepFromMargin(hub);
+      const at = stays(hub) + unitsAt(hub);
+      rationale.push(
+        `Deploy ${d} of the leftover to ${label(hub)} as a deterrent guard (#440): it has the most income at stake (protects +${value}, the borders being topped up at most +${top}), and its ${at} armies now need ${toTake(at)} to take, more than ${against}, before any border that already holds is topped up.`,
+      );
+    };
     /** #268: the rest spread by {@link headroomSpread}, already deployed: nothing is left for `where`. */
     let spreadRest: Map<number, number> | undefined;
     let where: number;
@@ -696,6 +810,8 @@ export function leftoverDeploy(
     let concentrating = false;
     /** #218 (comment): the leftover stays central: rule 6 keeps it there, not the armies already there. */
     let central = false;
+    /** #424: the Diplomacy partner's border the leftover keeps as the front. */
+    let peace: ReturnType<typeof partnerFront>;
     /** #226 review: the leftover defends `where` or saves there: the #226 margin leaves it. */
     let defends = false;
     /** #288: the attacks out of the expansion stack the leftover goes with (it has nothing else left to attack). */
@@ -802,6 +918,7 @@ export function leftoverDeploy(
       concentrating = true;
     } else if (short[0]) {
       defends = true;
+      deterrentGuard(short);
       // #218: the source of the step the leftover would save toward, when it is an open border:
       // once every short border has its comfortable margin, the rest goes there when it defends
       // as well as the border the rest would go to, and counts toward the step. A margin itself
@@ -854,6 +971,13 @@ export function leftoverDeploy(
       defends = true;
       lock = true;
       concentrating = true;
+    } else if ((peace = partnerFront()) !== undefined) {
+      where = peace.id;
+      why = `the border facing player ${peace.player}, at peace by a Diplomacy card in force${
+        peace.until !== undefined ? ` until turn ${peace.until}` : ''
+      } — no other enemy is in view, and its border is the front again once the card ends (#424)`;
+      defends = true;
+      lock = true;
     } else if (expansion !== undefined && open(expansion)) {
       // #218 (comment): with no enemy in view there is no front to go to, and a leftover riding
       // the top expansion walks deeper into one region every turn (live: 14 hops from the nearest
@@ -861,8 +985,7 @@ export function leftoverDeploy(
       // from my farthest border than the territory central to what I hold, and its attacks land
       // for sure without the leftover, the leftover stays there.
       // Only once its attacks land for sure: under luck the leftover there raises their odds.
-      const sure = moves.every((m) => m.from !== expansion || m.kind !== 'attack' || (m.winChance ?? 1) >= 1);
-      const c = noFront && sure ? centre() : undefined;
+      const c = noFront && expansionSure() ? centre() : undefined;
       if (c && c.id !== expansion && (c.ecc.get(expansion) ?? Infinity) > c.ecc.get(c.id)! + CENTRE_SLACK) {
         where = c.id;
         why = `no enemy is in view, so there is no front to go to: it stays central to what I hold (at most ${c.ecc.get(c.id)} hops from each of my borders, where the stack working on the top expansion, ${label(expansion)}, is ${c.ecc.get(expansion)} from its farthest), ready for wherever a front opens`;

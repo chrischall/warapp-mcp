@@ -1,7 +1,8 @@
 // Since last turn (#194): this turn's income against the next income the plan of the previous
 // turn expected, and what changed hands since the previous board — the positive bonuses I held
 // that are broken now, and the territories I held that are no longer mine (taken by a player,
-// neutral again, or out of view). Pure and deterministic (ascending ids); no I/O.
+// neutral again, or out of view), and (#442) the captures that plan expected and did not make, with
+// who holds each now. Pure and deterministic (ascending ids); no I/O.
 //
 // The expected figure is the plan's `expected.nextIncome` as it stood when the previous turn was
 // planned: it assumed the plan's orders were sent and every kept border held, so a shortfall says
@@ -27,6 +28,8 @@ interface SinceLastInput {
   expectedTurn?: number | undefined;
   /** #253: the army cap's arithmetic this turn, when the game has a cap (a cut is named in the line). */
   armyCap?: ArmyCapIncome | undefined;
+  /** #442: the captures the previous turn's plan expected (its orders' targets); absent when unknown. */
+  expectedCaptures?: readonly number[] | undefined;
 }
 
 export interface SinceLast {
@@ -44,6 +47,12 @@ export interface SinceLast {
   bonusesBroken?: Array<{ bonusId: number; value: number }>;
   /** Territories I held on the previous board and no longer hold, with the player who has them when shown. */
   territoriesLost?: Array<{ territoryId: number; to: number | null }>;
+  /**
+   * #442: the previous plan's captures I do not hold now, with the player who holds each when shown
+   * (`to`; `fresh` when the previous board did not show it as that player's: my attack hit its fresh
+   * capture, in effect an attack on that player); absent without those captures.
+   */
+  capturesMissed?: Array<{ territoryId: number; to: number | null; fresh?: true }>;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -77,12 +86,24 @@ export function sinceLastTurn(input: SinceLastInput): SinceLast {
     .map(({ b }) => ({ bonusId: b.id, value: b.value }))
     .sort((x, y) => x.bonusId - y.bonusId);
   const ownerNow = new Map(current.territories.map((t) => [t.territoryId, t.owner]));
+  const toOf = (territoryId: number) => {
+    const o = ownerNow.get(territoryId);
+    return o?.kind === 'player' ? o.playerId : null;
+  };
+  const ownerBefore = new Map(previous.territories.map((t) => [t.territoryId, t.owner]));
+  if (input.expectedCaptures)
+    out.capturesMissed = [...new Set(input.expectedCaptures)]
+      .filter((id) => graph.territoryById.has(id) && !now.has(id) && !before.has(id))
+      .sort(byNum)
+      .map((territoryId) => {
+        const to = toOf(territoryId);
+        const was = ownerBefore.get(territoryId);
+        const fresh = to !== null && !(was?.kind === 'player' && was.playerId === to);
+        return { territoryId, to, ...(fresh ? { fresh: true as const } : {}) };
+      });
   out.territoriesLost = [...before]
     .filter((id) => !now.has(id))
     .sort(byNum)
-    .map((territoryId) => {
-      const o = ownerNow.get(territoryId);
-      return { territoryId, to: o?.kind === 'player' ? o.playerId : null };
-    });
+    .map((territoryId) => ({ territoryId, to: toOf(territoryId) }));
   return out;
 }

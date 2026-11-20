@@ -42,9 +42,12 @@ import { simTerritories, simulateTurn, type SimResult } from '../turn-sim.js';
 import type { GameFormat } from '../profile.js';
 import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
+import { armiesToTake, DEFAULT_DEFENSIVE_KILL_RATE, straightKills } from '../combat.js';
 import {
+  captureCost,
   CONCEDE_FACTOR,
   type PlanAdvice,
+  type PlannerSettings,
   type PlanInput,
   type PlannedDeploy,
   type PlannedMove,
@@ -81,6 +84,8 @@ export interface Truce {
   noTarget: (t: number) => boolean;
   /** #375: a territory the plan was told to avoid (`PlanOptions.avoid`); `noTarget` includes it. */
   avoided: (t: number) => boolean;
+  /** #441: a neutral skipped because taking it would provoke an avoided player (`skirtedNeutrals`); `noTarget` includes it. */
+  skirted?: ReadonlyMap<number, Skirt>;
   /** #382: a territory of the siege target the siege holds back until its trigger fires; `noTarget` includes it. */
   siegeHeld?: (t: number) => boolean;
   /** T4 for rule 6: a covered territory of a partner a truce binds the planner to (free-for-all only). */
@@ -119,6 +124,75 @@ export function avoidedBy(input: PlanInput): (t: number) => boolean {
   const owner = new Map<number, number>();
   for (const t of input.board.territories) if (t.owner.kind === 'player') owner.set(t.territoryId, t.owner.playerId);
   return (t) => territories.has(t) || players.has(owner.get(t) ?? Number.NaN);
+}
+
+/** #441: why a neutral is skipped for an avoided player. */
+export interface Skirt {
+  player: number;
+  /** `stack`: that player is its only enemy neighbour; `bonus`: it sits in a bonus that player visibly holds most of. */
+  why: 'stack' | 'bonus';
+}
+
+/**
+ * #441: the neutrals an avoided player is visibly collecting — its only enemy neighbour is that player, or it
+ * sits in a bonus whose members that player visibly holds more than half of — which the plan skips like the
+ * player's own territories: taking one beside its stack reads as a provocation and is conceded next turn.
+ * Not skipped: a neutral whose capture completes a bonus of mine on its own (every other member mine at the
+ * start), or one the capture would hold next turn with what it leaves there alone (the fewest attackers that
+ * take it, less the defenders' kills) against every enemy stack beside it plus its owner's deploy. Empty
+ * with no avoided player, so every other plan is unchanged.
+ */
+export function skirtedNeutrals(
+  input: PlanInput,
+  o: { foe: (p: number) => boolean; deployOf: (p: number) => number; settings: PlannerSettings },
+): Map<number, Skirt> {
+  const out = new Map<number, Skirt>();
+  const avoid = new Set(input.options?.avoid?.players ?? []);
+  if (!avoid.size) return out;
+  const { graph: g, board, me } = input;
+  const state = new Map(board.territories.map((t) => [t.territoryId, t]));
+  const ownerOf = (t: number) => {
+    const st = state.get(t);
+    return st?.owner.kind === 'player' ? st.owner.playerId : undefined;
+  };
+  const rates = o.settings;
+  for (const st of [...board.territories].sort((a, b) => a.territoryId - b.territoryId)) {
+    const n = st.territoryId;
+    if (st.owner.kind !== 'neutral' || !g.territoryById.has(n)) continue;
+    const bonuses = g.map.bonuses.filter((b) => bonusTerritories(g, b.id).includes(n));
+    // It completes a bonus of mine: always worth taking.
+    if (bonuses.some((b) => b.value > 0 && bonusTerritories(g, b.id).every((x) => x === n || ownerOf(x) === me))) continue;
+    const foes = [...new Set(neighborsOf(g, n).flatMap((x) => {
+      const p = ownerOf(x);
+      return p !== undefined && o.foe(p) ? [p] : [];
+    }))];
+    let skirt: Skirt | undefined;
+    if (foes.length === 1 && avoid.has(foes[0]!)) skirt = { player: foes[0]!, why: 'stack' };
+    else
+      for (const b of [...bonuses].sort((x, y) => x.id - y.id)) {
+        const ts = bonusTerritories(g, b.id);
+        const p = [...avoid].sort(byNum).find((a) => ts.filter((x) => ownerOf(x) === a).length * 2 > ts.length);
+        if (p !== undefined) {
+          skirt = { player: p, why: 'bonus' };
+          break;
+        }
+      }
+    if (!skirt) continue;
+    // It holds next turn with its survivors alone: no provocation that costs it.
+    const defenders = st.armies ?? 0;
+    const sent = captureCost(defenders, o.settings);
+    const survivors = sent === null ? 0 : sent - straightKills(defenders, rates.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE);
+    const threat = Math.max(
+      0,
+      ...foes.map(
+        (p) =>
+          neighborsOf(g, n).reduce((sum, x) => sum + (ownerOf(x) === p ? Math.max(0, (state.get(x)!.armies ?? 0) - 1) : 0), 0) + o.deployOf(p),
+      ),
+    );
+    if (survivors > 0 && (armiesToTake(survivors, rates) ?? Number.POSITIVE_INFINITY) > threat) continue;
+    out.set(n, skirt);
+  }
+  return out;
 }
 
 function withAvoid(truce: Truce, input: PlanInput): Truce {

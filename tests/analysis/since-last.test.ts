@@ -95,4 +95,20 @@ describe('sinceLastTurn (#194)', () => {
     expect(sinceLastTurn({ graph, previous: b, current: b, me: ME, income: 52, expected: 52, armyCap: { ...CUT, armies: 300, received: 52, cut: false } })).not.toHaveProperty('capCut');
     expect(sinceLastTurn({ graph, previous: b, current: b, me: ME, income: 52, expected: 52 })).not.toHaveProperty('capCut');
   });
+
+  it('names each capture the previous plan expected and did not make, with who holds it now (#442)', () => {
+    const previous = board([mine(1, 3, ME), neutral(2, 2), enemy(3, 2), neutral(4, 2), neutral(5, 2)]);
+    // 3 was the enemy's already (an attack on it that failed, not a fresh capture); 2 went to the enemy (my attack hit its fresh capture), 4 is still neutral, 5 was taken, 6 is in the fog.
+    const current = board([mine(1, 3, ME), enemy(2, 1), enemy(3, 1), neutral(4, 1), mine(5, 1, ME), fogged(6)]);
+    const s = sinceLastTurn({ graph, previous, current, me: ME, income: 5, expectedCaptures: [6, 5, 4, 3, 2, 99] });
+    expect(s.capturesMissed).toEqual([
+      { territoryId: 2, to: ENEMY, fresh: true },
+      { territoryId: 3, to: ENEMY },
+      { territoryId: 4, to: null },
+      { territoryId: 6, to: null },
+    ]);
+    // Without the plan's captures, or without the previous board: no field.
+    expect(sinceLastTurn({ graph, previous, current, me: ME, income: 5 })).not.toHaveProperty('capturesMissed');
+    expect(sinceLastTurn({ graph, current, me: ME, income: 5, expectedCaptures: [2] })).not.toHaveProperty('capturesMissed');
+  });
 });

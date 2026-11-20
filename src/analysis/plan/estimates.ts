@@ -55,7 +55,7 @@ import { AHEAD_RATIO, BEHIND_RATIO, gameProfile, type ProfilePlayer } from '../p
 import type { BoardCtx, CombatCtx, OpponentsCtx, PlanCtx, PlanState, StandingCtx } from './state.js';
 import { byNum } from './util.js';
 import { sanctionedIncome } from '../cards-in-effect.js';
-import { truceOf } from './relations.js';
+import { skirtedNeutrals, truceOf } from './relations.js';
 import { teamFocusOf } from './team.js';
 import { neutralizeSeats, staticSeats } from '../static-seats.js';
 import { commanderPlace } from './commander.js';
@@ -144,7 +144,9 @@ export function planEnemyEstimates(input: {
   const previousBoard = input.previousBoard ? neutralizeSeats(input.previousBoard, seats) : undefined;
   const tracks = input.tracks?.filter((t) => !seats.has(t.playerId));
   const capCut = input.incomeCap ? Math.max(0, Math.floor(input.incomeCap.uncapped - input.incomeCap.received)) : 0;
-  const { prior, skipped } = fogPrior(board, input.me, ctx, input.income + capCut, seats);
+  const fog = fogPrior(board, input.me, ctx, input.income + capCut, seats);
+  const prior = statedScale(fog.prior, board, input.me, input.known ?? []);
+  const skipped = fog.skipped;
   const turn = input.turn ?? ctx.turn ?? null;
   const estimates = enemyDeployEstimates(input.graph, board, input.me, input.settings ?? {}, previousBoard, tracks, prior, {
     turn,
@@ -157,6 +159,26 @@ export function planEnemyEstimates(input: {
     input.known ?? [],
   );
   return { estimates: priced, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
+}
+
+/**
+ * #444: the incomes stated in chat (`known`) for players in view (not me) scale the prior of every other
+ * opponent when their mean is below my income: `EnemyIncomePrior.stated`. The prior unchanged otherwise.
+ */
+function statedScale(
+  prior: EnemyIncomePrior | undefined,
+  board: BoardState,
+  me: number,
+  known: readonly { player: number; income: number }[],
+): EnemyIncomePrior | undefined {
+  if (!prior || !known.length || prior.myIncome <= 0) return prior;
+  const inView = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' ? [t.owner.playerId] : [])));
+  const players = known
+    .filter((k) => k.player !== me && inView.has(k.player))
+    .map((k) => ({ id: k.player, income: Math.max(0, Math.floor(k.income)) }));
+  if (!players.length) return prior;
+  const ratio = players.reduce((n, x) => n + x.income, 0) / players.length / prior.myIncome;
+  return ratio < 1 ? { ...prior, stated: { players, mine: prior.myIncome, ratio } } : prior;
 }
 
 /**
@@ -398,9 +420,19 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
         )
       : [],
   );
-  const truceNow: typeof truce = held
+  const withSiege: typeof truce = held
     ? { ...truce, siegeHeld: (t: number) => heldLand.has(t), noTarget: (t: number) => truce.noTarget(t) || heldLand.has(t) }
     : truce;
+  // #441: the neutrals an avoided player is visibly collecting are no targets either.
+  const skirted = skirtedNeutrals({ ...input, board }, { foe, deployOf, settings: s });
+  const truceNow: typeof truce = skirted.size
+    ? {
+        ...withSiege,
+        skirted,
+        avoided: (t: number) => skirted.has(t) || withSiege.avoided(t),
+        noTarget: (t: number) => skirted.has(t) || withSiege.noTarget(t),
+      }
+    : withSiege;
   /**
    * #201: the planning horizon. Once the outlook (#178) says the game is decided — winning or losing
    * for OUTLOOK_TURNS turns running — every payback test counts the turns the game has left instead
@@ -909,6 +941,12 @@ export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
     rationale.push(
       `Multi-attack is on: the plan does not chain its own attacks from captured territories, but an enemy stack's chain — a capture, then the survivors on from it, through territories not mine — counts as a threat to the territory of mine, or the capture, it reaches (luck-free, at most ${CHAIN_MAX_STEPS} attacks deep).`,
     );
+  // #441: a neutral skipped for an avoided player, beside my land (one the plan could reach this turn).
+  for (const [n, k] of ctx.truce.skirted ?? [])
+    if (neighborsOf(ctx.g, n).some((x) => ctx.mineSet.has(x)))
+      rationale.push(
+        `Not taking ${ctx.label(n)}: ${k.why === 'stack' ? `its only enemy neighbour is player ${k.player}` : `it sits in a bonus player ${k.player} visibly holds most of`}, whom the plan avoids, and its capture would not hold next turn, so taking it would only provoke that player (#441).`,
+      );
   if (noSplit) {
     rationale.push(
       'No-Split: each territory issues at most one attack or transfer this turn, and it sends the whole stack (every army there, this turn\'s deploys included, less the guard); a territory that would split keeps its first (best) order, and one that must hold issues none.',

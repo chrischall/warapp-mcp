@@ -22,7 +22,7 @@ export interface TurnPrimitives {
   contact: boolean;
   /** It attacked me this turn; `null` when that cannot be told. */
   attackedMe: boolean | null;
-  /** I sent a non-transfer move onto a territory board T showed as its. */
+  /** I sent a non-transfer move onto a territory board T showed as its, or (#442) onto one not mine on T that board T+1 shows as its (its fresh capture). */
   iAttacked: boolean;
   /** Attacks of mine that measure whether it reinforced the target (`n`), those where it did (`e`), and the least armies above the board's count that explain them (`extra`, summed). */
   reinforce: { n: number; e: number; extra: number };
@@ -140,7 +140,8 @@ function leastFailing(armies: number, from: number, off: number, def: number): n
  * My orders as cached (`MyOrders`): `moves` holds only plain orders; a percentage, Attack Only or
  * Transfer Only order is in `sent` alone, and card plays in `cards`. A territory such an order leaves
  * or enters, or one of my Airlifts touches, is never tested for `attackedMe` and gives no `reinforce`
- * reading (its armies are not known); `iAttacked` counts every non-transfer order of `sent`. When the
+ * reading (its armies are not known); `iAttacked` counts every non-transfer order of `sent` (#442: onto its
+ * territory on T, or onto one not mine on T that is its on T+1 — my attack ran into its fresh capture). When the
  * orders do not record card plays (`cards` absent: a cache written before they were) and the game may
  * have Airlift, nothing is tested from armies at all, and when it may have Gift — orders unknown
  * included — captures cannot be told (`tookFromMe: null`; it may have been my gift), so a game with
@@ -221,9 +222,11 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
     const contact = ids.some((id) => ownsWas(id) && neighborsOf(graph, id).some(mineWas));
     const tookFromMe = giftUnknown ? null : ids.filter((id) => mineWas(id) && ownsNow(id) && !gifted.has(id));
     const lostToMe = ids.filter((id) => ownsWas(id) && mineNow(id));
+    // #442: or onto a territory not mine on T that is its on T+1 — its fresh capture my attack ran into.
+    const hit = (to: number) => ownsWas(to) || (!mineWas(to) && ownsNow(to));
     const iAttacked =
-      moves.some((m) => ownsWas(m.to) && m.armies > 0 && !transferOnly.has(`${m.from}:${m.to}`)) ||
-      sent.some((m) => ownsWas(m.to) && !m.transferOnly && sentCount(m) > plain(m));
+      moves.some((m) => hit(m.to) && m.armies > 0 && !transferOnly.has(`${m.from}:${m.to}`)) ||
+      sent.some((m) => hit(m.to) && !m.transferOnly && sentCount(m) > plain(m));
 
     // attackedMe
     let attackedMe: boolean | null = tookFromMe?.length ? true : null;
