@@ -810,7 +810,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   member (else the most valuable with a hidden border of mine), Reconnaissance on the hidden territory
   beside the most of mine, else (#443) on the hidden territory behind the opponent in contact whose stacks
   tie down the most of my border armies (`pressures`), a distribution-mode start first when the map carries
-  the mode's territories. **A team hand's cards carry `owner`**
+  the mode's territories. #434: an advised spy card whose kind is not in `UNVERIFIED_CARD_PLAYS` is flagged
+  `inOrders` and warapp_plan_turn puts its play into `orders` (`intelOrders`); all three are still in the set, so
+  none is today — verifying one live is removing it from that set. **A team hand's cards carry `owner`**
   (the in-game id read under, mine when under me at all; V8 verified, #310): the planner plays, discards and
   advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
   teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not

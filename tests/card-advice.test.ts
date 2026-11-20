@@ -3,7 +3,7 @@ import type { TerritoryState } from '../src/board.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import type { Card, CardChoice } from '../src/cards.js';
 import type { GameSettings, Player } from '../src/normalize.js';
-import { adviseCards, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
+import { adviseCards, intelOrders, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
 import { normalizeSettings } from '../src/normalize.js';
 import { turnOrdersArg } from '../src/tools/turn.js';
 import { board, mine, neutral, tinyMap } from './analysis/helpers.js';
@@ -311,6 +311,26 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     const off = adviseCards(input({ territories, game: { ...ffa, settings: { ...settings(), fog: 'NoFog' } }, hand }));
     expect(off.view.spy ?? off.view.reconnaissance ?? off.view.surveillance).toBeUndefined();
     expect(off.warnings.join('\n')).not.toMatch(/Spy|Reconnaissance|Surveillance/);
+  });
+
+  it('#434: a spy-card play goes into the orders only once its encoding is verified live; today none is', () => {
+    const fog = { territoryId: 3, owner: { kind: 'unknown' as const }, armies: null, fogLevel: 'Fogged' };
+    const territories = [me(1, 5), me(2, 7), fog, neutral(4, 2), neutral(5, 2), neutral(6, 2), foe(7, 3)];
+    const hand = [card(2, 'Spy', 'a'), card(10, 'Reconnaissance', 'b'), card(11, 'Surveillance', 'c')];
+    // The real set: all three unverified, so advice only and no order to add.
+    const real = adviseCards(input({ territories, game: ffa, hand }));
+    expect(real.view.spy?.inOrders ?? real.view.reconnaissance?.inOrders ?? real.view.surveillance?.inOrders).toBeUndefined();
+    expect(intelOrders(real.view)).toEqual([]);
+    // Surveillance verified (an injected set without it): its play goes into the orders, the others stay advice.
+    const verified = adviseCards(input({ territories, game: ffa, hand, unverifiedPlays: new Set(['Spy', 'Reconnaissance']) }));
+    expect(verified.view.surveillance).toEqual({ bonus: 101, inOrders: true, order: { kind: 'card', card: 'c'.repeat(32), bonus: 101 } });
+    expect(intelOrders(verified.view)).toEqual([{ kind: 'card', card: 'c'.repeat(32), bonus: 101 }]);
+    expect(verified.warnings.join('\n')).toMatch(/Surveillance on bonus 101: .*In the orders: its encoding is verified live/);
+    expect(verified.warnings.join('\n')).toMatch(/Spy on player 8811111299: .*Advice only, not in the orders/);
+    // All verified: every advised play is an order, and none with fog off.
+    expect(intelOrders(adviseCards(input({ territories, game: ffa, hand, unverifiedPlays: new Set() })).view)).toHaveLength(3);
+    const off = adviseCards(input({ territories, game: { ...ffa, settings: { ...settings(), fog: 'NoFog' } }, hand, unverifiedPlays: new Set() }));
+    expect(intelOrders(off.view)).toEqual([]);
   });
 
   it('G2: Sanctions pass over a truce partner, saying why', () => {

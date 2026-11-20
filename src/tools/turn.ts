@@ -83,7 +83,7 @@ import { inferFirstMover } from '../move-order.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from './card-effects.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
-import { adviseCards, cardGame, cardPieceOption, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
+import { adviseCards, cardGame, cardPieceOption, intelOrders, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   turnsCompleted,
@@ -2698,7 +2698,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       };
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect; D2: my Diplomacy, Sanctions, Airlift and Gift. Advice only: the orders
-      // below are the plan's (and the advised Order Delay).
+      // below are the plan's (and the advised Order Delay, and #434 a spy card whose play is verified live).
       // D3: a relation that is only a Diplomacy card is no truce to the card advice (it reads the card itself).
       const inForce = (truces?.relations ?? []).filter((r) => (r.state === 'active' || r.state === 'notice') && !r.card);
       const advice = rules.inPlay.length
@@ -2792,6 +2792,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const orders = [
         ...cards.discards.filter((c) => c.id !== playedDelay).map((c) => ({ kind: 'discard' as const, card: c.id })),
         ...plays.map((c) => ({ kind: 'card' as const, card: c.id })),
+        // #434: a spy card advised in heavy fog whose play is verified live (none yet: all are UNVERIFIED_CARD_PLAYS).
+        ...intelOrders(advice.view),
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
         // #274: my commander's walk takes it along (the #165 option, encoding unverified live).
         ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
@@ -3166,6 +3168,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                       ...(advice.view.orderDelay && orders.some((o) => o.kind === 'card' && o.card === advice.view.orderDelay!.card)
                         ? myHand.filter((c) => c.id === advice.view.orderDelay!.card)
                         : []),
+                      // #434: a verified spy-card play the orders carry.
+                      ...myHand.filter((c) => intelOrders(advice.view).some((o) => o.card === c.id)),
                     ],
                     discards: cards.discards,
                   }).map((r) => ({ ...r, by: r.by === null || r.by === 'me' ? r.by : playerRef(r.by) })),

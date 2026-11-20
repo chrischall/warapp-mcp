@@ -9,6 +9,7 @@ import { adviseOrderDelay, CARD_BLOCKADE, CARD_ORDER_DELAY, CARD_REINFORCEMENT, 
 import { blockadeOffer, bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
 import { bonusTerritories } from '../analysis/bonuses.js';
 import { diplomacyOpponents, supportAdvice, type SupportView } from './card-support-advice.js';
+export { intelOrders } from './card-support-advice.js';
 import type { TruceCover } from '../analysis/card-support.js';
 import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
@@ -150,6 +151,8 @@ export interface CardAdviceInput {
   enforced?: ReadonlySet<number>;
   /** PLAN-TEAMS D3: the plan's income already carries the Sanctions on me. */
   sanctionsApplied?: boolean;
+  /** #434: the card plays not yet verified live (default `UNVERIFIED_CARD_PLAYS`); tests inject their own. */
+  unverifiedPlays?: ReadonlySet<string>;
 }
 
 /**
@@ -386,7 +389,7 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
       a.card === 'Diplomacy' && a.players?.includes(me.id) && turn !== null && a.untilTurn === turn + 1 ? a.players.filter((p) => p !== me.id) : [],
     ),
   );
-  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, lastTurn, truces: input.truces ?? [] });
+  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, lastTurn, truces: input.truces ?? [], ...(input.unverifiedPlays ? { unverifiedPlays: input.unverifiedPlays } : {}) });
   Object.assign(view, support.view);
   warnings.push(...support.warnings);
   return { view, warnings };
