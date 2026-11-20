@@ -255,3 +255,36 @@ describe('adviseReply on classified text', () => {
     expect(adviseReply(classifyMessage('everyone attack Bluefox, he is winning', ctx), game({ iLead: true })).stance).toBe('report');
   });
 });
+
+describe('adviseReply: a conditional acceptance or counter-offer (#460)', () => {
+  const ctx = {
+    players: [
+      { id: ME, name: 'Bluefox', isMe: true },
+      { id: SENDER, name: 'Redcrane' },
+      { id: LEADER, name: 'Green Owl' },
+    ],
+    territories: [{ id: 10, name: 'Alaska' }],
+    bonuses: [{ id: 50, name: 'North America' }],
+    toMe: true,
+    myRecentMessages: ['Truce until turn 12? I stay out of North America.'],
+  };
+  const REPLY =
+    "Hey Redcrane, I'm potentially interested, but I need to expand eastward. If you're good with it, I take the rest of " +
+    "North America (Alaska), but I won't go to the islands I see you on now. I have a way to expand eastward via other " +
+    "routes. If that's acceptable, then I accept your terms, but I understand if that's not what you were thinking.";
+
+  it('is price (warapp_advise_diplomacy), notes the counter-terms, and offers no "Good luck" draft', () => {
+    const a = adviseReply(classifyMessage(REPLY, ctx), game({ channel: 'private', sender: { id: SENDER, truce: 'proposed' } }));
+    expect(a.stance).toBe('price');
+    expect(a.priceWith).toBe('warapp_advise_diplomacy');
+    expect(a.draft).toBeUndefined();
+    expect(a.reasons.join(' ')).toMatch(/counter/i);
+    expect(a.reasons.join(' ')).toMatch(/my proposal|I proposed/i);
+  });
+
+  it('a counter-offer label alone (proposal + accept) is priced with the counter-terms named', () => {
+    const a = adviseReply(cls(['truce-proposal', 'truce-accept'], { addressedToMe: true }, 'medium'), game());
+    expect(a.stance).toBe('price');
+    expect(a.reasons.join(' ')).toMatch(/counter/i);
+  });
+});

@@ -217,7 +217,12 @@ function advise(c: ClassifiedMessage, g: ChatAdviceGame, intents: Set<Intent>, s
     );
   }
   if (intents.has('truce-proposal')) {
-    const reasons = [`${who} proposes a truce: price it with warapp_advise_diplomacy for ${who}; never accept automatically.`];
+    // #460: a proposal and an acceptance together are a conditional acceptance with counter-terms.
+    const reasons = intents.has('truce-accept')
+      ? [
+          `${who} accepts on conditions of their own (counter-terms)${sender.truce === 'proposed' ? ' in reply to my proposal' : ''}: price the counter-terms with warapp_advise_diplomacy for ${who} before answering; nothing is agreed until recorded with warapp_record_agreement.`,
+        ]
+      : [`${who} proposes a truce: price it with warapp_advise_diplomacy for ${who}; never accept automatically.`];
     if (sender.truce === 'active' || sender.truce === 'in-notice') reasons.push('A truce with this player is already recorded: the terms may be changing.');
     return advice('price', reasons, [NOTES.trustLittle, NOTES.scopeEnd], { priceWith: 'warapp_advise_diplomacy' });
   }
