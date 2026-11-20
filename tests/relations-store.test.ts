@@ -39,6 +39,7 @@ import {
   recordTruceUsage,
   relationsPath,
   writeLedger,
+  intelOf,
 } from '../src/relations-store.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'warapp-relations-'));
@@ -380,5 +381,35 @@ describe('the cross-game record on disk', () => {
       expect(existsSync(playerRecordSaltPath(dir))).toBe(false);
       expect(await readPlayerRecord(dir, P, env)).toBe('off');
     }
+  });
+});
+
+describe('#386: the intel in the ledger', () => {
+  it('keeps the usable entries, drops the rest, and survives another writer', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-intel-'));
+    mkdirSync(join(dir, 'relations'), { recursive: true });
+    writeFileSync(
+      relationsPath(dir, 1, 2),
+      JSON.stringify({
+        gameId: 1,
+        playerId: 2,
+        agreements: [],
+        usage: {},
+        intel: {
+          avoidTerritories: [{ territory: 5, turn: 3, promisedTo: 9 }, { territory: 'x', turn: 3 }],
+          avoidPlayers: [{ player: 7, turn: 3, reason: 'promised' }, { player: 8, turn: 3, reason: 'free text' }],
+          incomes: [{ player: 7, income: 12, turn: 3 }, { player: 8, income: -1, turn: 3 }],
+        },
+      }),
+    );
+    const want = {
+      avoidTerritories: [{ territory: 5, turn: 3, promisedTo: 9 }],
+      avoidPlayers: [{ player: 7, turn: 3, reason: 'promised' }],
+      incomes: [{ player: 7, income: 12, turn: 3 }],
+    };
+    expect((await readLedger(dir, 1, 2))?.intel).toEqual(want);
+    expect(await recordTruceUsage(dir, 1, 2, 4, [])).toBe(true);
+    expect((await readLedger(dir, 1, 2))?.intel).toEqual(want);
+    expect(intelOf({ avoidTerritories: [], avoidPlayers: [], incomes: [] })).toEqual({});
   });
 });

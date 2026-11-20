@@ -16,6 +16,8 @@ import { claimedCardUses, claimedCardWarning, teamCardClaims, teamHandLeft, uncl
 import { boardStateFromLive } from '../live.js';
 import { withTeammateOrders } from '../team-orders.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
+import { readLedger } from '../relations-store.js';
+import { resolveIntel } from '../analysis/intel.js';
 import { avoidPlayersArg, avoidTerritoriesArg, gameIdArg, graphOf, knownIncomeArg, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
@@ -180,6 +182,12 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // The teams: GameFeed's, else the game list's (asked once per game, kept).
       const { game, me, source: teamSource, known: teamsKnown } = await resolveTeamsFor(ctx, feed, seat);
       const turn = currentTurn(game);
+      // #386: the avoid targets and stated incomes warapp_record_intel kept, as warapp_plan_turn applies them.
+      const intel = resolveIntel(ctx.dataDir ? (await readLedger(ctx.dataDir, game.id, me.id))?.intel : undefined, turn, {
+        ...(known_income !== undefined ? { knownIncome: known_income } : {}),
+        ...(avoid_territories !== undefined ? { avoidTerritories: avoid_territories } : {}),
+        ...(avoid_players !== undefined ? { avoidPlayers: avoid_players } : {}),
+      });
       const [{ territories, info }, history] = await Promise.all([loadLiveGame(ctx, game), boardHistory(ctx, game, me, turn)]);
       const graph = graphOf(map);
       // As warapp_plan_turn does (#166): the opponent's starts the award of picks proves stand on
@@ -328,7 +336,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // #368: an income the caller knows replaces the estimate (a Reinforcement card the clock adds on top),
       // before an untrusted mark; enemy_deploy, a what-if for everyone, wins over both. The commander check
       // below keeps the submit's sizing, so it never calls safe what warapp_submit_turn refuses.
-      const knownOf = new Map((enemy_deploy === undefined ? (known_income ?? []) : []).map((k) => [k.player, k.income]));
+      const knownOf = new Map((enemy_deploy === undefined ? (intel.knownIncome ?? []) : []).map((k) => [k.player, k.income]));
       const opponents = so.opponents.map((o) => {
         const known = knownOf.get(o.id);
         if (known !== undefined) return { ...o, deploy: known + (o.card ?? 0) };
@@ -608,8 +616,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // #275 pattern 3: each border these orders leave below what the default plan leaves there (one plan per call).
       const belowPlan = await bordersBelowPlan(ctx, { game, map, me, turn, territories, info, history, teamsKnown, given: { deploys, moves } });
       // #375: an order into a territory to avoid, or one an avoided player holds.
-      const avoidT = new Set((avoid_territories ?? []).map((t) => resolveTerritory(map, t).id));
-      const avoidP = new Set(avoid_players ?? []);
+      const avoidT = new Set((intel.avoidTerritories ?? []).map((t) => resolveTerritory(map, t).id));
+      const avoidP = new Set(intel.avoidPlayers ?? []);
       const ownerOf = (id: number) => {
         const o = board.territories.find((t) => t.territoryId === id)?.owner;
         return o?.kind === 'player' ? o.playerId : undefined;
@@ -620,6 +628,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const warnings = [
         // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
         ...[standInLine(standInOf(ctx))].filter((w): w is string => w !== undefined),
+        ...intel.warnings,
         ...(avoidedHits.length
           ? [`These orders attack ${avoidedHits.map((t) => name(t)).join(', ')}, which you asked to avoid (avoid_territories / avoid_players).`]
           : []),
@@ -695,6 +704,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         income: sanction.income,
         deployed,
         warnings,
+        // #386: the intel warapp_record_intel kept and what this check did with it (absent when none is kept).
+        ...(intel.report ? { intel: intel.report } : {}),
         // Only an opponent with a stack in view can be given a reply; the others are named apart.
         enemyDeploy: opponents
           .filter((o) => inView.has(o.id))

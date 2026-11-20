@@ -398,7 +398,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (no other opponent ≥ 0.5 × the larger income) and `trust`. Refused: me, an AI, a player out, a
   teammate, a 1v1, two left, and no third player or team outside me, my team and the partner's; an
   `until_turn` before this turn. Massing needs its growing pairs to end at the newest board. The ledger's `usage`
-  logs per planned turn (not a what-if plan) the armies each honoured truce freed and what a break would cost (T6: `lossIfBroken` armies, `incomeLostIfBroken`). Its read-modify-write runs
+  logs per planned turn (not a what-if plan) the armies each honoured truce freed and what a break would cost (T6: `lossIfBroken` armies, `incomeLostIfBroken`).
+  Its `intel` (#386, `warapp_record_intel`, not confirm-gated; pure part `src/analysis/intel.ts`) keeps avoid territories
+  (`promisedTo`), avoid players (a reason code from `AVOID_REASONS`, never free text) and stated incomes with their turn;
+  `warapp_plan_turn` and `warapp_check_plan` apply it by default (`resolveIntel`, reported as `intel`): an explicit
+  `avoid_territories` / `avoid_players` / `known_income` replaces the stored list of its kind for that call (`[]` included), and
+  an income more than `INCOME_STALE_TURNS` (3) turns old is not applied (a warning). Its read-modify-write runs
   under an in-process per-path lock (`src/path-lock.ts`; another process sharing the data dir is not
   covered). **The cross-game player record** (owner decision D5 of 2026-11-14: on, local AND hosted —
   registered and enabled on a hosted child, in its per-user data dir) is `src/player-record-store.ts` at

@@ -150,6 +150,7 @@ import { withTeammateOrders } from '../team-orders.js';
 import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../team-cards.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
+import { resolveIntel } from '../analysis/intel.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
@@ -2366,6 +2367,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #317: a surrender waiting on my acceptance (the game details; null when unreadable). Never throws.
         readPendingSurrenders(ctx, game, me),
       ]);
+      // #386: the avoid targets and stated incomes warapp_record_intel kept, applied unless an argument of
+      // that kind is given (an explicit one replaces the stored list); a stale stored income is left out.
+      const intel = resolveIntel(ctx.dataDir ? (await readLedger(ctx.dataDir, game.id, me.id))?.intel : undefined, turn, {
+        ...(known_income !== undefined ? { knownIncome: known_income } : {}),
+        ...(avoid_territories !== undefined ? { avoidTerritories: avoid_territories } : {}),
+        ...(avoid_players !== undefined ? { avoidPlayers: avoid_players } : {}),
+      });
+      const knownIncome = intel.knownIncome;
+      const avoidTerritories = intel.avoidTerritories;
+      const avoidPlayers = intel.avoidPlayers;
       const setup = await livePlanSetup(ctx, {
         game, map, me, turn, territories, info, history, teamsKnown,
         args: {
@@ -2376,9 +2387,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
           ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
-          ...(known_income?.length ? { knownIncome: known_income } : {}),
-          ...(avoid_territories?.length || avoid_players?.length
-            ? { avoid: { territories: (avoid_territories ?? []).map((t) => resolveTerritory(map, t).id), players: avoid_players ?? [] } }
+          ...(knownIncome?.length ? { knownIncome } : {}),
+          ...(avoidTerritories?.length || avoidPlayers?.length
+            ? { avoid: { territories: (avoidTerritories ?? []).map((t) => resolveTerritory(map, t).id), players: avoidPlayers ?? [] } }
             : {}),
         },
       });
@@ -2484,6 +2495,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           // Under enemy_deploy the planner ignores the mark (#275 review): say what the what-if used.
           enemy_deploy,
         ),
+        ...intel.warnings,
         ...(me.hasCommittedOrders
           ? [
               'You have already committed orders this turn; warapp_submit_turn will refuse until you withdraw them ' +
@@ -2666,6 +2678,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(chat ? { chat } : {}),
         // #317: the surrenders pending (the game details; null: unreadable, never "none").
         surrenderPending: surrenders,
+        // #386: the intel warapp_record_intel kept and what this plan did with it (absent when none is kept).
+        ...(intel.report ? { intel: intel.report } : {}),
         goal: plan.goal,
         goalSource: goal !== undefined ? 'explicit' : 'profile',
         // #382: the siege's state (goal siege only).

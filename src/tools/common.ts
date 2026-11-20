@@ -38,7 +38,7 @@ export const knownIncomeArg = z
   .describe(
     'Per-player incomes you know (what a player said in diplomacy chat, say), by GameFeed id: each replaces that ' +
       "opponent's estimate (a Reinforcement card the card clock adds stays on top), and the plan's warning says it was " +
-      'supplied. Taken as given, never checked against the board, and kept for this call only. `enemy_deploy`, a what-if ' +
+      'supplied. Taken as given, never checked against the board. Given, it replaces the incomes warapp_record_intel kept for this call. `enemy_deploy`, a what-if ' +
       'for every opponent, wins over it; a player with none of its territories in view is named as unused.',
   );
 
@@ -49,7 +49,8 @@ export const avoidTerritoriesArg = z
   .optional()
   .describe(
     'Territories (ids or names) never to attack this turn, whoever holds them: a neutral promised to someone, say. ' +
-      'warapp_plan_turn plans around them; warapp_check_plan warns when the orders attack one. Kept for this call only.',
+      'warapp_plan_turn plans around them; warapp_check_plan warns when the orders attack one. Given, it replaces the territories ' +
+      'warapp_record_intel kept, for this call (`[]`: none); omitted, those apply.',
   );
 
 /** #375: players never to attack (warapp_plan_turn's and warapp_check_plan's `avoid_players`). */
@@ -59,7 +60,8 @@ export const avoidPlayersArg = z
   .optional()
   .describe(
     'Players (GameFeed ids) never to attack this turn: peace promised outside a recorded truce. warapp_plan_turn ' +
-      'attacks none of their territories; warapp_check_plan warns when the orders do. Kept for this call only.',
+      'attacks none of their territories; warapp_check_plan warns when the orders do. Given, it replaces the players ' +
+      'warapp_record_intel kept, for this call (`[]`: none); omitted, those apply.',
   );
 
 /**
