@@ -564,7 +564,12 @@
 //     better use. It is floored (below) and waits for the captures; once they are planned
 //     (before rule 1c, and under `defend` after passes 1–2), it is held whole if what is left
 //     covers it (rationale "… (more than …), and nothing else this turn uses those armies"),
-//     else spread (below) when floored, else conceded whole as before. Under Local Deployment (#103) those tests (and its score)
+//     else spread (below) when floored, else conceded whole as before. #285 (plan/capture-instead.ts): just before
+//     that, an enemy territory whose fall leaves contested members bordering no enemy, fog or hidden territory
+//     is captured from the one of them needing the least deploy, sized for its owner's deploy there (the
+//     estimate the holds use, #368's middle figure; #120), when that deploy is at most HOLD_CREDIT_TURNS (3)
+//     × the hold costs it saves (owner decisions of 2026-11-19); those members are then held ("Take …
+//     rather than hold …"). Under Local Deployment (#103) those tests (and its score)
 //     use the cost net of the bonus's own pool, max(0, cost − pool): the pool can be
 //     deployed nowhere else. A unit that pays is funded before any capture that
 //     completes no bonus (advances, breaks, other expansion, unless focused): under `defend` with the
@@ -1569,6 +1574,7 @@ import { neverStandStill } from './plan/stand-still.js';
 import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
+import { captureInsteadOfHold } from './plan/capture-instead.js';
 import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { commanderMoveWarning, placeCommanderMove, reserveCommanderMove } from './plan/commander.js';
@@ -2458,6 +2464,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (unlocked.size)
       for (const c of candidates)
         if (c.target !== undefined && !captured.has(c.target) && targets.get(c.target)?.sources.some((x) => unlocked.has(x))) c.run();
+    // #285: a contested held bonus's borders facing one enemy stack take it when that costs less.
+    captureInsteadOfHold(pc, ps, book, threats, hd, tgt, caps);
     settleContested();
     // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
     // before rule 1c re-values the borders, so one whose bonus this completes is kept).
@@ -2475,6 +2483,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       advance(p);
       garrisonCompleted();
     }
+    // #285: as under `balanced`.
+    captureInsteadOfHold(pc, ps, book, threats, hd, tgt, caps);
     settleContested();
     // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
     // before rule 1c re-values the borders, so one whose bonus this completes is kept).
