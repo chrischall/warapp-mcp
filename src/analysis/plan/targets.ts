@@ -7,6 +7,7 @@ import type { TerritoryState } from '../../board.js';
 import { analyzeBonus, bonusTerritories } from '../bonuses.js';
 import { straightKills } from '../combat.js';
 import { bfsDistances, neighborsOf } from '../graph.js';
+import { DEFAULT_BASE_INCOME } from '../player.js';
 import {
   DEFENSE_DISCOUNT,
   HIDDEN_POOL_INCOMES,
@@ -623,7 +624,14 @@ export function bonusScoring(
   return { fogNote, toFinish, plans, wasteShare, wasteCost, wasteLoss, finishCost, economicMember, uneconomicMember, negativeMember, rememberedSaid, ratio };
 }
 
-/** #101: commit to the bonus closest to completion; a break's retake check. */
+/** #319: the opening warning's bound: at least this many territories held with no bonus. */
+export const SPREAD_TERRITORIES = 10;
+/** #319: the last turn the opening warning runs on (from turn 2). */
+export const SPREAD_LAST_TURN = 6;
+/** #319: "near base": an income at most this much above the base income. */
+export const SPREAD_INCOME_SLACK = 3;
+
+/** #101: commit to the bonus closest to completion; a break's retake check; #319's spread warning. */
 export function closestBonus(
   pc: PlanCtx,
   ps: PlanState,
@@ -710,6 +718,29 @@ export function closestBonus(
           `${bonusName(p.bonusId)}, advanced last turn, gives way to ${bonusName(top.bonusId)}: it is strictly closer to completion (${turnsText(top)} to finish against ${turnsText(p)}).`,
         );
     }
+  }
+  // #319: in the opening (turns 2–6), many territories on an income near base means the captures are
+  // spread over bonuses and none completed (six lost games held 11–20 territories on 8 or less after
+  // turn 4). A warning only, naming rule 4f's nearest bonus with its armies and turns: no order changes.
+  const turnNow = pc.game.turn ?? null;
+  const base = Math.max(0, Math.floor(input.settings?.baseIncome ?? DEFAULT_BASE_INCOME));
+  if (
+    turnNow !== null &&
+    turnNow >= 2 &&
+    turnNow <= SPREAD_LAST_TURN &&
+    !holdsBonus &&
+    mine.length >= SPREAD_TERRITORIES &&
+    income <= base + SPREAD_INCOME_SLACK
+  ) {
+    const nearest = committing ? byCloseness.find((p) => !p.focus) ?? byCloseness[0] : undefined;
+    ps.warnings.push(
+      `${mine.length} territories, no bonus: the captures are spread (income ${income}, base ${base}). ` +
+        (nearest
+          ? `Nearest bonus to complete: ${bonusName(nearest.bonusId)}, ${nearest.cost} armies to finish${fogNote(nearest.fogged, nearest.fogEach)}, ` +
+            `${turnsText(nearest)}${income > 0 ? ` at income ${income}` : ''} (rule 4f).`
+          : 'No bonus is worth completing from here.') +
+        ' Complete one before taking more territories outside it (#319).',
+    );
   }
   /**
    * A break's retake check, by its target: the warning it raised (if any) and what it was

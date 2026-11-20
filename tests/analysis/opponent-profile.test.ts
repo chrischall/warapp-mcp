@@ -443,3 +443,87 @@ describe('the estimate and the labels', () => {
     expect(labelsOf(estimateHabits({ ...base, attack: { e: 0, n: 8 } }))).toEqual(['turtle']);
   });
 });
+
+describe('observeTurn: single-army jabs (#361)', () => {
+  // My 10 on 3 beside its 9 on 4, every other neighbour of 3 shown; my orders recorded as none.
+  const none: MyOrders = { deploys: [], moves: [] };
+  const prev = board([...shown, mine(3, 10), its(4, 9)]);
+
+  it('a border that drops by exactly what one army kills (1 at 60%) was jabbed', () => {
+    const p = of(observe(prev, board([...shown, mine(3, 9), its(4, 8)]), none));
+    expect(p).toMatchObject({ attackedMe: true, jabs: 1 });
+  });
+
+  it('a larger drop is an attack, not a jab; a quiet border is no jab', () => {
+    expect(of(observe(prev, board([...shown, mine(3, 7), its(4, 2)]), none))).toMatchObject({ attackedMe: true, jabs: 0 });
+    expect(of(observe(prev, board([...shown, mine(3, 10), its(4, 9)]), none))).toMatchObject({ attackedMe: false, jabs: 0 });
+  });
+
+  it('cannot be read with luck on, weighted rounding or my orders unknown', () => {
+    const after = board([...shown, mine(3, 9), its(4, 8)]);
+    expect(of(observe(prev, after, none, { luckModifier: 0.16 })).jabs).toBeNull();
+    expect(of(observe(prev, after, none, { roundingMode: 'WeightedRandom' })).jabs).toBeNull();
+    expect(of(observe(prev, after)).jabs).toBeNull();
+  });
+});
+
+describe('habitsOf: jab (#361)', () => {
+  it('counts the contact turns it jabbed among those read', () => {
+    const h = habitsOf([
+      { turn: 3, primitives: turn({ contact: true, attackedMe: true, jabs: 1 }) },
+      { turn: 4, primitives: turn({ contact: true, attackedMe: true, jabs: 2 }) },
+      { turn: 5, primitives: turn({ contact: true, attackedMe: false, jabs: 0 }) },
+      { turn: 6, primitives: turn({ contact: true, attackedMe: true, jabs: null }) },
+      // An older record, kept before #361: not read.
+      { turn: 7, primitives: turn({ contact: true, attackedMe: true }) },
+    ]);
+    expect(h.jab).toEqual({ e: 2, n: 3 });
+  });
+
+  it('labels a jabber at the confidence bar', () => {
+    const base = habitsOf([]);
+    expect(labelsOf(estimateHabits({ ...base, jab: { e: 6, n: 6 } }))).toEqual(['jabber']);
+    expect(labelsOf(estimateHabits({ ...base, jab: { e: 2, n: 2 } }))).toEqual([]);
+  });
+});
+
+describe('observeTurn: topping up against my strike capacity (#295)', () => {
+  // My biggest stack, 20 on 3, faces its 5 on 4; I deploy 5 (my income): 19 movable + 5 = 24 can take
+  // 5 defenders (8 needed) but not 20 (33 needed).
+  const deploy: MyOrders = { deploys: [{ territoryId: 3, armies: 5 }], moves: [] };
+  const prev = board([...shown, mine(3, 20), its(4, 5)]);
+
+  it('a facing territory raised past what my stack plus my income can take is an event', () => {
+    expect(of(observe(prev, board([...shown, mine(3, 25), its(4, 20)]), deploy)).topUp).toBe(true);
+  });
+
+  it('one still takeable is an opportunity without an event', () => {
+    expect(of(observe(prev, board([...shown, mine(3, 25), its(4, 10)]), deploy)).topUp).toBe(false);
+  });
+
+  it('no opportunity when it was already out of reach, I attacked it, or my orders are unknown', () => {
+    expect(of(observe(board([...shown, mine(3, 20), its(4, 30)]), board([...shown, mine(3, 25), its(4, 40)]), deploy)).topUp).toBeNull();
+    const struck: MyOrders = { deploys: [{ territoryId: 3, armies: 5 }], moves: [{ from: 3, to: 4, armies: 3 }] };
+    expect(of(observe(prev, board([...shown, mine(3, 23), its(4, 20)]), struck)).topUp).toBeNull();
+    expect(of(observe(prev, board([...shown, mine(3, 25), its(4, 20)]))).topUp).toBeNull();
+  });
+});
+
+describe('habitsOf: capacityTopUp (#295)', () => {
+  it('counts the turns it had the chance, an event when it took it', () => {
+    const h = habitsOf([
+      { turn: 3, primitives: turn({ contact: true, topUp: true }) },
+      { turn: 4, primitives: turn({ contact: true, topUp: false }) },
+      { turn: 5, primitives: turn({ contact: true, topUp: null }) },
+      // An older record, kept before #295: not read.
+      { turn: 6, primitives: turn({ contact: true }) },
+    ]);
+    expect(h.capacityTopUp).toEqual({ e: 1, n: 2 });
+  });
+
+  it('labels an opponent that tops up against my strike at the confidence bar', () => {
+    const base = habitsOf([]);
+    expect(labelsOf(estimateHabits({ ...base, capacityTopUp: { e: 6, n: 6 } }))).toEqual(['tops-up']);
+    expect(labelsOf(estimateHabits({ ...base, capacityTopUp: { e: 2, n: 2 } }))).toEqual([]);
+  });
+});

@@ -216,11 +216,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   survives only behind `spread: true`. The rationale reports real hop
   distances and never calls a group compact unless it is one such cluster. The primary is the best-scoring
   group any of the best seeds grows, and the fallback is scored with the primary taken (it is granted only
-  then); a list past twice the limit (the client allows players × territories per player,
+  then); a first fallback tier of the primary's size that is one compact cluster and, scored alone, beats the
+  primary becomes the primary (#289: the seeded greedy search missed it), and a fallback that still outscores it
+  is warned about with the reason the primary stays first (an answering tier is granted whole only if every
+  primary pick is lost; a spread one breaks the one-cluster rule); a list past twice the limit (the client allows players × territories per player,
   `clientPickLimits`, docs/WARAPP-API.md) runs in tiers of the primary's size. The list is judged by the award
   order (rounds in a reversing move order, each player getting their best free pick: `pickOutcomes`), reporting
   the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
-  raises the worst outcome. With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
+  raises the worst outcome. #305 (owner decision 2026-11-20): `side` (`mapSides`, report only, never scored) is the positive
+  bonus income on my side of the map — a bonus whose every member is strictly nearer (hops) the primary than any start that
+  worst outcome implies for the others — against the contested rest; with no start implied it splits nothing and says so
+  (`known: false`). With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
   is listed first, since the first pick awarded carries the commander (#129).
   In a team game (C2) only players off my team are threats (a known start may be a teammate's: the worst case), the award is
   judged by both a reversing and a repeating order (`award.orders`, unverified), the duel rules stay two-player, the list stays
@@ -914,7 +920,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   first order, between two, after my last — so a border my later orders drain is judged as drained; a commander walk of the plan's goes with its move, as
   in warapp_check_plan's table on the same orders), the
   bonuses it breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
-  `headroom`, and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
+  `headroom` (`headroomView`, `src/tools/survival.ts`; #306: each row flags `belowMyIncome` and, against that opponent's
+  own deploy estimate, `belowOpponentEstimate` with `opponentEstimate` — for a leader my income flags every row; the
+  compact view lists the rows that protect something first — a held bonus, bonus income behind, a breach's income,
+  `protectsSomething` — each part weakest first, so bare 1-army tiles at 0 no longer crowd out the gates), and `warapp_submit_turn` warns (never refuses) when a held bonus's border falls to less than
   my income. A static seat (#270, `staticSeats`) gets no row: its territories are neutrals there, as the
   planner reads them (`HeadroomInput.staticSeats`; the hold diff below takes the same). Its figure is not
   #268's "falls to a deploy of less than ~D" line: that one is the planner's threat arithmetic on the
@@ -1002,7 +1011,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   not conceded by the plan; picked on the start-of-turn board, so one whose enemy stack the given orders
   capture still counts) what stands on it after the default plan's deploys and moves and after the given
   ones, on the turn simulator with no opponent order (my commander as 7, walking with the move that carries it on both sides — #274; card plays not carried out); a border
-  the given orders leave lower is named with `planLeaves`, `left`, `short`, largest first. `planLeaves` is
+  the given orders leave lower is named with `planLeaves`, `left`, `short`, largest first (the tools only from
+  `BELOW_PLAN_MIN_SHORT` (3) short: #306, one 1 or 2 short is the plan's surplus). `planLeaves` is
   everything the plan leaves there (leftover, margins, idle stacks), not the least that holds it, so a border
   named may still hold (the headroom table says what takes it). `bordersBelowPlan` (`src/tools/turn.ts`)
   makes the one extra plan per call as warapp_plan_turn makes it with no args: `livePlanSetup` with
@@ -1092,8 +1102,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`observeTurn` → `TurnPrimitives` per opponent: contact, `attackedMe` — `null` when it cannot be told —,
   `iAttacked`, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
   arithmetic cannot read —, `stack`, `tookFromMe` / `lostToMe`; visibility through `visibleState` / `ownerShown`)
-  and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake) from the
-  whole list, so re-deriving never double-counts. A territory an order only `sent` holds (percentage, Attack
+  and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake, jab — #361, capacityTopUp — #295) from the
+  whole list, so re-deriving never double-counts. #295: `topUp` reads my biggest stack facing it on board T
+  and its territories beside that stack: one takeable by the stack's movable armies plus my income (my deploys) on T and
+  none on T + 1 is an event, one still takeable an opportunity without (orders unknown, an order or card of mine on
+  one, a special unit or a territory not shown on both boards: no reading); the habit `capacityTopUp` and the label
+  `tops-up` (≥ 0.6) with its counter line follow. Inform only (P1). A territory an order only `sent` holds (percentage, Attack
   Only, Transfer Only) or my Airlift touches is never read from armies; orders cached without their card plays
   (`MyOrders.cards`, cached since A1) read nothing from armies when the game may have Airlift, and when it
   may have Gift captures from me cannot be told (`tookFromMe: null`: no retake counted, no "did not attack";
@@ -1370,7 +1384,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     opponent I out-earn or out-army. `TurnPlan.jabs` reports them (`winChance` 0, never in `captures`); a 1-army
     failed attack is no #240 evidence. Measured on the golden corpus with `jabs: true` (6253 plans): jabs on 242,
     279 in all; no other order, capture, next income or warning changed. Golden unchanged (off by default).
-    Not yet: tracking an opponent's own jabs in its profile (`attack` with a 1-army size).
+    An opponent's own jabs are tracked in its profile (#361): the primitive `jabs` (my borders read for
+    `attackedMe` that dropped by exactly what one army kills, exact combat only, else `null`), the habit `jab`
+    (contact turns it jabbed ÷ those read) and the label `jabber` (≥ 0.5 at the confidence bar) with a counter
+    line in the reads. Inform only (P1): the planner does not size refills on it.
   - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
     teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
     warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus
@@ -1380,7 +1397,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     and expansion phases, completions and advances go to the bonus fewest turns from completion
     first (equally close ones by score); a bonus advanced last turn keeps priority unless another
     is strictly closer. "N armies to finish" counts fogged members at the bonus's costliest
-    visible missing member. An FFA lead step into it (an enemy member, #203) is sized to land
+    visible missing member. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
+    territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
+    are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or
     a completion, it is taken at the bare cost that ranking used (#214), after every sibling's
     sure try, with #120's warning — only while rule 4f commits to the closest bonus, and never

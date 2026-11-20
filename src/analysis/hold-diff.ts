@@ -48,7 +48,15 @@ export interface HoldDiffInput {
    * neutrals, so they get no row, as the planner reads them.
    */
   staticSeats?: ReadonlySet<number> | ReadonlyMap<number, unknown>;
+  /**
+   * #306: the least shortfall named (default 1: every one). The tools pass {@link BELOW_PLAN_MIN_SHORT}: a
+   * border only 1 or 2 short is the plan's surplus, not a real difference.
+   */
+  minShort?: number;
 }
+
+/** #306: the least shortfall warapp_check_plan and warapp_submit_turn name; smaller ones are the plan's surplus. */
+export const BELOW_PLAN_MIN_SHORT = 3;
 
 export interface HoldShortfall {
   territory: number;
@@ -94,7 +102,7 @@ export function holdsBelowPlan(input: HoldDiffInput): HoldShortfall[] {
   for (const id of borders) {
     const planLeaves = planned(id);
     const left = given(id);
-    if (left < planLeaves) out.push({ territory: id, planLeaves, left, short: planLeaves - left });
+    if (planLeaves - left >= Math.max(1, input.minShort ?? 1)) out.push({ territory: id, planLeaves, left, short: planLeaves - left });
   }
   return out.sort((a, b) => b.short - a.short || a.territory - b.territory);
 }

@@ -62,7 +62,7 @@ import {
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH, type CombatSettings, luckFraction, straightKills } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
-import { holdsBelowPlan, type HoldOrders, type HoldShortfall } from '../analysis/hold-diff.js';
+import { BELOW_PLAN_MIN_SHORT, holdsBelowPlan, type HoldOrders, type HoldShortfall } from '../analysis/hold-diff.js';
 import { guardCase } from '../analysis/profile.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
 import { armiesForGold, cityAdvice, cityPurchaseCost, commerceDeploy, commerceRules, goldForArmies, type CommerceDeploy } from '../commerce.js';
@@ -2058,7 +2058,8 @@ export const BELOW_PLAN_BASIS =
   'the plan warapp_plan_turn makes now on this board with no goal, focus, reserve, enemy_deploy or first_mover ' +
   '(the award of picks read as it reads it, nothing written), or its border guess when the ' +
   'deploys given are the guess\'s; a plan made with options may differ, and a figure is what that plan leaves ' +
-  'standing there, surplus included, not the least that holds the border';
+  'standing there, surplus included, not the least that holds the border; a border short by less than ' +
+  `${BELOW_PLAN_MIN_SHORT} is left out (#306: that is the plan's surplus)`;
 
 /** The result of the comparison: the borders named, and whether the reference was the plan or its border guess. */
 export interface BelowPlan {
@@ -2131,6 +2132,8 @@ export async function bordersBelowPlan(
       },
       conceded: plan.conceded,
       given,
+      // #306: a border only 1 or 2 short is the plan's surplus, not a real difference.
+      minShort: BELOW_PLAN_MIN_SHORT,
     });
     const turn = a.turn;
     const held = new Set(a.history.boards.map((b) => b.turn));
@@ -2856,7 +2859,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             }
           : {}),
         // #275 (a): each border's headroom, the weakest first (compact: the first few).
-        headroom: headroomView(headroom, map, myIncome, rung === 'full', !teamsKnown),
+        headroom: headroomView(headroom, map, myIncome, rung === 'full', !teamsKnown, (p) => estimates.find((e) => e.playerId === p)?.estimate),
         ...(rung !== 'full' && headroom.length > HEADROOM_COMPACT ? { headroomMore: headroom.length - HEADROOM_COMPACT } : {}),
         // #72: the offensive options considered, full view only.
         ...(rung === 'full' ? { offence: plan.offence.map((o) => ({ ...o, target: name(o.target) })) } : {}),
