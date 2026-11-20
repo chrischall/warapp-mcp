@@ -829,7 +829,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   each share finishes something this turn or one share is needed to hold a border. **Encoded:**
   the planner commits to the bonus closest to completion until one is held (rule 4f); among
   equally close ones, the capture whose completed bonuses (a pair bonus included) add the most
-  income per army goes first (#438). Source:
+  income per army goes first (#438). A single-territory bonus of +5 or more two moves away through a
+  visible neutral counts as a two-turn completion, and the neutral in between is taken ahead of captures
+  that complete nothing (#439). Source:
   <https://docs.google.com/document/d/e/2PACX-1vS5eO54w3LgnkcwbLqM3DhynuQGoChrPn313QXIMm0QZ3ApILPuvcunEdmG_nZflHKcfRwCpZfvHA8L/pub>
 - `opening-capture-survivors` — Smallest sure captures and what moves in: 3 armies take a 2 and
   2 move in; 5 take a 3 (3 move in); 6 take a 4 (3); 8 take a 5 (4); 16 take a 10 (9). One army

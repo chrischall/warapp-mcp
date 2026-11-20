@@ -1436,6 +1436,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     sure try, with #120's warning — only while rule 4f commits to the closest bonus, and never
     with the armies a hold gets: `planTurn` plans again without bare steps and keeps that plan
     (saying so) when the bare one leaves a border it holds without its hold.
+  - **A big single-territory bonus two moves away is a two-turn completion (#439, `plan/two-move.ts`).** A bonus of
+    one territory worth at least `TWO_MOVE_MIN_VALUE` (5), two moves from mine through a visible neutral target (the
+    territory a visible neutral, or fogged and costed at its picking-board size), costs that neutral plus the territory
+    (cheapest neutral in between; every bonus the two complete counts; kept only when it repays within the payback
+    turns). Under `balanced` the neutral in between is a greedy candidate (`stage`) scored net ÷ both costs, treated
+    as an advance (after units, below holds in a 1v1); other goals take it after completions and before advances; a
+    "Stage toward …" line names both steps. Not when this turn already takes or borders the territory. Golden: no
+    plan changed (6253; the corpus has no such bonus).
   - **The economy test charges armies lost (#125).** A capture costs the economy the armies its
     attackers lose plus the one left on it (waived when an idle stack beside it, facing no enemy,
     takes it), not the armies sent; a bonus's worth adds its members' per-territory income; plain
