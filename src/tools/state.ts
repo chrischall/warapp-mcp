@@ -16,6 +16,7 @@
 // warapp_backfill_history: the warapp_my_games sweep (src/tools/end-of-game.ts) at a bigger batch —
 // up to 25 finished games not yet processed per call, each history read once, as the sweep reads it —
 // with an optional wider window. Writes only this server's state; nothing goes to war.app.
+import { backfillWinnerCurves } from './map-curves.js';
 import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations, type EnvSource } from '@chrischall/mcp-utils';
 import { mintUploadSlot, resolveUploadSource, type BlobStore, type UploadSource } from '@chrischall/mcp-utils/export';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -234,7 +235,8 @@ function registerBackfillTool(server: McpServer, ctx: LiveContext, env: EnvSourc
         'it) and kept name-free for the opponent profiles, map records and lessons — what warapp_my_games does two ' +
         'games per call. `window` widens how many of your newest finished games are considered (default 250, at ' +
         `most ${MAX_FINISHED_RECORDS}). Reports what it processed and how many remain; safe to call again until ` +
-        '`remaining` is 0. Writes only this server\'s state and never writes to war.app. ' +
+        '`remaining` is 0. It also gives map records kept before the winners\' income curves were those curves, from the ' +
+        'histories already kept (`winnerCurves`, no request). Writes only this server\'s state and never writes to war.app. ' +
         BRIDGE_NOTE,
       annotations: toolAnnotations({ title: 'Backfill finished war.app games', readOnly: false, destructive: false, idempotent: true, openWorld: true }),
       inputSchema: z.object({
@@ -260,7 +262,10 @@ function registerBackfillTool(server: McpServer, ctx: LiveContext, env: EnvSourc
         limit: limit ?? BACKFILL_DEFAULT,
         window: size,
       });
+      // #419: entries kept before the winners' curves were, given them from the kept histories (no request).
+      const winnerCurves = await backfillWinnerCurves(ctx.dataDir);
       return respond(undefined, ['compact'], () => ({
+        winnerCurves,
         processed: r.processed,
         processedCount: r.processed.length,
         remaining: r.pending,

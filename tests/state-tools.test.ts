@@ -190,6 +190,8 @@ describe('warapp_backfill_history', () => {
     await harness();
     const first = payload(await h!.call('warapp_backfill_history'));
     expect(first).toMatchObject({ processedCount: 10, remaining: 20, window: 250, finishedGames: 30 });
+    // #419: entries kept before the winners' curves get them from the kept histories (none to fill here).
+    expect(first.winnerCurves).toEqual({ filled: 0, unfilled: 0 });
     expect(historyReads()).toBe(10);
     const second = payload(await h!.call('warapp_backfill_history', { limit: 25 }));
     expect(second).toMatchObject({ processedCount: 20, remaining: 0 });

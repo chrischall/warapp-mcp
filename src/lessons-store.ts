@@ -265,6 +265,44 @@ export async function recordMapGame(dir: string, mapId: number, entry: MapEntry,
 }
 
 /**
+ * #419: give a game's winners kept before #419 their income curves, from the history its end-of-game record kept
+ * (`curves`: each winner's start territories and curve). A winner is matched by its start territories, or, with
+ * one winner and one curve, as that one; a winner with a curve keeps it. `filled` when one was added, `unchanged`
+ * when none could be, `missing` without the record or the game, `failed` on an unreadable record (never
+ * overwritten) or a failed write. Never throws.
+ */
+export async function fillWinnerCurves(
+  dir: string,
+  mapId: number,
+  key: string,
+  curves: readonly { territories: readonly number[]; income: (number | null)[] }[],
+): Promise<'filled' | 'unchanged' | 'missing' | 'failed'> {
+  const path = mapRecordPath(dir, mapId);
+  const same = (a: readonly number[], b: readonly number[]) => a.length === b.length && [...a].sort((x, y) => x - y).every((x, i) => x === [...b].sort((p, q) => p - q)[i]);
+  try {
+    return await withPathLock(path, async () => {
+      const rec = await readMapRecord(dir, mapId);
+      if (rec === 'unreadable') return 'failed' as const;
+      const e = rec.entries.find((x) => x.key === key);
+      if (!e) return 'missing' as const;
+      let filled = false;
+      e.winners = e.winners.map((w) => {
+        if (w.income) return w;
+        const c = curves.find((x) => same(x.territories, w.territories)) ?? (e.winners.length === 1 && curves.length === 1 ? curves[0] : undefined);
+        if (!c) return w;
+        filled = true;
+        return { territories: w.territories, bonuses: w.bonuses, income: c.income, income4: w.income4, income8: w.income8 };
+      });
+      if (!filled) return 'unchanged' as const;
+      await writeJsonAtomic(path, mapRecordDir(dir), rec);
+      return 'filled' as const;
+    });
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
  * #437: count a lottery or no-show game apart in its map's record: never in its games, outcomes or entries
  * (a game counted there before is taken back out), once per game. `excluded`, or `failed` (an unreadable
  * record is never overwritten; a failed write). Never throws.

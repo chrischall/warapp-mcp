@@ -116,7 +116,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`profiles/.store` for the two profile stores). The upload is deleted after an import and when it is no bundle;
   an account or salt refusal keeps it for a retry. `warapp_backfill_history` (not confirm-gated: this server's
   state only, never war.app) runs `sweepFinished` with `limit` (default 10, max 25) and an optional `window` (at
-  most `MAX_FINISHED_RECORDS`), so each game's history is still read once.
+  most `MAX_FINISHED_RECORDS`), so each game's history is still read once; it then fills the winners' income curves
+  of map-record entries kept before #419 from the kept histories (`winnerCurves`, no request).
 - **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing but its verdict to the decision log
   (#437), not the board cache either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
   (`docs/STRATEGY.md` "Turn resolution" links each page: deploys first, then attacks and transfers
@@ -1354,8 +1355,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the game. (2) **The map's record** `<dataDir>/maps-record/<mapId>.json`: games, outcomes, and per game (at most
   `MAX_MAP_ENTRIES`, 50) the format, seats, result, turns, my start region (territories and every bonus they touch,
   `startRegion`), my income curve (by completed turns, at most 60 points) and income after turns 4 and 8, and each
-  winner's start region, income curve (#419, as mine; absent on entries kept before it) and income after turns 4
-  and 8 (the pace to beat); at most `MAX_MAP_RECORDS` (200) maps
+  winner's start region, income curve (#419, as mine; an entry kept before it gets one from its end-of-game record's
+  boards through `warapp_backfill_history`'s `winnerCurves`, `backfillWinnerCurves` in `src/tools/map-curves.ts`, winners
+  matched by start territories, no request) and income after turns 4 and 8 (the pace to beat); at most `MAX_MAP_RECORDS` (200) maps
   by last write; `mapRecordSummary` gives the medians. (3) **The lessons** `<dataDir>/lessons.json`: per format the
   games, outcomes, lost games by cause (`lessonLoss`: `howLost` on the history boards — `commander`,
   `last-territories`, `unknown` — or `surrendered`, `booted`, `still-holding`), the turn my income first went flat
