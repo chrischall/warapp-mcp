@@ -265,7 +265,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `GameRefresh` (40, chat only) → `GameDetailsAndChat` → `GameMessage` by type name (`src/chat.ts`:
   fields by read order (243: 12 fields, the shared images at 5 and the reactions at 7, both optional lists), a private counterpart first, then a game group (`unknown`), then the channel,
   -1 public else the team), but only when the signed-in account can be read; otherwise, or on any
-  failure, GameFeed's `chat` (no channel: `unknown`). **A web read with fewer messages than GameFeed's chat (#313:
+  failure, GameFeed's `chat` (no channel: `unknown`). **GameRefresh leaves out messages war.app counts as seen
+  (#363: an own team message), so the web read also asks `RetrieveChat` (45) and, unless private messaging is off,
+  `RetrievePrivateMessageHistory` (46) per other human seat (at most `MAX_PRIVATE_HISTORY`, 8)** — the client's "show
+  older messages", markers the oldest id received or `999900000000000000` (`OLDEST_CHAT_MARKER`) — merged by id; a
+  failed one is named in `olderUnread`. A private message to me carries `toMe: true`; inbox entries count them (#387). **A web read with fewer messages than GameFeed's chat (#313:
   a finished game's surrender line was missing) uses GameFeed's too**, from the GameFeed read the tool already made
   (`readChat` in `src/tools/chat.ts`, no extra request): with no web message GameFeed's list stands in, else the
   GameFeed messages no web message matches (same sender, times within a second, or the same text when either has no
@@ -1248,7 +1252,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   - **Triage by protected value.** A threatened border's protected value is my complete
     bonuses containing it, plus bonuses I'd lose all access to, plus its share (value × members
     held ÷ size) of a bonus I am building — every missing member a visible neutral, finishing it
-    economic (#122) — plus per-territory income, plus (#235) the income of what its loss cuts off
+    economic (#122), or (#298) an enemy stack beside it that arrived since the previous board (took a member from me, or grew there) roams inside it, its other missing members visible neutrals or foe territories, on the same economy tests — plus per-territory income, plus (#235) the income of what its loss cuts off
     from the rest of my holdings (every part but the largest when it is a cut vertex; named in the rationale
     only with income or at least `PAYBACK_TURNS` armies), plus (#291, guard on or off) `OPENS_WEIGHT` (0.5) of the held
     bonuses its loss OPENS — my territories every route from an enemy or the fog reaches only through it
@@ -1332,10 +1336,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (3) × a 1v1 break and never count as a second front; until the trigger its territories outside its
     breakable bonuses join `truce.noTarget` (`siegeHeld`, the #375 path); rule 0p.3c builds the strike stack
     facing it in any format. Trigger: its income ≤ `SIEGE_INCOME_DROP` (0.6) × its baseline (the most the
-    tracker saw it deploy over its window; no tracked turn, no such trigger), mine ≥ `SIEGE_INCOME_LEAD` (1.8) ×
+    tracker saw it deploy over its window, or its income on the siege's first turn when larger; neither, no such
+    trigger), mine ≥ `SIEGE_INCOME_LEAD` (1.8) ×
     its, or a stack of mine at the start of the turn takes a member of a bonus it visibly holds against its
-    defenders plus its whole deploy. No memory between turns. `TurnPlan.siege` reports it; golden unchanged.
-    Not yet: a profile-picked siege, re-break tracking across turns, single-army jabs (#361).
+    defenders plus its whole deploy. **Memory (`src/siege-store.ts`, `<dataDir>/siege/<gameId>-<myId>.json`, ids and
+    numbers only):** warapp_plan_turn keeps each siege turn (target, its income, mine, the bonuses the plan broke — as
+    planned) and passes it back as `PlanInput.siegeMemory`; `priorSiegeTurns` keeps only the same target's turns before
+    this one, none when the newest is more than `SIEGE_MEMORY_GAP` (3) turns back; re-planning a turn replaces it; an
+    `enemy_deploy` what-if writes nothing. `siege.memory` reports `startedTurn`, `turns`, `startIncome`,
+    `opponentIncomeTrend`, `broken` (per bonus, its turns) and `rebroken`. `TurnPlan.siege` reports it; golden unchanged.
+    Not yet: a profile-picked siege.
+  - **Single-army jabs (#361, `src/analysis/plan/jabs.ts`), at 0% luck under straight rounding only**, where one
+    army kills round(1 × the offensive rate) ≥ 1 and dies: a one-for-one trade (seen live: 75 → 74, 19 → 18). On
+    under `siege` (`PlanOptions.jabs` / plan_turn's `jabs`: `true` on, `false` off; off otherwise). After the #226
+    margin, armies still idle beyond a source's hold (`spareBeyondHold`, never a step's saving source or rule 5's
+    kept leftover; never below what holds it against two opponents together, #128, or so thin #314 would warn; the
+    strike stack only into the siege target's break members) jab enemy stacks of 2 or more, one army each, at most
+    one per stack, never one another order attacks, a `noTarget`, a #240 repulsed one or a special unit's: the
+    siege's break members cheapest break first, then members of a bonus a foe holds in full, then any stack of an
+    opponent I out-earn or out-army. `TurnPlan.jabs` reports them (`winChance` 0, never in `captures`); a 1-army
+    failed attack is no #240 evidence. Measured on the golden corpus with `jabs: true` (6253 plans): jabs on 242,
+    279 in all; no other order, capture, next income or warning changed. Golden unchanged (off by default).
+    Not yet: tracking an opponent's own jabs in its profile (`attack` with a 1-army size).
   - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
     teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
     warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus
@@ -1404,6 +1426,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     plain size still on it, and the leftover there is not kept from the #226 margin (`repulsedSurplus`,
     `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes" (only when that size is
     the whole deploy estimate).
+  - **One deploy reinforces one target (#277, `src/analysis/plan/second-sizing.ts`).** Once every attack is sized
+    (after the #226 margin and #240's drops; not under No-Split or Local Deployment), when two or more attacks on one
+    player's territories are each sized for its whole deploy, the one sending the most keeps its size and the others
+    may give up what they send beyond their bare size, and beyond their source's deploy, which moves with it. A held
+    bonus (rule 1h's unit) no order leaves, whose threatened borders together lack at most that and `PAYBACK_TURNS` ×
+    its value, gets those deploys and is held, no longer conceded ("Fund held bonus … (#277)"). Golden unchanged.
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can

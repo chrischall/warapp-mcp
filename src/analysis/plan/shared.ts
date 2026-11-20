@@ -32,7 +32,8 @@ import { armyCapIncome, boardIncome, DEFAULT_BASE_INCOME, incomeRules, territory
 import type { GameProfile, ProfilePlayer } from '../profile.js';
 import { byNum } from './util.js';
 import type { TeamView } from './team.js';
-import type { SiegeReport } from './siege.js';
+import type { Jab } from './jabs.js';
+import type { SiegeMemory, SiegeReport } from './siege.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -265,6 +266,11 @@ export interface PlanOptions {
   /** #382: under `goal: 'siege'`, the player besieged (GameFeed id); default the strongest opponent in contact. */
   siegeTarget?: number;
   /**
+   * #361: single-army jabs (plan/jabs.ts), only at 0% luck under straight rounding. Default: on under
+   * `goal: 'siege'`, off otherwise (opt in with `true`; `false` turns them off under a siege too).
+   */
+  jabs?: boolean;
+  /**
    * #375: territories (any owner, a neutral included) and players (GameFeed ids) no pass of the plan
    * attacks — a deal outside any recorded truce. Each is treated like a truce's covered territory (T1).
    */
@@ -473,6 +479,8 @@ export interface PlanInput {
    * place of the single-turn observed figure.
    */
   tracks?: readonly OpponentTrack[];
+  /** #382: the siege's memory kept for this game (src/siege-store.ts), read under `goal: 'siege'` with `turn`. */
+  siegeMemory?: SiegeMemory;
   settings?: PlannerSettings;
   options?: PlanOptions;
   /** The game around the board, for the profile (rule 0p). */
@@ -644,6 +652,11 @@ export interface TurnPlan {
   goal: PlanGoal;
   /** #382: under `goal: 'siege'` with a target found, the siege's state this turn (plan/siege.ts). */
   siege?: SiegeReport;
+  /**
+   * #361: the single-army jabs among `moves` (0% luck, straight rounding only; plan/jabs.ts): each
+   * kills round(1 × the offensive kill rate) and loses its army. Attrition, never a capture. Absent with none.
+   */
+  jabs?: Jab[];
   /** The game profile (rule 0p), computed on every plan. */
   profile: GameProfile;
   /** Sorted by territory id; sums to the income whenever I own a territory. */
@@ -1789,6 +1802,8 @@ export function repulsedAttacks(
         const armies = failedAttackMoves(g, was.board, now.board, me, p, orders)
           .filter((m) => m.to === t)
           .reduce((n, m) => n + Math.max(0, m.armies), 0);
+        // #361: a single-army jab never tries to take it (one army takes no defended territory): no evidence.
+        if (armies <= 1) continue;
         const attack: RepulsedAttack = { turn: was.turn, armies, before: b, after: a, kills };
         const key = `${t}:${p}`;
         const entry = found.get(key);

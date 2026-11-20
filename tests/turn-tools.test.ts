@@ -496,6 +496,29 @@ describe('warapp_plan_turn', () => {
     expect(bad.isError).toBe(true);
   });
 
+  it('#382: a siege keeps its memory per game across turns; an enemy_deploy what-if keeps nothing', async () => {
+    h = await liveHarness({ feed: [game('Playing', { numberOfTurns: '3' })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const dir = h.dataDir;
+    const file = join(dir, 'siege', `${GAME}-${ANN.feed}.json`);
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'siege', enemy_deploy: 3 });
+    expect(existsSync(file)).toBe(false);
+    const first = payload<{ siege: { target: number; memory: { startedTurn: number; turns: number } } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'siege' }),
+    );
+    expect(first.siege.memory).toMatchObject({ startedTurn: 4, turns: 1 });
+    await h.harness.close();
+    h = await liveHarness({ dataDir: dir, feed: [game('Playing', { numberOfTurns: '4' })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const second = payload<{ siege: { memory: { startedTurn: number; turns: number; opponentIncomeTrend: unknown[] } } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', goal: 'siege' }),
+    );
+    expect(second.siege.memory).toMatchObject({ startedTurn: 4, turns: 2 });
+    expect(second.siege.memory.opponentIncomeTrend).toHaveLength(2);
+    const kept = JSON.parse(readFileSync(file, 'utf8')) as { target: number; turns: { turn: number }[] };
+    expect(kept.target).toBe(first.siege.target);
+    expect(kept.turns.map((t) => t.turn)).toEqual([4, 5]);
+    expect(readFileSync(file, 'utf8')).not.toMatch(/Ann|Bob/);
+  });
+
   it('focus takes bonus names or ids; reserve is held out of captures', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const p = payload<PlanPayload>(

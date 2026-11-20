@@ -144,7 +144,8 @@ export function readGameRefreshChat(bundle: ClassReader, body: Reader): ChatLine
 
 /**
  * The SendChat reply: the updated message list, read straight after the result-present flag (each
- * message behind its own present flag), oldest first; `undefined` when it cannot be read.
+ * message behind its own present flag), oldest first; `undefined` when it cannot be read. The replies of
+ * RetrieveChat and RetrievePrivateMessageHistory have the same shape (the client reads them alike).
  */
 export function readSendChatReply(bundle: ClassReader, body: Reader): ChatLine[] | undefined {
   try {
@@ -154,6 +155,39 @@ export function readSendChatReply(bundle: ClassReader, body: Reader): ChatLine[]
   } catch {
     return undefined;
   }
+}
+
+/** RetrieveChat's and RetrievePrivateMessageHistory's reply: a message list as SendChat's. */
+export const readMessageHistoryReply = readSendChatReply;
+
+/**
+ * `lines` with `more` added, each message once (by id; a line with no id is kept as it is), oldest first.
+ * GameRefresh and the history reads may both return a message.
+ */
+export function mergeChatLines(lines: readonly ChatLine[], more: readonly ChatLine[]): ChatLine[] {
+  const ids = new Set(lines.flatMap((l) => (l.id === undefined ? [] : [l.id])));
+  const out = [...lines];
+  for (const l of more) {
+    if (l.id !== undefined) {
+      if (ids.has(l.id)) continue;
+      ids.add(l.id);
+    }
+    out.push(l);
+  }
+  return out.sort(byAge);
+}
+
+/**
+ * The oldest message id received among `lines` that `pick` keeps (decimal text), the "older than" marker of a
+ * history read; `undefined` when there is none (the read then asks from the newest).
+ */
+export function oldestId(lines: readonly ChatLine[], pick: (l: ChatLine) => boolean): string | undefined {
+  let best: string | undefined;
+  for (const l of lines) {
+    if (l.id === undefined || !/^\d{1,20}$/.test(l.id) || !pick(l)) continue;
+    if (best === undefined || BigInt(l.id) < BigInt(best)) best = l.id;
+  }
+  return best;
 }
 
 // ---------- Read marks (RegisterChatView, #311) ----------

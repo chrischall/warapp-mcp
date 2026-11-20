@@ -101,6 +101,8 @@ elsewhere in this document beside a method's name are protocol 242's unless mark
 | 40 [39] | **GameRefresh** | params: int32 gameId, bool chat, bool nonChat, string "-1", string "-1", bool lobby, optional dict, optional dict, and since 243 an optional last value (a nullable number written as text; sent absent); reply `GameDetailsAndChat` — see [Chat](#chat) (the chat-only read of public messages VERIFIED live 2026-11-14; the rest UNVERIFIED) |
 | 41 [40] | GetLatestGameInfo | params: int32 gameId; reply class `NE` — expected to carry the board |
 | 44 [43] | **RegisterChatView** | params: int32 gameId, string public mark, string team mark, optional dict private counterpart → mark, optional dict game group → mark; no result — marks a game's chat read, see [Notifications and read marks](#notifications-and-read-marks) (VERIFIED live 2026-11-16, direct transport) |
+| 45 [44] | **RetrieveChat** | params: int32 gameId, string public "older than" marker, string team marker (the lowest message id received; `999900000000000000`, the client's 9999E14, when none); reply: result flag, list of optional `GameMessage` — see [Chat](#chat) (VERIFIED live 2026-11-19: returned a team message GameRefresh left out) |
+| 46 [45] | **RetrievePrivateMessageHistory** | params: int32 gameId, string "older than" marker (as RetrieveChat's), int32 counterpart (in-game id); reply as RetrieveChat's — see [Chat](#chat) (UNVERIFIED live: answered, no private message to compare) |
 | 49 [48] | GetGameSettings | |
 | 61 [60] | AcceptGame | accept an invitation (not used) |
 | 62 [61] | **AcceptOpenSeat** | take an open seat — see [Open games](#open-games) |
@@ -560,7 +562,7 @@ messages is VERIFIED LIVE 2026-11-14** (the owner's play session, at main 583297
 → `null`, `0` → 0, a later turn as sent), the sender (field 1 is the in-game id: the GameFeed id
 `fromId` maps it to, stripped of two digits each end, is GameFeed chat's `playerID`) and channel
 public (`-1`); six games with no chat read a count of 0. **Still UNVERIFIED live:** team and
-private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `warapp_plan_turn`'s
+private channels (fields 2, 6 with a team, 7; a team message VERIFIED live 2026-11-19 through RetrieveChat, below), `mark_seen` and the cursor, `warapp_plan_turn`'s
 `chat.unread`, `chatActivity` on a push, and sending (checks V2, V3 and V10).
 
 - **Read (web client):** `GameRefresh` (39): auth, int32 gameId, bool chat, bool nonChat, the public
@@ -615,8 +617,25 @@ private channels (fields 2, 6 with a team, 7), `mark_seen` and the cursor, `wara
   88 game deleted, 333 game archived, 17 not in the game, 202 private messaging disabled. A send
   reaches other people, so it is always confirm-gated, and a refusal is never retried.
 - **Marking chat read:** 43 RegisterChatView — see [Notifications and read marks](#notifications-and-read-marks).
-- **Other chat methods** (not used): 44 RetrieveChat (gameId and the two
-  markers), 45 RetrievePrivateMessageHistory, 46 RetrieveGameGroupMessageHistory. Push 242
+- **Older messages (#363, #387): `RetrieveChat` (45) and `RetrievePrivateMessageHistory` (46).**
+  GameRefresh sent `-1` markers — what the client itself sends on a first load: its markers are the highest id
+  *shown* (`HighestPublicChatIDSeen` / `HighestTeamChatIDSeen`), `-1` until a tab has shown one — leaves out
+  messages war.app counts as seen: live on 2026-11-19 an own team message was missing from it (count 0) and showed
+  in the official app only after "Show older messages". That button sends RetrieveChat: int32 gameId, then per
+  channel (public, team) the **lowest** message id the client has received, as decimal text, or
+  `999900000000000000` (the client's initial 9999E14) when it has received none; the reply is a result flag and
+  a list of optional `GameMessage`, as SendChat's. A private conversation's history button sends
+  RetrievePrivateMessageHistory: int32 gameId, the lowest id received in that conversation (same convention),
+  int32 counterpart. `warapp_get_chat` (and so `warapp_chat_inbox` and `warapp_mark_chat_read`) asks each once
+  after GameRefresh: RetrieveChat with the oldest public and team ids GameRefresh returned, and, unless the game
+  turns private messaging off, the private history per other human seat with an in-game id (at most 8, by id),
+  merged by message id. A history read that fails or does not decode adds nothing and is named in `olderUnread`
+  (`public`/`team`, `private`). VERIFIED live 2026-11-19 (direct transport) on the team game of #363: the team
+  message GameRefresh left out came back on the team channel; the private history answered (no private message
+  there to compare). Whether one RetrieveChat page holds every older message is not known (the client asks again
+  on each press): one page is read. A private message addressed to me carries `toMe: true`, and an inbox entry
+  counts them in `toMe`.
+- **Other chat methods** (not used): 47 RetrieveGameGroupMessageHistory. Push 242
   `ChatRoomNewMessage` is the site's chat rooms, not a game's chat.
 - **Push:** `GameUpdated` (245 in 243, 241 in 242) carries, after the game id, two bools the client's handler logs as
   `chat=` and `nonChat=`. `src/push/socketio.ts` reads the first when present: a push with it set is

@@ -18,6 +18,7 @@
 //   5. the leftover deploy, 3b's short borders (#121) ........... plan/leftover.ts
 //   5b. a neutral the leftover pays for (#218) ................. plan/after-leftover.ts
 //   6. transfers, #125 staging ................................. plan/transfers.ts
+//   #277: a held bonus funded from a second sure sizing ......... plan/second-sizing.ts
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
 //   1w. my commander walks, its transit hold (#274) ............. plan/commander.ts
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
@@ -468,7 +469,12 @@
 //     that I would lose all access to without it, plus (#122) its share of every other
 //     incomplete bonus containing it that I am building — value × the members I hold ÷ its
 //     size, one decimal, when every missing member is a visible neutral and finishing it passes
-//     rule 4's economy tests (PAYBACK_TURNS, WASTELAND_FACTOR) — plus the per-territory
+//     rule 4's economy tests (PAYBACK_TURNS, WASTELAND_FACTOR); #298: or when the missing members
+//     are visible neutrals and visible foe territories, one of them a foe's movable stack beside the
+//     border that arrived since `previousBoard` (taken from me, or grown there, read only where that
+//     board showed it): an enemy stack roaming inside the bonus that can reach the border. On the
+//     same economy tests over what
+//     stands there now, so the members it can reach are garrisoned — plus the per-territory
 //     income it carries (each bonus counted once). Its worth adds the armies a
 //     hold saves, in income terms (armies / PAYBACK_TURNS): a top-up that keeps a
 //     big stack is worth paying even for a small bonus (live, a 60-army border
@@ -564,7 +570,12 @@
 //     better use. It is floored (below) and waits for the captures; once they are planned
 //     (before rule 1c, and under `defend` after passes 1–2), it is held whole if what is left
 //     covers it (rationale "… (more than …), and nothing else this turn uses those armies"),
-//     else spread (below) when floored, else conceded whole as before. Under Local Deployment (#103) those tests (and its score)
+//     else spread (below) when floored, else conceded whole as before. #285 (plan/capture-instead.ts): just before
+//     that, an enemy territory whose fall leaves contested members bordering no enemy, fog or hidden territory
+//     is captured from the one of them needing the least deploy, sized for its owner's deploy there (the
+//     estimate the holds use, #368's middle figure; #120), when that deploy is at most HOLD_CREDIT_TURNS (3)
+//     × the hold costs it saves (owner decisions of 2026-11-19); those members are then held ("Take …
+//     rather than hold …"). Under Local Deployment (#103) those tests (and its score)
 //     use the cost net of the bonus's own pool, max(0, cost − pool): the pool can be
 //     deployed nowhere else. A unit that pays is funded before any capture that
 //     completes no bonus (advances, breaks, other expansion, unless focused): under `defend` with the
@@ -738,7 +749,10 @@
 //     while one capture makes another complete. R3 does not refuse it (the armies would otherwise
 //     leave a border the plan gives up), and a completed bonus keeps the border (rule 1c). Live, the
 //     last empty members of a bonus stood beside a conceded border: one was taken, the other refused
-//     ("a conceded border never attacks out for a capture that only costs nothing").
+//     ("a conceded border never attacks out for a capture that only costs nothing"). #286: a border
+//     rule 1c will keep (a positive bonus containing it already completed by this turn's captures)
+//     is no source: its armies would not withdraw (live, a kept +2 member sent 3 into an uneconomic
+//     bonus and ended 1 army short of its hold).
 //  1i. Income at risk (#109). `expected.nextIncome` is next turn's income if every territory
 //     the plan keeps and captures is held — the borders it concedes included, withdrawn from
 //     or not. A conceded border is not kept, so the plan also reports
@@ -1541,6 +1555,7 @@ import { neighborsOf } from './graph.js';
 import { forecastBorder, mainFront, type FrontStack } from './exchange.js';
 import { byNum, pct } from './plan/util.js';
 import { SIEGE_BREAK_WEIGHT } from './plan/siege.js';
+import { planJabs } from './plan/jabs.js';
 import {
   BREAK_WEIGHT,
   MIN_EXPANSION_SHARE,
@@ -1563,12 +1578,14 @@ import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
+import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
+import { captureInsteadOfHold } from './plan/capture-instead.js';
 import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
 import { commanderMoveWarning, placeCommanderMove, reserveCommanderMove } from './plan/commander.js';
@@ -1747,7 +1764,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   }
 
   // ---- the deploy book (plan/orders.ts): budget, guard, deploys, pools, protected value ----
-  const book = deployBook(pc, ps);
+  const book = deployBook(pc, ps, input.previousBoard);
   // #274: under No-Split my commander's walk is its territory's one order, entered before any pass plans.
   reserveCommanderMove(pc, ps);
   const {
@@ -2458,6 +2475,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (unlocked.size)
       for (const c of candidates)
         if (c.target !== undefined && !captured.has(c.target) && targets.get(c.target)?.sources.some((x) => unlocked.has(x))) c.run();
+    // #285: a contested held bonus's borders facing one enemy stack take it when that costs less.
+    captureInsteadOfHold(pc, ps, book, threats, hd, tgt, caps);
     settleContested();
     // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
     // before rule 1c re-values the borders, so one whose bonus this completes is kept).
@@ -2475,6 +2494,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       advance(p);
       garrisonCompleted();
     }
+    // #285: as under `balanced`.
+    captureInsteadOfHold(pc, ps, book, threats, hd, tgt, caps);
     settleContested();
     // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
     // before rule 1c re-values the borders, so one whose bonus this completes is kept).
@@ -2955,6 +2976,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     );
   }
 
+  // ---- #277: a held bonus funded before a second attack sized for the same deploy (plan/second-sizing.ts) ----
+  fundFromSecondSizing(pc, ps, book, threats, hd, caps);
+
   // #120: an attack on a player's territory still sized below its owner's deploy says what it
   // faces if that deploy lands there first.
   for (const m of moves) {
@@ -2969,6 +2993,31 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const aim = chanceAt(m.to);
     warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${aim >= 1 ? 'be sure' : `reach ${pct(aim)}`}` : ''}.`;
   }
+
+  // ---- #361: single-army jabs from the armies still idle beyond each hold (plan/jabs.ts) ----
+  const jabsOn = pc.opts.jabs ?? pc.siege !== undefined;
+  // A jab never brings on #128's or #314's warning: a border that holds against two opponents
+  // attacking it together keeps what holds it so, and one whose hold leaves enough that the attack's
+  // survivors cannot take it next turn keeps that too (report.ts's #314 test).
+  const thin = (x: number, have: number): boolean => {
+    const b = borders.get(x);
+    if (!b || conceded.has(x) || b.movable <= 0) return false;
+    const take = toTake(have);
+    if (take === null || take <= b.threat) return false;
+    const mineAfter = Math.max(0, have - straightKills(b.threat, rates.offensiveKillRate));
+    const hisAfter = Math.max(0, b.threat - straightKills(have, rates.defensiveKillRate));
+    const next = toTake(mineAfter);
+    return next !== null && next <= hisAfter;
+  };
+  const jabSpare = (x: number): number => {
+    let spare = spareBeyondHold(x);
+    const now = hd.stayAt(x) + unitsAt(x);
+    if (!thin(x, now)) while (spare > 0 && thin(x, now - spare)) spare--;
+    const pile = threats.forceAt(x, (n) => captured.has(n), { trend: true, allPlayers: true, pileOn: true });
+    if (!pile?.split || pile.split.players.length < 2) return spare;
+    return now > pile.split.takes ? Math.min(spare, now - pile.split.takes - 1) : spare;
+  };
+  const jabs = jabsOn ? planJabs(pc, ps, jabSpare, keepWhole, (t) => tgt.repulsed.has(t), pc.siege ? strikeStack?.id : undefined) : [];
 
 
   // ---- Order Priority for a strike (rule 1s) (plan/move-order.ts) ----
@@ -2989,6 +3038,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
   // #218: the main front's forecast at my whole income, for the game outlook to share.
   if (ps.front) plan.front = ps.front;
+  if (jabs.length) plan.jabs = jabs;
   // #303: my income over the last turns, as rule 5's flat-income saving (plan/leftover.ts) read it.
   if (pc.incomeTrend) plan.incomeTrend = pc.incomeTrend;
   // PLAN-TEAMS C3.3: the bonuses I share with a teammate (plan/team.ts).

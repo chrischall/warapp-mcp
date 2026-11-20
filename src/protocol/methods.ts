@@ -14,6 +14,8 @@ export const Method = {
   GetLatestGameInfo: 41,
   SendChat: 43,
   RegisterChatView: 44,
+  RetrieveChat: 45,
+  RetrievePrivateMessageHistory: 46,
   GetGameSettings: 49,
   GetMyGames: 51,
   AcceptGame: 61,
@@ -414,6 +416,57 @@ export function writeRegisterChatViewParams(w: Writer, p: RegisterChatViewParams
     .string(p.teamMark ?? NO_CHAT_MARKER);
   writeMarkDict(w, p.privateMarks);
   writeMarkDict(w, p.groupMarks);
+}
+
+/**
+ * The "older than" marker of a chat history read when nothing has been received on that channel yet: the
+ * client's 9999E14 (its initial lowest-id-received), written as text.
+ */
+export const OLDEST_CHAT_MARKER = '999900000000000000';
+
+const MESSAGE_ID_TEXT = /^\d{1,20}$/;
+function beforeMarker(m: string | undefined): string {
+  if (m === undefined) return OLDEST_CHAT_MARKER;
+  if (!MESSAGE_ID_TEXT.test(m)) throw new RangeError(`not a message id: ${JSON.stringify(m)}`);
+  return m;
+}
+
+/** What RetrieveChat asks for: per channel, messages older than the oldest one received (decimal text). */
+export interface RetrieveChatParams {
+  gameId: number;
+  /** The oldest public message id received; absent: none yet ({@link OLDEST_CHAT_MARKER}). */
+  publicBefore?: string;
+  /** The oldest team message id received; absent: none yet. */
+  teamBefore?: string;
+}
+
+/**
+ * RetrieveChat(auth, …) — the web client's "show older messages" for the public and team channels (#363). READ
+ * FROM THE CLIENT BUNDLE's writer: the int32 game id, then per channel the lowest message id the client has
+ * received (string; 9999E14 when none). Reply: a result flag, then a list of optional `GameMessage` (as the
+ * SendChat reply). GameRefresh with `-1` markers leaves out messages war.app counts as seen (an own team
+ * message, seen live 2026-11-19); this read returns them.
+ */
+export function writeRetrieveChatParams(w: Writer, p: RetrieveChatParams): void {
+  w.int32(p.gameId).string(beforeMarker(p.publicBefore)).string(beforeMarker(p.teamBefore));
+}
+
+/** What RetrievePrivateMessageHistory asks for: one private conversation's messages older than `before`. */
+export interface RetrievePrivateMessageHistoryParams {
+  gameId: number;
+  /** The oldest message id received in this conversation; absent: none yet. */
+  before?: string;
+  /** The counterpart's in-game id. */
+  counterpart: number;
+}
+
+/**
+ * RetrievePrivateMessageHistory(auth, …) — the client's history button of one private conversation (#387). READ
+ * FROM THE CLIENT BUNDLE's writer: the int32 game id, the lowest message id received in it (string; 9999E14 when
+ * none), the counterpart's in-game id (int32). Reply as RetrieveChat's.
+ */
+export function writeRetrievePrivateMessageHistoryParams(w: Writer, p: RetrievePrivateMessageHistoryParams): void {
+  w.int32(p.gameId).string(beforeMarker(p.before)).int32(p.counterpart);
 }
 
 interface SendChatParams {
