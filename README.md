@@ -313,6 +313,21 @@ For every turn of every game you play, the server keeps a name-free record at
   the plan used, with how far off they were. It then compacts the log: every turn keeps its board,
   decision, orders, outcome and truth; only the planner's replay input of unremarkable turns is dropped.
 
+Since #437 (decision log v2, `docs/PLAN-DECISION-LOG-V2.md`) each turn also keeps the planner's build (the git
+commit or a bundle hash beside the version), its `times` (planned, sent, the turn's start and boot deadlines),
+the `firstMover` and its source, the `cards` (my hand, the card advice offered by kind and target, what was
+played) and the `checks` (at submit: the commander check, the weakest headroom rows, the below-plan rows and
+chat warnings; and `warapp_check_plan`'s verdict when it ran). Each game also keeps its `events` with their turn
+(a seat booted, surrendered, eliminated or turned AI; a surrender asked or accepted; my own surrender with my
+income and the outlook then), the `join` context (the lobby's settings key and which join-policy checks it
+passed or broke), the `opponents` by id (first seen, level and ranked record when a tool read them) and the
+`picks` phase (the pick advice, the list sent and read back, the award read on turn 1). All of it is kept
+through compaction.
+
+The end-of-game record tags each game's kind: `lottery`, `no-show` (no turn committed, or booted before
+turn 2), `legacy` (played before this server kept a log or board cache) and `team`. Lottery and no-show
+games are counted apart in `lessons.json` and the map record and fold no opponent profile.
+
 Player ids and the map's own territory and bonus names only: no player name is ever written (one in an
 `override_reason` is scrubbed). Files are `0600` in a `0700` folder. At most 1000 games and 500 MB are kept
 in all; past that the oldest finished games are deleted whole, never a game still running.
@@ -326,6 +341,14 @@ happened, and the estimate accuracy against the end-of-game truth (`--accuracy`)
 detail and `--export-fixtures <dir>` writes the interesting turns as standalone test fixtures; `--help`
 lists every option. Details: `docs/PLAN-PROFILES.md` "Replaying the decision log"; the design record is
 `docs/PLAN-DECISIONS-412.md`.
+
+`node scripts/review-export.mjs --out <dir>` (after `npm run build`; also a local dev script) writes one JSON
+per game for a strategy review, joining the decision log (its turns without the encoded boards or replay
+input, the events, picks and join context), the end-of-game record, and the game's entries in the map record
+and `lessons.json`, plus an `index.json` listing each game's id, kinds, format, map, outcome, turns and which
+of those sources exist. `--game <id>` exports one game, `--boards` adds each logged turn's board rebuilt
+whole, `--data-dir` reads another data directory. Name-free, no request made, files `0600` in a `0700`
+folder (an existing folder others can read is refused).
 
 ## Skills
 

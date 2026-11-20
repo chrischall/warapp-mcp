@@ -2160,6 +2160,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn 1 when it writes the reading, `capturePicksAward`: `turn` and the `AwardReading` or `null`; written once, never
   over one kept). Each starts a log; a log holding only `picks` is finished and compacted like any other; kept through
   compaction.
+  **The review export (#437 task 5, `scripts/review-export.mjs`, LOCAL dev script like the replay: never a tool, never
+  in CI; logic in `src/review-export.ts`, tested in `tests/review-export.test.ts`).** `reviewGame` joins one game from
+  the data dir alone: the decision log (each turn without its encoded `board` and replay `input` — `hasInput` says
+  whether one was kept; `boards: true`/`--boards` adds `boardAt`'s board whole, `null` on a broken chain — plus
+  `accuracySummary`, `truthMissing`, `events`, `eventsDropped`, `seats`, `join`, `opponents`, `picks`), the
+  finished record, the map-record and lessons entries by `finishedGameKey` (`{ entry }`, or `{ entry: null, excluded }`
+  for a game counted apart), the settings record's game by ids only, the stored map's name and size, and
+  `kinds`/`format`/`outcome`/`turns` read off them; `sources` says per source `present`/`missing`/`unreadable`
+  (`excluded` for the two keyed stores). My account is the log's, else the board cache's, else — a legacy game — the
+  settings record seat whose `finishedPath` exists. `reviewGameIds` lists every game with a log (readable or not) or a
+  settings record; `exportReview` writes `game-<id>.json` and `index.json` (one line per game: id, kinds, format, map
+  id and name, outcome, turns, sources), pretty JSON, atomic, 0600, into a folder it makes 0700 and refuses when an
+  existing one is readable by others (never chmod-ed). No request; nothing written to the data dir (reading a stored
+  map touches its mtime, as every reader does). Name-free like its sources.
 - **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
   `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's
