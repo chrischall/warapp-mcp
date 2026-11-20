@@ -107,7 +107,9 @@ Ask the owner before part C (P2) and before part F (P1). Parts A, B and D do not
 
 ## 6. Live checks only the owner can do
 
-- **V1:** a finished game's `GetHistory` shows every territory un-fogged, turn by turn.
+- **V1 — VERIFIED in practice (2026-11-19):** a finished game's `GetHistory` shows every territory un-fogged,
+  turn by turn. 36 histories captured by the end-of-game pass (#312) held about 67,000 board rows between them,
+  and not one row had an unknown owner (counts only; no capture enters the repo).
 - **V2:** whether its `turn<N>` entries carry orders (deploys, attacks with their results, card
   plays), and under which keys. The owner describes the keys; no capture enters the repo.
 - **V3:** that a finished game's GameFeed read gives every player one of the states in
