@@ -1,7 +1,9 @@
 // The end-of-game capture (#312 E1), pure parts: the outcome from the player states, each player's
 // income and bonuses by turn from the history boards, the starts, the turn I was out, and what stood
 // on the target of each failed attack of mine. Synthetic maps and boards only.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { boardFromStanding } from '../../src/board.js';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import type { MyOrders } from '../../src/analysis/opponents.js';
 import {
@@ -89,6 +91,26 @@ describe('#437: a count that did not read where no fog hides it (a commander)', 
   it('a fogged one still makes the sum unknown', () => {
     const b = board({ ...t(1, ME, null), fogLevel: 'Fogged' }, t(2, ME, null));
     expect(turnIncomes(G, b, [ME], SETTINGS).get(ME)).toMatchObject({ armies: null, armiesUnread: 1 });
+  });
+});
+
+describe('#437: commander territories in a finished history (VERIFIED live 2026-11-20)', () => {
+  it('count their plain armies (no longer unread) and the commanders apart', () => {
+    const fx = JSON.parse(readFileSync(new URL('../fixtures/gamefeed-history-commander.json', import.meta.url), 'utf8'));
+    const map = { ...MAP, bonuses: [] };
+    const out0 = turnIncomes(buildGraph(map), boardFromStanding(fx.standing0)!, [1001, 1002, 1003], SETTINGS);
+    expect(out0.get(1001)).toEqual({ income: 5, territories: 2, armies: 10, bonuses: [], commanders: 1 });
+    expect(out0.get(1003)).toEqual({ income: 5, territories: 1, armies: 5, bonuses: [], commanders: 1 });
+    const out1 = turnIncomes(buildGraph(map), boardFromStanding(fx.standing1)!, [1001, 1002], SETTINGS);
+    expect(out1.get(1001)).toEqual({ income: 5, territories: 3, armies: 8, bonuses: [], commanders: 1 });
+    expect(out1.get(1002)).toEqual({ income: 5, territories: 2, armies: 497, bonuses: [], commanders: 1 });
+    for (const p of out1.values()) expect(p).not.toHaveProperty('armiesUnread');
+  });
+  it('a commander standing on another player\'s land counts for its owner only by the land, not as its commander', () => {
+    const b = board({ ...t(1, ME, 3), specialUnits: [{ kind: 'commander', id: 'c', playerId: FOE }] }, t(5, FOE, 2));
+    const out = turnIncomes(G, b, [ME, FOE], SETTINGS);
+    expect(out.get(ME)).not.toHaveProperty('commanders');
+    expect(out.get(FOE)).not.toHaveProperty('commanders');
   });
 });
 

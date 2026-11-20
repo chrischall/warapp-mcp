@@ -1467,12 +1467,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `outcome.leftTurn` (`leftTurnOf`): for a surrender or a boot the turn being played when the decision log's events saw
   my seat leave (`my-surrender`, my seat's `surrender-accepted` / `booted`; the earliest), else the history's out turn;
   for an elimination the out turn. It is the lessons' `howLost.turn` for a surrender or boot, and `failedAttacks` drops
-  my orders of that turn and later (they never ran). `PlayerTurn.armies` leaves out a territory whose count did not read
-  on a board that hides nothing (where a commander stands in a finished history) and counts it in `armiesUnread`;
-  only a fogged territory makes it `null`. The decision log's truth carries the same `armiesUnread` beside `armies`
-  (`mine` and each opponent), so a figure that leaves a territory out reads as a lower bound, never a definite count.
-  **Not yet done:** counting the commander's standing itself — GameFeed's raw value for a territory with a commander
-  has not been captured, so its armies are unread rather than parsed. Map entries keep `kinds` and `settings: { key (`settingsKey`), localDeployments?,
+  my orders of that turn and later (they never ran). **Commander territories in a finished history are counted (#437,
+  VERIFIED live 2026-11-20):** GameFeed sends such a territory's armies as `"<N>|cmdr,<GUID>,<owner id>,"`, N the plain
+  armies alone (the commander is the unit after the bar, fighting as 7, not in N); `boardFromStanding` reads it as
+  `armies: N` plus `specialUnits` (fixture `tests/fixtures/gamefeed-history-commander.json`), so `PlayerTurn.armies` is
+  exact there and `PlayerTurn.commanders` counts the player's own commanders on its land (the decision log's truth
+  carries `commanders` beside `armies`, `mine` and each opponent). `armiesUnread` remains for a count that does not
+  read on a board that hides nothing (records written before this, where a commander stood, carry it: `armies` is a
+  lower bound then); only a fogged territory makes `armies` `null`. Map entries keep `kinds` and `settings: { key (`settingsKey`), localDeployments?,
   commanders? }`; `mapRecordSummary` / `mapRecordStarts` take a `MapMatch` (`mapMatchOf`: the current game's format,
   Local Deployment and Commanders — an entry that kept no flag matches on it, counted in `settingsUnknown`), and
   warapp_plan_picks' `mapRecord` and warapp_plan_turn's `pace` read only the matching games, with `matched: { by,

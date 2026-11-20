@@ -72,6 +72,17 @@ describe('decisionTruth (#412 task 3)', () => {
     expect(r.truth.get(1)!.opponents[0]).not.toHaveProperty('armiesUnread');
   });
 
+  it('#437: a commander standing (read since 2026-11-20) counts its plain armies and the commander apart, never unread', () => {
+    const cmdr = (x: TerritoryState, playerId: number): TerritoryState => ({ ...x, specialUnits: [{ kind: 'commander', id: `c${playerId}`, playerId }] });
+    const withCommanders = board(t(1, ME, 5), cmdr(t(2, ME, 0), ME), t(3, 'neutral', 2), t(4, FOE, 2), cmdr(t(5, FOE, 9), FOE), t(6, FOE, 2));
+    const r = run({ history: [{ turn: 0, board: real(0) }, { turn: 1, board: withCommanders }, { turn: 2, board: real(2) }] });
+    const truth = r.truth.get(2)!;
+    expect(truth.mine).toEqual({ income: 8, armies: 5, territories: 2, commanders: 1 });
+    expect(truth.opponents[0]).toMatchObject({ armies: 13, commanders: 1 });
+    expect(truth.opponents[0]).not.toHaveProperty('armiesUnread');
+    expect(r.truth.get(1)!.mine).not.toHaveProperty('commanders');
+  });
+
   it('gives every turn of the game its truth from the board it was played on, logged or not', () => {
     const r = run();
     expect([...r.truth.keys()]).toEqual([1, 2, 3]);

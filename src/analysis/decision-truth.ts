@@ -23,10 +23,12 @@ export interface OpponentTruth {
   /** `null` when the history hid any of its armies. */
   armies: number | null;
   /**
-   * #437: its territories in view whose count did not read (where a commander stood): `armies` leaves them
-   * out, so it is a lower bound then. Absent when every count read.
+   * #437: its territories in view whose count did not read: `armies` leaves them out, so it is a lower bound
+   * then. Absent when every count read (a commander's territory reads since 2026-11-20: `commanders`).
    */
   armiesUnread?: number;
+  /** #437: its own commanders on its land (each fights as 7; not in `armies`, the plain armies); absent when none. */
+  commanders?: number;
   territories: number;
   bonuses: number[];
   /** Its true start-of-turn armies on each territory my logged board showed fogged or owner-only: `[territory, armies]`. */
@@ -38,7 +40,7 @@ export interface TurnTruth {
   /** The history board read (completed turns): the turn − 1. */
   board: number;
   /** `armiesUnread` as {@link OpponentTruth}'s: `armies` is a lower bound when present. */
-  mine: { income: number; armies: number | null; territories: number; armiesUnread?: number };
+  mine: { income: number; armies: number | null; territories: number; armiesUnread?: number; commanders?: number };
   opponents: OpponentTruth[];
 }
 
@@ -201,13 +203,19 @@ export function decisionTruth(input: TruthInput): TruthResult {
         income: x.income,
         armies: x.armies,
         ...(x.armiesUnread ? { armiesUnread: x.armiesUnread } : {}),
+        ...(x.commanders ? { commanders: x.commanders } : {}),
         territories: x.territories,
         bonuses: x.bonuses,
         hidden,
       };
     });
     const myUnread = mine.armiesUnread ? { armiesUnread: mine.armiesUnread } : {};
-    truth.set(turn, { board: turn - 1, mine: { income: mine.income, armies: mine.armies, territories: mine.territories, ...myUnread }, opponents });
+    const myCommanders = mine.commanders ? { commanders: mine.commanders } : {};
+    truth.set(turn, {
+      board: turn - 1,
+      mine: { income: mine.income, armies: mine.armies, territories: mine.territories, ...myUnread, ...myCommanders },
+      opponents,
+    });
     if (!logged) continue;
     const myIncome = logged.myIncome ?? mine.income;
     const hiddenStacks = logged.board ? opponents.reduce((s, o) => s + o.hidden.filter(([, a]) => a >= myIncome && a > 0).length, 0) : null;

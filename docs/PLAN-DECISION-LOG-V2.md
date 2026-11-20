@@ -66,6 +66,11 @@ and the decision-log truth), so `armies` is a lower bound whenever `armiesUnread
 Closing it fully needs one live history read of a commanders game to parse the real count; until then the
 owner either accepts the lower bound plus `armiesUnread`, or keeps this item open on #437.
 
+**Done 2026-11-20 (VERIFIED live, one read of a finished Commanders game's history):** such a territory's armies
+come as `"<N>|cmdr,<GUID>,<owner id>,"`, N the plain armies alone. `boardFromStanding` now reads N and the commander
+(`specialUnits`), so `armies` is exact there and `commanders` counts each player's commanders (finished record and
+decision-log truth). `armiesUnread` stays only for records written before, and for any count that still does not read.
+
 ## Task 5 — review export, docs
 - `scripts/review-export.mjs` (local dev script like calibrate/replay; reads `dist/`): `--data-dir`, `--out <dir>`,
   `--game <id>`; writes one JSON per game joining the decision log (boards rebuilt per turn on request with

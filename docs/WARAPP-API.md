@@ -464,7 +464,14 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   - id: `terrID` / `territoryID` / `id`
   - owner: `ownedBy` / `ownerID` / `owner` / `playerID`, where the value is a player id,
     `Neutral` or `AvailableForDistribution`
-  - armies: `armies` / `numArmies`, as a number or `{ numArmies }`
+  - armies: `armies` / `numArmies`, as a number or `{ numArmies }`; or (#437, **VERIFIED live
+    2026-11-20** on a finished three-player Commanders game's `GetHistory`) on a territory where a
+    commander stands, the string `"<N>|cmdr,<GUID>,<owner id>,"`: N is the plain armies alone (every
+    start read 5, the commander's included, and `0|cmdr,…` once all 5 left; the guard was off), then
+    per unit its tag, GUID and owner (a GameFeed id), each with a trailing comma. It is read as
+    `armies: N` plus `specialUnits` (`cmdr` → `commander`; any other tag is an `unknown` unit, as no
+    other tag has been seen). The commander fights as 7 and is not in N. Fixture:
+    `tests/fixtures/gamefeed-history-commander.json` (ids made up).
   - fog: `fogLevel` / `fog`
 - A fogged entry's owner and armies are read as unknown. The result is a source-agnostic
   `BoardState` with `verified: false`, or `undefined` when the parser can't use it.
