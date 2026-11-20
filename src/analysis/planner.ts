@@ -1219,8 +1219,13 @@
 //     the armies already there, never the leftover); #288: when that source faces no threat, holds
 //     no commander of mine and has nothing left to attack once this turn's captures land (every
 //     neighbour mine or captured), the leftover goes with its attacks on neutrals whose targets have
-//     a step onward (equal shares, most steps onward first; not under No-Split, not a combined
-//     capture: "and send it with the attack on …") — else the
+//     a step onward (most steps onward first; not under No-Split, not a combined capture: "and send
+//     it with the attack on …"): each attack first gets what the next step from its target (its
+//     cheapest visible neutral onward) needs beyond the armies that land movable, when the leftover
+//     covers that whole; the rest is offered to another capture this turn (a neutral beside another
+//     open territory of mine that issues no order, holds no commander and attacks no player, short
+//     of its cost by no more than the rest: "for another capture this turn"), which rule 5b takes or
+//     planPass sends back with the attacks (`revert`); what is left rides them in equal shares — else the
 //     border with the most fogged neighbours, else my biggest stack.
 //     #303 (plan/leftover.ts `flatSave`): when my income is flat (`PlanInput.incomeHistory` → `PlanCtx.incomeTrend`,
 //     #312's rule: the last FLAT_TURNS + 1 turns consecutive and within FLAT_TOLERANCE of the first) and the step
@@ -2675,7 +2680,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const beforeLeftover = new Map(ps.deployed);
   const leftover = leftoverDeploy(pc, ps, book, threats, hd, tgt, saveStep, stack, open, stays);
   let { strikeStack } = leftover;
-  const { poolDeployed, staging } = leftover;
+  const { poolDeployed, staging, offered } = leftover;
   // #235: the Standing-still warning names the source the leftover actually stages on.
   // Found by its text: earlier warnings may have been spliced out since (a revival, a dropped capture).
   if (staging && standStill && staging.t === standStill.t && staging.from !== standStill.named) {
@@ -2750,7 +2755,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- 5b. a neutral the leftover pays for (#218) (plan/after-leftover.ts) ----
   // The strike stack concentrates for its strike, and a step's source saves toward it: neither spends.
   const keepWhole = new Set([...(strikeStack ? [strikeStack.id] : []), ...(staging ? [staging.from] : [])]);
-  afterLeftoverCaptures(pc, ps, book, threats, hd, tgt, caps, beforeLeftover, keepWhole, poolDeployed);
+  const takenAfter = afterLeftoverCaptures(pc, ps, book, threats, hd, tgt, caps, beforeLeftover, keepWhole, poolDeployed);
+  // #288: the rest of the leftover offered to another capture rides the expansion stack's attacks
+  // after all when rule 5b took nothing from where it was offered.
+  if (offered && !moves.some((m) => m.kind === 'attack' && m.from === offered.at && takenAfter.includes(m.to))) offered.revert();
 
   // ---- efficient sizes (S2) ----
   // An attack below its next kill breakpoint is topped up to it from armies that would sit
