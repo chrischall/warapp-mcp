@@ -56,6 +56,8 @@ import {
   type DecisionRecord,
   type DecisionTimes,
   fillOutcome,
+  type LoggedChatMessage,
+  recordChat,
   type LoggedCardAdvice,
   type LoggedHeadroom,
   type Observation,
@@ -152,6 +154,19 @@ export async function captureObservation(ctx: Ctx, gameId: number, me: number, s
 export async function captureSent(ctx: Ctx, gameId: number, me: number, turn: number, sub: Submission): Promise<void> {
   if (!ctx.dataDir) return;
   await recordSubmission(ctx.dataDir, gameId, me, turn, sub, modeOf(ctx));
+}
+
+/** Log the chat read on a planned turn (#415: ids and labels only) beside its entry. Never throws. */
+export async function captureChat(
+  ctx: Ctx,
+  gameId: number,
+  me: number,
+  turn: number,
+  chat: readonly LoggedChatMessage[],
+  opts: { blockFlagOnly?: boolean } = {},
+): Promise<void> {
+  if (!ctx.dataDir || !chat.length) return;
+  await recordChat(ctx.dataDir, gameId, me, turn, chat, { ...modeOf(ctx), ...opts });
 }
 
 /** Log warapp_check_plan's summary of the turn (the latest run wins). Never throws. */

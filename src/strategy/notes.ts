@@ -2401,6 +2401,67 @@ export const STRATEGY_NOTES: readonly StrategyNote[] = [
     source: S.diplomacyGames,
     basis: 'source',
   },
+  // ---- diplomacy: chat as game information (#415) ----
+  {
+    id: 'diplomacy-chat-income-check',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'An income check in free-for-all chat is mostly a hunt for the leader: a forum poster gives "player X has ' +
+      '1000 income" as the post that turns a game into a popularity contest. Leading or close to it, say little and ' +
+      'give no figure; when another player clearly leads, your honest income helps the table see it.',
+    source: S.forumFfaChatEtiquette,
+    basis: 'derived',
+    encoded: 'the chat advice (adviseReply, src/analysis/chat-advice.ts, #415)',
+  },
+  {
+    id: 'diplomacy-chat-withhold',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'Answering chat is a choice: one forum poster simply ignored a deal offered by mail, while another warns that ' +
+      'ignoring it hands rivals an edge. Withholding breaks no rule and a vague reply is fine; what you do say should ' +
+      'be true, so say less rather than invent.',
+    source: S.forumFfaChatEtiquette,
+    basis: 'derived',
+    encoded: 'the chat advice (adviseReply, src/analysis/chat-advice.ts, #415)',
+  },
+  {
+    id: 'diplomacy-chat-gang-up-ask',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'The usual pitch is "X wins unless we gang up". Treat it as a deal offer: when X leads and you do not, price it ' +
+      'with warapp_advise_diplomacy as you would a truce. When you are X, it is a warning that others are being ' +
+      'turned on you: check the borders facing the asker and its neighbours.',
+    source: S.forumFfaChatEtiquette,
+    basis: 'derived',
+    encoded: 'the chat advice (adviseReply, src/analysis/chat-advice.ts, #415)',
+  },
+  {
+    id: 'diplomacy-chat-threat',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'One poster on truce disputes counts threatening moves of any kind as a possible breach. Read a threat in chat ' +
+      'the same way, as information about where the sender is looking rather than a reason to answer in kind: check ' +
+      'the borders facing that player before you commit.',
+    source: S.forumTrucePsychology,
+    basis: 'derived',
+    encoded: 'the chat advice (adviseReply, src/analysis/chat-advice.ts, #415)',
+  },
+  {
+    id: 'diplomacy-chat-trust-little',
+    topic: 'diplomacy',
+    when: on({ format: ['ffa'] }),
+    text:
+      'A forum guide to free-for-alls advises making pacts by private message but trusting a new partner only a ' +
+      'little at first, since some players betray quickly. Answer a truce offer by pricing it ' +
+      '(warapp_advise_diplomacy) rather than agreeing in the same breath, and keep that border guarded while it is new.',
+    source: S.ffa,
+    basis: 'derived',
+    encoded: 'the chat advice (adviseReply, src/analysis/chat-advice.ts, #415)',
+  },
   {
     id: 'teams-team-chat',
     topic: 'format',

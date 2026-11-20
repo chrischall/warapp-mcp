@@ -40,7 +40,9 @@
         "WARAPP_ENV_FILE": "${user_config.env_file}",
         "WARAPP_PLAYER_RECORD": "${user_config.player_record}",
         "WARAPP_PLAYER_PROFILE": "${user_config.player_profile}",
-        "WARAPP_DECISION_LOG": "${user_config.decision_log}"
+        "WARAPP_DECISION_LOG": "${user_config.decision_log}",
+        "WARAPP_CHAT_AUTOMATION": "${user_config.chat_automation}",
+        "WARAPP_CHAT_BLOCKS_TURN": "${user_config.chat_blocks_turn}"
       }
     }
   },
@@ -98,6 +100,18 @@
       "type": "string",
       "title": "Decision log (optional)",
       "description": "A per-game log of each turn's view, the plan, the orders sent and, once the game ends, the true figures (player ids and numbers, no names or chat), for offline review and replay. On by default; 'off' turns it off, 'full' keeps every turn uncompacted.",
+      "required": false
+    },
+    "chat_automation": {
+      "type": "string",
+      "title": "Automated chat replies (optional)",
+      "description": "Whether an agent may send chat replies you did not ask for. Off by default: chat is read, labelled and advised on, and you send every reply. 'on' lets the advice offer the exact send, and an automated send still waits for your confirmation.",
+      "required": false
+    },
+    "chat_blocks_turn": {
+      "type": "string",
+      "title": "Chat can block a turn (optional)",
+      "description": "Whether unread chat that may change the turn (a truce message from a partner, a threat aimed at you from a neighbour, a surrender waiting on your acceptance, a teammate asking about this turn) stops a turn submission until it is read. Off by default: the submit preview only warns. 'on' refuses until the messages are marked seen or the submit says chat_reviewed.",
       "required": false
     }
   },
