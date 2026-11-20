@@ -1590,11 +1590,6 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
 }
 
 /**
- * The "since last turn" view (#194): one line comparing this turn's income with the next income
- * the previous turn's plan expected, and naming the bonuses broken and territories lost since the
- * previous board. `full` adds the figures and the lists by id and name beside the line.
- */
-/**
  * #442: the captures the decision log's plan of `turn` expected, kept to the targets of the moves sent that
  * turn when they were logged (a capture the orders sent did not try is no failed attack). Never throws.
  */
@@ -1606,6 +1601,11 @@ async function previousCaptures(dir: string, gameId: number, me: number, turn: n
   return sent ? caps.filter((id) => sent.some((m) => m.to === id)) : [...caps];
 }
 
+/**
+ * The "since last turn" view (#194): one line comparing this turn's income with the next income
+ * the previous turn's plan expected, and naming the bonuses broken and territories lost since the
+ * previous board. `full` adds the figures and the lists by id and name beside the line.
+ */
 function sinceLastView(
   s: SinceLast,
   previousTurn: number,
