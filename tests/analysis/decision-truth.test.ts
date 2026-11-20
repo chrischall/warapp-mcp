@@ -89,15 +89,21 @@ describe('decisionTruth (#412 task 3)', () => {
     expect(r.summary.turnsWithHiddenStacks).toBe(2);
   });
 
-  it("compares the logged outlook with the true figures' outlook", () => {
-    const r = run();
-    for (const turn of [2, 3]) {
-      const o = r.accuracy.get(turn)!.outlook;
-      expect(o.logged).toBe(logged.get(turn)!.outlook);
-      if (o.truth === null) expect(o.right).toBeNull();
-      else expect(o.right).toBe(o.logged === o.truth);
-    }
-    expect(r.summary.outlook.right + r.summary.outlook.wrong).toBe([2, 3].filter((x) => r.accuracy.get(x)!.outlook.right !== null).length);
+  it("compares the logged outlook with the true figures' outlook: right, wrong, or no verdict", () => {
+    // Four boards of a steady game: neither side gains on the other, so once the outlook has its
+    // OUTLOOK_TURNS (3) turns in a row the true figures read 'even' (turns 3 and 4); turn 2 has only two
+    // boards behind it, so the truth gives no state there and no verdict.
+    const longer = [0, 1, 2, 3].map((n) => ({ turn: n, board: real(n) }));
+    const outlooks = new Map<number, LoggedTurn>([
+      [2, { ...logged.get(2)!, outlook: 'winning' }],
+      [3, { ...logged.get(3)!, outlook: 'even' }],
+      [4, { board: view(3), outlook: 'losing', estimates: [], myIncome: 8 }],
+    ]);
+    const r = run({ history: longer, numberOfTurns: 4, logged: outlooks });
+    expect(r.accuracy.get(2)!.outlook).toEqual({ logged: 'winning', truth: null, right: null });
+    expect(r.accuracy.get(3)!.outlook).toEqual({ logged: 'even', truth: 'even', right: true });
+    expect(r.accuracy.get(4)!.outlook).toEqual({ logged: 'losing', truth: 'even', right: false });
+    expect(r.summary.outlook).toEqual({ right: 1, wrong: 1 });
   });
 
   it('summarises estimate ÷ truth overall, by coverage band and by source', () => {

@@ -402,6 +402,7 @@ async function processHistory(dataDir: string, env: EnvSource, salt: string, me:
  * The decision log of a finished game (#412 task 3): with the history captured, every turn's truth and
  * every logged turn's accuracy from the FULL history boards (`h.boards`, before the finished record's
  * head/tail cut: no-gaps rule (c)); then the log is compacted (no-gaps rule (b); `full` keeps it whole).
+ * Without a captured history nothing is written: the retry that brings it writes the truth, then compacts.
  * Nothing with `WARAPP_DECISION_LOG=off`. Never throws.
  */
 async function closeDecisionLog(dataDir: string, env: EnvSource, me: number, gameId: number, game: Game | undefined, h: CapturedHistory | undefined): Promise<void> {
@@ -436,6 +437,10 @@ async function closeDecisionLog(dataDir: string, env: EnvSource, me: number, gam
         { mode },
       );
     }
+    // Compaction follows the truth (its choice of turns reads the accuracy): with no history captured, a
+    // retry (warapp_get_game include_history) can still bring it, so the log stays whole until then. A
+    // captured history with no map can never give a truth (a captured pass is not run again): compact.
+    if (!h) return;
     const lost = game ? ['lost', 'surrendered', 'eliminated', 'booted'].includes(outcomeOf(game.players, me)) : false;
     await compactDecisionLog(dataDir, gameId, me, { mode, lost });
   } catch {

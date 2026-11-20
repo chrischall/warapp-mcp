@@ -118,9 +118,14 @@ caps/pruning order, `off` mode writes nothing.
   `truthMissing` (never because of finished-store's cut, which this must run before).
   Tests: a synthetic finished game whose history differs from the logged estimates produces the right
   ratios, outlook verdicts and summary; re-running the pass is idempotent.
+  (Review: compaction runs only once the history is captured — a failed read leaves the log whole for the
+  `include_history` retry, which writes the truth and then compacts; the truth starts no log for a game
+  with none logged, so truth-only files never crowd real logs out of the prune budget.)
 - `pruneDecisionLogs` runs after writes (like `pruneBoardCaches`), at most once per process interval.
 - Add `decisions` to `STORES` + `RULES` in src/state-bundle.ts (per game: `/^(\d{1,12})\.json$/`, kept for
   finished games too — `allGames: true`) so export/import carries it; update the state-bundle tests.
+  (Review: export carries the decision logs newest first up to `MAX_EXPORT_DECISION_BYTES` = 16 MiB, the
+  rest counted in `leftOut.decisionLogs`, so they can never push a bundle past what import accepts.)
 - `warapp_healthcheck` (or wherever stores are summarised) reports the decision-log count/bytes if the
   other stores are reported there; skip if not.
 

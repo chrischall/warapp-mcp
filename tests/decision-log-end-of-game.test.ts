@@ -107,7 +107,9 @@ describe('the decision log at the end-of-game pass (#412 task 3)', () => {
     expect(log.turns['1']!.accuracy!.estimates).toEqual([{ player: FOE, estimate: 5, truth: 5, ratio: 1, source: 'tracked', coverage: 0.2, thin: true }]);
     expect(log.turns['2']!.truth!.opponents[0]).toMatchObject({ player: FOE, income: 9, bonuses: [200], hidden: [[5, 4], [6, 4]] });
     expect(log.turns['2']!.accuracy!.estimates[0]).toMatchObject({ estimate: 3, truth: 9, ratio: 0.333333 });
-    expect(log.turns['2']!.accuracy!.outlook.logged).toBe('even');
+    // Two boards are fewer than the outlook's three turns in a row: the true figures give no state, so no verdict.
+    expect(log.turns['2']!.accuracy!.outlook).toEqual({ logged: 'even', truth: null, right: null });
+    expect(log.accuracySummary!.outlook).toEqual({ right: 0, wrong: 0 });
     expect(log.accuracySummary!.estimates).toMatchObject({ n: 2, under: 0.5, over: 0 });
     expect(log.accuracySummary!.byCoverage['under-25']).toMatchObject({ n: 2 });
     expect(log.truthMissing).toEqual([]);
@@ -128,13 +130,40 @@ describe('the decision log at the end-of-game pass (#412 task 3)', () => {
     expect(readFileSync(decisionLogPath(dir, GAME), 'utf8')).toBe(text);
   });
 
-  it('a game played without a log gets a truth-only log of every turn', async () => {
+  it('starts no log for a game played without one (no truth-only file to crowd out real logs)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
     expect((await pass(dir)).status).toBe('captured');
+    expect(existsSync(decisionLogPath(dir, GAME))).toBe(false);
+  });
+
+  it('a pass whose history read fails leaves the log uncompacted; the retry writes the truth, then compacts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-decisions-'));
+    await updateDecisionLog(
+      dir,
+      GAME,
+      ME,
+      (l) => ({ ...l, turns: { '1': planned(1, [t(1, ME, 5), t(6, FOE, 5)], 5), '2': planned(2, [t(1, ME, 4), t(5, 'fog', null), t(6, 'fog', null)], 3) } }),
+      { mode: 'on' },
+    );
+    const before = readFileSync(decisionLogPath(dir, GAME), 'utf8');
+    const { fetchImpl } = stubFetch(finished);
+    const seen = await new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined }).getGame(GAME, { history: true, settings: true });
+    // The pass's own history read fails (a network error): no truth can be written yet.
+    const failing = (async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch;
+    const down = new WarappClient({ env: CREDS, fetchImpl: failing, sleep: async () => undefined });
+    expect((await endOfGame({ client: down, dataDir: dir, env: {} }, GAME, ME, seen)).status).toBe('read-failed');
+    // Not compacted: a retry can still bring the history, and compaction must follow the truth.
+    expect(readFileSync(decisionLogPath(dir, GAME), 'utf8')).toBe(before);
+    // The retry (warapp_get_game include_history): truth first, then compaction.
+    const client = new WarappClient({ env: CREDS, fetchImpl, sleep: async () => undefined });
+    expect((await endOfGame({ client, dataDir: dir, env: {} }, GAME, ME, seen, { history: seen, retry: true })).status).toBe('captured');
     const log = (await readDecisionLog(dir, GAME, ME))!;
-    expect(Object.keys(log.turns).sort()).toEqual(['1', '2']);
-    expect(log.turns['1']).toEqual({ truth: expect.objectContaining({ board: 0 }) });
-    expect(log.accuracySummary!.estimates).toBeNull();
+    expect(log.status).toBe('compacted');
+    expect(log.turns['2']!.accuracy!.estimates[0]).toMatchObject({ estimate: 3, truth: 9 });
+    expect(log.turns['2']!.accuracy!.myIncome).toBe(5);
+    expect(log.accuracySummary).toBeDefined();
   });
 
   it('writes nothing with WARAPP_DECISION_LOG=off', async () => {

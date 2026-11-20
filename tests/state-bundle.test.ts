@@ -1,7 +1,7 @@
 // The state bundle (export a local install's history, import it into another data dir, e.g. a hosted
 // child's MCP_DATA_DIR). Synthetic data dirs only: never the real ~/.config/warapp-mcp.
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -12,6 +12,9 @@ import {
   collectExport,
   decodeBundle,
   encodeBundle,
+  MAX_BUNDLE_BYTES,
+  MAX_EXPORT_DECISION_BYTES,
+  MAX_UNPACKED_BYTES,
   planImport,
   StateBundleError,
   STATE_FORMAT,
@@ -109,7 +112,36 @@ describe('collectExport', () => {
         `decisions/${DONE}.json`,
       ].sort(),
     );
-    expect(result.leftOut).toEqual({ finishedGames: 1, unknownGames: 1, otherAccountFiles: 2 });
+    expect(result.leftOut).toEqual({ finishedGames: 1, unknownGames: 1, otherAccountFiles: 2, decisionLogs: 0 });
+  });
+
+  it('bounds the decision logs it carries, newest first, counting the ones left out (#412)', async () => {
+    const dir = localDir();
+    // Three more of my logs, each about 1 kB, written a day apart (oldest 9001).
+    const pad = 'x'.repeat(1000);
+    for (const [i, g] of [9001, 9002, 9003].entries()) {
+      put(dir, `decisions/${g}.json`, { version: 1, gameId: g, playerId: ME, status: 'compacted', turns: { '1': { pad } } });
+      const when = new Date(Date.UTC(2026, 0, 10 + i));
+      utimesSync(join(dir, `decisions/${g}.json`), when, when);
+    }
+    for (const g of [ACTIVE, DONE]) {
+      const when = new Date(Date.UTC(2026, 0, 1));
+      utimesSync(join(dir, `decisions/${g}.json`), when, when);
+    }
+    // Room for two of the big ones: the newest two go, the rest (older, small ones too) stay home.
+    const result = await collectExport(dir, { decisionBytes: 2500 });
+    const kept = result.files.filter((f) => f.store === 'decisions').map((f) => f.path);
+    expect(kept.sort()).toEqual(['decisions/9002.json', 'decisions/9003.json']);
+    expect(result.leftOut.decisionLogs).toBe(3);
+    // The other stores are untouched by the bound.
+    expect(result.files.some((f) => f.path === 'relations/players.salt')).toBe(true);
+  });
+
+  it('keeps the default decision-log share far under what an import accepts', () => {
+    // Base64 inside the JSON is 4/3 of the raw bytes; the rest of the bundle needs its room too.
+    expect((MAX_EXPORT_DECISION_BYTES * 4) / 3).toBeLessThanOrEqual(MAX_UNPACKED_BYTES / 4);
+    // Even incompressible, the decision logs alone stay under the compressed cap.
+    expect((MAX_EXPORT_DECISION_BYTES * 4) / 3).toBeLessThan(MAX_BUNDLE_BYTES);
   });
 
   it('never includes credentials, the bundle cache, chat, maps, stats or the guess salt', async () => {

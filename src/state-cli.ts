@@ -4,7 +4,7 @@
 // and nothing else — never the env file or a credential, never a request. It prints counts and sizes
 // only: never the salt, a file's contents, or an id.
 import { dataDir } from './config.js';
-import { collectExport, encodeBundle, humanSize, StateBundleError, STORES, writeBundleFile } from './state-bundle.js';
+import { collectExport, encodeBundle, humanSize, MAX_EXPORT_DECISION_BYTES, StateBundleError, STORES, writeBundleFile } from './state-bundle.js';
 
 const USAGE =
   'Usage: warapp-mcp export-state --out <file> [--data-dir <dir>] [--account <war.app player id>] [--force]\n' +
@@ -59,10 +59,12 @@ export async function runExportCli(argv: readonly string[], io: Io = defaultIo):
       const fs = r.files.filter((f) => f.store === store);
       if (fs.length) io.out(`  ${store}: ${fs.length} file${fs.length === 1 ? '' : 's'}, ${humanSize(fs.reduce((n, f) => n + f.bytes.length, 0))}`);
     }
-    const { finishedGames, unknownGames, otherAccountFiles } = r.leftOut;
+    const { finishedGames, unknownGames, otherAccountFiles, decisionLogs } = r.leftOut;
     io.out(
       `Left out: per-game files of ${finishedGames} finished game(s) and ${unknownGames} game(s) of unknown state, ` +
-        `${otherAccountFiles} file(s) of another account; credentials, chat, maps, stats and the bundle cache are never included.`,
+        `${otherAccountFiles} file(s) of another account` +
+        (decisionLogs ? `, ${decisionLogs} older decision log(s) past the bundle's ${humanSize(MAX_EXPORT_DECISION_BYTES)} share` : '') +
+        '; credentials, chat, maps, stats and the bundle cache are never included.',
     );
     io.out('It holds the salt behind your hashed history: keep it private, and delete it once imported.');
     return 0;

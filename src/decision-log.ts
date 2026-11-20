@@ -885,8 +885,9 @@ export function loggedTurns(log: Pick<DecisionLog, 'turns'>): Map<number, Logged
  * Write the end-of-game truth (no-gaps rule (c)): `make` gets what each logged turn offers and returns
  * the truth (src/analysis/decision-truth.ts); every turn it covers gets its `truth` (a turn with no
  * entry, a truth-only entry), every logged turn its `accuracy`, the log its `accuracySummary` and
- * `truthMissing`, and status `finished` (a compacted log stays compacted). Starts a log for a game with
- * none. Running it again replaces what it wrote. `true` when written. Never throws.
+ * `truthMissing`, and status `finished` (a compacted log stays compacted). Starts no log: a game with
+ * none, or with truth only, gets nothing. Running it again replaces what it wrote. `true` when written.
+ * Never throws.
  */
 export async function recordTruth(
   dir: string,
@@ -900,6 +901,9 @@ export async function recordTruth(
     gameId,
     playerId,
     (log) => {
+      // No turn logged (no log, or truth only): nothing to score, and a truth-only file per finished game
+      // would crowd real logs out of the prune's budget. Gaps inside a log still get truth-only entries.
+      if (!Object.values(log.turns).some((e) => Object.keys(e).some((k) => k !== 'truth' && k !== 'accuracy'))) return undefined;
       const r = make(loggedTurns(log));
       if (!r) return undefined;
       const turns: Record<string, DecisionEntry> = {};

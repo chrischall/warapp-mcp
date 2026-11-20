@@ -189,11 +189,21 @@ describe('end-of-game truth in the log (#412 task 3)', () => {
     expect(Object.keys((await readDecisionLog(dir, GAME))!.turns)).toEqual(['2']);
   });
 
-  it('starts a log for a game played without one, and keeps a compacted log compacted', async () => {
-    expect(await recordTruth(dir, GAME, ME, () => result([1]), { mode: 'on' })).toBe(true);
-    expect((await readDecisionLog(dir, GAME))!.playerId).toBe(ME);
-    await write({ ...(await readDecisionLog(dir, GAME))!, status: 'compacted' });
-    await recordTruth(dir, GAME, ME, () => result([1]), { mode: 'on' });
+  it('starts no log for a game played without one (nor fills a truth-only one), and keeps a compacted log compacted', async () => {
+    let asked = false;
+    const make = () => {
+      asked = true;
+      return result([1]);
+    };
+    expect(await recordTruth(dir, GAME, ME, make, { mode: 'on' })).toBe(false);
+    expect(await readDecisionLog(dir, GAME)).toBeUndefined();
+    await write(logOf({}));
+    expect(await recordTruth(dir, GAME, ME, make, { mode: 'on' })).toBe(false);
+    await write({ ...logOf({}), turns: { '1': { truth: result([1]).truth.get(1) } } as never });
+    expect(await recordTruth(dir, GAME, ME, make, { mode: 'on' })).toBe(false);
+    expect(asked).toBe(false);
+    await write({ ...logOf({ 2: decided(2) }), status: 'compacted' });
+    expect(await recordTruth(dir, GAME, ME, make, { mode: 'on' })).toBe(true);
     expect((await readDecisionLog(dir, GAME))!.status).toBe('compacted');
   });
 
