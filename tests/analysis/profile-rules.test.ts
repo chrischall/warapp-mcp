@@ -87,7 +87,8 @@ describe('rule 0p.1: a 1v1 in contact', () => {
       ],
     ),
   );
-  const s = board([mine(1, 1), mine(2, 2), neutral(4, 2), neutral(5, 2), enemy(8, 2), neutral(9, 2), enemy(11, 2)]);
+  // T11 holds 1 so the armies in view are level (3 against 3): #287 reads 1.25× or more in view as behind in a 1v1.
+  const s = board([mine(1, 1), mine(2, 2), neutral(4, 2), neutral(5, 2), enemy(8, 2), neutral(9, 2), enemy(11, 1)]);
   const input = (options: PlanInput['options'] = {}): PlanInput => ({
     graph: g,
     board: s,

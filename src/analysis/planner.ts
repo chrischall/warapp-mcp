@@ -62,7 +62,8 @@
 //     returned as `profile`: format (1v1 / ffa / teams), phase (opening / expansion /
 //     contact / late; in an FFA, contact only when an enemy stack as it stands can take a
 //     territory of mine or most of my borders face enemies, #132), standing (my income against the strongest opponent's estimate:
-//     ahead ≥ AHEAD_RATIO×, behind ≤ BEHIND_RATIO×, unknown when fog hides most of the
+//     ahead ≥ AHEAD_RATIO×, behind ≤ BEHIND_RATIO× (#287: in a 1v1 also when the opponent's armies in
+//     view are ≥ OUTNUMBERED_RATIO× mine), unknown when fog hides most of the
 //     board) and the settings that shape strategy. #276: with One Army Must Stand Guard off it
 //     names that case first (`guard`, `guardCase`: what it means for interior defence) and its note
 //     leads `notes`; with the guard on it is absent, so a guard-on plan is unchanged

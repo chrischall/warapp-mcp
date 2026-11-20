@@ -1321,7 +1321,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     an enemy still playing with no estimate is named and forbids `ahead`, which reads `unknown`; #275: an
     opponent whose estimate a tripwire broke, `PlanInput.untrusted`, is compared at the larger of its estimate and
     its untrusted figure, and the standing is never `even` while one runs: it reads `behind`, not under `enemyDeploy`;
-    reading `behind` on armies in view alone, an opponent's ≥ 1.25 × mine with no tripwire, is not done: deferred to #287)
+    #287, the owner's choice of 2026-11-19, 1v1 only: `ahead` or `even` reads `behind` when the opponent's armies in view
+    are at least `OUTNUMBERED_RATIO` (1.25) × mine — never in a free-for-all, where a clear leader above me (#167:
+    strength ≥ 1.25 × the next) would always read `behind` and the profile defend instead of combining against it; the
+    goal line then says "behind on the board, not on income" rather than naming incomes that are not why)
     and the strategy settings. `warapp_plan_turn` passes `adapt: true`: with no `goal` the profile picks
     it (behind → `defend`, else `balanced`) and its rules fire (1v1 in contact: advances rank
     below holds and breaks; FFA with 2+ opponents: no second front; behind: no pressure margin;

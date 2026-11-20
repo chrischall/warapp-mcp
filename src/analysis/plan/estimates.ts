@@ -839,13 +839,18 @@ export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
     );
   } else if (auto) {
     const strongest = estimateList.reduce((m, e) => Math.max(m, e.estimate), 0);
+    // #287: a 1v1 can read behind on the armies in view alone; then the incomes are not why.
+    const behindWhy =
+      income <= BEHIND_RATIO * strongest
+        ? `behind on income (${income} against ~${strongest})`
+        : `behind on the board, not on income (${income} against ~${strongest}: the standing says why)`;
     rationale.push(
       siege?.auto
-        ? `Goal siege from the game profile (${profileText}): it plans as balanced against player ${siege.target}, its cheap bonus breaks first and its other territories held back until the assault trigger fires${minimal ? `; behind on income (${income} against ~${strongest}), attacks are sized at the minimum (no extra margin beyond what the rules require)` : ''}.`
+        ? `Goal siege from the game profile (${profileText}): it plans as balanced against player ${siege.target}, its cheap bonus breaks first and its other territories held back until the assault trigger fires${minimal ? `; ${behindWhy}, attacks are sized at the minimum (no extra margin beyond what the rules require)` : ''}.`
         : strike
-          ? `Goal balanced from the game profile (${profileText}): behind on income (${income} against ~${strongest}) in a 1v1 — strike: break the opponent's bonuses with minimal attacks before expansion that completes nothing (holds of my own bonuses that pay for themselves still come first), sized at the minimum (no extra margin beyond what the rules require).`
+          ? `Goal balanced from the game profile (${profileText}): ${behindWhy} in a 1v1 — strike: break the opponent's bonuses with minimal attacks before expansion that completes nothing (holds of my own bonuses that pay for themselves still come first), sized at the minimum (no extra margin beyond what the rules require).`
           : minimal
-          ? `Goal defend from the game profile (${profileText}): behind on income (${income} against ~${strongest}), so defend first and size attacks at the minimum (no extra margin beyond what the rules require).`
+          ? `Goal defend from the game profile (${profileText}): ${behindWhy}, so defend first and size attacks at the minimum (no extra margin beyond what the rules require).`
           : `Goal balanced from the game profile (${profileText}): the base goal.`,
     );
     if (pressureFactor !== PRESSURE_FACTOR)
