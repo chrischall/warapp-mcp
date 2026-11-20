@@ -1,3 +1,4 @@
+import type { BlobStore } from '@chrischall/mcp-utils/export';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -84,6 +85,8 @@ export async function liveHarness(
     bundle?: WarappBundle;
     /** Called before each GameFeed call is answered (e.g. to hold one back); default none. */
     beforeFeed?: (url: string) => Promise<void>;
+    /** The mcp-host blob store (upload slots, the state import); default none. */
+    blobStore?: BlobStore;
   } = {},
 ): Promise<Harness> {
   const dataDir = opts.dataDir ?? mkdtempSync(join(tmpdir(), 'warapp-mcp-test-'));
@@ -108,6 +111,7 @@ export async function liveHarness(
       bridge,
       bundle: async () => bundle,
       ...(opts.directFetch ? { directFetch: opts.directFetch } : {}),
+      blobStore: opts.blobStore ?? null,
     }),
     opts.elicitation ? { elicitation: opts.elicitation } : undefined,
   );

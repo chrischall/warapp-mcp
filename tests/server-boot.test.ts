@@ -90,6 +90,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_accept_surrender',
       'warapp_advise_diplomacy',
       'warapp_analyze_board',
+      'warapp_backfill_history',
       'warapp_begin_turn',
       'warapp_chat_inbox',
       'warapp_check_plan',
