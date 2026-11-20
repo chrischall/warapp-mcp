@@ -160,6 +160,9 @@ describe('gameOutlook (#178)', () => {
     // hold no more than 210 then: winning that turn is sound. By turn 12 the bound no longer is, and
     // (#436) the incomes read behind: its 15 + 5 in view against my 5 + 5.
     expect(o.turns.map((t) => t.state)).toEqual(['winning', 'behind', 'behind']);
+    expect(o.state).toBeNull();
+    expect(o.heldTurns).toBe(2);
+    expect(o.basis).toMatch(/Behind for 2 of the 3 turns \(winning, behind, behind\), so no state yet/);
   });
 
   it('a bounded opponent with no strength at all is dominated: winning', () => {

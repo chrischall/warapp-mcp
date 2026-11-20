@@ -305,6 +305,11 @@ export interface OutlookTurn {
   income?: OutlookIncome;
   /** #436: the bonuses in reach (latest turn only), largest first; absent when none. */
   bonusesInReach?: BonusInReach[];
+  /**
+   * #436: `even` when the state is an income lean (`ahead`, `behind` or `unknown`) that replaced an even
+   * reading on strength; absent otherwise. Even-on-strength turns are one run, whatever their leans.
+   */
+  strength?: 'even';
   state: OutlookState;
 }
 
@@ -338,9 +343,13 @@ export interface OutlookEvidence {
 }
 
 export interface GameOutlook {
-  /** The state, once it held for {@link OUTLOOK_TURNS} turns; `null` until then. */
+  /**
+   * The state, once it held for {@link OUTLOOK_TURNS} turns; `null` until then. #436: turns that read even on
+   * strength are one run whatever their income leans; the run reports its lean when every turn judged read
+   * the same one, else `even`.
+   */
   state: OutlookState | null;
-  /** How many of the latest turns read the newest turn's state. */
+  /** How many of the latest turns read the newest turn's state (#436: or, read even on strength, were even on strength). */
   heldTurns: number;
   /** The turns judged (the latest {@link OUTLOOK_TURNS} consecutive ones), oldest first. */
   turns: OutlookTurn[];
@@ -352,7 +361,8 @@ export interface GameOutlook {
   /** #304: the latest turn's {@link OutlookEvidence}; absent with no turn judged. */
   evidence?: OutlookEvidence;
   /**
-   * #368: every turn judged ({@link OUTLOOK_TURNS} running) read `even` while my side lost a bonus on each
+   * #368: every turn judged ({@link OUTLOOK_TURNS} running) read `even` (#436: on strength, whatever its income
+   * lean) while my side lost a bonus on each
    * (`lost`: per turn, the value of the bonuses lost): the ratio lags a slide the board already shows, so
    * the game leans behind. Reported beside the state, which it never changes (the thresholds stay; the
    * profile's standing is #287's). Absent otherwise.
@@ -1008,16 +1018,38 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       delete inc.byTrend;
     }
     inc.lean = lean;
-    if (t.state === 'even') t.state = lean;
+    if (t.state === 'even' && lean !== 'even') {
+      t.state = lean;
+      t.strength = 'even';
+    }
   }
 
   const last = turns.at(-1);
+  // #436: an income lean moves from turn to turn; the turns that read even on strength are one run, so a
+  // lean that changes (even, behind, behind on a slide) does not reset the hold. The run reports its lean
+  // when every turn judged read it, else `even`.
+  const evenOnStrength = (t: OutlookTurn) => t.state === 'even' || t.strength === 'even';
+  const sameRun = (t: OutlookTurn) => (last && evenOnStrength(last) ? evenOnStrength(t) : t.state === last?.state);
   let heldTurns = 0;
-  for (let i = turns.length - 1; i >= 0 && turns[i]!.state === last?.state; i--) heldTurns++;
-  const state = last && heldTurns >= OUTLOOK_TURNS ? last.state : null;
-  // #368: even for OUTLOOK_TURNS turns running while a bonus of mine fell on each: leaning behind.
+  for (let i = turns.length - 1; i >= 0 && sameRun(turns[i]!); i--) heldTurns++;
+  const held = turns.slice(turns.length - heldTurns);
+  const state: OutlookState | null =
+    !last || heldTurns < OUTLOOK_TURNS
+      ? null
+      : evenOnStrength(last)
+        ? held.every((t) => t.state === last.state)
+          ? last.state
+          : 'even'
+        : last.state;
+  // #368: even on strength for OUTLOOK_TURNS turns running while a bonus of mine fell on each: leaning
+  // behind. #436: whatever the income lean (the lean is the incomes; the slide is the board), unless the run
+  // already reads behind.
   const leaning: GameOutlook['leaning'] =
-    state === 'even' && turns.length >= OUTLOOK_TURNS && turns.every((t) => t.bonusesLost?.length)
+    state !== null &&
+    state !== 'behind' &&
+    turns.length >= OUTLOOK_TURNS &&
+    turns.every(evenOnStrength) &&
+    turns.every((t) => t.bonusesLost?.length)
       ? {
           toward: 'behind',
           turns: turns.length,
@@ -1108,9 +1140,13 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     reading =
       turns.length < OUTLOOK_TURNS
         ? `Only ${turns.length} turn${turns.length === 1 ? '' : 's'} of boards in a row (${OUTLOOK_TURNS} needed), so no state yet; ${figures}.`
-        : state
-          ? `${state[0]!.toUpperCase()}${state.slice(1)} for ${OUTLOOK_TURNS} turns running; ${figures}.`
-          : `${last.state[0]!.toUpperCase()}${last.state.slice(1)} for ${heldTurns} of the ${OUTLOOK_TURNS} turns (${turns.map((t) => t.state).join(', ')}), so no state yet; ${figures}.`;
+        : evenOnStrength(last) && !held.every((t) => t.state === last.state)
+          ? state
+            ? `Even on strength for ${OUTLOOK_TURNS} turns running, the incomes reading ${turns.map((t) => t.state).join(', ')}; ${figures}.`
+            : `Even on strength for ${heldTurns} of the ${OUTLOOK_TURNS} turns (${turns.map((t) => t.state).join(', ')}), so no state yet; ${figures}.`
+          : state
+            ? `${state[0]!.toUpperCase()}${state.slice(1)} for ${OUTLOOK_TURNS} turns running; ${figures}.`
+            : `${last.state[0]!.toUpperCase()}${last.state.slice(1)} for ${heldTurns} of the ${OUTLOOK_TURNS} turns (${turns.map((t) => t.state).join(', ')}), so no state yet; ${figures}.`;
     // #304: the incomes compared and each opponent's frontier read, said beside the state, and thin
     // evidence named so that "even" does not read as safe.
     const ev = last.evidence;

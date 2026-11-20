@@ -2114,8 +2114,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   outlook, the outlook log (per turn and `latest`, without the coverage's words) and the surrender preview
   carry it. Reporting only: it never changes the state, a ratio or any plan.
   **Leaning behind (#368).** Each outlook turn names the positive bonuses my side held in full on the board
-  before and no longer does (`bonusesLost`); when the state is `even` for `OUTLOOK_TURNS` running and every
-  turn of the run lost one, `GameOutlook.leaning` is `{ toward: 'behind', turns, lost }` and the basis says
+  before and no longer does (`bonusesLost`); when the state is `even` on strength for `OUTLOOK_TURNS` running
+  (#436: whatever each turn's income lean, unless the run reports `behind`) and every turn of the run lost one, `GameOutlook.leaning` is `{ toward: 'behind', turns, lost }` and the basis says
   "Leaning behind: …"; plan_turn's compact outlook carries it. Reporting only: the state, its thresholds and
   the profile's standing (#287) are unchanged.
   **Incomes, their trend, and the surrender line (#436, owner decision of 2026-11-20).** Each turn carries `income`
@@ -2132,7 +2132,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   to (`byTrend`). No lead is claimed at low coverage (any `evidence.thin`): `ahead` reads `unknown`, and a win on
   the likely high alone is not read (`noLeadClaim`; a win on the bound still is). The lean replaces `even` as the
   state (winning, losing, stalemate keep their tests; the planner reads only winning and losing), so the state can
-  read `ahead`, `behind`, `unknown`; the chat standing maps them. `GameOutlook.pace` is the pace line (both incomes
+  read `ahead`, `behind`, `unknown`; the chat standing maps them. A turn whose lean replaced `even` carries
+  `strength: 'even'`, and turns even on strength are one run for the hold whatever their leans: the run reports its
+  lean when every turn judged read it, else `even` (a slide reading even, behind, behind holds `even`, and #368's
+  lean behind still reads). `GameOutlook.pace` is the pace line (both incomes
   and their change per turn) and `surrenderLine` — ADVICE ONLY, the server never acts on it — is present while my
   income is under ⅔ of the strongest estimate, `crossed` after `SURRENDER_TURNS` (3) turns running with no bonus in
   reach closing the gap (`bonusesInReach`: every missing member beside my land, its visible defenders below my

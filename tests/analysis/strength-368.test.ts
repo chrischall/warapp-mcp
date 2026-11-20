@@ -326,8 +326,24 @@ describe('(4) the outlook leans behind when it reads even while bonuses keep fal
   const run = (ks: number[], baseIncome = 50) =>
     gameOutlook({ graph: lg, me: ME, boards: ks.map((k, i) => ({ turn: 3 + i, board: held(k) })), settings: { baseIncome }, game });
 
-  it('#436: at the default base income the same slide reads behind on the incomes and their trend', () => {
-    expect(run([5, 4, 3, 2], 5).turns.map((t) => t.state)).toEqual(['even', 'behind', 'behind']);
+  it('#436: at the default base income the same slide reads behind on the incomes, and still holds even with the lean behind', () => {
+    const o = run([5, 4, 3, 2], 5);
+    expect(o.turns.map((t) => t.state)).toEqual(['even', 'behind', 'behind']);
+    // Every turn read even on strength: the income leans (even, behind, behind) are one run, held for three turns.
+    expect(o.turns.map((t) => t.strength ?? t.state)).toEqual(['even', 'even', 'even']);
+    expect(o.heldTurns).toBe(3);
+    expect(o.state).toBe('even');
+    expect(o.leaning).toEqual({ toward: 'behind', turns: 3, lost: [{ turn: 4, value: 1 }, { turn: 5, value: 1 }, { turn: 6, value: 1 }] });
+    expect(o.basis).toMatch(/Even on strength for 3 turns running, the incomes reading even, behind, behind/);
+    expect(o.basis).toMatch(/Leaning behind: even for 3 turns running/);
+  });
+
+  it('#436: two even-on-strength turns are not yet a state, whatever their income leans', () => {
+    const o = run([5, 4], 5);
+    expect(o.turns.map((t) => t.state)).toEqual(['even', 'behind']);
+    expect(o.state).toBeNull();
+    expect(o.heldTurns).toBe(2);
+    expect(o.basis).toMatch(/Only 2 turns of boards in a row/);
   });
 
   it('even for OUTLOOK_TURNS turns running, a bonus of mine lost on each: leaning behind, with the bonuses lost', () => {
