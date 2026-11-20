@@ -214,6 +214,9 @@
 //          #421, the break spend: on the pile (`pc.pile`), rule 4a runs the break of the strongest
 //          opponent's cheapest visible bonus before every other capture, never skipped as a second
 //          front ("Stockpile spend (#421): …").
+//          #421, the all-in completion: on the pile, each contested bonus is planned all-in through
+//          #298's push (`planPushed`, `PlanInput.stockpileAllIn`), kept only when taken whole
+//          ("Stockpile all-in (#421): …").
 //       3d. Decided (#201): given `options.outlook` (#178) reporting winning or losing, the game is
 //          decided, and every payback test (PAYBACK_TURNS everywhere it appears in these rules)
 //          counts the turns it has left instead: the loser's strength over the winner's income a
@@ -1663,6 +1666,7 @@ import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
+import { contestedBonuses } from './plan/stockpile.js';
 import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
@@ -1780,18 +1784,75 @@ function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>
 const allInOutcome = new WeakMap<TurnPlan, ReadonlyMap<number, AllInTry>>();
 
 /**
+ * #298's attempt memory ({@link planAttempts}), then #421's stockpile all-in completions: on a pile, the
+ * contested bonuses a push could complete are planned all-in, those it does not take whole left out.
+ */
+function planPushed(input: PlanInput): TurnPlan {
+  const plan = planAttempts(input);
+  const candidates = pileAllInOutcome.get(plan);
+  if (!candidates?.length) return plan;
+  // #421 (owner decision, 2026-11-20): on a stockpile, every contested bonus whose missing members can all be
+  // taken this turn — each an opponent holds sized for its owner's deploy, the push within the payback horizon ×
+  // its value — is completed all-in. One the plan does not take whole is left out (no drop: it is no failed
+  // attempt), and a push that would cost a #298 verdict its plan is not made.
+  const missingOf = (id: number) => {
+    const at = new Map(input.board.territories.map((t) => [t.territoryId, t.owner]));
+    return bonusTerritories(input.graph, id).filter((t) => {
+      const o = at.get(t);
+      return !(o?.kind === 'player' && o.playerId === input.me);
+    });
+  };
+  const pushed = new Set(candidates);
+  for (;;) {
+    const next = planAttempts({ ...input, stockpileAllIn: new Set(pushed) });
+    const tries = allInOutcome.get(next);
+    const taken = new Set(next.expected.captures);
+    const failing = [...pushed].filter((id) => !tries?.get(id)?.feasible || missingOf(id).some((t) => !taken.has(t)));
+    if (!failing.length) {
+      if (JSON.stringify(next.bonusPush ?? []) !== JSON.stringify(plan.bonusPush ?? [])) return plan;
+      const name = (id: number) => `${input.graph.bonusById.get(id)!.name} (#${id})`;
+      for (const id of [...pushed].sort((a, b) => a - b)) {
+        const t = tries!.get(id)!;
+        next.rationale.push(
+          `Stockpile all-in (#421): bonus ${name(id)} is contested and my armies stand idle on a flat income, so every missing member is taken this turn, each one another player holds sized for its owner's deploy: ${t.cost} armies, within the cap of ${t.cap} (the payback horizon × its value).`,
+        );
+      }
+      return next;
+    }
+    for (const id of failing) pushed.delete(id);
+    if (!pushed.size) return plan;
+  }
+}
+
+/** #421: per plan, the contested bonuses a stockpile could push all-in (only on a plan made without such a push). */
+const pileAllInOutcome = new WeakMap<TurnPlan, readonly number[]>();
+
+/** Merge the #421 stockpile pushes (`input.stockpileAllIn`) into #298's push and focus. */
+function withPush(input: PlanInput, allIn: ReadonlySet<number>, dropped: ReadonlySet<number>): PlanInput {
+  const ids = new Set([...allIn, ...(input.stockpileAllIn ?? [])]);
+  const focus = [...new Set([...(input.options?.focusBonusIds ?? []), ...ids])];
+  return {
+    ...input,
+    bonusPush: { allIn: ids, dropped },
+    options: { ...input.options, ...(ids.size ? { focusBonusIds: focus } : {}) },
+  };
+}
+
+/**
  * #298: the plan with the attempt memory's verdicts (plan/bonus-attempts.ts). A bonus whose completion
  * failed on two consecutive turns is pushed all-in (focused, every missing member sized for its owner's
  * deploy or not taken); when the push does not fit the cap, or the plan does not take every missing
  * member, it is planned again with that bonus dropped for DROP_TURNS turns. With no verdict, the plan
  * is exactly what it was without the memory.
  */
-function planPushed(input: PlanInput): TurnPlan {
+function planAttempts(input: PlanInput): TurnPlan {
   const turn = input.turn;
-  if (!input.bonusAttempts || turn === undefined) return planShare(input);
+  const none = new Set<number>();
+  if (!input.bonusAttempts || turn === undefined)
+    return planShare(input.stockpileAllIn?.size ? withPush(input, none, none) : input);
   const judged = judgeAttempts(input.bonusAttempts, turn, input.graph, input.board, input.me);
   const verdicts = bonusVerdicts(judged, turn).filter((v) => input.graph.bonusById.has(v.bonusId));
-  if (!verdicts.length) return planShare(input);
+  if (!verdicts.length) return planShare(input.stockpileAllIn?.size ? withPush(input, none, none) : input);
   const entries = new Map<number, BonusPushEntry>();
   for (const v of verdicts)
     if (v.kind === 'dropped') entries.set(v.bonusId, { ...v });
@@ -1816,12 +1877,7 @@ function planPushed(input: PlanInput): TurnPlan {
   let plan: TurnPlan;
   for (;;) {
     const ids = new Set(allIn.map((v) => v.bonusId));
-    const focus = [...new Set([...(input.options?.focusBonusIds ?? []), ...ids])];
-    plan = planShare({
-      ...input,
-      bonusPush: { allIn: ids, dropped: new Set([...entries.keys()]) },
-      options: { ...input.options, ...(ids.size ? { focusBonusIds: focus } : {}) },
-    });
+    plan = planShare(withPush(input, ids, new Set([...entries.keys()])));
     const tries = allInOutcome.get(plan);
     const taken = new Set(plan.expected.captures);
     const failing = allIn.flatMap((v) => {
@@ -3394,6 +3450,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
   if (tgt.allInTries.size) allInOutcome.set(plan, tgt.allInTries);
   if (pc.strikeShare > 0) shareOutcome.set(plan, pc.strikeShare);
+  // #421: on a stockpile, the contested bonuses this plan does not complete that an all-in push could (planPushed).
+  if (pc.pile && !input.stockpileAllIn) {
+    const done = new Set(plan.expected.bonusesCompleted);
+    const pushed = new Set([...(input.bonusPush?.allIn ?? []), ...(input.bonusPush?.dropped ?? [])]);
+    const ids = contestedBonuses(g, state, mineSet, foe).filter((id) => !done.has(id) && !pushed.has(id));
+    if (ids.length) pileAllInOutcome.set(plan, ids);
+  }
   // #274: a plan that walks my commander says so first.
   if (pc.commanderAt?.retreat) plan.warnings.unshift(commanderMoveWarning(pc.commanderAt.retreat, label));
   return plan;

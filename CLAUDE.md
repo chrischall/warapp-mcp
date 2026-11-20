@@ -1864,7 +1864,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     before every other capture (`Candidate.spend`, moved ahead of the first capture; holds keep their places, and
     the held-bonus units still fund first at it) and never skips it as a second front, with a "Stockpile spend
     (#421)" line and the attack's reason naming it. Golden byte-identical; with the flat history injected, 12 plans
-    changed (the line), none in their orders. Left for later: all-in completions.
+    changed (the line), none in their orders. **The all-in completion (#421, same decision):** on the pile, each
+    contested bonus (`contestedBonuses`: positive, a member mine, every missing member in view beside mine, one an
+    opponent's, none a teammate's) the plan does not complete, and #298 neither pushes nor drops, is planned all-in
+    (`planPushed` → `planAttempts` with `PlanInput.stockpileAllIn`: #298's push, focused, its missing members bonus
+    targets under `balanced` — an opponent's included — each an opponent holds sized for its owner's deploy, the push
+    capped at the payback horizon × its value, not at my income: the armies already stand on the board). One the plan
+    does not take whole is left out without a drop or a `bonusPush` entry (no failed attempt), and the pushes are not
+    made when they would change a #298 verdict's outcome. A "Stockpile all-in (#421)" line names each. Golden
+    byte-identical; with the flat history injected, 11 plans had a candidate and none was taken whole (8 over the
+    cap, 4 not taken): no plan changed.
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and

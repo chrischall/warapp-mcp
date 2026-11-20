@@ -1,14 +1,16 @@
 // #421, spending a stockpile: the armies of mine in view against my income, and what the planner does when
-// they pile up on a flat income. Pure, and a leaf (types only), so the estimates phase and the strike
-// phase read one rule:
+// they pile up on a flat income. Pure (it imports no plan phase), so the estimates phase, the strike phase
+// and planTurn read one rule:
 // - the pile (`pileOf`): my income is flat and my armies in view are at least STOCKPILE_TURNS turns of it;
 // - outside a 1v1, the pile builds a strike stack facing the opponent beside me whose armies in view mine
 //   outnumber STOCKPILE_LEAD× (`stockpileOf`, #450);
 // - once in contact on a flat income, STRIKE_SHARE of the income is held out of captures for the strike
 //   stack (`strikeShareOf`: holds keep their exact need first; owner decision of 2026-11-20);
 // - on the pile, the turn also spends by breaking the strongest opponent's cheapest visible bonus and by
-//   all-in completions of contested bonuses (planner.ts).
+//   all-in completions of the contested bonuses (`contestedBonuses`; planner.ts).
 import type { TerritoryState } from '../../board.js';
+import { bonusTerritories } from '../bonuses.js';
+import { neighborsOf, type MapGraph } from '../graph.js';
 import type { IncomeTrend } from '../income-trend.js';
 import type { GameProfile } from '../profile.js';
 import type { PlanGoal } from './shared.js';
@@ -93,4 +95,37 @@ export function strikeShareOf(
     (a.auto && a.format === '1v1' && a.goal !== 'defend' && a.contact.size > 0) ||
     stockpileOf({ ...a, siege: a.siege !== undefined, facing: a.contact }) !== undefined;
   return stack ? Math.floor(STRIKE_SHARE * a.income) : 0;
+}
+
+/**
+ * #421 (owner decision, 2026-11-20): the contested bonuses an all-in completion could take on the pile — a
+ * positive bonus I hold a member of, whose every missing member is in view (armies shown) beside a territory of
+ * mine, at least one of them an opponent's, none a teammate's. By id.
+ */
+export function contestedBonuses(
+  g: MapGraph,
+  territories: ReadonlyMap<number, TerritoryState>,
+  mineSet: ReadonlySet<number>,
+  foe: (p: number) => boolean,
+): number[] {
+  return g.map.bonuses
+    .filter((b) => {
+      const ts = bonusTerritories(g, b.id);
+      if (b.value <= 0 || !ts.some((t) => mineSet.has(t))) return false;
+      const missing = ts.filter((t) => !mineSet.has(t));
+      if (!missing.length) return false;
+      let opponent = false;
+      for (const t of missing) {
+        const st = territories.get(t);
+        if (!st || st.armies === null || st.owner.kind === 'unknown' || st.owner.kind === 'available') return false;
+        if (!neighborsOf(g, t).some((n) => mineSet.has(n))) return false;
+        if (st.owner.kind === 'player') {
+          if (!foe(st.owner.playerId)) return false;
+          opponent = true;
+        }
+      }
+      return opponent;
+    })
+    .map((b) => b.id)
+    .sort((a, b) => a - b);
 }

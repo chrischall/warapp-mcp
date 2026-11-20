@@ -530,6 +530,12 @@ export interface PlanInput {
    * pass (each missing member sized for its owner's deploy, or not taken) and those dropped as targets.
    */
   bonusPush?: { allIn: ReadonlySet<number>; dropped: ReadonlySet<number> };
+  /**
+   * #421, set by planTurn on a stockpile (callers leave it out): the contested bonuses pushed all-in as a spend
+   * of the pile — every missing member a target (an opponent's included), sized for its owner's deploy or not
+   * taken, the push capped at the payback horizon × the bonus's value (the armies already stand on the board).
+   */
+  stockpileAllIn?: ReadonlySet<number>;
   settings?: PlannerSettings;
   options?: PlanOptions;
   /** The game around the board, for the profile (rule 0p). */
