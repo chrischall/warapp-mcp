@@ -2,9 +2,10 @@
 // read as deploy up to twice the income carried so far (#123), so walk-ins compounded the carry
 // (10, 20, 40, …) while nothing read in full backed it. Every board here is synthetic.
 //  1. A rise no turn read in full confirmed is held to RISE_CAP × the carry before it, each turn, while
-//     I lead it on the board (my income above what it reads, LEAD_ARMIES × its armies in view).
+//     I lead it on the board (my income above the carry before the rise, LEAD_ARMIES × its armies in view).
 //  2. A rise a turn read in full confirmed is kept whole.
-//  3. No trend step on thin evidence when I lead it on income and on armies in view.
+//  3. No trend step on thin evidence when I lead it on income and on armies in view (with LEAD_ARMIES ×
+//     its armies in view, on income above what it earned before the newest rise, however high it reads).
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
@@ -82,8 +83,25 @@ describe('1. an unconfirmed rise is held to RISE_CAP × the carry a turn while I
     expect(t!.incomeMethod).toBe('max-observed');
   });
 
-  it('my income not above what it reads: the rise is read as before, however many armies I have', () => {
-    // The first map: my bonus +5, income 10, below the reads of 20 and 40.
+  it('a reading above my income while I lead three to one on armies is still held: my income is above the carry before it', () => {
+    // My bonus +10: income 15, above the carry of 10 but below the walk-in read up to twice it (20).
+    const g15 = buildGraph(
+      makeMap(range(1, 9), line(9), [
+        [101, 10, [1, 2, 3]],
+        [102, 20, [6, 7]],
+        [103, 25, [8, 9]],
+      ]),
+    );
+    const [t] = trackOpponents(g15, history([at(5), at(50), at(95)]), ME, STD);
+    expect(t!.turns.map((x) => x.leadIncome)).toEqual([15, 15]);
+    expect(t!.turns.map((x) => x.observed)).toEqual([10, 20]);
+    expect(t!.income).toBe(13);
+    expect(t!.incomeMethod).toBe('rise-capped');
+    expect(t!.incomeRise).toEqual({ read: 20, before: 10 });
+  });
+
+  it('my income not above the carry before the rise: the rise is read as before, however many armies I have', () => {
+    // The first map: my bonus +5, income 10, not above the carry of 10 the first walk-in rose from.
     const [t] = trackOpponents(g, history([at(5), at(50), at(95), at(140)]), ME, STD);
     expect(t!.turns.map((x) => x.observed)).toEqual([10, 20, 40]);
     expect(t!.income).toBe(40);
@@ -163,15 +181,27 @@ describe('3. no trend step when I lead on income and armies in view (#418)', () 
       notes: [],
     };
   };
-  const at = (theirs: number) => {
+  const at = (theirs: number, readings = [10, 20, 40, 60]) => {
     const b = board([mine(1, 40), mine(2, 3), mine(3, 3), mine(4, 40), enemy(5, theirs), neutral(6, 2), ...fog2]);
-    return enemyDeployEstimates(g2, b, ME, S, undefined, [track([10, 20, 40, 60])]).find((e) => e.playerId === ENEMY)!;
+    return enemyDeployEstimates(g2, b, ME, S, undefined, [track(readings)]).find((e) => e.playerId === ENEMY)!;
   };
 
   it('my income 110 and 86 armies in view against its tracked 60 and 30 armies: the tracked figure, no step to 80', () => {
     const e = at(30);
     expect(e.thinEvidence).toBeNull();
     expect(e.estimate).toBe(60);
+  });
+
+  it('its tracked 160 above my income 110, but 80 before the newest rise, and 86 armies against 20: the lead holds, no step to 220', () => {
+    const e = at(20, [10, 40, 80, 160]);
+    expect(LEAD_ARMIES * 20).toBeLessThanOrEqual(86);
+    expect(e.thinEvidence).toBeNull();
+    expect(e.estimate).toBe(160);
+  });
+
+  it('the same reads under three to one on armies (86 against 30): the trend still steps above the tracked 160', () => {
+    const e = at(30, [10, 40, 80, 160]);
+    expect(e.thinEvidence).toMatchObject({ rising: [40, 80, 160], trend: 220 });
   });
 
   it('more armies in view than mine: the trend still raises the lower bound', () => {

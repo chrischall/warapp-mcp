@@ -209,8 +209,9 @@ export interface ObservedTurn {
   coverage?: FrontierCoverage;
   /**
    * #418: my income on the later board, when my armies in view there were at least
-   * {@link LEAD_ARMIES} × its own; absent otherwise. An unconfirmed rise to below it is held
-   * ({@link RISE_CAP}).
+   * {@link LEAD_ARMIES} × its own; absent otherwise. While it is above the carry before the turn (or
+   * that turn's visible income), an unconfirmed rise is held ({@link RISE_CAP}), however far the
+   * reading itself goes above it.
    */
   leadIncome?: number;
   /** Its observed deploy, capped at what it could earn ({@link ObservedTurn.cap}). */
@@ -1068,9 +1069,10 @@ const confirmedBy = (window: readonly ObservedTurn[], income: number) =>
  * bound-cut readings (section 7's +20 read 10, 20, …), is dropped the first time it deploys into
  * the fog and shows less in full — unless a turn read in full had already confirmed it.
  *
- * #418: a window figure above the carry that no turn read in full confirmed rises at most to
- * {@link RISE_CAP} × the carry (or that turn's visible income, when larger), rounded up; on a turn
- * read in full that observed less than the carry it does not rise at all.
+ * #418: while I lead it ({@link ObservedTurn.leadIncome} above the carry before the turn, or that
+ * turn's visible income when larger — not above the reading, which an over-read would pass), a window
+ * figure above the carry that no turn read in full confirmed rises at most to {@link RISE_CAP} × that
+ * figure, rounded up; on a turn read in full that observed less than the carry it does not rise at all.
  */
 function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
   let carry = null as Carry | null;
@@ -1099,7 +1101,9 @@ function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
       else {
         const before = Math.max(prev.income, x.visibleIncome);
         const limit = disproved ? prev.income : Math.ceil(before * RISE_CAP - 1e-9);
-        carry = (x.leadIncome ?? 0) > fresh.income && !fresh.confirmed && fresh.income > limit ? { ...fresh, income: limit, set: limit, rise: { read: fresh.income, before } } : fresh;
+        // #418 review: the lead is judged against the carry before the rise (or its visible income), never
+        // against the reading being judged: an over-read above my income must not switch its own cap off.
+        carry = (x.leadIncome ?? 0) > before && !fresh.confirmed && fresh.income > limit ? { ...fresh, income: limit, set: limit, rise: { read: fresh.income, before } } : fresh;
       }
     }
     if (pattern && pattern.income > carry.income) carry = pattern;
