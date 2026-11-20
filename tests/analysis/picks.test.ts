@@ -1,7 +1,7 @@
 // Pick advisor (K1, docs/PLAN-PICKS.md). Every map, id and name here is made up.
 import { describe, expect, it } from 'vitest';
 import { buildGraph, distance, type MapGraph } from '../../src/analysis/graph.js';
-import { planPicks, SPREAD_DISTANCE, type PickPlan, type PickSettings, type PlanPicksInput } from '../../src/analysis/picks.js';
+import { mapSides, planPicks, SPREAD_DISTANCE, type PickPlan, type PickSettings, type PlanPicksInput } from '../../src/analysis/picks.js';
 import type { GameMap } from '../../src/normalize.js';
 
 type Edge = [number, number];
@@ -678,5 +678,55 @@ describe('planPicks — compact 1v1 (#73)', () => {
     const input = { graph: g, pickable: [13, 11, 3, 1, 12, 2], players: 2, territoryLimit: 3, maxPicks: 6 };
     expect(plan(input)).toEqual(plan(input));
     expect(plan(input)).toEqual(plan({ ...input, pickable: regionPicks }));
+  });
+});
+
+describe('mapSides — the bonus income on my side of the map (#305)', () => {
+  // A line 1-2-3-4-5-6-7: West (+4) = {1,2}, Mid (+3) = {3,4,5}, East (+6) = {6,7}, Dud (-1) = {2}.
+  const g = mkGraph(
+    [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7]],
+    [
+      { id: 901, name: 'West', value: 4, territoryIds: [1, 2] },
+      { id: 902, name: 'Mid', value: 3, territoryIds: [3, 4, 5] },
+      { id: 903, name: 'East', value: 6, territoryIds: [6, 7] },
+      { id: 904, name: 'Dud', value: -1, territoryIds: [2] },
+    ],
+  );
+
+  it('a bonus is mine when every member is strictly nearer my primary than any implied opponent start; else contested', () => {
+    // Me on 1, the opponent on 7: 4 is 3 hops from each, so Mid is contested. Dud pays nothing: left out.
+    expect(mapSides(g, [1], [7])).toEqual({
+      known: true,
+      opponentStarts: [7],
+      mine: { income: 4, bonuses: [{ id: 901, name: 'West', value: 4 }] },
+      contested: {
+        income: 9,
+        bonuses: [
+          { id: 902, name: 'Mid', value: 3 },
+          { id: 903, name: 'East', value: 6 },
+        ],
+      },
+    });
+    // Me on 1 and 4: Mid's 5 is 1 hop from 4 against 2 from 7, so Mid is mine.
+    expect(mapSides(g, [1, 4], [7]).mine).toEqual({
+      income: 7,
+      bonuses: [
+        { id: 901, name: 'West', value: 4 },
+        { id: 902, name: 'Mid', value: 3 },
+      ],
+    });
+  });
+
+  it('says so and splits nothing when no opponent start is known', () => {
+    const s = mapSides(g, [1], []);
+    expect(s.known).toBe(false);
+    expect(s).not.toHaveProperty('mine');
+    expect(s.note).toMatch(/no opponent start/i);
+  });
+
+  it('planPicks reports it from the award, and the score is the same without it', () => {
+    const p = plan({ graph: g, pickable: [1, 4, 7], players: 2, territoryLimit: 1, maxPicks: 3 });
+    const starts = p.award?.worst.opponentStarts ?? [];
+    expect(p.side).toEqual(mapSides(g, p.groups.primary.territoryIds, starts));
   });
 });

@@ -376,6 +376,8 @@ export interface PickPlan {
   groups: { primary: PickGroup; fallback: PickGroup };
   /** The list judged by what the award order can give; absent when too many outcomes to enumerate (#129). */
   award?: AwardReport;
+  /** #305: the bonus income on my side of the map (nearer my primary than any implied opponent start) against the rest. Report only. */
+  side: MapSidesReport;
   /** The primary group's coverage ({@link coverageModel}, #166). */
   coverage: CoverageReport;
   /**
@@ -1920,6 +1922,8 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       picks,
       groups,
       ...(award ? { award } : {}),
+      // #305: report only, never scored.
+      side: mapSides(g, groups.primary.territoryIds, award?.worst.opponentStarts ?? []),
       coverage: primaryCoverage,
       ...(alternative ? { alternative } : {}),
       warnings,
@@ -2193,6 +2197,53 @@ export function impliedOpponentStarts(list: readonly number[], granted: readonly
     if (got.has(t)) last = i;
   });
   return list.slice(0, last + 1).filter((t) => !got.has(t));
+}
+
+/** A side of the map's bonuses (#305): the positive bonuses on it, ascending by id, and their summed value. */
+export interface MapSide {
+  income: number;
+  bonuses: { id: number; name: string; value: number }[];
+}
+
+/**
+ * #305 (owner decision 2026-11-20, definition 1): the bonus income on my side of the map against the rest.
+ * A positive bonus is mine when every member is strictly nearer (hops) my primary than any start the award
+ * implies for the other players; otherwise contested. With no opponent start known nothing is split
+ * (`known: false`, a note says so). Report only: it never feeds the pick score.
+ */
+export interface MapSidesReport {
+  known: boolean;
+  opponentStarts: number[];
+  mine?: MapSide;
+  contested?: MapSide;
+  note?: string;
+}
+
+export function mapSides(g: MapGraph, primary: readonly number[], opponentStarts: readonly number[]): MapSidesReport {
+  const starts = [...opponentStarts].sort((a, b) => a - b);
+  if (!starts.length || !primary.length)
+    return {
+      known: false,
+      opponentStarts: starts,
+      note: 'No opponent start is implied by the award of this list, so the map is not split into my side and the rest.',
+    };
+  const fromMe = bfsDistances(g, primary);
+  const fromThem = bfsDistances(g, starts);
+  const mine: MapSide = { income: 0, bonuses: [] };
+  const contested: MapSide = { income: 0, bonuses: [] };
+  for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
+    if (b.value <= 0) continue;
+    const members = bonusTerritories(g, b.id);
+    if (!members.length) continue;
+    const near = members.every((t) => {
+      const d = fromMe.get(t);
+      return d !== undefined && d < (fromThem.get(t) ?? Infinity);
+    });
+    const side = near ? mine : contested;
+    side.bonuses.push({ id: b.id, name: b.name, value: b.value });
+    side.income += b.value;
+  }
+  return { known: true, opponentStarts: starts, mine, contested };
 }
 
 /** Every ordering of `xs`, starting with `xs` itself (lexicographic by position). */

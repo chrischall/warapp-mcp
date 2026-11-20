@@ -223,7 +223,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `clientPickLimits`, docs/WARAPP-API.md) runs in tiers of the primary's size. The list is judged by the award
   order (rounds in a reversing move order, each player getting their best free pick: `pickOutcomes`), reporting
   the worst set it can yield and the other players' starts that implies; the primary is reordered only when that
-  raises the worst outcome. With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
+  raises the worst outcome. #305 (owner decision 2026-11-20): `side` (`mapSides`, report only, never scored) is the positive
+  bonus income on my side of the map — a bonus whose every member is strictly nearer (hops) the primary than any start that
+  worst outcome implies for the others — against the contested rest; with no start implied it splits nothing and says so
+  (`known: false`). With commanders on, the primary's safest pick (fewest other pickables within 2 hops)
   is listed first, since the first pick awarded carries the commander (#129).
   In a team game (C2) only players off my team are threats (a known start may be a teammate's: the worst case), the award is
   judged by both a reversing and a repeating order (`award.orders`, unverified), the duel rules stay two-player, the list stays

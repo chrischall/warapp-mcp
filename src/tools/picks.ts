@@ -103,6 +103,9 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           '`twoOrderCaptures` (neutrals its opening takes with two attacks because one cannot be paid for), ' +
           'the award (how many sets the round-by-round award order can grant from the list, and the worst of them with the ' +
           'other players\' starts it implies), ' +
+          '`side` (the positive bonus income on my side of the map — every member strictly nearer the primary than any start the ' +
+          'award implies for the others — against the contested rest; `known: false` with a note when no start is implied; ' +
+          'report only, never in the score), ' +
           'warnings (assumed settings) and the reasoning. The primary group carries its `coverage`: the share of reasonable bonuses ' +
           '(positive, with a pickable territory, no wasteland, value per army at least the median) a pick can stand next to within 2 moves, ' +
           'and the ones it cannot, by name. In a two-player game without spread it may also return an `alternative`: a coverage-first list ' +
@@ -298,6 +301,15 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
               reordered: plan.award.reordered,
             }
           : null,
+        // #305: the bonus income on my side of the map (nearer my primary than any start the award implies
+        // for the others) against the rest; report only, never scored.
+        side: {
+          known: plan.side.known,
+          opponentStarts: plan.side.opponentStarts.map(name),
+          ...(plan.side.mine ? { mine: plan.side.mine } : {}),
+          ...(plan.side.contested ? { contested: plan.side.contested } : {}),
+          ...(plan.side.note ? { note: plan.side.note } : {}),
+        },
         warnings: [...warnings, ...plan.warnings],
         rationale: plan.rationale,
         submitPicks: { game_id: game.id, territories: plan.picks.map((p) => p.territoryId) },

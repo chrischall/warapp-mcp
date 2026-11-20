@@ -242,6 +242,13 @@ describe('warapp_plan_picks', () => {
     // The list judged by the award order: a 3-pick 1v1 list of 6 can yield 11 sets.
     expect(p.award).toMatchObject({ outcomes: 11, reordered: expect.any(Boolean) });
     for (const t of [...p.award!.worst.territories, ...p.award!.worst.opponentStarts]) expect(t.name).toBe(mapName(t.id));
+    // #305: my side of the map against the rest, by the opponent starts the worst outcome implies (report only).
+    const side = (p as unknown as { side: { known: boolean; opponentStarts: Named[]; mine?: { income: number; bonuses: { id: number; name: string; value: number }[] }; contested?: { income: number }; note?: string } }).side;
+    expect(side.opponentStarts.map((t) => t.id)).toEqual(p.award!.worst.opponentStarts.map((t) => t.id).sort((a, b) => a - b));
+    if (side.known) {
+      expect(side.mine!.income).toBe(side.mine!.bonuses.reduce((n, b) => n + b.value, 0));
+      expect(side.contested!.income).toEqual(expect.any(Number));
+    } else expect(side.note).toMatch(/no opponent start/i);
     // In a two-player game the fallback picks answer the loss that grants them (#166), and say so.
     expect(p.picks.slice(0, 3).some((x) => x.reasons.some((r) => r.startsWith('Answers the loss of ')))).toBe(false);
     const answers = p.picks.slice(3).flatMap((x) => x.reasons.filter((r) => r.startsWith('Answers the loss of ')));
