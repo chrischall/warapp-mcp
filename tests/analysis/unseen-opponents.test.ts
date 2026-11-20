@@ -239,33 +239,46 @@ describe('turnsUnseen when my boards do not cover the whole game (#94 review)', 
 });
 
 describe('trackGame and the caveats on the bound (#94 review)', () => {
-  it('full distribution (DistributionMode -1) leaves the starting armies out', () => {
-    const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: -1, cards: [] });
-    expect(game.start).toBeUndefined();
-    expect(game.startUnknown).toMatch(/full distribution/);
+  it('#428: DistributionMode -1 is a limited start (TerritoryLimit × InitialPlayerArmiesPerTerritory), not full distribution', () => {
+    // A finished game read the opponent's start as 189 (an even share of the map) when it was 3 × 3 = 9.
+    const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 3, distributionMode: -1, cards: [] });
+    expect(game.start).toEqual({ territories: 3, armiesPerTerritory: 3 });
+    expect(game.fullDistribution).toBeUndefined();
+    expect(game.startUnknown).toBeUndefined();
+  });
+
+  it('#428: DistributionMode 0 with no TerritoryLimit is full distribution, which leaves the starting armies out', () => {
+    for (const territoryLimit of [undefined, 0]) {
+      const game = trackGame(GAME.players, { ...(territoryLimit !== undefined ? { territoryLimit } : {}), initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] });
+      expect(game.start).toBeUndefined();
+      expect(game.startUnknown).toMatch(/full distribution/);
+      expect(game.fullDistribution).toBe(true);
+    }
   });
 
   it('#205: with the starts unknown under an even split, keeps the armies per starting territory for an upper bound', () => {
-    expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: -1, cards: [] }).startArmiesPerTerritory).toBe(2);
-    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 4, distributionMode: 0, cards: [] }).startArmiesPerTerritory).toBe(4);
+    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] }).startArmiesPerTerritory).toBe(2);
+    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 4, distributionMode: -1, cards: [] }).startArmiesPerTerritory).toBe(4);
     // A scenario sets its own starts, and without the armies per territory there is nothing to bound.
     const scenario = { distributionModes: [{ id: 7, name: 'Scenario', type: 'scenario' }] };
     expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 4, distributionMode: 7, cards: [] }, scenario).startArmiesPerTerritory).toBeUndefined();
-    expect(trackGame(GAME.players, { territoryLimit: 3, distributionMode: -1, cards: [] }).startArmiesPerTerritory).toBeUndefined();
+    expect(trackGame(GAME.players, { distributionMode: 0, cards: [] }).startArmiesPerTerritory).toBeUndefined();
     // Known starts need no ceiling.
-    expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] }).startArmiesPerTerritory).toBeUndefined();
+    expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: -1, cards: [] }).startArmiesPerTerritory).toBeUndefined();
   });
 
   it('#214 review: says when the even share is the real start (full distribution), not only a bound', () => {
-    expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: -1, cards: [] }).fullDistribution).toBe(true);
-    // Without TerritoryLimit the share is only a bound: picks may have granted far fewer.
-    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 4, distributionMode: 0, cards: [] }).fullDistribution).toBeUndefined();
+    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] }).fullDistribution).toBe(true);
+    // A limited start without TerritoryLimit: the share is only a bound, picks may have granted far fewer.
+    expect(trackGame(GAME.players, { initialPlayerArmiesPerTerritory: 4, distributionMode: -1, cards: [] }).fullDistribution).toBeUndefined();
     expect(trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] }).fullDistribution).toBeUndefined();
   });
 
   it('manual or automatic distribution keeps TerritoryLimit × InitialPlayerArmiesPerTerritory', () => {
-    const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode: 0, cards: [] });
-    expect(game.start).toEqual({ territories: 3, armiesPerTerritory: 2 });
+    for (const distributionMode of [-1, 0]) {
+      const game = trackGame(GAME.players, { territoryLimit: 3, initialPlayerArmiesPerTerritory: 2, distributionMode, cards: [] });
+      expect(game.start).toEqual({ territories: 3, armiesPerTerritory: 2 });
+    }
   });
 
   it('the Sanctions card: the note says the base-income floor may not hold', () => {

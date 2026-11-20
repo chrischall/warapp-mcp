@@ -469,8 +469,8 @@ export interface OpponentTrack {
 /**
  * {@link TrackGame} from GameFeed's players and settings: each player's starting armies are
  * TerritoryLimit × InitialPlayerArmiesPerTerritory, unless either is missing, the game uses full
- * distribution (DistributionMode -1: every territory is split among the players, TerritoryLimit
- * ignored — unverified, docs/WARAPP-API.md) or a map distribution that is not `normal` (a
+ * distribution ({@link fullDistribution}, #428: DistributionMode 0 with no TerritoryLimit — every
+ * territory is split among the players; -1 is a limited start) or a map distribution that is not `normal` (a
  * scenario sets its own starts). A Sanctions card is an income caveat: it can cut income below
  * the base the bound counts.
  */
@@ -498,7 +498,7 @@ export function trackGame(
   const base = { players: list, ...(seats.length ? { staticSeats: seats } : {}), ...(caveats.length ? { incomeCaveats: caveats } : {}) };
   const perTerritory =
     settings?.initialPlayerArmiesPerTerritory !== undefined ? { startArmiesPerTerritory: Math.max(0, settings.initialPlayerArmiesPerTerritory) } : {};
-  if (settings?.distributionMode === FULL_DISTRIBUTION)
+  if (fullDistribution(settings))
     return {
       ...base,
       startUnknown: 'the game uses full distribution, which splits every territory among the players whatever the territory limit',
@@ -530,8 +530,21 @@ export function staticSeatsFor(game: TrackGame | undefined, me: number): Map<num
 /** TerritoryLimit assumed when the settings do not say (war.app's usual default). */
 export const DEFAULT_TERRITORY_LIMIT = 3;
 
-/** GameFeed's DistributionMode for full distribution (unverified, docs/WARAPP-API.md). */
-const FULL_DISTRIBUTION = -1;
+/**
+ * GameFeed's DistributionMode for full distribution: the client's id (docs/WARAPP-API.md, #235). #428:
+ * -1 is a limited start (the client's random warlords: TerritoryLimit territories each), verified on
+ * three finished games, where reading it as full distribution put an opponent's start at 189 for a real 9.
+ */
+const FULL_DISTRIBUTION = 0;
+
+/**
+ * #428: the game deals every territory among the players — DistributionMode 0 with no TerritoryLimit
+ * (unset or 0: the client's "no cap"). Mode 0 with a TerritoryLimit stays a limited start (the client
+ * caps each player's share by the limit; that a full-distribution game never sends one is unverified).
+ */
+export function fullDistribution(settings: Pick<GameSettings, 'distributionMode' | 'territoryLimit'> | undefined): boolean {
+  return settings?.distributionMode === FULL_DISTRIBUTION && !(settings.territoryLimit !== undefined && settings.territoryLimit > 0);
+}
 
 /** GameFeed's DistributionMode for a custom scenario (the client's id; unverified on GameFeed, docs/WARAPP-API.md). */
 const CUSTOM_SCENARIO = -3;

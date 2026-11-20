@@ -1982,7 +1982,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   planner): each turn 2 × the higher of my income and the most any opponent was tracked earning, the
   map's even share only a ceiling — never sized by the map; it can still block `winning`. Every likely
   high starts symmetric: the given start, the even share under full distribution (the real start
-  then), else my opening board, else the default territory limit (3) at the starting armies — never
+  then; #428, `fullDistribution`: DistributionMode 0 with no TerritoryLimit — -1 is a limited start,
+  TerritoryLimit × InitialPlayerArmiesPerTerritory, verified on three games), else my opening board, else the default territory limit (3) at the starting armies — never
   the territories I hold on a later board; my income before my first board ramps up from that
   opening's.
   #228: the likely high is generous to the opponent (every army received, none lost: a game I lead read
