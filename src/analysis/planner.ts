@@ -76,6 +76,10 @@
 //          more than CONCEDE_FACTOR × its worth, so the captures go first) is held whole before the
 //          first advance when what is left covers it (best worth per army first, never weighed
 //          against spreading: `settleContested(true)`); the rest stays contested as before.
+//          #417, the race for vacated land: while a static seat's land is untaken, its captures
+//          costing at most VACATED_MAX_COST (`raceTargets`, the 2-defender price of its fogged land
+//          included) rank ahead of that rule — after the held-bonus units and my commander's hold,
+//          before every other candidate (`raceTier`); the contested units are settled before the first.
 //       2. FFA with two or more opponents left: no second front — a break (also from a held
 //          border, rule 4a) against a player that can take no member of a bonus I hold next
 //          turn and loses nothing to this turn's strike / finishing off is skipped when a
@@ -1640,7 +1644,7 @@ import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { stageTwoMove, twoMoveStages } from './plan/two-move.js';
-import { addEmptyEnemyTargets, dropEmptyEnemyTargets, foggedLastSeen, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
+import { addEmptyEnemyTargets, dropEmptyEnemyTargets, foggedLastSeen, plainOrderCosts, raceLine, raceTargets, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
 import { captureInsteadOfHold } from './plan/capture-instead.js';
@@ -2069,7 +2073,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       return Math.max(...[...byPlayer].map(([p, movable]) => movable + deployOf(p)));
     };
     interface Candidate {
-      kind: 'hold' | 'unit' | 'complete' | 'advance' | 'stage' | 'break' | 'counter';
+      kind: 'hold' | 'unit' | 'complete' | 'advance' | 'stage' | 'break' | 'counter' | 'race';
       score: number;
       cost: number;
       id: number;
@@ -2083,11 +2087,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       owner?: number;
       /** #420: a hold sized only on the fog prior ({@link priorOnlyHold}): the evidence's figure. It ranks after every capture. */
       prior?: number;
+      /** #417: my commander's hold (rule 1k): funded ahead of the 1v1 race, as a held bonus's gate is. */
+      critical?: boolean;
       run: () => void;
     }
-    const rank = { unit: 0, hold: 0, complete: 1, advance: 2, stage: 2, break: 3, counter: 3 } as const;
-    /** A capture that completes no bonus this turn: an advance, a two-move stage (#439), a break or a counter. */
-    const completesNothing = (c: Candidate) => c.kind === 'advance' || c.kind === 'stage' || c.kind === 'break' || c.kind === 'counter';
+    const rank = { unit: 0, hold: 0, complete: 1, advance: 2, stage: 2, race: 2, break: 3, counter: 3 } as const;
+    /** A capture that completes no bonus this turn: an advance, a two-move stage (#439), a 1v1 race (#417), a break or a counter. */
+    const completesNothing = (c: Candidate) =>
+      c.kind === 'advance' || c.kind === 'stage' || c.kind === 'race' || c.kind === 'break' || c.kind === 'counter';
     const candidates: Candidate[] = [];
     const deferred: Threatened[] = [];
     /** #215: pending holds this step conceded and unlocked, whose armies may still attack out. */
@@ -2136,6 +2143,25 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // competes as an advance does, on the income per army of both captures.
     for (const st of stages)
       candidates.push({ kind: 'stage', score: st.net / st.cost, cost: st.cost, id: st.bonusId, value: st.net, focus: false, borders: 0, target: st.via, run: spend(() => stageTwoMove(pc, ps, st, gainWith, tryExpand)) });
+    // #417, the 1v1 race: while a static seat's land is still untaken, its cheap captures rank ahead of
+    // rule 0p.1's "expansion last" (`ahead` below); held-bonus gates and my commander's hold go first.
+    const races = oneVsOne ? raceTargets(pc, targets, captured) : [];
+    if (races.length) rationale.push(raceLine(pc, races));
+    for (const r of races)
+      candidates.push({
+        kind: 'race',
+        score: 0,
+        cost: r.cost,
+        id: r.t,
+        value: 0,
+        focus: false,
+        borders: 0,
+        target: r.t,
+        run: spend(() => {
+          if (captured.has(r.t)) return;
+          withoutTransit(pc, tgt, r.t, () => tryExpand(r.t, `races for land player ${pc.vacated.get(r.t)} left (out, no AI), ahead of the 1v1 "expansion last" rule (#417)`));
+        }),
+      });
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
     // A break is sized to land (#72): its score leaves out what holding it would need.
     const breakOption = (t: number) => {
@@ -2385,6 +2411,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       candidates.push({
         kind: 'hold',
         ...(prior !== null ? { prior } : {}),
+        ...(t.critical ? { critical: true } : {}),
         // A border just taken from a weak opponent is held first: conceding it hands it back.
         score: t.recentFrom !== undefined ? Infinity : t.worth / t.holdCost,
         cost: t.holdCost,
@@ -2471,10 +2498,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     }
     // PLAN-TEAMS C3.4: a capture of a player my teammate attacks this turn ranks above an equal one.
     const teamFocused = (c: Candidate) => Number(c.owner !== undefined && pc.teamFocus.has(c.owner));
+    /** #417: the 1v1 race's tier: 0 a held bonus's gate or my commander's hold, 1 a race, 2 any other. */
+    const raceTier = (c: Candidate) => (c.kind === 'unit' || (c.kind === 'hold' && c.critical) ? 0 : c.kind === 'race' ? 1 : 2);
     const ahead = (a: Candidate, b: Candidate) =>
       Number(b.focus) - Number(a.focus) ||
       // #420: a hold sized only on the fog prior ranks after every capture.
       Number(a.prior !== undefined) - Number(b.prior !== undefined) ||
+      // #417, the 1v1 race: held-bonus gates and my commander's hold, then the races, then everything else.
+      (races.length ? raceTier(a) - raceTier(b) : 0) ||
       // #201: ahead, every held bonus is held for the worst case before any capture (said below).
       (holdPasses === 'worst' ? Number(b.kind === 'unit') - Number(a.kind === 'unit') : 0) ||
       (oneVsOne ? Number(a.kind === 'advance' || a.kind === 'stage') - Number(b.kind === 'advance' || b.kind === 'stage') : 0) ||
@@ -2588,7 +2619,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // #215, rule 0p.1: an advance ranks below every hold, a contested held bonus's included
       // (#118 lets the captures go first, but in a 1v1 in contact not one that completes nothing):
       // live, a +4 bonus's one border was left to fall while 15 went to a bonus 47 armies from done.
-      if (oneVsOne && (c.kind === 'advance' || c.kind === 'stage') && !c.focus && !contestedDue) {
+      if (oneVsOne && (c.kind === 'advance' || c.kind === 'stage' || c.kind === 'race') && !c.focus && !contestedDue) {
         contestedDue = true;
         settleContested(true);
       }

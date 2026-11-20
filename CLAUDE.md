@@ -1707,6 +1707,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     army first, never weighed against spreading); otherwise it stays contested as before. Live, a +4
     bonus's one border was floored and spread on 9 armies while 15 went to an advance into a bonus
     47 armies from done, and fell to the 33 that could reach it whoever moved first.
+  - **The 1v1 race for vacated land (#417, owner decision of 2026-11-20).** In a 1v1 in contact, while a static
+    seat's (#270) land is still untaken, its capture targets costing at most `VACATED_MAX_COST` (neutral, or
+    hidden at the 2-defender price; never a negative bonus's member: `raceTargets` in `plan/vacated.ts`) are
+    `race` candidates of the greedy step that rank ahead of rule 0p.1's "expansion last": after the held-bonus
+    units and my commander's hold (`raceTier`), before every other hold, break, completion and advance; the
+    contested units are settled before the first race, as before the first advance. A "1v1 race for vacated
+    land (#417)" line names them. Golden: unchanged (no corpus plan is a 1v1 in contact with such land).
   - **The army cap prices idle armies (#253, rule 4h, `src/analysis/plan/cap-spend.ts`).** When my
     armies after this turn plus next income exceed the cap, the income above it is lost, so captures of
     neutrals and of foe territories holding at most 1 army (no truce, teammate or commander) are taken

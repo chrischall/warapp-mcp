@@ -133,6 +133,35 @@ export function breachOf(
     .sort((a, b) => a - b);
 }
 
+/**
+ * #417, the 1v1 race (owner decision of 2026-11-20): the land a static seat left that this turn's greedy
+ * step races for ahead of rule 0p.1's "expansion last" — a capture target next to mine, still untaken
+ * (neutral, or hidden: {@link fogVacated}), costing at most {@link VACATED_MAX_COST} (the 2-defender price
+ * included), never a negative bonus's member. Cheapest first, then by id. Pure.
+ */
+export function raceTargets(
+  pc: Pick<PlanCtx, 'g' | 'vacated' | 'territories' | 'mineSet' | 'bonusesWith'>,
+  targets: ReadonlyMap<number, { cost: number; enemy: boolean }>,
+  captured: ReadonlySet<number>,
+): { t: number; cost: number }[] {
+  const out: { t: number; cost: number }[] = [];
+  for (const t of [...pc.vacated.keys()].sort((a, b) => a - b)) {
+    const tg = targets.get(t);
+    if (!tg || tg.enemy || pc.mineSet.has(t) || captured.has(t) || tg.cost > VACATED_MAX_COST) continue;
+    const st = pc.territories.get(t);
+    if (st?.owner.kind !== 'neutral' && !fogVacated(pc.vacated, st, t)) continue;
+    if ((pc.bonusesWith.get(t) ?? []).some((id) => (pc.g.bonusById.get(id)?.value ?? 0) < 0)) continue;
+    out.push({ t, cost: tg.cost });
+  }
+  return out.sort((a, b) => a.cost - b.cost || a.t - b.t);
+}
+
+/** #417: the 1v1 race's rationale line, said once when the greedy step has races. */
+export function raceLine(pc: Pick<PlanCtx, 'label' | 'vacated'>, races: readonly { t: number; cost: number }[]): string {
+  const left = [...new Set(races.map((r) => pc.vacated.get(r.t)!))].sort((a, b) => a - b).map((p) => `player ${p}`).join(' and ');
+  return `1v1 race for vacated land (#417): ${races.map((r) => `${pc.label(r.t)} (${r.cost})`).join(', ')}, land ${left} left (out, no AI), ${races.length === 1 ? 'goes' : 'go'} ahead of the "expansion last" rule while it is up for taking — the opponent takes it otherwise; holds of my held bonuses and my commander still come first.`;
+}
+
 /** #417: the rationale line for a stack the breach force keeps beside land a static seat left. */
 export function breachLine(pc: Pick<PlanCtx, 'label' | 'vacated'>, t: number, n: number, land: readonly number[]): string {
   const left = [...new Set(land.map((x) => pc.vacated.get(x)!))].sort((a, b) => a - b).map((p) => `player ${p}`).join(' and ');
