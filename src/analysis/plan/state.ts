@@ -77,6 +77,8 @@ export interface OpponentsCtx {
   siege?: Siege;
   /** #382: why `goal: 'siege'` found no one to besiege (the plan is then `balanced`). */
   siegeWarning?: string;
+  /** #382: the profile's siege fits but its trigger fired: the line that says it hands back. */
+  siegeHandBack?: string;
   /** Rule 0p.3: behind — size attacks at the minimum (no pressure margin). */
   minimal: boolean;
   /** #303: my income trend ({@link TurnPlan.incomeTrend}); absent without history. */

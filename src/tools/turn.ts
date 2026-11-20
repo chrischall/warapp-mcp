@@ -2188,7 +2188,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
           'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
-          '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
+          '"profile"): siege when it fits (in contact, not ahead, one target — in an FFA the leader, earning 1.5× any other ' +
+          'opponent beside me — with a sure break costing at most 2 turns of its bonus and at most my income; handed back ' +
+          'once its assault trigger fires), else defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
           'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
           `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
           'across holds, bonuses and breaking enemy bonuses, at least 30% on expansion; "expand" — neutrals only; ' +
@@ -2276,7 +2278,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           .enum(GOALS)
           .optional()
           .describe(
-            'Omit to let the game profile pick (defend when behind on income outside a 1v1, else balanced, tuned to the format). ' +
+            'Omit to let the game profile pick (siege when it fits, else defend when behind on income outside a 1v1, else balanced, tuned to the format). ' +
               'balanced (default): best income per army across holds, bonuses and breaking enemy bonuses; expand: take ' +
               'neutrals only; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first; ' +
               "siege: against one opponent (siege_target), fund its cheapest bonus breaks first and build one strike stack " +
@@ -2396,7 +2398,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const avoidTerritories = intel.avoidTerritories;
       const avoidPlayers = intel.avoidPlayers;
       // #382: the siege's memory, kept per game while a siege runs.
-      const siegeMemory = goal === 'siege' && ctx.dataDir && turn !== null ? await readSiegeMemory(ctx.dataDir, game.id, me.id) : undefined;
+      const siegeMemory = (goal === undefined || goal === 'siege') && ctx.dataDir && turn !== null ? await readSiegeMemory(ctx.dataDir, game.id, me.id) : undefined;
       const setup = await livePlanSetup(ctx, {
         game, map, me, turn, territories, info, history, teamsKnown,
         args: {
