@@ -118,6 +118,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_profile_opponents',
       'warapp_recent_events',
       'warapp_record_agreement',
+      'warapp_record_intel',
       'warapp_scout_player',
       'warapp_send_chat',
       'warapp_session_status',

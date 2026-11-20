@@ -9,6 +9,9 @@
 // `commitments` (part B4): what my chat messages promised (warapp_send_chat's declared commitments,
 // never the text), recorded once a message is sent; warapp_submit_turn warns when orders break one.
 //
+// `intel` (#386): avoid targets and stated incomes from diplomacy (warapp_record_intel), applied by
+// warapp_plan_turn and warapp_check_plan by default.
+//
 // `usage` (part B2): per planned turn, what each honoured truce freed and what a break would have
 // cost (rule T6: the armies and the income); warapp_plan_turn calls `recordTruceUsage`.
 import { randomUUID } from 'node:crypto';
@@ -24,6 +27,7 @@ import {
   type AgreementTerms,
 } from './analysis/relations.js';
 import { COMMITMENT_KINDS, type RecordedCommitment } from './analysis/commitments.js';
+import { AVOID_REASONS, intelIsEmpty, type AvoidReason, type StoredIntel } from './analysis/intel.js';
 
 type Rec = Record<string, unknown>;
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -36,6 +40,9 @@ export const MAX_AGREEMENTS = 50;
 export const MAX_USAGE_TURNS = 200;
 /** Commitments kept per game (the newest). */
 export const MAX_COMMITMENTS = 200;
+/** #386: intel entries kept per game and kind (the newest). */
+export const MAX_INTEL_TERRITORIES = 200;
+export const MAX_INTEL_PLAYERS = 50;
 
 /** Part B2's per-turn log for one truce. */
 export interface TruceUsage {
@@ -57,6 +64,8 @@ export interface RelationsLedger {
   usage: Record<string, TruceUsage[]>;
   /** B4: what my sent messages committed me to, oldest first (absent when none). */
   commitments?: RecordedCommitment[];
+  /** #386: avoid targets and stated incomes `warapp_record_intel` kept (ids, turns and a reason code only; absent when none). */
+  intel?: StoredIntel;
 }
 
 export const relationsDir = (dir: string) => join(dir, 'relations');
@@ -143,6 +152,24 @@ export function nextCommitmentId(ledger: Pick<RelationsLedger, 'commitments'>): 
   return `c${n + 1}`;
 }
 
+/** #386: the intel of a ledger file, the unusable entries dropped; absent when none. */
+export function intelOf(v: unknown): { intel?: StoredIntel } {
+  if (!isRec(v)) return {};
+  const list = (x: unknown): Rec[] => (Array.isArray(x) ? x.filter(isRec) : []);
+  const intel: StoredIntel = {
+    avoidTerritories: list(v.avoidTerritories)
+      .filter((a) => isInt(a.territory) && isInt(a.turn))
+      .map((a) => ({ territory: a.territory as number, turn: a.turn as number, ...(isInt(a.promisedTo) ? { promisedTo: a.promisedTo } : {}) })),
+    avoidPlayers: list(v.avoidPlayers)
+      .filter((a) => isInt(a.player) && isInt(a.turn) && typeof a.reason === 'string' && (AVOID_REASONS as readonly string[]).includes(a.reason))
+      .map((a) => ({ player: a.player as number, turn: a.turn as number, reason: a.reason as AvoidReason })),
+    incomes: list(v.incomes)
+      .filter((a) => isInt(a.player) && isInt(a.income) && a.income >= 0 && isInt(a.turn))
+      .map((a) => ({ player: a.player as number, income: a.income as number, turn: a.turn as number })),
+  };
+  return intelIsEmpty(intel) ? {} : { intel };
+}
+
 function usageOf(v: unknown): Record<string, TruceUsage[]> {
   if (!isRec(v)) return {};
   const out: Record<string, TruceUsage[]> = {};
@@ -173,7 +200,7 @@ export async function readLedger(dir: string, gameId: number, playerId: number):
     const c: unknown = JSON.parse(await readFile(relationsPath(dir, gameId, playerId), 'utf8'));
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !Array.isArray(c.agreements)) return undefined;
     const agreements = c.agreements.map(agreementOf).filter((a): a is Agreement => a !== undefined);
-    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments) };
+    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments), ...intelOf(c.intel) };
   } catch {
     return undefined;
   }
@@ -199,7 +226,7 @@ export async function readLedgerForWrite(
     const c: unknown = JSON.parse(text);
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !Array.isArray(c.agreements)) return 'unreadable';
     const agreements = c.agreements.map(agreementOf).filter((a): a is Agreement => a !== undefined);
-    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments) };
+    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments), ...intelOf(c.intel) };
   } catch {
     return 'unreadable';
   }
@@ -222,8 +249,17 @@ export function boundLedger(ledger: RelationsLedger): RelationsLedger {
     .slice(0, MAX_USAGE_TURNS)
     .sort((a, b) => a - b);
   const commitments = ledger.commitments?.length ? { commitments: ledger.commitments.slice(-MAX_COMMITMENTS) } : {};
-  const { commitments: _all, ...rest } = ledger;
-  return { ...rest, agreements, usage: Object.fromEntries(turns.map((t) => [String(t), ledger.usage[String(t)]!])), ...commitments };
+  const { commitments: _all, intel: _intel, ...rest } = ledger;
+  const intel = intelIsEmpty(ledger.intel)
+    ? {}
+    : {
+        intel: {
+          avoidTerritories: ledger.intel!.avoidTerritories.slice(-MAX_INTEL_TERRITORIES),
+          avoidPlayers: ledger.intel!.avoidPlayers.slice(-MAX_INTEL_PLAYERS),
+          incomes: ledger.intel!.incomes.slice(-MAX_INTEL_PLAYERS),
+        },
+      };
+  return { ...rest, agreements, usage: Object.fromEntries(turns.map((t) => [String(t), ledger.usage[String(t)]!])), ...commitments, ...intel };
 }
 
 /** Write the ledger (bounded), atomically, 0600. `true` when written; never throws. */

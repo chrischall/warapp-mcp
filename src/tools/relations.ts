@@ -33,6 +33,7 @@ import {
   type WatchFlag,
   type WatchFlagKind,
 } from '../analysis/relations.js';
+import { AVOID_REASONS, emptyIntel, INCOME_STALE_TURNS, intelIsEmpty, type StoredIntel } from '../analysis/intel.js';
 import type { BoardState } from '../board.js';
 import { boardStateFromLive } from '../live.js';
 import type { Game, GameMap, Player } from '../normalize.js';
@@ -53,6 +54,11 @@ import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_SCOPE_ITEMS = 200;
+
+/** #386: what warapp_record_intel writes, and where. */
+export const INTEL_NOTE =
+  "Written only to the server's data directory (the game's agreement ledger: ids, turns and reason codes, no name or " +
+  'message); nothing was sent to war.app or to any player. warapp_plan_turn and warapp_check_plan apply it by default.';
 
 /** What the results say about the board-derived parts. */
 export const RELATIONS_NOTE =
@@ -721,6 +727,148 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         agreement: agreementView(agreement, game, map, turn, 'full'),
         playerRecord: recorded,
         written: LEDGER_NOTE,
+      }));
+    },
+  );
+
+  server.registerTool(
+    'warapp_record_intel',
+    {
+      title: 'Record avoid targets and stated incomes for a war.app game',
+      _meta: mintMeta('change', ['remember not to attack', 'they said their income', 'promised them a territory', 'forget the intel']),
+      description: untrustedDescription(
+        "Keep what diplomacy told you for a war.app (Warzone) game in this server's agreement ledger, so every " +
+          'warapp_plan_turn and warapp_check_plan call applies it without being told again (another session or the ' +
+          'hosted connector included): `avoid_territories` (territories never to attack — a neutral promised to ' +
+          '`promised_to`, say), `avoid_players` (players never to attack outside any truce, each with a `reason` code: ' +
+          `${AVOID_REASONS.join(', ')}) and \`known_income\` (a player's stated income, kept with the turn it was stated: ` +
+          '`stated_turn`, default this turn). Recording a territory, player or income again replaces its entry; `forget` ' +
+          'removes entries. The plans apply them by default and report it as `intel`; an explicit `avoid_territories`, ' +
+          '`avoid_players` or `known_income` argument replaces the stored list of its kind for that call (an empty list ' +
+          `included), and a stored income more than ${INCOME_STALE_TURNS} turns old is not applied (the estimate stands, ` +
+          'with a warning). Nothing is sent to war.app or to any player (no confirmation step), and the ledger keeps ids, ' +
+          'turns and reason codes only: no name, no message. Refused for yourself as a player, and outside a game being played.',
+      ),
+      annotations: toolAnnotations({ title: 'Record war.app intel', readOnly: false, destructive: false, idempotent: true, openWorld: true }),
+      inputSchema: z.object({
+        game_id: gameIdArg,
+        player: playerArg,
+        avoid_territories: z.array(playerRef).max(MAX_SCOPE_ITEMS).optional().describe('Territories (names or ids) never to attack.'),
+        promised_to: playerRef.optional().describe('The player (name or id) `avoid_territories` were promised to, when one.'),
+        avoid_players: z
+          .array(z.object({ player: playerRef.describe('The player (name or GameFeed id).'), reason: z.enum(AVOID_REASONS).describe('Why.') }))
+          .max(50)
+          .optional()
+          .describe('Players never to attack outside any truce, each with a reason code.'),
+        known_income: z
+          .array(
+            z.object({
+              player: playerRef.describe('The player (name or GameFeed id).'),
+              income: z.coerce.number().int().min(0).max(10_000).describe('The income it stated, per turn, card armies aside.'),
+            }),
+          )
+          .max(50)
+          .optional()
+          .describe("Players' stated incomes."),
+        stated_turn: z.coerce.number().int().min(0).optional().describe('The turn the incomes were stated (default this turn; never later).'),
+        forget: z
+          .object({
+            territories: z.array(playerRef).max(MAX_SCOPE_ITEMS).optional().describe('Territories to stop avoiding.'),
+            players: z.array(playerRef).max(50).optional().describe('Players to stop avoiding.'),
+            incomes: z.array(playerRef).max(50).optional().describe('Players whose stated income to drop.'),
+          })
+          .optional()
+          .describe('Entries to remove.'),
+      }),
+    },
+    async (args) => {
+      if (!ctx.dataDir) {
+        throw new McpToolError('This server has no data directory, so there is no ledger to record into: nothing was recorded.', {
+          hint: 'Set MCP_DATA_DIR, or run with a writable home directory.',
+        });
+      }
+      const dir = ctx.dataDir;
+      const refuse = (why: string, hint: string): never => {
+        throw new McpToolError(`${why}: nothing was recorded.`, { hint });
+      };
+      const given =
+        args.avoid_territories?.length || args.avoid_players?.length || args.known_income?.length ||
+        args.forget?.territories?.length || args.forget?.players?.length || args.forget?.incomes?.length;
+      if (!given) refuse('Nothing to record', 'Give `avoid_territories`, `avoid_players`, `known_income` or `forget`.');
+      const feed = await ctx.client.getGame(args.game_id, { settings: true });
+      if (feed.state !== 'Playing' && feed.state !== 'DistributingTerritories')
+        refuse(`Game ${feed.id} is ${feed.state}: intel is recorded only while it is being played`, 'Record it once the game has started (picks included).');
+      const me = await resolveMe(ctx, feed.players, args.player);
+      const map = mapOf(feed);
+      const turn = Math.max(0, currentTurn(feed) ?? 0);
+      const other = (ref: string | number, what: string): number => {
+        const p = resolvePlayer(feed.players, ref);
+        if (p.id === me.id) refuse(`${what} must be another player, not yourself`, 'Name another player in the game.');
+        return p.id;
+      };
+      if (args.stated_turn !== undefined && args.stated_turn > turn)
+        refuse(`stated_turn ${args.stated_turn} is after this turn (${turn})`, 'Give the turn the income was stated, this one or earlier.');
+      const statedTurn = args.stated_turn ?? turn;
+      const promisedTo = args.promised_to !== undefined ? other(args.promised_to, '`promised_to`') : undefined;
+      const addT = (args.avoid_territories ?? []).map((t) => resolveTerritory(map, t).id);
+      const addP = (args.avoid_players ?? []).map((a) => ({ player: other(a.player, 'A player to avoid'), reason: a.reason }));
+      const addI = (args.known_income ?? []).map((k) => ({ player: other(k.player, 'A player whose income'), income: k.income }));
+      const dropT = new Set((args.forget?.territories ?? []).map((t) => resolveTerritory(map, t).id));
+      const dropP = new Set((args.forget?.players ?? []).map((p) => resolvePlayer(feed.players, p).id));
+      const dropI = new Set((args.forget?.incomes ?? []).map((p) => resolvePlayer(feed.players, p).id));
+
+      const intel = await withLedgerLock(dir, feed.id, me.id, async () => {
+        const read = await readLedgerForWrite(dir, feed.id, me.id);
+        if (read === 'unreadable') {
+          throw new McpToolError(`The ledger for game ${feed.id} exists but cannot be read: nothing was recorded, and the file was left as it is.`, {
+            hint: "Inspect or move aside the game's file under the server's data directory (relations/), then record again.",
+          });
+        }
+        const ledger: RelationsLedger = read ?? emptyLedger(feed.id, me.id);
+        const was = ledger.intel ?? emptyIntel();
+        const tNew = new Set(addT);
+        const pNew = new Set(addP.map((a) => a.player));
+        const iNew = new Set(addI.map((a) => a.player));
+        const next: StoredIntel = {
+          avoidTerritories: [
+            ...was.avoidTerritories.filter((a) => !tNew.has(a.territory) && !dropT.has(a.territory)),
+            ...[...tNew].filter((t) => !dropT.has(t)).map((territory) => ({ territory, turn, ...(promisedTo !== undefined ? { promisedTo } : {}) })),
+          ],
+          avoidPlayers: [
+            ...was.avoidPlayers.filter((a) => !pNew.has(a.player) && !dropP.has(a.player)),
+            ...addP.filter((a) => !dropP.has(a.player)).map((a) => ({ player: a.player, turn, reason: a.reason })),
+          ],
+          incomes: [
+            ...was.incomes.filter((a) => !iNew.has(a.player) && !dropI.has(a.player)),
+            ...addI.filter((a) => !dropI.has(a.player)).map((a) => ({ player: a.player, income: a.income, turn: statedTurn })),
+          ],
+        };
+        const { intel: _old, ...rest } = ledger;
+        if (!(await writeLedger(dir, { ...rest, ...(intelIsEmpty(next) ? {} : { intel: next }) }))) {
+          throw new McpToolError(`The ledger for game ${feed.id} could not be written: nothing was recorded.`, {
+            hint: "Check that the server's data directory is writable.",
+          });
+        }
+        return next;
+      });
+      const name = namer(map);
+      const playerName = (id: number) => {
+        const p = feed.players.find((x) => x.id === id);
+        return { id, name: p ? untrustedText(p.name) : null };
+      };
+      return respond(undefined, ['compact'], () => ({
+        game: { id: feed.id, turn },
+        intel: {
+          avoidTerritories: intel.avoidTerritories.map((a) => ({
+            territory: name(a.territory),
+            turn: a.turn,
+            ...(a.promisedTo !== undefined ? { promisedTo: playerName(a.promisedTo) } : {}),
+          })),
+          avoidPlayers: intel.avoidPlayers.map((a) => ({ player: playerName(a.player), reason: a.reason, turn: a.turn })),
+          incomes: intel.incomes.map((a) => ({ player: playerName(a.player), income: a.income, statedTurn: a.turn })),
+        },
+        incomeStaleAfterTurns: INCOME_STALE_TURNS,
+        written: INTEL_NOTE,
       }));
     },
   );

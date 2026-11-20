@@ -38,6 +38,7 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_get_relations: 'lookup',
   warapp_advise_diplomacy: 'lookup',
   warapp_record_agreement: 'change',
+  warapp_record_intel: 'change',
   warapp_scout_player: 'lookup',
   warapp_list_open_games: 'lookup',
   warapp_strategy: 'lookup',

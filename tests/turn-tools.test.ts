@@ -2875,6 +2875,75 @@ describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)'
     expect(check.warnings.join('\n')).toMatch(/which you asked to avoid/);
   });
 
+  it('#386: intel recorded with warapp_record_intel is applied by default; explicit arguments win; a stale income is dropped', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([]) }) });
+    const attacked = (p: EffectPayload) =>
+      (p.moves as unknown as { kind: string; to: { id: number } }[]).flatMap((m) => (m.kind === 'attack' ? [m.to.id] : []));
+    const rec = payload<{ intel: { avoidTerritories: unknown[]; avoidPlayers: unknown[]; incomes: unknown[] } }>(
+      await h.call('warapp_record_intel', {
+        game_id: GAME,
+        avoid_territories: [157],
+        avoid_players: [{ player: Number(BOB.feed), reason: 'promised' }],
+        known_income: [{ player: Number(BOB.feed), income: 27 }],
+      }),
+    );
+    expect(rec.intel).toEqual({
+      avoidTerritories: [{ territory: expect.objectContaining({ id: 157 }), turn: 3 }],
+      avoidPlayers: [{ player: expect.objectContaining({ id: Number(BOB.feed) }), reason: 'promised', turn: 3 }],
+      incomes: [{ player: expect.objectContaining({ id: Number(BOB.feed) }), income: 27, statedTurn: 3 }],
+    });
+    // The ledger stays name-free.
+    expect(readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')).not.toMatch(/Ann|Bob/);
+
+    const plan = payload<EffectPayload & { intel?: Record<string, unknown> }>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(attacked(plan).some((t) => t === 157 || t === 158)).toBe(false);
+    expect(plan.enemyDeploy).toBe(27);
+    expect(plan.intel).toMatchObject({
+      applied: { avoidTerritories: [{ territory: 157 }], avoidPlayers: [{ player: Number(BOB.feed), reason: 'promised' }], knownIncome: [{ player: Number(BOB.feed), income: 27, statedTurn: 3 }] },
+      overridden: [],
+      stale: [],
+    });
+    expect(plan.warnings.join('\n')).toMatch(/Recorded intel \(warapp_record_intel\) applied/);
+
+    const check = payload<{ warnings: string[]; intel?: Record<string, unknown>; enemyDeploy: Array<{ deploy: number; source: string }> }>(
+      await h.call('warapp_check_plan', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }, { kind: 'move', from: 159, to: 157, armies: 8 }] }),
+    );
+    expect(check.warnings.join('\n')).toMatch(/which you asked to avoid/);
+    expect(check.enemyDeploy[0]).toMatchObject({ deploy: 27, source: 'known_income' });
+    expect(check.intel).toMatchObject({ overridden: [] });
+
+    // Explicit arguments win, kind by kind (an empty list included).
+    const over = payload<EffectPayload & { intel?: { overridden: string[] } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, avoid_territories: [], avoid_players: [], known_income: [] }),
+    );
+    expect(over.enemyDeploy).toBe(5);
+    expect(over.intel!.overridden).toEqual(['avoid_territories', 'avoid_players', 'known_income']);
+
+    // Four turns on, the income is stale: the estimate stands, with a warning.
+    await h.harness.close();
+    h = await liveHarness({ dataDir: h.dataDir, feed: [game('Playing', { numberOfTurns: '6' })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([]) }) });
+    const later = payload<EffectPayload & { intel?: { stale: unknown[] } }>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(later.enemyDeploy).not.toBe(27);
+    expect(later.intel!.stale).toEqual([{ player: Number(BOB.feed), income: 27, statedTurn: 3, turnsOld: 4 }]);
+    expect(later.warnings.join('\n')).toMatch(/is 4 turns old, past 3: it is not applied and the estimate stands/);
+
+    // Forgetting removes entries.
+    const forgot = payload<{ intel: { avoidTerritories: unknown[]; avoidPlayers: unknown[]; incomes: unknown[] } }>(
+      await h.call('warapp_record_intel', { game_id: GAME, forget: { territories: [157], players: [Number(BOB.feed)], incomes: [Number(BOB.feed)] } }),
+    );
+    expect(forgot.intel).toEqual({ avoidTerritories: [], avoidPlayers: [], incomes: [] });
+    const after = payload<EffectPayload & { intel?: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(after.intel).toBeUndefined();
+  });
+
+  it('#386: warapp_record_intel refuses yourself as a player to avoid, and an empty call', async () => {
+    h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([]) }) });
+    expect(textOf(await h.call('warapp_record_intel', { game_id: GAME, avoid_players: [{ player: Number(ANN.feed), reason: 'other' }] }))).toMatch(
+      /not yourself.*nothing was recorded/,
+    );
+    expect(textOf(await h.call('warapp_record_intel', { game_id: GAME }))).toMatch(/Nothing to record/);
+  });
+
   it('#277: warapp_check_plan reports the income Sanctions on me leave, as warapp_plan_turn does', async () => {
     h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([san(3)]) }) });
     const p = payload<{ income: number; deployed: number; warnings: string[] }>(
