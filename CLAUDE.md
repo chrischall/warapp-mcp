@@ -1632,7 +1632,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     ended weaker than a topped-up one (review fix: 3 suite golden plans keep a +5 territory's idle armies). Live: a +8 hub of nine pair
     bonuses ended on 3 while 15 armies topped up low-value borders. Any held bonus's member was tried first: 4 golden
     plans changed, one shaving a front's armies into a #226 margin, so it is gated to the single-territory case.
-    Golden: no plan changed (6,253; the corpus holds no such territory behind topped-up borders).
+    Golden: synthetic unchanged; 3 suite plans (100-102) each drop one idle transfer out of a +5 single-territory
+    bonus behind borders that already hold; deploys, captures and income unchanged.
     #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
     reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
     sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,
