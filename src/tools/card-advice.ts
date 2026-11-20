@@ -8,7 +8,7 @@
 import { adviseOrderDelay, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
 import { bonusTerritories } from '../analysis/bonuses.js';
-import { supportAdvice, type SupportView } from './card-support-advice.js';
+import { diplomacyOpponents, supportAdvice, type SupportView } from './card-support-advice.js';
 import type { TruceCover } from '../analysis/card-support.js';
 import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
@@ -282,7 +282,8 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
       if (a.card === 'Diplomacy' && a.players?.includes(me.id)) {
         const other = a.players.find((p) => p !== me.id);
         const hit = plan.moves.filter((m) => m.kind === 'attack' && other !== undefined && owner(m.to) === other);
-        // #424: its last turn (gone by the next): say so, and chain it with a Diplomacy card in hand.
+        // #424: its last turn (gone by the next): say so, and chain it with a Diplomacy card in hand —
+        // outside a 1v1, where the support advice chains it too (a 1v1 is advised no Diplomacy).
         const last = turn !== null && a.untilTurn === turn + 1;
         warnings.push(
           `Diplomacy is in effect between you and player ${other}${until}: neither can attack the other.` +
@@ -293,7 +294,7 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
                 : '') +
             (last
               ? ` This is its last turn: from turn ${a.untilTurn} it can attack you again — ${
-                  held(CARD_DIPLOMACY)
+                  held(CARD_DIPLOMACY) && diplomacyOpponents(game, me.id, friends) >= 2
                     ? 'chain it: play your Diplomacy card on it this turn (it starts the turn after it is played), or ready the borders it faces.'
                     : 'ready the borders it faces.'
                 }`

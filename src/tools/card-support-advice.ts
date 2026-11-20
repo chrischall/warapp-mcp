@@ -85,6 +85,14 @@ interface SupportInput {
   truces: readonly TruceCover[];
 }
 
+/**
+ * #424: the opponents still playing (teammates out). A lone one in contact is advised Diplomacy only
+ * outside a 1v1 (2 or more), and the last-turn warning offers a chain only then too.
+ */
+export function diplomacyOpponents(game: SupportInput['game'], me: number, friends?: ReadonlySet<number>): number {
+  return game.players.filter((p) => p.id !== me && !friends?.has(p.id) && (p.state ?? 'Playing') === 'Playing').length;
+}
+
 /** The D2 advice for the cards in `cards`: a view and one warning per card advised. */
 export function supportAdvice(input: SupportInput): { view: SupportView; warnings: string[] } {
   const { me, cards, cb } = input;
@@ -94,8 +102,7 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
 
   const dip = first(CARD_DIPLOMACY);
   if (dip) {
-    // #424: the opponents still playing (teammates out): a lone one in contact is advised outside a 1v1.
-    const opponents = input.game.players.filter((p) => p.id !== me.id && !cb.friends?.has(p.id) && (p.state ?? 'Playing') === 'Playing').length;
+    const opponents = diplomacyOpponents(input.game, me.id, cb.friends);
     const d = diplomacyAdvice(cb, { atPeace: input.atPeace, truces: input.truces, opponents, ...(input.lastTurn ? { lastTurn: input.lastTurn } : {}) });
     if (d) {
       if (d.player !== undefined && d.pressure) {

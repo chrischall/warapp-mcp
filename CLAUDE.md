@@ -732,7 +732,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   contact too, unless no other opponent is still playing — a 1v1 says nothing; a truce partner the truce
   already covers is passed over unless the truce is in notice or leaves a border it presses uncovered; one a
   Diplomacy card in force covers is passed over, unless this is that card's last turn: then it is chained
-  first, `chain: true`, and the in-effect warning says it is the last turn and to chain or ready the borders), Sanctions
+  first, `chain: true`, and the in-effect warning says it is the last turn and to chain or ready the borders — in a 1v1 only to ready them,
+  `diplomacyOpponents` gating both), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
   percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
   Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only
