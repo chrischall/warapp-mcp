@@ -4,6 +4,7 @@
 // larger of its estimate and my income (and enemy_deploy, a what-if floor; an untrusted opponent's at
 // least at the figure its #275 tripwire gave it, as the stress test sizes it), both move orders, the
 // free-for-all lead (#180), Order Priority and my Airlifts. No I/O: the callers load the boards.
+import { gameBaseIncome } from '../analysis/player.js';
 import { commanderSafety, type CommanderAirlift, type CommanderSafety } from '../analysis/commander-safety.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { PlannerSettings } from '../analysis/index.js';
@@ -86,7 +87,7 @@ export function commanderCheckOn(a: CommanderCheckInput): CommanderCheck | undef
     settings: a.settings,
     ...(so.teams.size ? { teams: so.teams } : {}),
     orderPriority: a.orderPriority,
-    ...(a.settings.localDeployments ? { localDeployments: true } : {}),
+    ...(a.settings.localDeployments ? { localDeployments: true, baseIncome: gameBaseIncome(a.settings) } : {}),
     ...(a.settings.localDeployments && (a.settings.bonusArmyPer ?? 0) > 0 ? { perTerritoryIncome: true } : {}),
     leader: so.leader,
     killedBy: a.killedBy ?? false,
