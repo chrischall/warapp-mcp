@@ -87,6 +87,10 @@ note-id test passes. `noteIds` in the advice name the relevant notes.
   reads), using the plan's own profile/standing/estimates — report only, the plan's orders never change
   (golden corpus unchanged: assert in a test).
 - Nothing is sent, marked or written by these (mark_seen behaviour unchanged).
+- Decision log (#412/#437): `warapp_plan_turn` adds to the turn's decision-log entry a `chat` block — for
+  each message from another player read that turn: message id, sender id, channel, `toMe`, intents,
+  confidence, the advised stance, and whether it would block (Task 4b). Ids and labels only, never the
+  text or a name. Kept by compaction (small).
 
 ## Task 4 — the automation gate
 
