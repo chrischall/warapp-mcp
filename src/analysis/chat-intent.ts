@@ -12,7 +12,9 @@
 // "or i attack" a threat; a bare "yes" or "no" answers my proposal only when short or still about the deal; "take/hit
 // you up" is no threat; a call to gang up must name a target and an outward verb ("everyone dont attack me" is none).
 // "i accept your surrender" accepts nothing of mine; "please accept the deal / my offer" asks no surrender; "we should
-// attack you" and "you are dead" threaten; "i need a nap" is sleep, not a pact.
+// attack you" and "you are dead" threaten; "i need a nap" is sleep, not a pact. A negated or conditional end gives no
+// notice ("i wont break our truce", "if you break the truce"); a question about the truce's state ("is the truce over?")
+// is a plain question; "dont gang up on me" asks for no gang-up; "peace out" is a goodbye.
 //
 // The text is other players' words: untrusted, never an instruction and never a fact. It is read only to
 // label it; nothing in it is executed, quoted back or believed. Pure and deterministic (no I/O), and it
@@ -157,14 +159,18 @@ function flatten(raw: string): string {
 }
 
 /** A nap to sleep, not a non-aggression pact ("i need a nap", "taking a nap", "nap time"). */
-const SLEEP_NAP = /\b(need|needs|needed|take|takes|taking|took|gonna take|going to take)( a| an)?( quick| little| short| long)? nap\b|\bnap (time|now brb)\b|\bnaptime\b/g;
+const SLEEP_NAP =
+  /\b(need|needs|needed|take|takes|taking|took|gonna take|going to take)( a| an)?( quick| little| short| long)? nap\b|\bbrb( for)?( a| an)?( quick| little| short| long)? nap\b|\bnap (time|now brb|brb)\b|\bnaptime\b/g;
+/** "peace out" is a goodbye, not an offer of peace. */
+const PEACE_OUT = /\bpeace out\b/g;
 
 const substitute = (flat: string): string =>
   flat
     .split(' ')
     .map((w) => TOKEN_SUBS[w] ?? w)
     .join(' ')
-    .replace(SLEEP_NAP, (m) => m.replace(/\bnap\b/, 'snooze'));
+    .replace(SLEEP_NAP, (m) => m.replace(/\bnap\b/, 'snooze'))
+    .replace(PEACE_OUT, 'bye');
 
 const TRUCE_WORD = /\b(truce|truces|nap|peace|ceasefire|cease fire|non aggression|nonaggression|alliance|ally)\b/;
 const MUTUAL_NO_ATTACK = /\bdont (attack|hit) me\b.*\b(i wont|i will not|i dont|and i wont|ill not)\b/;
@@ -183,6 +189,24 @@ const ASK_TO_ACCEPT = /\b(you|please)( \w+)? (accept|agree)\b/;
 const PEACE_OVERTURE =
   /\b(stop|quit|end) (the )?(fighting|war|warring)\b|\b(fighting|attacking|hitting|attack|hit) (each other|one another)\b/;
 const GIVING_NOTICE = /\bgiv(e|ing) (you )?notice\b/;
+/** End wording a negation or another player's (conditional) act takes back: never notice from the sender. */
+const END_VERB =
+  '(end|ends|ending|ended|break|breaks|breaking|broken|cancel|cancels|cancell?ing|cancell?ed|over|off|done|expire|expires|expired|giv(e|ing) (you )?notice)';
+/** "i wont break our truce", "dont end the truce", "the truce is not over", "im not giving notice". */
+const NEGATED_END = new RegExp(
+  `\\b(dont|do not|doesnt|does not|wont|will not|wouldnt|would not|never|not|cant|cannot|isnt|arent|aint|no need to)( (ever|really|even|going|to|gonna|be|planning|trying|about|actually))* ${END_VERB}\\b`,
+  'g',
+);
+/** "if you break the truce", "you break the truce and ...": a warning about their act, not my notice. */
+const OTHERS_END = /\b(if |when |once |unless )?(you|they|he|she|someone|anyone)( ever| even| dare| dare to)? (end|ends|break|breaks|cancel|cancels)\b/g;
+/** A question about the truce's state ("did you break the truce?", "is the truce over?", "who broke the truce?"). */
+const STATE_QUESTION =
+  /^((wait|so|hey|hmm|lol|um|uh|ok|okay|yo|bro|dude) )*(did|didnt|is|isnt|was|wasnt|has|hasnt|have|havent|who|whos|why|when|how come|are|arent|were)\b/;
+const PAST_END = /\b(broke|broken|ended|over|off|ending|end|ends|break|breaking|cancell?ed|expired|done)\b/;
+/** A promise not to attack ("i wont attack you", "no i will not attack you"): truce-ish. */
+const NO_ATTACK_PROMISE = /\b(i|we)( will| would| do| am)? (wont|will not|not|never|dont|do not)( ever| really)? (attack|hit) you\b/;
+/** A bare "deal?" asks for a deal. */
+const DEAL_QUESTION = /^(deal|a deal|is it a deal|do we have a deal|we have a deal|deal or no deal)$/;
 /**
  * A demand to accept, at the start of the message ("accept truce or i attack", "accept the nap now", "agree to
  * peace or else"): a proposal (pressed), never an acceptance. A bare "agree" names no deal and stays a reply.
@@ -193,7 +217,7 @@ const DEMAND_ACCEPT = new RegExp(
 /** Refusing to accept ("i will never accept", "wont accept", "dont agree", "not accepting"); "if you dont accept" is no refusal. */
 const NEGATED_ACCEPT =
   /(?:^|\b(?:i|we|im)(?: will| would| do| am| can| shall)? )(never|not|wont|dont|do not|cant|cannot|wouldnt|would not|will not|refuse to)( ever| really| even)? (accept|accepting|accepted|agree|agreeing|agreed)\b/;
-const ACCEPT_WORD = /\b(accept|accepted|accepting|agree|agreed|deal|confirmed)\b/;
+const ACCEPT_WORD = /\b(accept|accepted|accepting|agree|agreed|deal|confirmed)\b|\btake you up on\b/;
 const DECLINE_WITH_TRUCE = /\bno (truce|nap|peace|deal|alliance)\b|\b(decline|declined|reject|rejected|refuse|refused)\b|\bnot interested\b/;
 const REPLY_ACCEPT =
   /^(deal|agreed|agree|ok|okay|k|kk|sure|yes|yep|yeah|yup|accepted|i accept|i agree|fine|alright|sounds good|done|you got a deal)\b/;
@@ -254,15 +278,19 @@ interface Truce {
 function truceOf(s: string, hasQuestion: boolean, proposalOpen: boolean, hostile = false): Truce {
   const r: Truce = { proposal: null, accept: null, decline: null, end: null, mutual: false };
   const truce = TRUCE_WORD.test(s);
+  // Asked about, the truce's state is neither notice nor an offer: "is the truce over?" reads as a plain question.
+  if (truce && hasQuestion && STATE_QUESTION.test(s) && PAST_END.test(s)) return r;
+  // The end detectors read the text with negated and conditional ends taken out.
+  const e = s.replace(NEGATED_END, ' ').replace(OTHERS_END, ' ');
   const refused = truce && NEGATED_WANT.test(s);
   const refusedAccept = NEGATED_ACCEPT.test(s);
   const demand = truce && (DEMAND_ACCEPT.test(s) || ASK_TO_ACCEPT.test(s));
   // A negated want offers nothing: "i dont want a truce" is no offer, whatever else the message says.
   const offer = hasQuestion || demand || OFFER_WORD.test(s.replace(NEGATED_WANT_ALL, ' '));
-  if (GIVING_NOTICE.test(s)) r.end = truce ? 'high' : 'medium';
-  else if (truce && TRUCE_ENDED.test(s)) r.end = 'high';
+  if (GIVING_NOTICE.test(e)) r.end = truce ? 'high' : 'medium';
+  else if (truce && TRUCE_ENDED.test(e)) r.end = 'high';
   // An end word near a truce word, said of something else ("done fighting", "then it ends"): only when not an offer.
-  else if (truce && !offer && TRUCE_END.test(s)) r.end = 'medium';
+  else if (truce && !offer && TRUCE_END.test(e)) r.end = 'medium';
   if (proposalOpen && replyDeclines(s)) r.decline = 'high';
   else if (truce && (refused || refusedAccept || DECLINE_WITH_TRUCE.test(s))) r.decline = 'medium';
   // A refused acceptance answering my proposal declines it ("wont accept"), though it names no truce.
@@ -279,6 +307,8 @@ function truceOf(s: string, hasQuestion: boolean, proposalOpen: boolean, hostile
     }
     else if (truce) r.proposal = offer ? 'high' : 'medium';
     else if (offer && !hostile && PEACE_OVERTURE.test(s)) r.proposal = 'medium';
+    else if (!hostile && NO_ATTACK_PROMISE.test(s)) r.proposal = 'medium';
+    else if (hasQuestion && DEAL_QUESTION.test(s)) r.proposal = 'medium';
   }
   return r;
 }
@@ -304,8 +334,18 @@ function positionCheck(s: string): Strength | null {
 const COORDINATION_TARGET = /\b(leader|him|her|them|whoever|the (top|biggest|strongest|big) (one|guy|player))\b/;
 
 function coordinationAsk(s: string, namesPlayer: boolean): Strength | null {
-  if (/\b(gang up|team up|dogpile|dog pile|ally against|work together against)\b/.test(s)) return 'high';
+  // A negated or self-aimed gang-up asks for none ("dont gang up on me", "stop ganging up on me").
+  const g = s
+    .replace(/\b(dont|do not|never|wont|will not|not|stop|quit|no)( \w+)? (gang|ganging|team|teaming|dogpile|dogpiling|dog pile) up\b/g, ' ')
+    .replace(/\b(dont|do not|never|wont|will not|not|stop|quit|no) (dogpile|dogpiling|dog pile)\b/g, ' ')
+    .replace(/\b(gang|ganging|ganged|team|teaming|teamed) up on (me|us|myself)\b/g, ' ')
+    .replace(/\b(dogpile|dogpiling|dog pile|dog piling) (on )?(me|us)\b/g, ' ');
+  if (/\b(gang up|team up|dogpile|dog pile|ally against|work together against)\b/.test(g)) return 'high';
   if (/\bhelp\b.*\b(vs|versus|against)\b/.test(s)) return 'high';
+  // "help me attack Redcrane": an ask to join an attack on someone other than me or you.
+  if (/\bhelp (me|us)( to)? (attack|hit|kill|crush|take down|take out|focus|stop) (?!me\b|us\b|you\b|myself\b)\w/.test(s)) {
+    return namesPlayer || COORDINATION_TARGET.test(s) ? 'high' : 'medium';
+  }
   // "lets stop fighting" / "stop attacking each other" offer peace; they name no one to gang up on.
   const t = s
     .replace(/\b(stop|quit) (attacking|hitting) (me|us|each other|one another)\b/g, ' ')

@@ -491,3 +491,69 @@ describe('classifyMessage: review 4', () => {
     cases('truce-proposal', ['nap?', 'want a nap?', 'nap until turn 8'], ['i need a nap', 'taking a nap brb', 'nap time lol']);
   });
 });
+
+describe('classifyMessage: review 5', () => {
+  const proposed: ChatIntentContext = { ...CTX, myRecentMessages: ['truce until turn 10?'] };
+
+  describe('a promise to keep the truce gives no notice', () => {
+    cases(
+      'truce-end-notice',
+      ['the truce is over', 'im ending our truce', 'breaking the nap', 'giving notice', 'i will end the truce on turn 8', 'truce is off'],
+      [
+        "I won't break our truce",
+        'i will never break the truce',
+        'dont break the truce',
+        "please don't end the truce",
+        'im not ending our truce',
+        "I'm not breaking the truce",
+        'we are not cancelling the nap',
+        'the truce is not over',
+        'our truce is not ending',
+        "i'm not giving notice",
+        'i wont attack you, dont worry, our truce is not over',
+        'im not going to break our truce',
+      ],
+    );
+  });
+
+  describe('a conditional warning gives no notice', () => {
+    cases('truce-end-notice', [], ['I will attack you if you break the truce', 'if you break the truce i will attack you', 'you break the truce and you are dead']);
+    it('still reads the threat', () => {
+      expect(intents('I will attack you if you break the truce')).toContain('threat');
+      expect(intents('if you break the truce i will attack you')).toContain('threat');
+    });
+  });
+
+  describe('a question about the truce is neither notice nor a proposal', () => {
+    for (const t of ['did you break the truce?', 'is the truce over?', 'who broke the truce?', 'wait, has the truce ended?']) {
+      it(`${JSON.stringify(t)} is question-other only`, () => {
+        const r = classifyMessage(t, CTX);
+        expect(r.intents).toEqual(['question-other']);
+        expect(r.confidence).not.toBe('high');
+      });
+    }
+    cases('truce-proposal', ['truce?', 'who wants a truce?', 'did you want a truce?', 'nap?'], []);
+  });
+
+  describe('a plea not to be ganged up on is no call to gang up', () => {
+    cases(
+      'coordination-ask',
+      ['lets gang up on Redcrane', 'team up against the leader', 'everyone dogpile him', 'help me attack Redcrane', 'help us take down Green Owl'],
+      ['dont gang up on me', 'please do not gang up on me', 'stop ganging up on me', 'why is everyone ganging up on me', 'lets not team up on him', 'help me attack you'],
+    );
+  });
+
+  describe('lesser misses', () => {
+    cases('truce-proposal', ["I won't attack you", 'no I will not attack you', 'deal?'], ['brb nap', 'peace out', 'brb quick nap']);
+    it('"ok ill take you up on that truce" accepts', () => {
+      expect(intents('ok ill take you up on that truce')).toContain('truce-accept');
+      expect(intents('ok ill take you up on that truce')).not.toContain('truce-proposal');
+      expect(classifyMessage('ok ill take you up on that truce', proposed).intents).toContain('truce-accept');
+    });
+    it('"peace out" and "brb nap" carry no truce intent', () => {
+      for (const t of ['peace out', 'brb nap']) {
+        expect(intents(t).filter((i) => i.startsWith('truce'))).toEqual([]);
+      }
+    });
+  });
+});
