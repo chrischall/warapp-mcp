@@ -6,6 +6,7 @@ import type { IncomePoint, IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
 import { commerceRules } from '../../commerce.js';
 import type { MyOrders, ObservedTurn, OpponentTrack } from '../opponents.js';
+import { LEAD_ARMIES } from '../opponents.js';
 import type { GameSettings } from '../../normalize.js';
 import { bonusTerritories } from '../bonuses.js';
 import {
@@ -467,6 +468,12 @@ export interface PlanInput {
    * who left them. `planTurn` sets it when it plans them as neutrals; a caller need not.
    */
   vacated?: ReadonlyMap<number, number>;
+  /**
+   * #417: for each territory fogged on `board`, the player who held it on the newest earlier board that
+   * showed it (`foggedLastSeen` in plan/vacated.ts, over my board history). A static seat's fogged land is planned
+   * as vacated from it however long it has been fogged. Absent: `previousBoard` alone is read.
+   */
+  foggedLastSeen?: ReadonlyMap<number, number>;
   /**
    * #226: my orders on the turn `previousBoard` was played (what warapp_submit_turn sent and cached):
    * a failed attack of mine counts its kills back into the defender's observed deploy
@@ -1189,6 +1196,14 @@ export interface EnemyDeployEstimate {
   armyPrice?: { gold: number; multiplier: number };
   /** #368: the income the user supplied for it (`PlanInput.knownIncome`), and the estimate's income it replaced. */
   known?: { income: number; was: number };
+  /**
+   * #444: its prior scaled by the incomes other players stated (`EnemyIncomePrior.stated`): `full` the
+   * prior unscaled, `scaled` the figure `prior` now holds. With no usable track (#368's midpoint, applied
+   * to an untracked opponent while the scale applies) and the scaled prior above what is in view
+   * (`lower`: its visible or observed figure), it is sized at `midpoint`, the middle (rounded up);
+   * `midpoint` is `null` otherwise. Absent when nothing was scaled.
+   */
+  stated?: { full: number; scaled: number; lower: number; midpoint: number | null };
 }
 
 /**
@@ -1225,6 +1240,12 @@ export interface EnemyIncomePrior {
    * so a player out no longer turns the prior off. Absent with none.
    */
   out?: readonly { id: number; state: string }[];
+  /**
+   * #444: the incomes stated in chat (`known_income`) applied this turn — players in view — whose mean
+   * is below `mine` (`myIncome`): every other opponent's prior is scaled by `ratio` (their mean ÷ mine),
+   * never below what is in view or tracked, never above the prior unscaled. Absent otherwise.
+   */
+  stated?: { players: readonly { id: number; income: number }[]; mine: number; ratio: number };
 }
 
 /**
@@ -2323,6 +2344,15 @@ export function enemyDeployEstimates(
     g.map.territories.every((t) => ownerShown(seenNow.get(t.id)) !== undefined);
   const minimum = Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME));
   const per = settings.bonusArmyPer ?? 0;
+  // #418: my income on the board (cards aside) and my armies in view, against which a rising track is weighed.
+  const myLand = new Set<number>();
+  let myArmies = 0;
+  for (const [t, p] of owner)
+    if (p === me) {
+      myLand.add(t);
+      myArmies += armies.get(t) ?? 0;
+    }
+  const myBoardIncome = boardIncome(g, myLand, { base: minimum, per }).total;
   return players.map((playerId) => {
     // Its visible territories are a lower bound on what it holds, so on its
     // per-territory income too.
@@ -2386,7 +2416,10 @@ export function enemyDeployEstimates(
       prior && k > 0
         ? Math.min(couldEarn, territoryIncome(held + Math.ceil((couldHold - held) / k), minimum, per) + possibleOwn + Math.ceil((possible - possibleOwn) / k))
         : null;
-    const priorFigure = prior && fogBeside ? Math.min(Math.max(0, Math.floor(priorBase!)), priorCap ?? couldEarn) : null;
+    const priorFull = prior && fogBeside ? Math.min(Math.max(0, Math.floor(priorBase!)), priorCap ?? couldEarn) : null;
+    // #444: incomes other players stated scale this one's prior down by their ratio to mine (never up).
+    const statedRatio = prior?.stated && !prior.stated.players.some((x) => x.id === playerId) ? prior.stated.ratio : null;
+    const priorFigure = priorFull !== null && statedRatio !== null ? Math.min(priorFull, Math.ceil(priorFull * statedRatio - 1e-9)) : priorFull;
     // A track over enough turns replaces the single-turn observed figure (S3).
     const track = tracks?.find((t) => t.playerId === playerId);
     const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
@@ -2408,7 +2441,7 @@ export function enemyDeployEstimates(
       ? observeDeploy(g, board, previous, playerId, settings, {
           me,
           guard: (settings.oneArmyStandsGuard ?? true) ? 1 : 0,
-          expected: Math.max(visible, trackBound ?? tracked ?? priorFigure ?? 0),
+          expected: Math.max(visible, trackBound ?? tracked ?? priorFull ?? 0),
           most: couldEarn,
           // #293: under Local Deployment, growth beside the fog outside every bonus it could hold is
           // deploy only up to its free income.
@@ -2476,17 +2509,34 @@ export function enemyDeployEstimates(
       exact !== null ? 'exact' : priorUsed !== null && priorUsed > seen ? 'prior' : seenSource;
     // #294: what its tracked figure was read from (#368: while that is little, thin evidence below).
     const coverage = usable ? trackCoverage(usable.turns.filter((x) => usable.incomeTurns.includes(x.from))) : null;
-    const chosen = source === 'exact' ? exact! : source === 'prior' ? priorUsed! : seen;
+    // #444: an untracked opponent whose prior a stated income scaled: #368's midpoint between what is in
+    // view (or observed) and that prior.
+    const statedMid = statedRatio !== null && source === 'prior' && !usable ? seen + Math.ceil((priorUsed! - seen) / 2 - 1e-9) : null;
+    const chosen = source === 'exact' ? exact! : source === 'prior' ? (statedMid ?? priorUsed!) : seen;
     // #368 (owner decision of 2026-11-19: on a hidden opponent, choose the middle until we learn
     // otherwise): thin evidence — its tracked figure read from under LOW_COVERAGE of its frontier —
     // sizes it for the midpoint between the lower bound (what is in view or tracked, raised to the
-    // trend's next step when its tracked figure rose two turns running) and the upper bound (the fog
+    // trend's next step when its tracked figure rose two turns running, #418: unless I lead it on armies
+    // in view and on income — above its tracked figure, or with LEAD_ARMIES × its armies above what it
+    // earned before the newest rise) and the upper bound (the fog
     // prior whole, else the most it could earn), moved toward what the evidence gives as the coverage
     // nears LOW_COVERAGE. A rising track read from more of its frontier only raises the estimate to that
     // lower bound. Never the maximum.
     let thinEvidence: EnemyDeployEstimate['thinEvidence'] = null;
     if (source !== 'exact' && usable && tracked !== null) {
-      const rising = risingTracked(usable.turns);
+      // #418: no trend step on an opponent I lead on income (its tracked figure) and on armies in view.
+      // #418 review: with LEAD_ARMIES × its armies in view, the income lead is judged against what it
+      // earned before the newest rise (or its visible income) instead: an over-read tracked figure must
+      // not switch off the gate meant to stop it. (On that judgement alone, with a bare army lead, the
+      // calibration lost 3 of 4 changed samples further below truth.)
+      let theirArmies = 0;
+      for (const t of theirs) theirArmies += armies.get(t) ?? 0;
+      const risen = risingTracked(usable.turns);
+      const leadIt =
+        risen !== null &&
+        myArmies > theirArmies &&
+        (myBoardIncome > Math.max(visible, tracked) || (myArmies >= LEAD_ARMIES * theirArmies && myBoardIncome > Math.max(visible, risen[1]!)));
+      const rising = leadIt ? null : risen;
       const thinCoverage = coverage !== null && coverage.share < LOW_COVERAGE;
       if (thinCoverage || rising) {
         const trend = rising ? Math.min(couldEarn, rising[2]! + Math.ceil((rising[2]! - rising[0]!) / 2 - 1e-9)) : null;
@@ -2573,6 +2623,7 @@ export function enemyDeployEstimates(
       exact,
       card,
       cardPlayed,
+      ...(priorFull !== null && priorFigure! < priorFull ? { stated: { full: priorFull, scaled: priorFigure!, lower: seen, midpoint: statedMid } } : {}),
     };
   });
 }

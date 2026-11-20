@@ -35,6 +35,8 @@ export interface StressOpponentsInput {
   opening?: ReadonlyMap<number, number>;
   /** Overrides every estimate. */
   enemyDeploy?: number;
+  /** #368/#444: the stated incomes applied (`known_income`): each replaces its player's estimate and scales the others' prior. */
+  known?: readonly { player: number; income: number }[];
 }
 
 export function stressOpponents(input: StressOpponentsInput) {
@@ -86,6 +88,7 @@ export function stressOpponents(input: StressOpponentsInput) {
     },
     turn,
     ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
+    ...(input.known?.length && input.enemyDeploy === undefined ? { known: input.known } : {}),
   });
   const myTeam = carriesTeam(me.team) ? me.team : undefined;
   const teamOf = new Map(game.players.map((p) => [p.id, p.team]));

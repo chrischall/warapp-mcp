@@ -15,6 +15,7 @@ import {
   CITE_OPEN,
   CITE_SEP,
   CONCEDE_FACTOR,
+  MIN_ENEMY_DEPLOY,
   nearMissMargin,
   type PlannedMove,
   type TwoStepHoldAt,
@@ -29,6 +30,30 @@ import { byNum } from './util.js';
 
 /** #235: the most territories a cut-off line names. */
 const MAX_CUT_NAMED = 4;
+
+/**
+ * #420: `t`'s hold is sized only on the fog prior (#119) — its opponent has no usable track and its
+ * figure is the prior, above what the evidence gives (its base and visible bonuses, an observed deploy,
+ * a Reinforcement card on the clock), and `t` holds against the stacks beside it plus that evidence.
+ * Returns the evidence figure, else `null`. Only a plain border: one opponent beside it (every other
+ * neighbour mine or neutral), no chain, split, joint or worst-case sizing, no Bomb, no figure Local
+ * Deployment or #275 changed, no given `enemy_deploy`.
+ */
+export function priorOnlyHold(pc: PlanCtx, b: Border, t: Threatened): number | null {
+  if (pc.custom || pc.bombOn || b.chain || b.split || b.worst !== undefined || b.alone !== undefined || b.commanderWorst) return null;
+  const e = pc.estimates.get(b.player);
+  if (!e || e.source !== 'prior' || e.tracked !== null || b.deploy !== pc.deployOf(b.player)) return null;
+  for (const n of neighborsOf(pc.g, t.id)) {
+    const o = pc.territories.get(n)?.owner;
+    if (pc.mineSet.has(n) || o?.kind === 'neutral' || (o?.kind === 'player' && o.playerId === b.player)) continue;
+    return null;
+  }
+  const floor = Math.max(MIN_ENEMY_DEPLOY, e.base);
+  const evidence = Math.max(e.opening ? floor : Math.max(floor, e.base + e.bonusIncome), e.observed ?? 0) + (e.card?.armies ?? 0);
+  if (evidence >= b.deploy) return null;
+  const take = pc.toTake(t.have + t.units);
+  return take !== null && take > b.movable + Math.max(evidence, b.growth) ? evidence : null;
+}
 
 /** A territory of mine with a threat next to it (rule 1): what it has, what it faces, what holding it costs. */
 export interface Threatened {

@@ -677,8 +677,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   attacking you hardest, not on a strong neighbour who is leaving you alone, and not when you
   are the one winning the fights; use the quiet turns for something that border would not have
   allowed. **Encoded as advice** (D2): `cards.advice.diplomacy` names the opponent whose stacks tie
-  down the most of my border armies, only when two or more are in contact, passing over a truce
-  partner the truce already covers; never auto-played. Source:
+  down the most of my border armies (the only one in contact too, outside a 1v1, #424), passing over
+  a truce partner the truce already covers; a card in force in its last turn is warned of and chained
+  first; never auto-played. Source:
   <https://war.app/Forum/141245-ais-use-blockadegiftdiplomacybomb>
 - `cards-sanctions-sign-and-timing` — Read the Sanctions percentage first: a negative one raises
   the target's income, so that card goes on yourself or a teammate. A normal one resolves at the
@@ -709,7 +710,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
   base + visible bonuses, or what it observed), derived; from the lost games of 2026-11-12/13,
   where the estimate ran 2–3× low. The planner's fog prior (at least my income for an opponent beside the
   fog, in an even-start 1v1 or free-for-all) stays on after a player is out of a free-for-all, that
-  player's share of the hidden board split among the rest (#368). Source: Good 1v1 strategies.
+  player's share of the hidden board split among the rest (#368). A hold only that prior makes needed (the
+  border holds against what the evidence shows) ranks after every capture (#420). Source: Good 1v1 strategies.
 - `reading-who-moves-first` — whose deployment or order runs first shows the first mover; under
   a cyclic (not random) order it alternates, and whoever was awarded first moves second on turn 1;
   under fog, the parity of your own deployments (or moves) before its first visible one of the same
@@ -751,9 +753,11 @@ delays the orders listed after it; under No-Split the whole stack moves).
   contact and after). **Advice only** (the planner does not state that split yet, #294), derived;
   from the lost 1v1s of #300. On thin evidence (under half its frontier read) the planner sizes an opponent at
   the midpoint between what it has seen (its tracked figure, raised to the trend's next step while that
-  rises) and the most it could have (the fog prior, else what it could earn), moving toward what it has seen
+  rises, unless you lead it on income and armies in view — at three to one on armies, on income above what it earned before the rise, however high the rise reads, #418) and the most it could have (the fog prior, else what it could earn), moving toward what it has seen
   as more of the frontier comes into view (#368, the owner's call: choose the middle until we learn
-  otherwise), and takes an income you know from `known_income`. Source: Good 1v1 strategies.
+  otherwise), and takes an income you know from `known_income`; incomes stated below mine scale the prior of
+  the opponents who said nothing by their ratio to mine, and an untracked one is then sized at the midpoint
+  between what is in view and that (#444). Source: Good 1v1 strategies.
 - `reading-stack-arrival` — When a stack you saw goes out of view, count the turns it needs to
   walk to each of your borders and expect it from that turn on. Do not advance toward where it
   must be unless you are sure to move first; and when a deployment drops with no fight to
@@ -827,7 +831,11 @@ delays the orders listed after it; under No-Split the whole stack moves).
 - `opening-one-bonus-at-a-time` — Do not split a turn's income between two unfinished bonuses:
   both then finish later. Put it all into the bonus that completes soonest, and split only when
   each share finishes something this turn or one share is needed to hold a border. **Encoded:**
-  the planner commits to the bonus closest to completion until one is held (rule 4f). Source:
+  the planner commits to the bonus closest to completion until one is held (rule 4f); among
+  equally close ones, the capture whose completed bonuses (a pair bonus included) add the most
+  income per army goes first (#438). A single-territory bonus of +5 or more two moves away through a
+  visible neutral counts as a two-turn completion, and the neutral in between is taken ahead of captures
+  that complete nothing (#439). Source:
   <https://docs.google.com/document/d/e/2PACX-1vS5eO54w3LgnkcwbLqM3DhynuQGoChrPn313QXIMm0QZ3ApILPuvcunEdmG_nZflHKcfRwCpZfvHA8L/pub>
 - `opening-capture-survivors` — Smallest sure captures and what moves in: 3 armies take a 2 and
   2 move in; 5 take a 3 (3 move in); 6 take a 4 (3); 8 take a 5 (4); 16 take a 10 (9). One army

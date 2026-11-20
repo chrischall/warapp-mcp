@@ -59,7 +59,6 @@ import {
   type PlanRelation,
   type PlanInput,
 } from '../analysis/index.js';
-import { visibleState } from '../analysis/plan/shared.js';
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH, type CombatSettings, luckFraction, straightKills } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
@@ -148,7 +147,7 @@ import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { recordOutlook } from '../outlook-log.js';
 import { bootTimes, captureChat, capturePlan, captureObservation, captureSent, cardAdviceLog, handLog, submitChecksLog } from './decision-capture.js';
 import { chatTruces } from '../analysis/chat-read.js';
-import { scrubNames, type LoggedChatMessage, type LoggedSent, type SentOrders, type SubmitChecks } from '../decision-log.js';
+import { readDecisionLog, scrubNames, type LoggedChatMessage, type LoggedSent, type SentOrders, type SubmitChecks } from '../decision-log.js';
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
@@ -172,6 +171,7 @@ import { readSiegeMemory, writeSiegeMemory } from '../siege-store.js';
 import { readBonusAttempts, writeBonusAttempts } from '../bonus-attempt-store.js';
 import { rememberBonusAttempts } from '../analysis/plan/bonus-attempts.js';
 import { rememberSiegeTurn, type SiegeMemory } from '../analysis/plan/siege.js';
+import { countsOf, fogSightings, ownersOf } from '../analysis/plan/vacated.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
@@ -364,24 +364,6 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
 }
 
 export { currentTurn, turnsCompleted } from './common.js';
-
-/**
- * #428: each territory's last sighting on my board history (oldest first): its armies and owner (a
- * player id, `null` for a neutral) on the newest board that showed both. Boards from GameFeed history
- * (unverified in progress) are left out. The planner costs a fogged bonus member at it.
- */
-export function lastSeenOf(boards: readonly TurnBoard[]): Map<number, { armies: number; owner: number | null }> {
-  const out = new Map<number, { armies: number; owner: number | null }>();
-  for (const b of boards) {
-    if (b.source === 'history') continue;
-    for (const t of b.board.territories) {
-      const v = visibleState(t);
-      if (!v || v.armies === null) continue;
-      out.set(t.territoryId, { armies: v.armies, owner: v.owner.kind === 'player' ? v.owner.playerId : null });
-    }
-  }
-  return out;
-}
 
 /** My teammates' GameFeed ids (empty outside a team game; GameFeed's team field is unverified). */
 export function friendsOf(players: readonly Player[], me: Player): Set<number> {
@@ -1612,6 +1594,18 @@ export async function boardHistory(ctx: LiveContext, game: Game, me: Player, tur
  * the previous turn's plan expected, and naming the bonuses broken and territories lost since the
  * previous board. `full` adds the figures and the lists by id and name beside the line.
  */
+/**
+ * #442: the captures the decision log's plan of `turn` expected, kept to the targets of the moves sent that
+ * turn when they were logged (a capture the orders sent did not try is no failed attack). Never throws.
+ */
+async function previousCaptures(dir: string, gameId: number, me: number, turn: number): Promise<number[] | undefined> {
+  const e = (await readDecisionLog(dir, gameId, me))?.turns[String(turn)];
+  const caps = e?.decision?.expected?.captures;
+  if (!Array.isArray(caps)) return undefined;
+  const sent = e?.sent?.moves;
+  return sent ? caps.filter((id) => sent.some((m) => m.to === id)) : [...caps];
+}
+
 function sinceLastView(
   s: SinceLast,
   previousTurn: number,
@@ -1636,7 +1630,13 @@ function sinceLastView(
           : `${inc}, as expected ${when}.`;
   const broken = s.bonusesBroken ?? [];
   const lost = s.territoriesLost ?? [];
+  const missed = s.capturesMissed ?? [];
   const parts = [
+    ...missed.map((t) =>
+      t.to === null
+        ? `the capture of ${name(t.territoryId).name} (#${t.territoryId}) failed`
+        : `the capture of ${name(t.territoryId).name} (#${t.territoryId}) failed: ${player(t.to).name} holds it${t.fresh ? ' — your attack hit their fresh capture' : ''}`,
+    ),
     ...(broken.length
       ? [`${broken.length === 1 ? 'bonus' : 'bonuses'} broken — ${broken.map((b) => `${bonus(b.bonusId)} (+${b.value})`).join(', ')}`]
       : []),
@@ -1662,6 +1662,7 @@ function sinceLastView(
       ? {
           bonusesBroken: broken.map((b) => ({ id: b.bonusId, name: bonus(b.bonusId), value: b.value })),
           territoriesLost: lost.map((t) => ({ ...name(t.territoryId), to: t.to !== null ? player(t.to) : null })),
+          ...(missed.length ? { capturesMissed: missed.map((t) => ({ ...name(t.territoryId), to: t.to !== null ? player(t.to) : null, ...(t.fresh ? { fresh: true } : {}) })) } : {}),
         }
       : {}),
     line,
@@ -1927,7 +1928,6 @@ export async function livePlanSetup(
   // plan's main front, so its front forecast and the plan's front outlook are one computation.
   const outlook = gameOutlook(outlookInput);
   const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
-  const lastSeen = lastSeenOf(history.boards);
   // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
   const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
   const gameContext: PlanGameContext = {
@@ -2001,6 +2001,11 @@ export async function livePlanSetup(
   const incomeHistory = commerceRules(game.settings)
     ? []
     : history.boards.map((b) => ({ turn: b.turn, income: incomeDetail(graph, b.board, me.id, game.settings).income }));
+  // #417 / #428: each fogged territory's newest earlier sighting, one source for both readers: who held it
+  // (a static seat's stays vacated, #417) and, when that board showed them, its armies (#428's fog price).
+  const sightings = fogSightings(board, history.boards);
+  const lastSeen = ownersOf(sightings);
+  const lastCounts = countsOf(sightings);
   const input: PlanInput = {
     graph,
     board,
@@ -2016,6 +2021,7 @@ export async function livePlanSetup(
     ...(truces?.relations.length ? { relations: truces.relations } : {}),
     settings,
     ...(trend ? { previousBoard: trend.board } : {}),
+    ...(lastSeen.size ? { foggedLastSeen: lastSeen } : {}),
     // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
     ...(trend && previousOrders ? { previousOrders } : {}),
     ...(repulsed.length ? { repulsed } : {}),
@@ -2033,7 +2039,7 @@ export async function livePlanSetup(
       // #201: the picking board's neutrals, so a fogged one keeps its size (wastelands).
       ...(picking?.neutrals ? { rememberedNeutrals: new Map(picking.neutrals) } : {}),
       // #428: and a member my earlier boards showed keeps its last-seen armies.
-      ...(lastSeen.size ? { lastSeen } : {}),
+      ...(lastCounts.size ? { lastSeen: lastCounts } : {}),
       ...(goal !== undefined ? { goal } : {}),
       focusBonusIds,
       ...(opponents > 0 ? { opponents } : {}),
@@ -2378,7 +2384,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'the first warning. ' +
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
-          'and the bonuses broken and territories lost since the previous board. ' +
+          'and the bonuses broken and territories lost since the previous board, and each capture that plan expected and did ' +
+          "not make, with the player who now holds it (your attack hit that player's fresh capture). " +
           '`headroom` lists, weakest first, each border of yours with the smallest single deploy by a neighbouring opponent that ' +
           'takes it after the plan\'s orders (carried out on the turn simulator, both move orders unless the first mover is known), ' +
           'whether that is below your income, and what falls with it (the bonuses it breaks, the territories behind it and their ' +
@@ -2600,6 +2607,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               expected: expectedNow,
               expectedTurn: turn - 1,
               armyCap: setup.incomeCap,
+              expectedCaptures: ctx.dataDir && turn !== null ? await previousCaptures(ctx.dataDir, game.id, me.id, turn - 1) : undefined,
             })
           : undefined;
       // A what-if plan (an explicit goal or enemy_deploy) keeps the board but not its expected income:

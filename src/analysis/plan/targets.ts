@@ -24,7 +24,7 @@ import type { Holds } from './holds.js';
 import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
-import { denialsOf, emptyEnemiesOf } from './vacated.js';
+import { denialsOf, emptyEnemiesOf, VACATED_FOG_ARMIES } from './vacated.js';
 import { breakableBonuses, type Breakable } from './siege.js';
 import { ALL_IN_VALUE_TURNS, type AllInTry } from './bonus-attempts.js';
 
@@ -577,8 +577,8 @@ export function bonusScoring(
         rationale.push(`Skip bonus ${b.name} (#${b.id}): completing it costs more income than it pays (net ${net}).`);
       continue;
     }
-    // Armies to finish (#101): every missing member's capture cost. A fogged member is costed from
-    // what is known of it (#428): its last sighting on my boards (unless the fog shows another owner
+    // Armies to finish (#101): every missing member's capture cost. A fogged member a static seat left
+    // is priced by #417 first (below); any other is costed from what is known of it (#428): its last sighting on my boards (unless the fog shows another owner
     // now), else (#201) its size on the picking board, else the game's neutral size (when its owner is
     // hidden too); only with none of those does it count at its bonus's costliest visible missing
     // member (counting it as free made the figure jump when it came into view; 65 finished-game plans
@@ -598,9 +598,19 @@ export function bonusScoring(
       loss += l;
       worstLoss = Math.max(worstLoss, l);
     };
+    /** #417: the fogged members a static seat left, each with its cost and loss at VACATED_FOG_ARMIES. */
+    const vacatedFog: { t: number; left: number; c: number; l: number }[] = [];
     for (const t of remaining) {
       const st = state.get(t);
       if (!st || st.owner.kind === 'unknown' || st.armies === null) {
+        // #417 first: land a static seat left is thin behind its border stack: costed at most at
+        // VACATED_FOG_ARMIES defenders, and never raising what another fogged member counts at.
+        const left = pc.vacated.get(t);
+        if (left !== undefined) {
+          const c = costAt(t, VACATED_FOG_ARMIES) ?? Infinity;
+          vacatedFog.push({ t, left, c, l: Math.min(c - 1, straightKills(VACATED_FOG_ARMIES, rates.defensiveKillRate)) + 1 });
+          continue;
+        }
         const shown = st?.owner.kind === 'player' ? st.owner.playerId : undefined;
         // #428: its last sighting, under the owner the fog shows now (or any, when it shows none).
         const seen = opts.lastSeen?.get(t);
@@ -630,9 +640,23 @@ export function bonusScoring(
       loss += l;
       worstLoss = Math.max(worstLoss, l);
     }
-    const costed = remaining.length - fogged - foggedNeutral;
-    let fogEach = fogged ? (costed > 0 ? worst : Infinity) : 0;
-    let fogLoss = fogged ? (costed > 0 ? worstLoss : Infinity) : 0;
+    // #417: a member a static seat left counts at the lesser of its VACATED_FOG_ARMIES cost and the
+    // costliest member in view; with none in view (only fog), at that cost.
+    const inView = remaining.length - fogged - foggedNeutral - vacatedFog.length > 0;
+    for (const v of vacatedFog) {
+      const c = inView ? Math.min(v.c, worst) : v.c;
+      cost += c;
+      loss += inView ? Math.min(v.l, worstLoss) : v.l;
+      if (remaining.some(bonusTarget))
+        sayOnce(
+          rememberedSaid,
+          v.t,
+          b,
+          `${label(v.t)}, fogged now, was player ${v.left}'s (out, no AI): its land behind a border stack stands on ${VACATED_FOG_ARMIES} at most, so it is costed at ${c}, not at a stack in view (#417).`,
+        );
+    }
+    let fogEach = fogged ? (inView ? worst : Infinity) : 0;
+    let fogLoss = fogged ? (inView ? worstLoss : Infinity) : 0;
     let neutralEach = foggedNeutral ? neutralCost : 0;
     let neutralEachLoss = foggedNeutral ? neutralLoss : 0;
     // #167: with automatic Wastelands, a fogged member may be one: its expected surcharge over an
@@ -741,9 +765,10 @@ export function closestBonus(
   // While no bonus is held (and in the opening and expansion phases), expansion goes to the bonus
   // closest to completion — fewest turns to finish at this income (its armies to finish, counting
   // the members I hold, over the income) — then the next closest, instead of one capture into each
-  // of several large bonuses by value per army. Bonuses as close as each other keep the score order
-  // (value per army, rule 4), except that a bonus advanced last turn (a member captured since
-  // `previousBoard`) keeps priority unless another is strictly closer. Focused bonuses come first.
+  // of several large bonuses by value per army. Bonuses as close as each other go by the income per
+  // army of every bonus their capture completes (#438: a pair bonus on top of a single-territory one
+  // counts), then a bonus advanced last turn (a member captured since `previousBoard`) first, then the
+  // score order (value per army, rule 4). Focused bonuses come first.
   const holdsBonus = g.map.bonuses.some((b) => {
     const ts = bonusTs.get(b.id)!;
     return b.value > 0 && ts.length > 0 && ts.every((t) => mineSet.has(t));
@@ -774,12 +799,27 @@ export function closestBonus(
   /** Turns to finish a bonus at this income, and at least its depth (with no income, its armies to finish). */
   const turnsOf = (p: BonusPlan) => (income > 0 ? Math.max(Math.ceil(p.cost / income), depthOf(p)) : p.cost);
   const scoreRank = new Map(plans.map((p, i) => [p.bonusId, i]));
-  /** Bonus plans closest to completion first (focus first; ties: advanced last turn, then the score order). */
+  /**
+   * #438: every bonus a plan's capture completes — each plan whose missing members are all among
+   * its own (a pair bonus beside a single-territory one) — with their net income added up.
+   */
+  const completesWith = (p: BonusPlan) => plans.filter((q) => q.remaining.every((t) => p.remaining.includes(t)));
+  const incomeOf = (p: BonusPlan) => completesWith(p).reduce((n, q) => n + q.net, 0);
+  /** #438: that income per army, on the score's cost (`ratio`, scaled from this bonus's net to the sum). */
+  const perArmy = (p: BonusPlan) => {
+    const r = prev.ratio(p);
+    return Number.isFinite(r) && p.net > 0 ? (r * incomeOf(p)) / p.net : r;
+  };
+  /**
+   * Bonus plans closest to completion first (focus first; ties: the income per army of every bonus
+   * the capture completes, #438, then advanced last turn, then the score order).
+   */
   const byCloseness = committing
     ? [...plans].sort(
         (a, b) =>
           Number(b.focus) - Number(a.focus) ||
           turnsOf(a) - turnsOf(b) ||
+          perArmy(b) - perArmy(a) ||
           Number(advancedLast.has(b.bonusId)) - Number(advancedLast.has(a.bonusId)) ||
           scoreRank.get(a.bonusId)! - scoreRank.get(b.bonusId)!,
       )
@@ -804,6 +844,20 @@ export function closestBonus(
         .join(', ')} — and a farther bonus gets only armies the closer ones cannot use.`,
     );
     const top = byCloseness.find((p) => !p.focus);
+    // #438: a capture that completes more than one bonus says what they add up to per army.
+    const said = new Set<string>();
+    for (const p of byCloseness) {
+      const all = completesWith(p);
+      const key = [...p.remaining].sort((x, y) => x - y).join(',');
+      // Only where it ranks: another bonus as close that this capture does not complete.
+      const rivals = byCloseness.some((q) => !all.includes(q) && !q.focus && turnsOf(q) === turnsOf(p));
+      if (all.length < 2 || !rivals || said.has(key)) continue;
+      said.add(key);
+      const names = all.map((q) => bonusName(q.bonusId));
+      rationale.push(
+        `${names.slice(0, -1).join(', ')} and ${names.at(-1)} complete together for ${p.cost} armies: +${incomeOf(p)} next-turn income, ${(incomeOf(p) / p.cost).toFixed(2)} per army — ranked on that among bonuses as close (#438).`,
+      );
+    }
     for (const p of byCloseness.filter((x) => advancedLast.has(x.bonusId))) {
       if (p === top)
         rationale.push(

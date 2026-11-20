@@ -158,6 +158,69 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(warnings.join('\n')).toMatch(/Passed over: player 8811111299: your truce already covers every border it presses/);
   });
 
+  it('#424: advises Diplomacy on the only opponent in contact in a free-for-all', () => {
+    const plan = { deploys: [{ territoryId: 4, armies: 3 }], moves: [{ from: 4, to: 3, armies: 10, kind: 'attack' as const, reason: '' }], moveSlots: ['sure' as const], enemyDeploy: 5, conceded: [] };
+    const before = structuredClone(plan);
+    const { view } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 20)], plan, game: ffa, hand: [card(8, 'Diplomacy')] }));
+    expect(view.diplomacy).toMatchObject({ player: FOE.id, borders: [4], order: { players: [ME.id, FOE.id] } });
+    // Report-only: the plan's orders are unchanged.
+    expect(plan).toEqual(before);
+  });
+
+  it('#424: warns on the last turn of a Diplomacy card in force, and advises chaining it', () => {
+    const order = (...ints: number[]) => ({
+      $type: 'warlight.shared.GameOrderPlayCardDiplomacy',
+      ...Object.fromEntries(ints.map((n, i) => [`f${i}`, n])),
+      g: 'ab'.repeat(16),
+      p: FOE_IN,
+    });
+    const info = (e: number) => ({
+      $type: 'warlight.shared.LatestGameInfo',
+      s: { $type: 'warlight.shared.GameStanding', a: [{ $type: 'warlight.shared.ActiveCard', c: order(ME_IN, FOE_IN), e }] },
+    });
+    const territories = fronts();
+    const plan = { deploys: [{ territoryId: 4, armies: 3 }], moves: [{ from: 4, to: 6, armies: 2, kind: 'attack' as const, reason: '' }], moveSlots: ['sure' as const], enemyDeploy: 5, conceded: [] };
+    const before = structuredClone(plan);
+    // e: 4 → in effect until turn 5: turn 4 is its last.
+    const last = adviseCards(input({ territories, plan, info: info(4), turn: 4, game: ffa, hand: [card(8, 'Diplomacy')] }));
+    const w = last.warnings.join('\n');
+    expect(w).toMatch(/Diplomacy is in effect between you and player 7176543229 \(until turn 5\): .*This is its last turn: from turn 5 it can attack you again — chain it: play your Diplomacy card on it this turn/);
+    expect(last.view.diplomacy).toMatchObject({ player: FOE.id, chain: true });
+    expect(w).toMatch(/Chain it: the Diplomacy card in force with player 7176543229 ends after this turn/);
+    // Without a card in hand: the warning, and the borders to ready.
+    const bare = adviseCards(input({ territories, plan, info: info(4), turn: 4, game: ffa }));
+    expect(bare.warnings.join('\n')).toMatch(/This is its last turn: from turn 5 it can attack you again — ready the borders it faces\./);
+    // Not its last turn: no warning, and the partner is passed over.
+    const early = adviseCards(input({ territories, plan, info: info(4), turn: 3, game: ffa, hand: [card(8, 'Diplomacy')] }));
+    expect(early.warnings.join('\n')).not.toMatch(/last turn/);
+    expect(early.view.diplomacy?.player).toBe(FOE2.id);
+    // Report-only: the warning and the chain advice leave the plan's orders unchanged.
+    expect(plan).toEqual(before);
+  });
+
+  it('#424: in a 1v1 the last-turn warning does not say to chain the card (no chain is advised there)', () => {
+    const order = (...ints: number[]) => ({
+      $type: 'warlight.shared.GameOrderPlayCardDiplomacy',
+      ...Object.fromEntries(ints.map((n, i) => [`f${i}`, n])),
+      g: 'ab'.repeat(16),
+      p: FOE_IN,
+    });
+    const info = {
+      $type: 'warlight.shared.LatestGameInfo',
+      s: { $type: 'warlight.shared.GameStanding', a: [{ $type: 'warlight.shared.ActiveCard', c: order(ME_IN, FOE_IN), e: 4 }] },
+    };
+    const plan = { deploys: [{ territoryId: 4, armies: 3 }], moves: [{ from: 4, to: 3, armies: 10, kind: 'attack' as const, reason: '' }], moveSlots: ['sure' as const], enemyDeploy: 5, conceded: [] };
+    const before = structuredClone(plan);
+    const { view, warnings } = adviseCards(
+      input({ territories: [neutral(3, 2), me(4, 20), foe(5, 20)], plan, info, turn: 4, hand: [card(8, 'Diplomacy')] }),
+    );
+    expect(plan).toEqual(before);
+    const w = warnings.join('\n');
+    expect(w).toMatch(/This is its last turn: from turn 5 it can attack you again — ready the borders it faces\./);
+    expect(w).not.toMatch(/chain it/i);
+    expect(view.diplomacy).toBeUndefined();
+  });
+
   it('says nothing of Diplomacy in a 1v1', () => {
     const { view } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 20)], hand: [card(8, 'Diplomacy')] }));
     expect(view.diplomacy).toBeUndefined();

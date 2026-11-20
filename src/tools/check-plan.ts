@@ -312,6 +312,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         info,
         ...(opening ? { opening } : {}),
         ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
+        // #444: the stated incomes scale the other opponents' prior, as warapp_plan_turn has them.
+        ...(intel.knownIncome?.length ? { known: intel.knownIncome } : {}),
       });
       const { tracks, income, effect, friend, teams, inView, leader, estimates } = so;
       // #275 (b): an opponent whose estimate an observation broke is tried at the larger of what tripped it

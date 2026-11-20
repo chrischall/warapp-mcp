@@ -8,7 +8,7 @@
 import { adviseOrderDelay, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
 import { bonusTerritories } from '../analysis/bonuses.js';
-import { supportAdvice, type SupportView } from './card-support-advice.js';
+import { diplomacyOpponents, supportAdvice, type SupportView } from './card-support-advice.js';
 import type { TruceCover } from '../analysis/card-support.js';
 import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
@@ -18,6 +18,7 @@ import { isTeamGame, teammatesOf as teamOf } from '../teams.js';
 
 const CARD_BOMB = 13;
 const CARD_EMERGENCY_BLOCKADE = 3;
+const CARD_DIPLOMACY = 8;
 
 /** The game around my hand, for the card policy; in a team game with `me`, my in-game id (V8). */
 export function cardGame(game: Pick<Game, 'players' | 'settings'>, me?: Player): CardGame {
@@ -281,13 +282,23 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
       if (a.card === 'Diplomacy' && a.players?.includes(me.id)) {
         const other = a.players.find((p) => p !== me.id);
         const hit = plan.moves.filter((m) => m.kind === 'attack' && other !== undefined && owner(m.to) === other);
+        // #424: its last turn (gone by the next): say so, and chain it with a Diplomacy card in hand —
+        // outside a 1v1, where the support advice chains it too (a 1v1 is advised no Diplomacy).
+        const last = turn !== null && a.untilTurn === turn + 1;
         warnings.push(
           `Diplomacy is in effect between you and player ${other}${until}: neither can attack the other.` +
             (other !== undefined && input.enforced?.has(other)
               ? ' The plan honours it (T9): no hold against that player and no attack on it.'
               : hit.length
                 ? ` The plan's attacks on ${hit.map((m) => label(m.to)).join(', ')} would do nothing — drop or redirect them.`
-                : ''),
+                : '') +
+            (last
+              ? ` This is its last turn: from turn ${a.untilTurn} it can attack you again — ${
+                  held(CARD_DIPLOMACY) && diplomacyOpponents(game, me.id, friends) >= 2
+                    ? 'chain it: play your Diplomacy card on it this turn (it starts the turn after it is played), or ready the borders it faces.'
+                    : 'ready the borders it faces.'
+                }`
+              : ''),
         );
       }
       if (a.card === 'Sanctions' && a.target === me.id) {
@@ -307,7 +318,13 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
   const atPeace = new Set(
     (view.active ?? []).flatMap((a) => (a.card === 'Diplomacy' && a.players?.includes(me.id) ? a.players.filter((p) => p !== me.id) : [])),
   );
-  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, truces: input.truces ?? [] });
+  // #424: the cards in force whose last turn this is (gone by the next): chained, not passed over.
+  const lastTurn = new Set(
+    (view.active ?? []).flatMap((a) =>
+      a.card === 'Diplomacy' && a.players?.includes(me.id) && turn !== null && a.untilTurn === turn + 1 ? a.players.filter((p) => p !== me.id) : [],
+    ),
+  );
+  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, lastTurn, truces: input.truces ?? [] });
   Object.assign(view, support.view);
   warnings.push(...support.warnings);
   return { view, warnings };

@@ -549,6 +549,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `warapp_check_plan`, for this call only (`PlanOptions.avoid`). The planner treats each like a truce's covered
   territory for T1 (`truceOf` wraps `noTarget`; `Truce.avoided` names it in the "Not attacking" line), a neutral
   included, in any format; holds are not relaxed (T2 does not apply). check_plan warns when the orders attack one.
+  #441: an avoided player's neutrals go too (`skirtedNeutrals`, wrapped into `noTarget` in the estimates phase): a
+  neutral whose only enemy neighbour is that player, or in a bonus it visibly holds over half of, unless it completes
+  a bonus of mine or its minimal capture's survivors alone would hold against the stacks beside it plus the owner's
+  deploy; a "Not taking … (#441)" line per one beside my land. No avoided player: golden unchanged.
 - **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (docs/PLAN-TEAMS.md
   section 8 B3). `priceTruce` (`src/analysis/relations.ts`, pure) diffs two plans on the exact input
   `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the
@@ -773,16 +777,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   moves. The preview warns the encoding is unverified and the result
   carries `cardPlayCheck`. The planner never plays them; `warapp_plan_turn`'s `cards.advice` (D2,
   `src/analysis/card-support.ts`, pure) says where they pay, each with an `order`, never added to the
-  orders: Diplomacy on the opponent whose stacks tie down the most of my border armies, only with two or
-  more in contact (a truce partner the truce already covers is passed over unless the truce is in notice
-  or leaves a border it presses uncovered; one a Diplomacy card in force covers is passed over), Sanctions
+  orders: Diplomacy on the opponent whose stacks tie down the most of my border armies (#424: the only one in
+  contact too, unless no other opponent is still playing — a 1v1 says nothing; a truce partner the truce
+  already covers is passed over unless the truce is in notice or leaves a border it presses uncovered; one a
+  Diplomacy card in force covers is passed over, unless this is that card's last turn: then it is chained
+  first, `chain: true`, and the in-effect warning says it is the last turn and to chain or ready the borders — in a 1v1 only to ready them,
+  `diplomacyOpponents` gating both), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
   percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
   Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only
   where the fog hides what the plan needs, never with fog off: Spy on an opponent out of view (else the
   owner shown beside my most hidden stacks), Surveillance on a bonus I hold half or more of with a fogged
   member (else the most valuable with a hidden border of mine), Reconnaissance on the hidden territory
-  beside the most of mine. **A team hand's cards carry `owner`**
+  beside the most of mine, else (#443) on the hidden territory behind the opponent in contact whose stacks
+  tie down the most of my border armies (`pressures`), a distribution-mode start first when the map carries
+  the mode's territories. **A team hand's cards carry `owner`**
   (the in-game id read under, mine when under me at all; V8 verified, #310): the planner plays, discards and
   advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
   teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not
@@ -843,7 +852,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   wasteland, no hold beside them, never the standing or the strike stack's direction. Never me or a
   teammate. The board cache keeps what war.app showed. #281: the planner keeps which neutrals a seat
   left (`PlanInput.vacated` → `BoardCtx.vacated`, set by `planTurn`); one costing at most
-  `VACATED_MAX_COST` (2) beside a live stack that can take it with what stands there
+  `VACATED_MAX_COST` (3; #417 raised it from 2 to what `VACATED_FOG_ARMIES` (2) defenders cost) beside a live stack that can take it with what stands there
   (`denialOf`, `src/analysis/plan/vacated.ts`) comes either way, so rule 4d never refuses it on its hold
   cost alone, pass 3 ranks it without that hold need and credits the denial (1 + payback × the bonus
   progress it gives that opponent: it can outrank every plain capture, and a member of my uneconomic
@@ -862,7 +871,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   its check (`outgrows`), so rule 4e's non-contact fallback applies it too. No #281 capture (a denial or
   an empty enemy territory) is sourced from the territory my commander walks from (#282: all that stands
   there is its transit hold, `commanderTransitFrom` / `notFromTransit`); a commander that stays keeps its
-  worst-case hold through `keepOf`, as from any capture.
+  worst-case hold through `keepOf`, as from any capture. #417: `vacated` also takes the territories fogged
+  now that a seat held when last seen (`foggedLastSeen` over my whole board history, `PlanInput.foggedLastSeen` set
+  in `livePlanSetup`: the newest earlier sighting; `previousBoard` only as the fallback), and in "N armies to finish" a fogged member a seat left
+  counts at `VACATED_FOG_ARMIES` defenders, never above the costliest member in view (not at the seat's
+  border stack), with a "… was player N's (out, no AI) … (#417)" line. Golden: 22 of 2000 synthetic plans
+  changed (rationale), 3 plans' orders: +4 captures, none lost, next income and concessions unchanged.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -937,7 +951,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   visible share of its edge on this board). This applies in a 1v1 too,
   pulling #119's prior back toward the tracked figures #119 found 2–3× low (8 turns with the whole
   frontier read keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
-  against a finished 1v1. **Frontier coverage (#294).** Each observed turn carries `coverage`
+  against a finished 1v1. #420 (`priorOnlyHold`, `plan/holds.ts`): a single-border hold under `balanced` that
+  only the prior makes needed (no usable track; the border holds against its one opponent's stacks plus
+  base + visible bonuses / an observed deploy / a clock card; plain borders only) ranks after every capture
+  in rule 4a's greedy step, with a "(#420)" line when it passed one; held-bonus units and evidence-sized holds keep their rank. **Frontier coverage (#294).** Each observed turn carries `coverage`
   (`frontierCoverage`, pure, in `src/analysis/plan/shared.ts`): its territories in view with a neighbour
   not its own, plus every territory beside them whose owner is hidden (it could hold it: the "~M"), read
   when in view with armies on both boards, and the positive bonuses it could hold with a hidden member;
@@ -950,7 +967,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   its visible income, the tracked figure and — when its tracked figure rose two turns running,
   `risingTracked`: the most it earned over a turn and the two before it, as of each of its last three
   consecutive observed turns — the trend's next step, the newest figure plus the mean rise of the two
-  steps) and an upper bound (the fog prior whole, not `priorBlend`'s shrink, else the most it could earn):
+  steps; #418: no step when my armies on the board are above its in view and my board income above its tracked figure, or — with `LEAD_ARMIES` × its armies in view — above what it earned before the newest rise, so an over-read tracked figure does not switch the gate off; that judgement with a bare army lead moved 3 of 4 changed calibration samples further below truth) and an upper bound (the fog prior whole, not `priorBlend`'s shrink, else the most it could earn):
   the midpoint (rounded up) with none of its frontier read, moving to what the evidence gives without thin
   evidence (`toward`: the track, or `priorBlend`) as the coverage nears `LOW_COVERAGE` — `toward` + (1 −
   coverage ÷ 0.5) × (midpoint − `toward`) — so it never jumps at 0.5; up or down, never the maximum. A
@@ -963,7 +980,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the clock adds stays on top; `EnemyDeployEstimate.known`), with a warning; `enemy_deploy` wins over it,
   one for a player with nothing in view is named unused, the tripwire keeps the board's own estimates, and
   the commander check (plan block, check_plan's `commander`, the submit) keeps its sizing; check_plan's
-  stress test tries it (`enemyDeploy` source `known_income`) before an untrusted mark. Each observed
+  stress test tries it (`enemyDeploy` source `known_income`) before an untrusted mark. **Stated incomes
+  scale the others (#444, `EnemyIncomePrior.stated`, `statedScale`):** the known incomes of players in view
+  whose mean is below my income scale every other opponent's fog prior by that ratio (rounded up; never
+  above the prior; the #123 bound keeps the unscaled one); a tracked one keeps its track as the floor
+  (thin evidence's upper bound is the scaled prior), an untracked one is sized at #368's midpoint between
+  its visible/observed figure and the scaled prior (`EnemyDeployEstimate.stated`); a warning names it;
+  check_plan passes them through `stressOpponents`. Each observed
   deploy also carries `stacks` (`DeployObservation`): every stack of the opponent held in view on both
   boards that grew, its growth split into what a neighbour in view of its own visibly sent (each shrink
   claimed once, first by the stacks with no hidden neighbour, whose rest can only be deploy, then by those
@@ -1126,6 +1149,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn, income = the most of the last three observed turns (or its stock and flow when more),
   floored at base + visibly held bonuses — and never decaying (#119): an earlier figure is carried
   until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it;
+  #418: while I lead it on the board read (my armies in view ≥ `LEAD_ARMIES` (3) × its own and my income
+  above the carry before the turn or that turn's visible income — never the reading being judged, which an
+  over-read passes — `ObservedTurn.leadIncome`), a rise no turn read in full confirmed rises at most
+  `RISE_CAP` (1.3) × the carry (or that turn's visible income) a turn, none on a turn read in full that observed
+  less (`incomeMethod` `rise-capped`, `incomeRise`), so walk-ins read up to twice the carry no longer compound;
+  measured on 167 calibration samples: 5 changed, mixed and small (ungated it lowered 45, mostly true rises);
+  golden: 1 plan's rationale; judging the lead by the carry (review fix): calibration unchanged, golden 3
+  synthetic plans (readings above my income held: one break attack the plan warned was 0% if reinforced
+  dropped, one break target and two ranking incomes lower; next income unchanged);
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
   `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;
@@ -1175,7 +1207,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   counts, never a story: events out of opportunities (`{ e, n }`) or a size (`{ n, sum, sq }`).
   `src/analysis/opponent-profile.ts` (pure) observes each pair of my consecutive boards with my cached orders
   (`observeTurn` → `TurnPrimitives` per opponent: contact, `attackedMe` — `null` when it cannot be told —,
-  `iAttacked`, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
+  `iAttacked` — #442: also onto a territory not mine on T that is its on T+1, its fresh capture —, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
   arithmetic cannot read —, `stack`, `tookFromMe` / `lostToMe`; visibility through `visibleState` / `ownerShown`)
   and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake, jab — #361, capacityTopUp — #295) from the
   whole list, so re-deriving never double-counts. #295: `topUp` reads my biggest stack facing it on board T
@@ -1504,14 +1536,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     teammate territory is unknown (team vision unverified). Absent outside a team game.
   - **Commit to the closest bonus (#101, rule 4f).** While no bonus is held, and in the opening
     and expansion phases, completions and advances go to the bonus fewest turns from completion
-    first (equally close ones by score); a bonus advanced last turn keeps priority unless another
-    is strictly closer. "N armies to finish" counts a fogged member (#428) at its last sighting on my
-    boards (`lastSeenOf` → `options.lastSeen`, cached boards only, unless the fog shows another owner now),
-    else its picking-board size (#201), else — its owner hidden too — the game's neutral size
-    (`settings.neutralArmies`: the larger of the two neutral sizes the settings give), and only without
-    any of those at the bonus's costliest visible missing member (65 finished-game plans counted every one
-    at 208). Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input
-    1020 plans, 724 orders, captures +22/−2, next income lower on 1. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
+    first; equally close ones by the income per army (on the score's cost) of every bonus the capture
+    completes (#438: a pair bonus on top of a single-territory one adds up; a "complete together" line
+    when another bonus as close competes), then a bonus advanced last turn, then the score. Golden: 14 of
+    6253 plans' orders changed, captures, next income and warnings unchanged. "N armies to finish" counts a
+    fogged member a static seat left at its #417 price first; else (#428) at its last sighting on my boards
+    (`options.lastSeen`, unless the fog shows another owner now), else its picking-board size (#201), else — its
+    owner hidden too — the game's neutral size (`settings.neutralArmies`: the larger of the two neutral sizes the
+    settings give), and only without any of those at the bonus's costliest visible missing member (65
+    finished-game plans counted every one at 208). The sightings are one source with #417's: `fogSightings`
+    (plan/vacated.ts) over my board history gives each fogged territory's newest sighting (owner, and armies when
+    shown); `foggedLastSeen` is its owners, `lastSeen` its counts. Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input 1017 of 6253 plans, 722
+    orders, captures +21/−2, next income lower on 1; with sightings from each input's previous board, 51 plans, 34 orders,
+    captures +1. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
     are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or
@@ -1519,6 +1556,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     sure try, with #120's warning — only while rule 4f commits to the closest bonus, and never
     with the armies a hold gets: `planTurn` plans again without bare steps and keeps that plan
     (saying so) when the bare one leaves a border it holds without its hold.
+  - **A big single-territory bonus two moves away is a two-turn completion (#439, `plan/two-move.ts`).** A bonus of
+    one territory worth at least `TWO_MOVE_MIN_VALUE` (5), two moves from mine through a visible neutral target (the
+    territory a visible neutral, or fogged and costed at its picking-board size), costs that neutral plus the territory
+    (cheapest neutral in between; every bonus the two complete counts; kept only when it repays within the payback
+    turns). Under `balanced` the neutral in between is a greedy candidate (`stage`) scored net ÷ both costs, treated
+    as an advance (after units, below holds in a 1v1); other goals take it after completions and before advances; a
+    "Stage toward …" line names both steps. Not when this turn already takes or borders the territory. Golden: no
+    plan changed (6253; the corpus has no such bonus).
   - **The economy test charges armies lost (#125).** A capture costs the economy the armies its
     attackers lose plus the one left on it (waived when an idle stack beside it, facing no enemy,
     takes it), not the armies sent; a bonus's worth adds its members' per-territory income; plain
@@ -1648,6 +1693,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     bonuses), and counts toward the step; with no enemy territory in view the leftover stays on the
     territory central to what I hold (fewest hops through my land to my farthest border) rather than
     ride an expansion stack more than `CENTRE_SLACK` hops farther out whose attacks land without it.
+    #424 (`partnerFront`): when that is only because a Diplomacy card in force (T9) makes the sole opponent
+    beside me no foe, the leftover goes instead to my border facing its stacks (most at stake, then its
+    biggest stack beside it, then id), once the expansion's attacks land without it: the card's end reopens it.
     #288 (`joinsOf`, `plan/leftover.ts`): an expansion stack facing no threat and holding no commander of mine
     that has nothing left to attack once this turn's captures land (every neighbour mine or captured) sends the
     leftover with its attacks on neutrals whose targets have a step onward (equal shares, most steps onward
@@ -1679,6 +1727,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     the opponent's whole observed deploy: the largest of its estimate, `observedRaw`, this turn's high reading
     (`observation.high`, growth beside the fog read as deploy) and the track's cut reading (`newestCut`) — a jump
     kept as a lower bound counts in full. A "(#290)" line names each; the spread itself is unchanged.
+    #440 (`deterrentGuard`): before the leftover tops up a border that already holds (or one a truce relaxes, T2), the
+    territory of mine carrying a single-territory bonus of at least `DETERRENT_MIN_VALUE` (5) with the most protected
+    value (open, no order, not one of those borders) gets a deterrent guard when it protects `DETERRENT_VALUE_RATIO` (2)
+    × the most any of them protects and an opponent stands within two steps: armies until taking it needs more than
+    `COMFORT_MARGIN` × the largest deploy estimate of those opponents (its threat, when a border), never from what the
+    borders that would fall need to hold; it is then `locked` (rule 6 moves nothing out) — also when it already needs
+    more than that to take and gets no deploy (a "keeps its N armies" line), else a capital that started stronger
+    ended weaker than a topped-up one (review fix: 3 suite golden plans keep a +5 territory's idle armies). Live: a +8 hub of nine pair
+    bonuses ended on 3 while 15 armies topped up low-value borders. Any held bonus's member was tried first: 4 golden
+    plans changed, one shaving a front's armies into a #226 margin, so it is gated to the single-territory case.
+    Golden: synthetic unchanged; 3 suite plans (100-102) each drop one idle transfer out of a +5 single-territory
+    bonus behind borders that already hold; deploys, captures and income unchanged.
     #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
     reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
     sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,
@@ -1696,6 +1756,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     flat history on every plan of turn ≥ 5 it fired on 25 of 6,253 and changed orders on 7, no capture lost, next
     income never lower, no concession added. A completion that takes an opponent's member only reaches it where
     rule 5 already saves toward such a step.
+  - **A stockpile on a flat income is spent (#421).** Outside a 1v1 (no siege, adapting, not `defend`, not
+    No-Split), when `incomeTrend` is flat and my armies in view are at least `STOCKPILE_TURNS` (4) turns of income,
+    rule 0p.3c builds the strike stack facing the opponent beside me whose visible armies mine outnumber
+    `STOCKPILE_LEAD` (2)× (fewest first; visible armies only, never an income estimate; never on my commander's
+    territory): the leftover goes to it ahead of comfort margins and #102 spends it as in a 1v1, with a
+    "Stockpile (#421)" rationale line (`chooseStrikeStack`, `stackFacing`, `plan/strike.ts`). The golden corpus
+    carries no income history, so it is byte-identical; with a flat history injected on its 1,839 plans of turn
+    ≥ 5, 7 changed orders: 2 captures gained, none lost, next income never lower, no concession, warnings 1 added
+    and 1 removed. Left for later: a fixed share of income for the stack, breaks and all-in completions.
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and
@@ -2143,7 +2212,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   10; `boardAt` rebuilds any turn), the planner's replay `input` (what the map store, the settings record and the board
   cannot give back; `encodeInput`/`decodeInput`), `planner.version`, the `decision` (goal, profile, deploys, moves,
   expected, conceded, offence, enemyDeploy, card advice, the logged estimates, the `rationale` and `warnings` lines verbatim, outlook state), and
-  `next` (actual income, captures/holds, bonuses, eliminated) filled when the following turn is planned. Every other
+  `next` (actual income, captures/holds, bonuses, eliminated; #442: `capturesMissedTo`, the player holding each missed
+  capture) filled when the following turn is planned; warapp_plan_turn's `sinceLastTurn` names each capture the logged plan
+  expected (kept to the moves sent, when logged) and did not make, with who holds it ("your attack hit their fresh
+  capture" when it was not theirs before). Every other
   turn the server sees gets an observation entry (`kind: 'observed'`, `source: 'live' | 'history'`) wherever the board
   cache is written (`src/tools/decision-capture.ts` `captureObservation`: track/locate/profile opponents, get_relations,
   plan_turn what-ifs and `boardHistory`'s history fill); it never overwrites a planned entry, and a later plan upgrades
