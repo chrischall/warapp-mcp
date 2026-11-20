@@ -1130,7 +1130,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   counts, never a story: events out of opportunities (`{ e, n }`) or a size (`{ n, sum, sq }`).
   `src/analysis/opponent-profile.ts` (pure) observes each pair of my consecutive boards with my cached orders
   (`observeTurn` → `TurnPrimitives` per opponent: contact, `attackedMe` — `null` when it cannot be told —,
-  `iAttacked`, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
+  `iAttacked` — #442: also onto a territory not mine on T that is its on T+1, its fresh capture —, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
   arithmetic cannot read —, `stack`, `tookFromMe` / `lostToMe`; visibility through `visibleState` / `ownerShown`)
   and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake, jab — #361, capacityTopUp — #295) from the
   whole list, so re-deriving never double-counts. #295: `topUp` reads my biggest stack facing it on board T
@@ -2080,7 +2080,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   10; `boardAt` rebuilds any turn), the planner's replay `input` (what the map store, the settings record and the board
   cannot give back; `encodeInput`/`decodeInput`), `planner.version`, the `decision` (goal, profile, deploys, moves,
   expected, conceded, offence, enemyDeploy, card advice, the logged estimates, the `rationale` and `warnings` lines verbatim, outlook state), and
-  `next` (actual income, captures/holds, bonuses, eliminated) filled when the following turn is planned. Every other
+  `next` (actual income, captures/holds, bonuses, eliminated; #442: `capturesMissedTo`, the player holding each missed
+  capture) filled when the following turn is planned; warapp_plan_turn's `sinceLastTurn` names each capture the logged plan
+  expected (kept to the moves sent, when logged) and did not make, with who holds it ("your attack hit their fresh
+  capture" when it was not theirs before). Every other
   turn the server sees gets an observation entry (`kind: 'observed'`, `source: 'live' | 'history'`) wherever the board
   cache is written (`src/tools/decision-capture.ts` `captureObservation`: track/locate/profile opponents, get_relations,
   plan_turn what-ifs and `boardHistory`'s history fill); it never overwrites a planned entry, and a later plan upgrades

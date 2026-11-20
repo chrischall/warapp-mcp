@@ -214,6 +214,8 @@ export interface DecisionOutcome {
   /** The plan's captures I held next turn, and those I did not. */
   capturesMade: number[];
   capturesMissed: number[];
+  /** #442: each missed capture a player holds next turn, with that player (an attack on it, in effect); absent in entries written before. */
+  capturesMissedTo?: { territoryId: number; owner: number }[];
   /** The bonuses I held in full next turn. */
   bonusesHeld: number[];
   eliminated: boolean;
@@ -790,6 +792,10 @@ export function decisionOutcome(a: {
     lost: was ? [...was].filter((id) => !now.has(id)).sort(byNum) : [],
     capturesMade: a.captures.filter((id) => now.has(id)),
     capturesMissed: a.captures.filter((id) => !now.has(id)),
+    capturesMissedTo: a.captures.flatMap((id) => {
+      const o = now.has(id) ? undefined : a.after.territories.find((x) => x.territoryId === id)?.owner;
+      return o?.kind === 'player' ? [{ territoryId: id, owner: o.playerId }] : [];
+    }),
     bonusesHeld: [...a.bonuses]
       .filter(([, ts]) => ts.length > 0 && ts.every((id) => now.has(id)))
       .map(([id]) => id)

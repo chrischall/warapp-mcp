@@ -524,9 +524,12 @@ describe('capture helpers (#412 task 2)', () => {
       lost: [2],
       capturesMade: [4],
       capturesMissed: [3],
+      // #442: who holds each missed capture now, when a player does (a fogged one names nobody).
+      capturesMissedTo: [{ territoryId: 3, owner: FOE }],
       bonusesHeld: [10],
       eliminated: false,
     });
+    expect(decisionOutcome({ before, after, me: ME, income: 7, captures: [5, 1], bonuses }).capturesMissedTo).toEqual([]);
     // No land left: eliminated.
     const gone: BoardState = { ...after, territories: after.territories.map((x) => (x.owner.kind === 'player' && x.owner.playerId === ME ? t(x.territoryId, FOE, 1) : x)) };
     expect(decisionOutcome({ before, after: gone, me: ME, income: null, captures: [], bonuses })).toMatchObject({ eliminated: true, income: null, gained: [] });

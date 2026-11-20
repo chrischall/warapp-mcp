@@ -1173,6 +1173,38 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(p.sinceLastTurn).toBe(`Income ${p.income}, as expected when turn 3 was planned. Since turn 3: nothing lost.`);
   });
 
+  it('(h) since last turn names a capture the plan expected that another player took first (#442)', async () => {
+    // No player beside Ann: the plan takes neutrals.
+    const start = BOARD.map((t) => (t.id === 158 ? { ...t, owner: 0, armies: 1 } : t));
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(start) }) });
+    const first = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    const [hit, ...rest] = first.expected.captures.map((c) => c.id);
+    expect(hit).toBeDefined();
+    const dir = h.dataDir;
+    await h.harness.close();
+    // Turn 4: Bob took the first target before my attack landed; the other captures went through.
+    const after = start.map((t) =>
+      t.id === hit
+        ? { ...t, owner: BOB.inGame, armies: 2, fogged: false, fogLevel: 1 }
+        : rest.includes(t.id)
+          ? { ...t, owner: ANN.inGame, fogged: false, fogLevel: 1 }
+          : t,
+    );
+    h = await liveHarness({
+      dataDir: dir,
+      feed: [game('Playing', { numberOfTurns: '3' }), game('Playing', { numberOfTurns: '3' })],
+      warapp: routes({ [Method.GetLatestGameInfo]: board(after) }),
+    });
+    const p = payload<PlanPayload & { sinceLastTurn: string }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.sinceLastTurn).toContain(
+      `Since turn 3: the capture of ${mapName(hit!)} (#${hit}) failed: Bob holds it — your attack hit their fresh capture`,
+    );
+    const full = payload<{ sinceLastTurn: { capturesMissed: unknown } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', view: 'full' }),
+    );
+    expect(full.sinceLastTurn.capturesMissed).toEqual([{ id: hit, name: mapName(hit!), to: { id: Number(BOB.feed), name: 'Bob' }, fresh: true }]);
+  });
+
   it('(h) since last turn from a history board when turn 3 was not planned here (#194)', async () => {
     h = await liveHarness({
       feed: [game('Playing', { numberOfTurns: '3', history: [{ turn: 0, standing: [] }, { turn: 1, standing: [] }, { turn: 2, standing: previous }] })],
