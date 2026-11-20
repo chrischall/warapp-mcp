@@ -280,6 +280,8 @@ export interface PlanOptions {
    * plan/commander.ts off). Default: it walks toward safety when it should.
    */
   commanderWalks?: boolean;
+  /** #382: `false` keeps the profile from picking the siege (adapting with no goal). Default: it picks it when it fits. */
+  siegeAuto?: boolean;
   /**
    * #201: the outlook (#178, `gameOutlook`) from my boards over the last turns. Once it reports the
    * game decided (winning or losing), payback tests count the turns the game has left and the

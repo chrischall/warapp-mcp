@@ -254,3 +254,78 @@ describe('#382 siege goal', () => {
     });
   });
 });
+
+describe('#382 siege chosen by the profile', () => {
+  const auto = (o: Parameters<typeof input>[0] = {}, extra: Partial<PlanInput> = {}): PlanInput => {
+    const base = input(o);
+    const { goal: _goal, ...options } = base.options!;
+    return { ...base, ...extra, options: { ...options, adapt: true } };
+  };
+  const recolour = (armies: number) =>
+    board(BOARD.territories.map((t) => (t.owner.kind === 'player' && t.owner.playerId === ENEMY ? { ...t, armies } : t)));
+
+  it('a 1v1 in contact, not ahead, with a cheap sure break: the profile picks the siege', () => {
+    const p = planTurn(auto());
+    expect(p.profile.format).toBe('1v1');
+    expect(p.profile.standing).not.toBe('ahead');
+    expect(p.goal).toBe('siege');
+    expect(p.siege).toMatchObject({ target: ENEMY, ready: false, auto: expect.stringMatching(/B1 \(#1\) \(\+5\) for 3 breaks within 2 turns/) });
+    expect(p.rationale.join('\n')).toMatch(/The profile chose the siege on player 20 \(#382\)/);
+  });
+
+  it('an explicit goal overrides it', () => {
+    const p = planTurn({ ...auto(), options: { adapt: true, goal: 'balanced' } });
+    expect(p.goal).toBe('balanced');
+    expect(p.siege).toBeUndefined();
+  });
+
+  it('ahead on income: no siege', () => {
+    const p = planTurn(auto({ income: 30 }));
+    expect(p.siege).toBeUndefined();
+    expect(p.goal).not.toBe('siege');
+  });
+
+  it('hands back once the assault trigger fires, and says so', () => {
+    const p = planTurn(auto({ tracks: [track(30, 15)] }));
+    expect(p.siege).toBeUndefined();
+    expect(p.rationale.join('\n')).toMatch(/assault trigger has fired \(income-fell\).*hands back/);
+  });
+
+  it('no break costs at most twice its value: no siege', () => {
+    expect(planTurn(auto({}, { board: recolour(40) })).siege).toBeUndefined();
+  });
+
+  it('a break the target retook on two earlier siege turns counts one turn of its value', () => {
+    const memory: SiegeMemory = {
+      target: ENEMY,
+      turns: [
+        { turn: 2, opponentIncome: 15, myIncome: 10, breaks: [1, 2, 3] },
+        { turn: 3, opponentIncome: 15, myIncome: 10, breaks: [1, 2, 3] },
+      ],
+    };
+    // Every member at 4: a break costs 7 — at most 2 × 5 fresh, more than 5 once retaken twice.
+    expect(planTurn(auto({ turn: 4 }, { board: recolour(4) })).siege).toBeDefined();
+    const p = planTurn(auto({ turn: 4, memory }, { board: recolour(4) }));
+    expect(p.siege).toBeUndefined();
+    expect(p.rationale.join('\n')).not.toMatch(/The profile chose the siege/);
+  });
+
+  describe('a free-for-all', () => {
+    const THIRD = 30;
+    const game = { players: [{ id: ME, state: 'Playing' }, { id: ENEMY, state: 'Playing' }, { id: THIRD, state: 'Playing' }] } as PlanInput['game'];
+    // The third player holds T4, beside my interior T3.
+    const ffa = board(BOARD.territories.map((t) => (t.territoryId === 4 ? { territoryId: 4, owner: { kind: 'player', playerId: THIRD }, armies: 2 } : t)));
+
+    it('besieges the leader when every other opponent in contact earns at most 2/3 of it', () => {
+      const p = planTurn(auto({}, { board: ffa, game }));
+      expect(p.profile.format).toBe('ffa');
+      expect(p.profile.ranking?.commonThreat).toBe(ENEMY);
+      expect(p.siege).toMatchObject({ target: ENEMY });
+    });
+
+    it('not with a rival in contact earning as much as the target (two fronts)', () => {
+      const p = planTurn(auto({}, { board: ffa, game, knownIncome: [{ player: THIRD, income: 15 }] }));
+      expect(p.siege).toBeUndefined();
+    });
+  });
+});

@@ -7,7 +7,7 @@
 // (#167) and the turns to eliminate each opponent (#179). planPass runs them where they ran before:
 // the expected outcome and the offence report after Order Priority for a strike, the plan last,
 // after the move order (plan/move-order.ts).
-import { siegeLines, siegeReport } from './siege.js';
+import { siegeFitLine, siegeLines, siegeReport } from './siege.js';
 import { bonusTerritories } from '../bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from '../combat.js';
 import { classifyExchange, type ExchangeCase } from '../exchange.js';
@@ -809,9 +809,12 @@ export function finishPlan(
   // #382: the siege's state and rationale, first.
   if (pc.siegeWarning) warnings.push(pc.siegeWarning);
   if (pc.siege) rationale.unshift(...siegeLines(pc.siege, label, pc.bonusName));
+  const chose = pc.siege ? siegeFitLine(pc.siege, pc.bonusName) : undefined;
+  if (chose) rationale.unshift(chose);
+  if (pc.siegeHandBack) rationale.push(pc.siegeHandBack);
   return {
-    goal: pc.opts.goal === 'siege' ? 'siege' : goal,
-    ...(pc.siege ? { siege: siegeReport(pc.siege, g, captured) } : {}),
+    goal: pc.opts.goal === 'siege' || pc.siege ? 'siege' : goal,
+    ...(pc.siege ? { siege: siegeReport(pc.siege, g, captured, pc.bonusName) } : {}),
     profile,
     // Deploys interleave like moves, and the order they land in shows the opponent my income and
     // the move order: next to a visible enemy first, in the back after (ascending id within each).
