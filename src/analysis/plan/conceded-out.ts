@@ -48,11 +48,22 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
     }
     return { completes, advances };
   };
+  /**
+   * #286: rule 1c keeps `x` — a positive bonus containing it is completed by this turn's captures —
+   * so its armies would not withdraw: they are its garrison, not a free step. Live, a +2 member
+   * attacked out with 3 into an uneconomic bonus, was kept, and ended 1 army short of its hold.
+   */
+  const keptBy1c = (x: number) =>
+    g.map.bonuses.some((b) => {
+      if (b.value <= 0) return false;
+      const ts = bonusTerritories(g, b.id);
+      return ts.includes(x) && ts.every(holding) && !ts.every((y) => mineSet.has(y));
+    });
   const tried = new Set<number>();
   for (;;) {
     const cands: { t: number; from: number; cost: number; bonus: number; value: number; completes: boolean; focus: boolean }[] = [];
     for (const x of [...conceded].sort(byNum)) {
-      if (!mineSet.has(x) || myCommanders.has(x)) continue;
+      if (!mineSet.has(x) || myCommanders.has(x) || keptBy1c(x)) continue;
       // #272 review: what tryCapture's forced source may spend: a covered exit (#179) keeps its cover
       // (No-Split sends the whole stack).
       const n = (avail.get(x) ?? 0) - (noSplit ? 0 : coverOf(x));
