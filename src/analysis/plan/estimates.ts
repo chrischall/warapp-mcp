@@ -825,16 +825,17 @@ export function planContext(input: PlanInput): PlanCtx {
  * every plan, in this order.
  */
 export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
-  const { board, s, opts, earnedIncome: income, estimateList, profile, auto, strike, goal, minimal, pressureFactor, decidedGame, siege } = ctx;
+  const { board, s, opts, earnedIncome: income, estimateList, profile, auto, strike, minimal, pressureFactor, decidedGame, siege } = ctx;
   const { rates, minWin, exactCombat, bombOn, luck, weightedRounding, noSplit, armiesBehindVs } = ctx;
   const { warnings, rationale } = state;
   const profileText = `${profile.format}, ${profile.phase}, ${profile.standing}`;
   if (opts.adapt && opts.goal !== undefined) {
-    rationale.push(`Goal ${goal} was given explicitly, so it overrides the game profile (${profileText}): none of the profile's rules apply.`);
+    // #385: under `siege` the planner runs as `balanced`, so name the goal the caller gave.
+    rationale.push(`Goal ${opts.goal} was given explicitly, so it overrides the game profile (${profileText}): none of the profile's rules apply.`);
     // Also a warning: live, a script that always passed `goal: balanced` switched the 1v1 rules
     // (strike stack, breaks before expansion) off for two whole games, and nobody noticed.
     warnings.push(
-      `Goal ${goal} was given explicitly, so none of the game-profile rules for ${profile.format === 'ffa' ? 'an FFA' : profile.format === 'teams' ? 'a team game' : 'a 1v1'} apply this turn (standing ${profile.standing}): leave the goal out to let the profile choose it and apply them.`,
+      `Goal ${opts.goal} was given explicitly, so none of the game-profile rules for ${profile.format === 'ffa' ? 'an FFA' : profile.format === 'teams' ? 'a team game' : 'a 1v1'} apply this turn (standing ${profile.standing}): leave the goal out to let the profile choose it and apply them.`,
     );
   } else if (auto) {
     const strongest = estimateList.reduce((m, e) => Math.max(m, e.estimate), 0);
