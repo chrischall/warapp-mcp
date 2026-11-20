@@ -165,6 +165,13 @@ describe('#298: the planner pushes all-in once, or drops the bonus', () => {
     expect(p.rationale.join('\n')).toMatch(/Bonus Fen \(#301\) is dropped as a target on turns 18 to 20 \(#298\)/);
   });
 
+  it('#406: two failed attempts but no missing member held by another player any more: no all-in and no drop', () => {
+    // Player 30 lost 3 to the neutral: Fen is no longer contested, so it is planned as any other bonus.
+    const neutral3 = board([mine(1, 8), mine(2, 4), { territoryId: 3, owner: { kind: 'neutral' }, armies: 2 }, mine(4, 3), mine(5, 2), player(6, 14, P3), player(7, 3, P3), player(8, 3, P2), player(9, 4, P3)]);
+    const p = planTurn(input(neutral3, TWICE));
+    expect(p.bonusPush ?? []).toEqual([]);
+  });
+
   it('a drop still running, and an all-in that failed, leave it unfunded', () => {
     const running: BonusAttemptMemory = { bonuses: [{ bonusId: FEN, attempts: [], drop: { from: 17, until: 19 } }] };
     const p = planTurn(input(at(3), running));
