@@ -87,6 +87,8 @@ function blockOf(m: ChatBlockMessage, i: number, g: ChatBlockGame): ChatBlock | 
   if (!m || typeof m !== 'object' || m.unread !== true) return undefined;
   const from = m.senderId;
   if (typeof from !== 'number' || from === g.meId) return undefined;
+  // An unknown turn count (negative, not a number) never blocks: the window could not be judged.
+  if (!Number.isFinite(g.turnsCompleted) || g.turnsCompleted < 0) return undefined;
   if (typeof m.turn !== 'number' || m.turn < g.turnsCompleted - 1) return undefined;
   const players = Array.isArray(g.players) ? g.players : [];
   const c = classifyMessage(typeof m.text === 'string' ? m.text : '', {

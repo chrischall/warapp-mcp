@@ -383,7 +383,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `team-orders-ask`). A context not read (contact, surrenders: `null`) never blocks. `turnChatBlocks`
   (`src/tools/chat-advice.ts`) feeds it from the GameFeed chat of the tool's own game read (`chatSummary`): the
   submit now asks that read with `GetChat=true`, no extra request (asserted), and reads no surrenders, so case 3
-  only shows in warapp_plan_turn. `warapp_plan_turn` reports `chat.chatBlocks` (+ `chatBlocksGate`,
+  only shows in warapp_plan_turn. GameFeed's chat names no channel or recipient (`toMe` never set), so neither tool can fire a private threat or case 4 today: case 2 fires only on a message naming me; both wait on the web chat read. A turn count not known never blocks. `warapp_plan_turn` reports `chat.chatBlocks` (+ `chatBlocksGate`,
   `CHAT_BLOCKS_NOTE`; report only, orders unchanged — asserted). `warapp_submit_turn`: gate off, the preview's
   `chatWarnings` ("would block with WARAPP_CHAT_BLOCKS_TURN=on: …"), never a refusal; on, refused before sending,
   naming each message by id (else time), sender id, intent and why, unless `chat_reviewed` is true (the result's

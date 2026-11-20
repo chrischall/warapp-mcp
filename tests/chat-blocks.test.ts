@@ -59,6 +59,15 @@ describe('chatBlocksTurnMode', () => {
   });
 });
 
+describe('an unknown turn count never blocks', () => {
+  it('blocks nothing when the turns completed are not known (negative or not a number)', () => {
+    const m = [msg({ text: 'our truce is over' })];
+    const truces = new Map([[BLUE, 'active' as const]]);
+    expect(chatBlocks(m, { ...game({ truces }), turnsCompleted: -1 })).toEqual([]);
+    expect(chatBlocks(m, { ...game({ truces }), turnsCompleted: Number.NaN })).toEqual([]);
+  });
+});
+
 describe('case 1: a truce message from a partner', () => {
   it('blocks a high-confidence end notice from a player I have an active truce with', () => {
     const blocks = chatBlocks([msg({ text: 'our truce is over' })], game({ truces: new Map([[BLUE, 'active']]) }));

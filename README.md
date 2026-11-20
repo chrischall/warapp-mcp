@@ -324,7 +324,7 @@ never a fact, the plan's orders never read it, and the decision log keeps only i
 and in one of four cases: a truce end notice, proposal or acceptance from a player you have a truce (or a pending
 proposal) with; a threat or call to gang up on you, naming you (or private to you), from a player beside you; a
 surrender ask while your acceptance is owed (seen by `warapp_plan_turn`, which reads the pending surrenders; the
-submit reads none); a teammate's private question about this turn's orders, cards or gifts. `warapp_plan_turn`
+submit reads none); a teammate's private question about this turn's orders, cards or gifts. Today both tools read GameFeed's chat, which names no channel or recipient, so only cases 1 and 2 can fire (case 2 only for a message that names you); private threats and case 4 wait on the web chat read. `warapp_plan_turn`
 reports them as `chat.chatBlocks` (each by message id or time, sender id, intent and why; with `chatBlocksGate`).
 `warapp_submit_turn` reads the chat in the game read it already makes (no extra request): with
 `WARAPP_CHAT_BLOCKS_TURN` off (the default) its preview lists them in `chatWarnings`; on, it refuses until they are
