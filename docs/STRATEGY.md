@@ -752,7 +752,7 @@ delays the orders listed after it; under No-Split the whole stack moves).
   contact and after). **Advice only** (the planner does not state that split yet, #294), derived;
   from the lost 1v1s of #300. On thin evidence (under half its frontier read) the planner sizes an opponent at
   the midpoint between what it has seen (its tracked figure, raised to the trend's next step while that
-  rises) and the most it could have (the fog prior, else what it could earn), moving toward what it has seen
+  rises, unless you lead it on income and armies in view, #418) and the most it could have (the fog prior, else what it could earn), moving toward what it has seen
   as more of the frontier comes into view (#368, the owner's call: choose the middle until we learn
   otherwise), and takes an income you know from `known_income`; incomes stated below mine scale the prior of
   the opponents who said nothing by their ratio to mine, and an untracked one is then sized at the midpoint

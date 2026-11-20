@@ -2324,6 +2324,15 @@ export function enemyDeployEstimates(
     g.map.territories.every((t) => ownerShown(seenNow.get(t.id)) !== undefined);
   const minimum = Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME));
   const per = settings.bonusArmyPer ?? 0;
+  // #418: my income on the board (cards aside) and my armies in view, against which a rising track is weighed.
+  const myLand = new Set<number>();
+  let myArmies = 0;
+  for (const [t, p] of owner)
+    if (p === me) {
+      myLand.add(t);
+      myArmies += armies.get(t) ?? 0;
+    }
+  const myBoardIncome = boardIncome(g, myLand, { base: minimum, per }).total;
   return players.map((playerId) => {
     // Its visible territories are a lower bound on what it holds, so on its
     // per-territory income too.
@@ -2487,13 +2496,18 @@ export function enemyDeployEstimates(
     // #368 (owner decision of 2026-11-19: on a hidden opponent, choose the middle until we learn
     // otherwise): thin evidence — its tracked figure read from under LOW_COVERAGE of its frontier —
     // sizes it for the midpoint between the lower bound (what is in view or tracked, raised to the
-    // trend's next step when its tracked figure rose two turns running) and the upper bound (the fog
+    // trend's next step when its tracked figure rose two turns running, #418: unless I lead it on income
+    // and on armies in view) and the upper bound (the fog
     // prior whole, else the most it could earn), moved toward what the evidence gives as the coverage
     // nears LOW_COVERAGE. A rising track read from more of its frontier only raises the estimate to that
     // lower bound. Never the maximum.
     let thinEvidence: EnemyDeployEstimate['thinEvidence'] = null;
     if (source !== 'exact' && usable && tracked !== null) {
-      const rising = risingTracked(usable.turns);
+      // #418: no trend step on an opponent I lead on income (its tracked figure) and on armies in view.
+      let theirArmies = 0;
+      for (const t of theirs) theirArmies += armies.get(t) ?? 0;
+      const leadIt = myBoardIncome > Math.max(visible, tracked) && myArmies > theirArmies;
+      const rising = leadIt ? null : risingTracked(usable.turns);
       const thinCoverage = coverage !== null && coverage.share < LOW_COVERAGE;
       if (thinCoverage || rising) {
         const trend = rising ? Math.min(couldEarn, rising[2]! + Math.ceil((rising[2]! - rising[0]!) / 2 - 1e-9)) : null;

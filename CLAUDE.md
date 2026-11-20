@@ -960,7 +960,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   its visible income, the tracked figure and — when its tracked figure rose two turns running,
   `risingTracked`: the most it earned over a turn and the two before it, as of each of its last three
   consecutive observed turns — the trend's next step, the newest figure plus the mean rise of the two
-  steps) and an upper bound (the fog prior whole, not `priorBlend`'s shrink, else the most it could earn):
+  steps; #418: no step when my board income is above its tracked figure and my armies on the board above its in view) and an upper bound (the fog prior whole, not `priorBlend`'s shrink, else the most it could earn):
   the midpoint (rounded up) with none of its frontier read, moving to what the evidence gives without thin
   evidence (`toward`: the track, or `priorBlend`) as the coverage nears `LOW_COVERAGE` — `toward` + (1 −
   coverage ÷ 0.5) × (midpoint − `toward`) — so it never jumps at 0.5; up or down, never the maximum. A
@@ -1142,6 +1142,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn, income = the most of the last three observed turns (or its stock and flow when more),
   floored at base + visibly held bonuses — and never decaying (#119): an earlier figure is carried
   until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it;
+  #418: while I lead it on the board read (my armies in view ≥ `LEAD_ARMIES` (3) × its own and my income
+  above what the window reads, `ObservedTurn.leadIncome`), a rise no turn read in full confirmed rises at most
+  `RISE_CAP` (1.3) × the carry (or that turn's visible income) a turn, none on a turn read in full that observed
+  less (`incomeMethod` `rise-capped`, `incomeRise`), so walk-ins read up to twice the carry no longer compound;
+  measured on 167 calibration samples: 5 changed, mixed and small (ungated it lowered 45, mostly true rises);
+  golden: 1 plan's rationale;
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
   `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;
