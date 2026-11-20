@@ -869,7 +869,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   an empty enemy territory) is sourced from the territory my commander walks from (#282: all that stands
   there is its transit hold, `commanderTransitFrom` / `notFromTransit`); a commander that stays keeps its
   worst-case hold through `keepOf`, as from any capture. #417: `vacated` also takes the territories fogged
-  now that `previousBoard` showed a seat holding, and in "N armies to finish" a fogged member a seat left
+  now that a seat held when last seen (`foggedLastSeen` over my whole board history, `PlanInput.foggedLastSeen` set
+  in `livePlanSetup`: the newest earlier sighting; `previousBoard` only as the fallback), and in "N armies to finish" a fogged member a seat left
   counts at `VACATED_FOG_ARMIES` defenders, never above the costliest member in view (not at the seat's
   border stack), with a "… was player N's (out, no AI) … (#417)" line. Golden: 22 of 2000 synthetic plans
   changed (rationale), 3 plans' orders: +4 captures, none lost, next income and concessions unchanged.
