@@ -272,6 +272,7 @@ export function leftoverDeploy(
       .filter(
         (t) =>
           conceded.has(t.id) &&
+          revivableHere(t.id) &&
           !stood.has(t.id) &&
           !moves.some((m) => m.from === t.id && m.reason !== 'withdraws from a conceded border'),
       )
@@ -480,7 +481,21 @@ export function leftoverDeploy(
   // stack, a border short of its margin), and then before the worse-order holds; otherwise the
   // worse-order holds go first, as before.
   // #240 review: judged as the plain plan judged it, so a repulsed attack's sure size revives nothing.
-  const reviving = !stack && ps.budget > 0 && shortOf(comfortPool, new Map(), true).length > 0;
+  // #420: an opponent's most valuable border keeps its full deploy. When it was conceded while the borders
+  // its top-up sizes read comfortable (a 0 top-up leaves a guard-only stack no threat), no border is short
+  // and the revival would not run, so the leftover went to a stack nothing threatens: the full-deploy border
+  // is revived then too (alone), as it was when its other borders were sized for the full deploy.
+  const fullConceded = (() => {
+    const { primary, capAt } = threats.oneBorder();
+    const out = new Set<number>();
+    for (const [player, t] of primary)
+      if (conceded.has(t) && [...capAt.values()].some((m) => m.has(player))) out.add(t);
+    return out;
+  })();
+  const shortNow = shortOf(comfortPool, new Map(), true).length > 0;
+  const reviving = !stack && ps.budget > 0 && (shortNow || fullConceded.size > 0);
+  /** The conceded borders the revival may hold: every one when a border is short, else the #420 full-deploy ones. */
+  const revivableHere = (id: number) => shortNow || fullConceded.has(id);
   if (!reviving) {
     holdCompletedMembers();
     worseOrderHolds();

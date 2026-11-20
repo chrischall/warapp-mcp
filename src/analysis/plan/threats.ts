@@ -114,6 +114,8 @@ export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput, value
   return {
     ...seen,
     growthOf,
+    /** #420: each opponent's full-deploy border and the borders its top-up sizes (the leftover's revival reads it). */
+    oneBorder: forces.oneBorder,
     /** #290: the previous board as given (the leftover reads which enemy stacks grew since). */
     previousBoard: input.previousBoard,
     deployReaching,

@@ -1041,7 +1041,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   track: every border keeps the whole deploy), under `enemyDeploy`, on my commander's territory, for an
   untrusted estimate (#275) there, or for an opponent beside a single border of mine. Golden: 49 of 6253
   plans changed, 16 in their orders (captures +3/−7, next income unchanged on all, concessions 6 fewer
-  and 3 more).
+  and 3 more). **The full-deploy border is revived first** (review fix, `fullConceded` in `plan/leftover.ts`,
+  read through `Threats.oneBorder`): a top-up of 0 sizes a guard-only stack's other borders at no threat, so
+  no border was short of its margin, the leftover's revival ("Hold … after all") did not run and the leftover
+  went to a border nothing threatens while the most valuable one stayed conceded. When an opponent's
+  full-deploy border is conceded while a border of its takes only the top-up, the revival runs for that
+  border alone (every conceded border, as before, when some border is short). Golden: 20 of 6253 plans
+  changed, 19 in their orders: captures +1/−0, next income unchanged on all, concessions 14 fewer and 1 more
+  (a border held by transfers after the leftover lost them to the revived full-deploy border).
   With a previous board (`previousBoard`), an adjacent enemy stack that grew raises that
   border's threat to movable + max(that opponent's deploy, growth). `warapp_plan_turn` gets it from
   `<dataDir>/boards/<gameId>.json` first — the verified live boards written after each plan or

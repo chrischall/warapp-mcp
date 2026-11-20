@@ -104,3 +104,43 @@ describe('#420: one opponent is sized at its full deploy on one border only', ()
     expect(p.warnings.some((w) => w.startsWith('T3 (#3)') && w.includes('could be taken'))).toBe(true);
   });
 });
+
+// syn1750's shape (review of #420): one guard-only stack of the opponent, T3 (1), faces my T1 (1) and T2
+// (10); it never grew, so its top-up is 0 and T2, off its most valuable border T1, reads no threat at all.
+// T1 needs more than it protects (+0) and is conceded at first. No border is then short of a margin, so the
+// leftover's revival ("Hold … after all") would not run and the leftover went to T2 as "my biggest stack":
+// the border that keeps the full deploy ended conceded. It is revived now, ahead of the stack nothing threatens.
+describe('#420: the full-deploy border is held before the leftover goes to a border its top-up sized at 0', () => {
+  const g3 = buildGraph(
+    makeMap([1, 2, 3, 4], [[1, 2], [1, 3], [2, 3], [3, 4]], [[903, 2, [3, 4]]]),
+  );
+  const at = (t: number): TurnBoard => ({ turn: t, board: board([mine(1, 1), mine(2, 10), foe(3, 1), foe(4, 1)]) });
+  const tracks3 = trackOpponents(g3, [at(1), at(2), at(3)], ME, STD);
+  const plan3 = () =>
+    planTurn({
+      graph: g3,
+      board: at(4).board,
+      me: ME,
+      income: 12,
+      settings: STD,
+      turn: 4,
+      tracks: tracks3,
+      game: { players: [{ id: ME }, { id: FOE }], turn: 4 },
+      options: { goal: 'defend' },
+    });
+
+  it('reads a top-up of 0, so T2 is sized at the bare stack', () => {
+    expect(tracks3[0]!.topUp).toBe(0);
+    const line = plan3().rationale.find((r) => r.includes('(#420)') && r.includes('most valuable border'));
+    expect(line).toContain('T1 (#1); T2 (#2) is sized at its stack beside it plus its largest top-up seen, +0');
+  });
+
+  it('T1 is held after all from the leftover, never conceded; the rest goes to T2', () => {
+    const p = plan3();
+    const dep = (t: number) => p.deploys.find((d) => d.territoryId === t)?.armies ?? 0;
+    expect(dep(1)).toBe(4);
+    expect(dep(2)).toBe(8);
+    expect(p.rationale.join('\n')).toMatch(/Hold T1 \(#1\) after all \(not conceded\): deploy 4 there; the leftover covers it before any comfort margin \(5 armies need 8 to take, above the ~7 threat/);
+    expect(p.warnings.some((w) => w.startsWith('T1 (#1) cannot be held') && w.endsWith(': conceded'))).toBe(false);
+  });
+});
