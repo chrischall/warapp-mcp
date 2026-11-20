@@ -17,6 +17,18 @@ Two PRs, built in order on stacked branches:
 
 Out of scope: #445 (open questions), #415 and #437 (their own branches, in flight).
 
+**PR 2 closes none of its issues** (review): each commit ships only part of its issue, so the PR body says
+`Refs #417, #418, #420, #421` — never `Closes` — and the issues stay open with the deferred items below until
+each is shipped or filed as its own follow-up issue (whoever opens the PR files them first if they are to close):
+- #417: the 1v1 "expansion last" lift; keeping the stacks facing the old wall as a breach force; the
+  accept-surrender preview's hidden-land count (needs the leaver's total territory count).
+- #418: the floor from captures with every source in view (the under-read side); the over-read tripwire.
+- #420: full deploy on one border per opponent with stack + top-up on the rest; observed sizing for neighbours
+  that never attack (needs opponent-profile reads in the planner, owner decision P1); the 50%/70% cap on
+  total holds.
+- #421: a fixed share of income for the strike stack ahead of margins; the "break" and "all-in completion"
+  stockpile spends.
+
 Each issue is one task. Read the issue (`gh issue view <n> --repo chrischall/warapp-mcp`) and the CLAUDE.md
 bullets for the code it touches before writing anything. Rules for every task:
 - TDD: failing test first (a miniature board in the style of `tests/analysis/lessons.test.ts` or the
