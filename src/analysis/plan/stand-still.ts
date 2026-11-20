@@ -504,7 +504,7 @@ export function neverStandStill(
           : []),
       ].join('; ');
       const reasonOf = ({ id, f }: (typeof steps)[number]) =>
-        `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${toFinish(f.cost, f.fogged, f.fogEach)}, ${
+        `cheapest expansion toward bonus ${bonusName(id)} (+${f.value}, ${toFinish(f.cost, f)}, ${
           f.cost === fewest ? 'the fewest of any bonus in reach' : 'the fewest of any bonus with a capture affordable this turn'
         })`;
 
@@ -582,7 +582,7 @@ export function neverStandStill(
         const v = g.bonusById.get(e.bonus.id)!.value;
         if (e.bonus.breaks) return `cheapest capture: breaks bonus ${bonusName(e.bonus.id)} (+${v}) of player ${e.player}`;
         const f = finishCost.get(e.bonus.id)!;
-        return `cheapest capture: advances bonus ${bonusName(e.bonus.id)} (+${v}, ${toFinish(f.cost, f.fogged, f.fogEach)}) from player ${e.player}`;
+        return `cheapest capture: advances bonus ${bonusName(e.bonus.id)} (+${v}, ${toFinish(f.cost, f)}) from player ${e.player}`;
       };
       /**
        * Every candidate, in the order tried. Outside contact: rule 4e's neutral steps as ranked

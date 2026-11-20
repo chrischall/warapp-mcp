@@ -15,6 +15,7 @@ import {
   visibleState,
   WASTELAND_FACTOR,
   type BonusPlan,
+  type FogNeutral,
   type OffenceEntry,
   type PlanInput,
   type Target,
@@ -480,10 +481,20 @@ export function bonusScoring(
   const { exposure } = threats;
   const { targets, bonusTarget, survivorsOf, frontierDelta, scoreCost } = prev;
   // ---- bonus scoring ----
-  /** "N armies to finish", naming the fogged members counted in it (#101). */
-  const fogNote = (fogged: number, each: number) =>
-    fogged ? ` (${fogged} fogged member${fogged === 1 ? '' : 's'} counted at ${each} each)` : '';
-  const toFinish = (cost: number, fogged: number, each: number) => `${cost} armies to finish${fogNote(fogged, each)}`;
+  /**
+   * "N armies to finish", naming the fogged members counted in it (#101): those at the costliest visible
+   * member, and (#428) those costed as the game's neutral size.
+   */
+  const fogNote = (f: { fogged: number; fogEach: number; fogNeutral?: FogNeutral | undefined }) => {
+    const parts = [
+      ...(f.fogged ? [`${f.fogged} fogged member${f.fogged === 1 ? '' : 's'} counted at ${f.fogEach} each`] : []),
+      ...(f.fogNeutral
+        ? [`${f.fogNeutral.count} fogged member${f.fogNeutral.count === 1 ? '' : 's'} counted at ${f.fogNeutral.each} each: the game's neutral size, ${f.fogNeutral.size}`]
+        : []),
+    ];
+    return parts.length ? ` (${parts.join('; ')})` : '';
+  };
+  const toFinish = (cost: number, f: Parameters<typeof fogNote>[0]) => `${cost} armies to finish${fogNote(f)}`;
   const plans: BonusPlan[] = [];
   /** #167: the share of the map's territories that started as wastelands, and what one costs to take and loses. */
   const wasteShare =
@@ -493,13 +504,30 @@ export function bonusScoring(
   const wasteCost = wasteShare > 0 ? (costOf(s.wastelands!.size) ?? Infinity) : 0;
   const wasteLoss = wasteShare > 0 ? Math.min(wasteCost - 1, straightKills(s.wastelands!.size, rates.defensiveKillRate)) + 1 : 0;
   /** Every positive bonus worth completing (net > 0) still missing members: its armies to finish (rule 4e). */
-  const finishCost = new Map<number, { cost: number; value: number; net: number; fogged: number; fogEach: number }>();
+  const finishCost = new Map<number, { cost: number; value: number; net: number; fogged: number; fogEach: number; fogNeutral?: FogNeutral }>();
   const economicMember = new Set<number>();
   const uneconomicMember = new Set<number>();
   /** Missing members of a negative bonus (not focused): plain expansion never steps into one. */
   const negativeMember = new Set<number>();
   /** #201: a remembered neutral's rationale line (its index) and the bonuses it names. */
   const rememberedSaid = new Map<number, { at: number; bonuses: string[] }>();
+  /** #428: the same for a member costed at its last sighting. */
+  const lastSeenSaid = new Map<number, { at: number; bonuses: string[] }>();
+  /** Says once per territory, naming every bonus it is costed in (#201, #428). */
+  const sayOnce = (said: Map<number, { at: number; bonuses: string[] }>, t: number, b: { id: number; name: string }, tail: string) => {
+    const was = said.get(t);
+    if (was) {
+      was.bonuses.push(`${b.name} (#${b.id})`);
+      rationale[was.at] = `${was.bonuses.join(', ')}: ${tail}`;
+    } else {
+      said.set(t, { at: rationale.length, bonuses: [`${b.name} (#${b.id})`] });
+      rationale.push(`${b.name} (#${b.id}): ${tail}`);
+    }
+  };
+  // #428: the game's neutral size, costed once: a fogged member no board showed, whose owner the fog hides.
+  const neutralSize = s.neutralArmies !== undefined && s.neutralArmies >= 0 ? s.neutralArmies : undefined;
+  const neutralCost = neutralSize !== undefined ? (costOf(neutralSize) ?? Infinity) : Infinity;
+  const neutralLoss = neutralSize !== undefined && Number.isFinite(neutralCost) ? Math.min(neutralCost - 1, straightKills(neutralSize, rates.defensiveKillRate)) + 1 : Infinity;
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     const isFocus = focus.has(b.id);
     const ts = bonusTerritories(g, b.id);
@@ -549,21 +577,33 @@ export function bonusScoring(
         rationale.push(`Skip bonus ${b.name} (#${b.id}): completing it costs more income than it pays (net ${net}).`);
       continue;
     }
-    // Armies to finish (#101): every missing member's capture cost. A fogged member counts at its
-    // bonus's costliest visible missing member (it cannot be costed, and counting it as free made
-    // the figure jump when it came into view); with none visible, the bonus cannot be costed.
+    // Armies to finish (#101): every missing member's capture cost. A fogged member a static seat left
+    // is priced by #417 first (below); any other is costed from what is known of it (#428): its last sighting on my boards (unless the fog shows another owner
+    // now), else (#201) its size on the picking board, else the game's neutral size (when its owner is
+    // hidden too); only with none of those does it count at its bonus's costliest visible missing
+    // member (counting it as free made the figure jump when it came into view; 65 finished-game plans
+    // counted every one at 208); with none visible either, the bonus cannot be costed.
     let cost = 0;
     let worst = 0;
     let fogged = 0;
+    let foggedNeutral = 0;
     // #125: the economy test charges the armies lost, not the armies sent.
     let loss = 0;
     let worstLoss = 0;
+    const known = (t: number, armies: number) => {
+      const c = costAt(t, armies) ?? Infinity;
+      cost += c;
+      worst = Math.max(worst, c);
+      const l = Math.min(c - 1, straightKills(armies, rates.defensiveKillRate)) + 1;
+      loss += l;
+      worstLoss = Math.max(worstLoss, l);
+    };
     /** #417: the fogged members a static seat left, each with its cost and loss at VACATED_FOG_ARMIES. */
     const vacatedFog: { t: number; left: number; c: number; l: number }[] = [];
     for (const t of remaining) {
       const st = state.get(t);
       if (!st || st.owner.kind === 'unknown' || st.armies === null) {
-        // #417: land a static seat left is thin behind its border stack: costed at most at
+        // #417 first: land a static seat left is thin behind its border stack: costed at most at
         // VACATED_FOG_ARMIES defenders, and never raising what another fogged member counts at.
         const left = pc.vacated.get(t);
         if (left !== undefined) {
@@ -571,30 +611,26 @@ export function bonusScoring(
           vacatedFog.push({ t, left, c, l: Math.min(c - 1, straightKills(VACATED_FOG_ARMIES, rates.defensiveKillRate)) + 1 });
           continue;
         }
-        // #201: a neutral the picking board showed keeps its size (an owner the fog shows is not one).
-        const was = opts.rememberedNeutrals?.get(t);
-        if (was === undefined || (st && st.owner.kind === 'player')) {
-          fogged++;
+        const shown = st?.owner.kind === 'player' ? st.owner.playerId : undefined;
+        // #428: its last sighting, under the owner the fog shows now (or any, when it shows none).
+        const seen = opts.lastSeen?.get(t);
+        if (seen && (shown === undefined || seen.owner === shown)) {
+          known(t, seen.armies);
+          if (remaining.some(bonusTarget))
+            sayOnce(lastSeenSaid, t, b, `${label(t)}, fogged now, was last seen at ${seen.armies} armies (#428): costed at that.`);
           continue;
         }
-        const c = costAt(t, was) ?? Infinity;
-        cost += c;
-        worst = Math.max(worst, c);
-        const l = Math.min(c - 1, straightKills(was, rates.defensiveKillRate)) + 1;
-        loss += l;
-        worstLoss = Math.max(worstLoss, l);
-        if (remaining.some(bonusTarget)) {
-          // Said once per territory, naming every bonus it is costed in.
-          const said = rememberedSaid.get(t);
-          const tail = `${label(t)}, fogged now, was a neutral of ${was} on the picking board (#201): costed at that.`;
-          if (said) {
-            said.bonuses.push(`${b.name} (#${b.id})`);
-            rationale[said.at] = `${said.bonuses.join(', ')}: ${tail}`;
-          } else {
-            rememberedSaid.set(t, { at: rationale.length, bonuses: [`${b.name} (#${b.id})`] });
-            rationale.push(`${b.name} (#${b.id}): ${tail}`);
-          }
+        // #201: a neutral the picking board showed keeps its size (an owner the fog shows is not one).
+        const was = opts.rememberedNeutrals?.get(t);
+        if (was === undefined || shown !== undefined) {
+          // #428: a member whose owner is hidden too is costed as the game's neutral size, when known.
+          if (shown === undefined && Number.isFinite(neutralCost)) foggedNeutral++;
+          else fogged++;
+          continue;
         }
+        known(t, was);
+        if (remaining.some(bonusTarget))
+          sayOnce(rememberedSaid, t, b, `${label(t)}, fogged now, was a neutral of ${was} on the picking board (#201): costed at that.`);
         continue;
       }
       const c = costAt(t) ?? Infinity;
@@ -606,48 +642,54 @@ export function bonusScoring(
     }
     // #417: a member a static seat left counts at the lesser of its VACATED_FOG_ARMIES cost and the
     // costliest member in view; with none in view (only fog), at that cost.
-    const inView = remaining.length - fogged - vacatedFog.length > 0;
+    const inView = remaining.length - fogged - foggedNeutral - vacatedFog.length > 0;
     for (const v of vacatedFog) {
       const c = inView ? Math.min(v.c, worst) : v.c;
       cost += c;
       loss += inView ? Math.min(v.l, worstLoss) : v.l;
-      if (remaining.some(bonusTarget)) {
-        const said = rememberedSaid.get(v.t);
-        const tail = `${label(v.t)}, fogged now, was player ${v.left}'s (out, no AI): its land behind a border stack stands on ${VACATED_FOG_ARMIES} at most, so it is costed at ${c}, not at a stack in view (#417).`;
-        if (said) {
-          said.bonuses.push(`${b.name} (#${b.id})`);
-          rationale[said.at] = `${said.bonuses.join(', ')}: ${tail}`;
-        } else {
-          rememberedSaid.set(v.t, { at: rationale.length, bonuses: [`${b.name} (#${b.id})`] });
-          rationale.push(`${b.name} (#${b.id}): ${tail}`);
-        }
-      }
+      if (remaining.some(bonusTarget))
+        sayOnce(
+          rememberedSaid,
+          v.t,
+          b,
+          `${label(v.t)}, fogged now, was player ${v.left}'s (out, no AI): its land behind a border stack stands on ${VACATED_FOG_ARMIES} at most, so it is costed at ${c}, not at a stack in view (#417).`,
+        );
     }
     let fogEach = fogged ? (inView ? worst : Infinity) : 0;
     let fogLoss = fogged ? (inView ? worstLoss : Infinity) : 0;
+    let neutralEach = foggedNeutral ? neutralCost : 0;
+    let neutralEachLoss = foggedNeutral ? neutralLoss : 0;
     // #167: with automatic Wastelands, a fogged member may be one: its expected surcharge over an
     // ordinary member is (wastelands ÷ territories on the map) × (a wasteland's cost − this one's).
-    if (wasteShare > 0 && fogged && Number.isFinite(fogEach)) {
-      const extra = Math.ceil(wasteShare * Math.max(0, wasteCost - fogEach));
-      const extraLoss = Math.ceil(wasteShare * Math.max(0, wasteLoss - fogLoss));
-      if (extra > 0) {
-        fogEach += extra;
-        fogLoss += extraLoss;
-        if (remaining.some(bonusTarget))
-          rationale.push(
-            `${b.name} (#${b.id}): its ${fogged} fogged member${fogged === 1 ? '' : 's'} may be ${fogged === 1 ? 'a wasteland' : 'wastelands'} (${s.wastelands!.count} of the map's ${g.territoryById.size} territories start at ${s.wastelands!.size}): +${extra * fogged} armies expected.`,
-          );
-      }
+    if (wasteShare > 0 && (fogged || foggedNeutral)) {
+      // The loss rises with the cost only (an expected surcharge of 0 adds no loss either).
+      const surcharge = (each: number, eachLoss: number) => {
+        const extra = Number.isFinite(each) ? Math.ceil(wasteShare * Math.max(0, wasteCost - each)) : 0;
+        return { extra, extraLoss: extra > 0 ? Math.ceil(wasteShare * Math.max(0, wasteLoss - eachLoss)) : 0 };
+      };
+      const a = fogged ? surcharge(fogEach, fogLoss) : { extra: 0, extraLoss: 0 };
+      const n = foggedNeutral ? surcharge(neutralEach, neutralEachLoss) : { extra: 0, extraLoss: 0 };
+      fogEach += a.extra;
+      fogLoss += a.extraLoss;
+      neutralEach += n.extra;
+      neutralEachLoss += n.extraLoss;
+      const count = (a.extra > 0 ? fogged : 0) + (n.extra > 0 ? foggedNeutral : 0);
+      const expected = a.extra * fogged + n.extra * foggedNeutral;
+      if (expected > 0 && remaining.some(bonusTarget))
+        rationale.push(
+          `${b.name} (#${b.id}): its ${count} fogged member${count === 1 ? '' : 's'} may be ${count === 1 ? 'a wasteland' : 'wastelands'} (${s.wastelands!.count} of the map's ${g.territoryById.size} territories start at ${s.wastelands!.size}): +${expected} armies expected.`,
+        );
     }
-    cost += fogged * fogEach;
-    loss += fogged * fogLoss;
-    if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach });
+    cost += fogged * fogEach + foggedNeutral * neutralEach;
+    loss += fogged * fogLoss + foggedNeutral * neutralEachLoss;
+    const fogNeutral: FogNeutral | undefined = foggedNeutral ? { count: foggedNeutral, each: neutralEach, size: neutralSize! } : undefined;
+    if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach, ...(fogNeutral ? { fogNeutral } : {}) });
     const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
     if (!economic) {
       rationale.push(
-        `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${toFinish(cost, fogged, fogEach)}, losing ~${loss}; ${worstLoss} lost on its costliest territory).`,
+        `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${toFinish(cost, { fogged, fogEach, fogNeutral })}, losing ~${loss}; ${worstLoss} lost on its costliest territory).`,
       );
       continue;
     }
@@ -688,6 +730,7 @@ export function bonusScoring(
       frontier,
       fogged,
       fogEach,
+      ...(fogNeutral ? { fogNeutral } : {}),
     });
   }
   const ratio = (p: BonusPlan) => {
@@ -796,7 +839,7 @@ export function closestBonus(
       `${why}: expansion goes to the bonus closest to completion first — ${byCloseness
         .map(
           (p, i) =>
-            `${bonusName(p.bonusId)} ${i ? p.cost : `${p.cost} armies to finish`}${fogNote(p.fogged, p.fogEach)}, ${turnsText(p)}${i || income <= 0 ? '' : ` at income ${income}`}`,
+            `${bonusName(p.bonusId)} ${i ? p.cost : `${p.cost} armies to finish`}${fogNote(p)}, ${turnsText(p)}${i || income <= 0 ? '' : ` at income ${income}`}`,
         )
         .join(', ')} — and a farther bonus gets only armies the closer ones cannot use.`,
     );
@@ -843,7 +886,7 @@ export function closestBonus(
     ps.warnings.push(
       `${mine.length} territories, no bonus: the captures are spread (income ${income}, base ${base}). ` +
         (nearest
-          ? `Nearest bonus to complete: ${bonusName(nearest.bonusId)}, ${nearest.cost} armies to finish${fogNote(nearest.fogged, nearest.fogEach)}, ` +
+          ? `Nearest bonus to complete: ${bonusName(nearest.bonusId)}, ${nearest.cost} armies to finish${fogNote(nearest)}, ` +
             `${turnsText(nearest)}${income > 0 ? ` at income ${income}` : ''} (rule 4f).`
           : 'No bonus is worth completing from here.') +
         ' Complete one before taking more territories outside it (#319).',

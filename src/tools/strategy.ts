@@ -25,7 +25,7 @@ import { cardClock } from '../strategy/card-clock.js';
 import { cardRules } from '../cards.js';
 import { gameIdArg, graphOf, readAnnotations, respond, untrustedDescription, viewArg, WARAPP_UNTRUSTED_NOTE } from './common.js';
 import { lookupMeta } from './hints.js';
-import { DEFAULT_TERRITORY_LIMIT, PICK_PHASE_STATE, pickSettings } from './picks.js';
+import { PICK_PHASE_STATE, pickSettings, pickTerritoryLimit } from './picks.js';
 import { mapOf } from './map.js';
 import { currentTurn } from './turn.js';
 import { FROZEN_TAB_HINT, loadLiveGame, type LiveContext } from './live-context.js';
@@ -77,7 +77,6 @@ const mapView = (map: GameMap, n: MapNotes, full: boolean) => ({
 function gameMapNotes(game: Game, map: GameMap): MapNotes {
   const picking = game.state === PICK_PHASE_STATE;
   const playing = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length;
-  const limit = game.settings?.territoryLimit;
   const board = game.standing?.territories ?? [];
   const pickable = board.filter((t) => t.owner.kind === 'available').map((t) => t.territoryId);
   const neutralArmies = new Map(
@@ -91,7 +90,8 @@ function gameMapNotes(game: Game, map: GameMap): MapNotes {
       ? {
           opening: {
             players: Math.max(2, playing || game.players.length),
-            territoryLimit: limit && limit > 0 ? limit : DEFAULT_TERRITORY_LIMIT,
+            // #428: the limit set, else the full-distribution share, else the default.
+            territoryLimit: pickTerritoryLimit(game.settings, game.players.length, pickable.length).limit,
             pickable,
             ...(neutralArmies.size ? { neutralArmies } : {}),
           },
