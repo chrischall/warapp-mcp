@@ -947,7 +947,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   visible share of its edge on this board). This applies in a 1v1 too,
   pulling #119's prior back toward the tracked figures #119 found 2–3× low (8 turns with the whole
   frontier read keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
-  against a finished 1v1. **Frontier coverage (#294).** Each observed turn carries `coverage`
+  against a finished 1v1. #420 (`priorOnlyHold`, `plan/holds.ts`): a single-border hold under `balanced` that
+  only the prior makes needed (no usable track; the border holds against its one opponent's stacks plus
+  base + visible bonuses / an observed deploy / a clock card; plain borders only) ranks after every capture
+  in rule 4a's greedy step, with a "(#420)" line when it passed one; held-bonus units and evidence-sized holds keep their rank. **Frontier coverage (#294).** Each observed turn carries `coverage`
   (`frontierCoverage`, pure, in `src/analysis/plan/shared.ts`): its territories in view with a neighbour
   not its own, plus every territory beside them whose owner is hidden (it could hold it: the "~M"), read
   when in view with armies on both boards, and the positive bonuses it could hold with a hidden member;

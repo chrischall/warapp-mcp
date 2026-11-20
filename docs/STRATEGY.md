@@ -710,7 +710,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
   base + visible bonuses, or what it observed), derived; from the lost games of 2026-11-12/13,
   where the estimate ran 2–3× low. The planner's fog prior (at least my income for an opponent beside the
   fog, in an even-start 1v1 or free-for-all) stays on after a player is out of a free-for-all, that
-  player's share of the hidden board split among the rest (#368). Source: Good 1v1 strategies.
+  player's share of the hidden board split among the rest (#368). A hold only that prior makes needed (the
+  border holds against what the evidence shows) ranks after every capture (#420). Source: Good 1v1 strategies.
 - `reading-who-moves-first` — whose deployment or order runs first shows the first mover; under
   a cyclic (not random) order it alternates, and whoever was awarded first moves second on turn 1;
   under fog, the parity of your own deployments (or moves) before its first visible one of the same

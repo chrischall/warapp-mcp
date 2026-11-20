@@ -1605,7 +1605,7 @@ import {
 import { emptyPlan, noteEstimates, planContext } from './plan/estimates.js';
 import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js';
 import { deployBook } from './plan/orders.js';
-import { holdsPhase, type Threatened, type Unit } from './plan/holds.js';
+import { holdsPhase, priorOnlyHold, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
@@ -2058,6 +2058,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       target?: number;
       /** PLAN-TEAMS C3.4: the player holding `target`. */
       owner?: number;
+      /** #420: a hold sized only on the fog prior ({@link priorOnlyHold}): the evidence's figure. It ranks after every capture. */
+      prior?: number;
       run: () => void;
     }
     const rank = { unit: 0, hold: 0, complete: 1, advance: 2, stage: 2, break: 3, counter: 3 } as const;
@@ -2354,9 +2356,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           );
       }
     }
-    for (const t of holds)
+    for (const t of holds) {
+      const b = borders.get(t.id);
+      const prior = t.recentFrom === undefined && !t.critical && b ? priorOnlyHold(pc, b, t) : null;
       candidates.push({
         kind: 'hold',
+        ...(prior !== null ? { prior } : {}),
         // A border just taken from a weak opponent is held first: conceding it hands it back.
         score: t.recentFrom !== undefined ? Infinity : t.worth / t.holdCost,
         cost: t.holdCost,
@@ -2383,6 +2388,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           hold(t);
         },
       });
+    }
     // A conceded unit's members, judged on their own now (rule 1a, against what is left).
     const singleNow = (t: Threatened, quiet: boolean) => {
       if (t.critical) return;
@@ -2444,6 +2450,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const teamFocused = (c: Candidate) => Number(c.owner !== undefined && pc.teamFocus.has(c.owner));
     const ahead = (a: Candidate, b: Candidate) =>
       Number(b.focus) - Number(a.focus) ||
+      // #420: a hold sized only on the fog prior ranks after every capture.
+      Number(a.prior !== undefined) - Number(b.prior !== undefined) ||
       // #201: ahead, every held bonus is held for the worst case before any capture (said below).
       (holdPasses === 'worst' ? Number(b.kind === 'unit') - Number(a.kind === 'unit') : 0) ||
       (oneVsOne ? Number(a.kind === 'advance' || a.kind === 'stage') - Number(b.kind === 'advance' || b.kind === 'stage') : 0) ||
@@ -2451,6 +2459,15 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const after = (a: Candidate, b: Candidate) =>
       a.cost - b.cost || a.borders - b.borders || rank[a.kind] - rank[b.kind] || a.id - b.id;
     candidates.sort((a, b) => ahead(a, b) || teamFocused(b) - teamFocused(a) || after(a, b));
+    for (const c of candidates) {
+      if (c.prior === undefined) continue;
+      const passed = candidates.filter((d) => d.kind !== 'hold' && d.kind !== 'unit' && d.score < c.score);
+      if (!passed.length) continue;
+      const b = borders.get(c.id)!;
+      rationale.push(
+        `Hold ${label(c.id)} after the captures (#420): it needs ${c.cost} only against player ${b.player}'s ~${b.deploy}, the fog prior; against the stacks beside it plus the ~${c.prior} the evidence gives, it holds as it stands.`,
+      );
+    }
     if (pc.teamFocus.size)
       for (const [i, c] of candidates.entries()) {
         if (!teamFocused(c)) continue;
