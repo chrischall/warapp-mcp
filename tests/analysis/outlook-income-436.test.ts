@@ -219,8 +219,11 @@ describe('outlook incomes (#436)', () => {
         expect(leans.has(o.lean)).toBe(true);
       }
     }
-    // A run whose leans differ reports even, with no lean.
+    // A run whose leans differ reports even, with no lean. The fixture must give that run (#459): its precondition is
+    // asserted, so the check can never be skipped silently.
     const mixed = cases[3]!;
-    if (mixed.state === 'even' && new Set(mixed.turns.map((t) => t.lean)).size > 1) expect(mixed.lean).toBeUndefined();
+    expect(mixed.state).toBe('even');
+    expect(new Set(mixed.turns.map((t) => t.lean)).size).toBeGreaterThan(1);
+    expect(mixed.lean).toBeUndefined();
   });
 });
