@@ -920,7 +920,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the clock adds stays on top; `EnemyDeployEstimate.known`), with a warning; `enemy_deploy` wins over it,
   one for a player with nothing in view is named unused, the tripwire keeps the board's own estimates, and
   the commander check (plan block, check_plan's `commander`, the submit) keeps its sizing; check_plan's
-  stress test tries it (`enemyDeploy` source `known_income`) before an untrusted mark. Each observed
+  stress test tries it (`enemyDeploy` source `known_income`) before an untrusted mark. **Stated incomes
+  scale the others (#444, `EnemyIncomePrior.stated`, `statedScale`):** the known incomes of players in view
+  whose mean is below my income scale every other opponent's fog prior by that ratio (rounded up; never
+  above the prior; the #123 bound keeps the unscaled one); a tracked one keeps its track as the floor
+  (thin evidence's upper bound is the scaled prior), an untracked one is sized at #368's midpoint between
+  its visible/observed figure and the scaled prior (`EnemyDeployEstimate.stated`); a warning names it;
+  check_plan passes them through `stressOpponents`. Each observed
   deploy also carries `stacks` (`DeployObservation`): every stack of the opponent held in view on both
   boards that grew, its growth split into what a neighbour in view of its own visibly sent (each shrink
   claimed once, first by the stacks with no hidden neighbour, whose rest can only be deploy, then by those

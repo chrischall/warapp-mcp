@@ -144,7 +144,9 @@ export function planEnemyEstimates(input: {
   const previousBoard = input.previousBoard ? neutralizeSeats(input.previousBoard, seats) : undefined;
   const tracks = input.tracks?.filter((t) => !seats.has(t.playerId));
   const capCut = input.incomeCap ? Math.max(0, Math.floor(input.incomeCap.uncapped - input.incomeCap.received)) : 0;
-  const { prior, skipped } = fogPrior(board, input.me, ctx, input.income + capCut, seats);
+  const fog = fogPrior(board, input.me, ctx, input.income + capCut, seats);
+  const prior = statedScale(fog.prior, board, input.me, input.known ?? []);
+  const skipped = fog.skipped;
   const turn = input.turn ?? ctx.turn ?? null;
   const estimates = enemyDeployEstimates(input.graph, board, input.me, input.settings ?? {}, previousBoard, tracks, prior, {
     turn,
@@ -157,6 +159,26 @@ export function planEnemyEstimates(input: {
     input.known ?? [],
   );
   return { estimates: priced, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
+}
+
+/**
+ * #444: the incomes stated in chat (`known`) for players in view (not me) scale the prior of every other
+ * opponent when their mean is below my income: `EnemyIncomePrior.stated`. The prior unchanged otherwise.
+ */
+function statedScale(
+  prior: EnemyIncomePrior | undefined,
+  board: BoardState,
+  me: number,
+  known: readonly { player: number; income: number }[],
+): EnemyIncomePrior | undefined {
+  if (!prior || !known.length || prior.myIncome <= 0) return prior;
+  const inView = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' ? [t.owner.playerId] : [])));
+  const players = known
+    .filter((k) => k.player !== me && inView.has(k.player))
+    .map((k) => ({ id: k.player, income: Math.max(0, Math.floor(k.income)) }));
+  if (!players.length) return prior;
+  const ratio = players.reduce((n, x) => n + x.income, 0) / players.length / prior.myIncome;
+  return ratio < 1 ? { ...prior, stated: { players, mine: prior.myIncome, ratio } } : prior;
 }
 
 /**

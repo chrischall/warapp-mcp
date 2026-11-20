@@ -753,7 +753,9 @@ delays the orders listed after it; under No-Split the whole stack moves).
   the midpoint between what it has seen (its tracked figure, raised to the trend's next step while that
   rises) and the most it could have (the fog prior, else what it could earn), moving toward what it has seen
   as more of the frontier comes into view (#368, the owner's call: choose the middle until we learn
-  otherwise), and takes an income you know from `known_income`. Source: Good 1v1 strategies.
+  otherwise), and takes an income you know from `known_income`; incomes stated below mine scale the prior of
+  the opponents who said nothing by their ratio to mine, and an untracked one is then sized at the midpoint
+  between what is in view and that (#444). Source: Good 1v1 strategies.
 - `reading-stack-arrival` — When a stack you saw goes out of view, count the turns it needs to
   walk to each of your borders and expect it from that turn on. Do not advance toward where it
   must be unless you are sure to move first; and when a deployment drops with no fight to

@@ -340,3 +340,55 @@ describe('(4) the outlook leans behind when it reads even while bonuses keep fal
     expect(run([5, 5, 5, 5]).leaning).toBeUndefined();
   });
 });
+
+describe('(5) #444: incomes stated in chat scale the fog prior for the opponents who said nothing', () => {
+  // A states 27 against my 91; B (beside the fog at T21, visible 10, prior 91) said nothing.
+  const b = (r: ReturnType<typeof est>) => r.estimates.find((e) => e.playerId === B)!;
+
+  it('an untracked opponent: the prior scales by the stated ratio, then the midpoint between what is in view and it', () => {
+    const r = est({ players, turn: 12, symmetricStart: true }, { known: [{ player: A, income: 27 }] });
+    expect(r.prior?.stated).toEqual({ players: [{ id: A, income: 27 }], mine: 91, ratio: 27 / 91 });
+    // Scaled prior ceil(91 × 27/91) = 27; untracked, so the midpoint 10 + ceil(17/2) = 19.
+    expect(b(r)).toMatchObject({ source: 'prior', estimate: 19, prior: 27, stated: { full: 91, scaled: 27, lower: 10, midpoint: 19 } });
+    // The stated player itself takes its stated income.
+    expect(r.estimates.find((e) => e.playerId === A)).toMatchObject({ estimate: 27, known: { income: 27 } });
+  });
+
+  it('several stated incomes: the ratio of their mean to mine', () => {
+    const r = est({ players, turn: 12, symmetricStart: true }, { known: [{ player: A, income: 40 }, { player: C, income: 60 }] });
+    // C is in no view, so its figure is not applied: only A's 40 scales.
+    expect(r.prior?.stated).toMatchObject({ players: [{ id: A, income: 40 }], ratio: 40 / 91 });
+    expect(b(r)).toMatchObject({ prior: 40, estimate: 25 });
+  });
+
+  it('a tracked opponent with thin evidence: the scaled prior is the upper bound of its midpoint', () => {
+    const r = est({ players, turn: 12, symmetricStart: true }, { known: [{ player: A, income: 27 }], tracks: [track(B, 12, [12, 12, 12], { share: 0 })] });
+    expect(b(r)).toMatchObject({ estimate: 20, thinEvidence: { lower: 12, upper: 27, midpoint: 20 }, stated: { full: 91, scaled: 27 } });
+    // Never below the tracked figure: a stated income far below it leaves the track.
+    const low = est({ players, turn: 12, symmetricStart: true }, { known: [{ player: A, income: 5 }], tracks: [track(B, 12, [12, 12, 12], { share: 0 })] });
+    expect(b(low)).toMatchObject({ estimate: 12, source: 'tracked' });
+  });
+
+  it('never above the prior: a stated income at or above mine leaves every other estimate as it was', () => {
+    const plain = est({ players, turn: 12, symmetricStart: true });
+    const r = est({ players, turn: 12, symmetricStart: true }, { known: [{ player: A, income: 120 }] });
+    expect(r.prior?.stated).toBeUndefined();
+    expect(b(r)).toEqual(b(plain));
+    expect(b(plain)).toMatchObject({ estimate: 91, source: 'prior' });
+    expect(b(plain).stated).toBeUndefined();
+  });
+
+  it('no stated income in view, or no prior: nothing is scaled', () => {
+    expect(b(est({ players, turn: 12, symmetricStart: true }, { known: [{ player: C, income: 20 }] }))).toMatchObject({ estimate: 91 });
+    const uneven = est({ players, turn: 12, symmetricStart: false }, { known: [{ player: A, income: 20 }] });
+    expect(uneven.prior).toBeUndefined();
+    expect(b(uneven).stated).toBeUndefined();
+  });
+
+  it('the plan names the scale in the estimate warning', () => {
+    const p = planTurn(ffa({ knownIncome: [{ player: A, income: 27 }] }));
+    expect(p.warnings.join('\n')).toMatch(
+      /Player 30's fog prior is scaled by the incomes stated in chat \(known_income: player 20 states 27\), 0\.3× my 91: ~27 in place of ~91, never below what is in view or tracked; with no track it is sized at the midpoint ~19 between ~10 and ~27 \(#368\)/,
+    );
+  });
+});
