@@ -2016,8 +2016,6 @@ export async function livePlanSetup(
   const incomeHistory = commerceRules(game.settings)
     ? []
     : history.boards.map((b) => ({ turn: b.turn, income: incomeDetail(graph, b.board, me.id, game.settings).income }));
-  // #417 / #428: each fogged territory's newest earlier sighting, one source for both readers: who held it
-  // (a static seat's stays vacated, #417) and, when that board showed them, its armies (#428's fog price).
   // #420 (P1 amended): the quiet neighbours, from this game's kept profile turns and the boards in hand.
   const quiet =
     turn !== null
@@ -2034,6 +2032,8 @@ export async function livePlanSetup(
           teamsKnown: a.teamsKnown !== false,
         })
       : [];
+  // #417 / #428: each fogged territory's newest earlier sighting, one source for both readers: who held it
+  // (a static seat's stays vacated, #417) and, when that board showed them, its armies (#428's fog price).
   const sightings = fogSightings(board, history.boards);
   const lastSeen = ownersOf(sightings);
   const lastCounts = countsOf(sightings);
