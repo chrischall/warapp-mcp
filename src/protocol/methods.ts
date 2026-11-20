@@ -642,9 +642,11 @@ export const TARGETED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set([
 /**
  * The card plays whose encoding is read from the bundle but not yet sent live (V9): the preview warns
  * and the result carries `cardPlayCheck`. Airlift left it once verified live 2026-11-16 (#296), Diplomacy
- * once verified live 2026-11-18 (#369: played through warapp_submit_turn, read in force on later boards).
+ * once verified live 2026-11-18 (#369: played through warapp_submit_turn, read in force on later boards),
+ * Reconnaissance once war.app accepted it live 2026-11-20 (#443: a turn with the play committed, no error;
+ * withdrawn before it resolved, so the reveal itself is not yet seen).
  */
-const VERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set<CardPlayKind>(['Airlift', 'Diplomacy']);
+const VERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set<CardPlayKind>(['Airlift', 'Diplomacy', 'Reconnaissance']);
 export const UNVERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set(
   [...TARGETED_CARD_PLAYS].filter((kind) => !VERIFIED_CARD_PLAYS.has(kind)),
 );
