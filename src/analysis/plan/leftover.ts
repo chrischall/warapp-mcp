@@ -4,7 +4,8 @@
 // each member of a bonus this turn's captures complete that falls to the enemy beside it (#265), to
 // the borders that fall without the armies withdrawn into them unless I am known to move first
 // (#215), to the borders short of their hold before the strike stack, then to the strike
-// stack, the short borders' comfortable margins (#218: the rest on the step's source when it
+// stack, the territory with the most income at stake as a deterrent guard (#440), the short borders'
+// comfortable margins (#218: the rest on the step's source when it
 // defends as well; #268: else spread over the borders facing one opponent for equal headroom
 // over its deploy), the step it saves toward, the expansion stack (#218: with no front in view,
 // the territory central to what I hold instead when the stack lies far from it; #288: with the
@@ -24,6 +25,10 @@ import { COMFORT_MARGIN, type PlannedMove } from './shared.js';
 
 /** #218 (comment): hops the expansion stack may lie farther from my farthest border than the centre before the leftover stays central. */
 export const CENTRE_SLACK = 1;
+/** #440: the least protected value of the territory a deterrent guard goes to. */
+export const DETERRENT_MIN_VALUE = 5;
+/** #440: how many times the most any border being topped up protects that territory must protect. */
+export const DETERRENT_VALUE_RATIO = 2;
 import { knownFirst, lateArrivals, lateNet, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';
@@ -687,6 +692,67 @@ export function leftoverDeploy(
         );
       }
     };
+    /**
+     * #440: before the leftover tops up a border that already holds, or one a recorded truce covers (T2),
+     * the territory with the most income at stake that carries a single-territory bonus of at least
+     * DETERRENT_MIN_VALUE gets a deterrent guard. Live (a large FFA), the +8
+     * territory that was the hub of nine pair bonuses ended on 3 while 15 armies topped up two low-value
+     * borders. That territory (open, issuing no order, not itself a border being topped up) must protect
+     * at least DETERRENT_MIN_VALUE and DETERRENT_VALUE_RATIO × the most any border being topped up
+     * protects, with an opponent within two steps; it gets armies until taking it needs more than
+     * COMFORT_MARGIN × a casual attack (the largest deploy estimate of those opponents, or its own
+     * threat when it is a border). The borders that would fall keep what makes them hold (a truce-covered
+     * one excepted: the truce covers it). Its armies then stay (`locked`: rule 6 moves none out).
+     */
+    const deterrentGuard = (bs: readonly Border[]) => {
+      const relaxed = (id: number) => ps.truce?.relaxed.has(id) ?? false;
+      const holdNeed = (b: Border) => {
+        let d = 0;
+        while (d < ps.budget) {
+          const take = toTake(stays(b.id) + d + unitsAt(b.id));
+          if (take === null || take > b.threat) break;
+          d++;
+        }
+        return d;
+      };
+      const reserve = bs.filter((b) => !relaxed(b.id)).reduce((sum, b) => sum + holdNeed(b), 0);
+      // A territory that carries a large single-territory bonus of its own (a city, a capital), not
+      // any member of a held bonus: the issue's case, and the golden corpus's churn stays small.
+      const carries = (x: number) =>
+        [...g.bonusById.values()].some((b) => b.value >= DETERRENT_MIN_VALUE && bonusTerritories(g, b.id).length === 1 && bonusTerritories(g, b.id)[0] === x);
+      const hub = [...mine]
+        .filter((x) => open(x) && !orderOf(x) && carries(x))
+        .sort((a, b) => valueOf(b) - valueOf(a) || a - b)[0];
+      if (hub === undefined || bs.some((b) => b.id === hub)) return;
+      const value = valueOf(hub);
+      const top = Math.max(0, ...bs.map((b) => valueOf(b.id)));
+      if (value < DETERRENT_MIN_VALUE || value < DETERRENT_VALUE_RATIO * top) return;
+      const near = new Set([hub, ...neighborsOf(g, hub)].flatMap((x) => [x, ...neighborsOf(g, x)]));
+      const foes = [...new Set([...near].flatMap((x) => {
+        const st = state.get(x);
+        return !captured.has(x) && st?.owner.kind === 'player' && pc.foe(st.owner.playerId) ? [st.owner.playerId] : [];
+      }))].sort((a, b) => a - b);
+      if (!foes.length) return;
+      const casual = Math.max(...foes.map((p) => pc.deployOf(p)), borders.get(hub)?.threat ?? 0);
+      const bar = COMFORT_MARGIN * casual;
+      const most = Math.min(roomAt(hub), ps.budget - reserve);
+      let d = 0;
+      while (d < most) {
+        const take = toTake(stays(hub) + d + unitsAt(hub));
+        if (take === null || take > bar) break;
+        d++;
+      }
+      if (d <= 0) return;
+      deploy(hub, d);
+      locked.add(hub);
+      keepFromMargin(hub);
+      const at = stays(hub) + unitsAt(hub);
+      rationale.push(
+        `Deploy ${d} of the leftover to ${label(hub)} as a deterrent guard (#440): it has the most income at stake (protects +${value}, the borders being topped up at most +${top}), and its ${at} armies now need ${toTake(at)} to take, more than ${COMFORT_MARGIN} × the ~${casual} ${
+          borders.has(hub) && casual === borders.get(hub)!.threat ? 'threat beside it' : `deploy of player ${foes.length === 1 ? foes[0] : foes.join(' or ')} within two steps`
+        }, before any border that already holds is topped up.`,
+      );
+    };
     /** #268: the rest spread by {@link headroomSpread}, already deployed: nothing is left for `where`. */
     let spreadRest: Map<number, number> | undefined;
     let where: number;
@@ -802,6 +868,7 @@ export function leftoverDeploy(
       concentrating = true;
     } else if (short[0]) {
       defends = true;
+      deterrentGuard(short);
       // #218: the source of the step the leftover would save toward, when it is an open border:
       // once every short border has its comfortable margin, the rest goes there when it defends
       // as well as the border the rest would go to, and counts toward the step. A margin itself

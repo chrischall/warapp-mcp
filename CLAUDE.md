@@ -1604,6 +1604,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     the opponent's whole observed deploy: the largest of its estimate, `observedRaw`, this turn's high reading
     (`observation.high`, growth beside the fog read as deploy) and the track's cut reading (`newestCut`) — a jump
     kept as a lower bound counts in full. A "(#290)" line names each; the spread itself is unchanged.
+    #440 (`deterrentGuard`): before the leftover tops up a border that already holds (or one a truce relaxes, T2), the
+    territory of mine carrying a single-territory bonus of at least `DETERRENT_MIN_VALUE` (5) with the most protected
+    value (open, no order, not one of those borders) gets a deterrent guard when it protects `DETERRENT_VALUE_RATIO` (2)
+    × the most any of them protects and an opponent stands within two steps: armies until taking it needs more than
+    `COMFORT_MARGIN` × the largest deploy estimate of those opponents (its threat, when a border), never from what the
+    borders that would fall need to hold; it is then `locked` (rule 6 moves nothing out). Live: a +8 hub of nine pair
+    bonuses ended on 3 while 15 armies topped up low-value borders. Any held bonus's member was tried first: 4 golden
+    plans changed, one shaving a front's armies into a #226 margin, so it is gated to the single-territory case.
+    Golden: no plan changed (6,253; the corpus holds no such territory behind topped-up borders).
     #218 (rule 5b, `src/analysis/plan/after-leftover.ts`): once it is placed, a territory the leftover
     reached takes a neutral beside it from what stands above its hold (pass 3's economy test and
     sizing; the hold as if its attacks on players failed, without withdrawals unless I move first,

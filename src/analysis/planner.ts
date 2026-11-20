@@ -1190,7 +1190,10 @@
 //     first, only that one lands before the opponent's first; when I am known to move first, the
 //     warning is "holds only if my first order is …"). The warning names why the leftover made no
 //     deploy there (too little left, Local Deployment, No-Split sending the stack with its order)
-//     only when that was the reason. Then it goes to the held
+//     only when that was the reason. #440: before the margins below, the territory with the most
+//     protected value that carries a single-territory bonus of at least DETERRENT_MIN_VALUE
+//     (DETERRENT_VALUE_RATIO × the borders' most, an opponent within two steps) gets a deterrent guard: taking it needs more than
+//     COMFORT_MARGIN × that opponent's deploy (plan/leftover.ts `deterrentGuard`). Then it goes to the held
 //     border with the highest protected value still short of COMFORT_MARGIN × its threat (counting
 //     armies withdrawn into it) — but first (#121), when it would go to such margins (no strike stack;
 //     #215 review: judged and run before the worse-order deploys above), a conceded border the leftover can make hold is held after all, from what is left once
