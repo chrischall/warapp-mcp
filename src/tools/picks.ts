@@ -17,7 +17,8 @@ import { teammateOrdersOf } from '../team-orders.js';
 import { readTeammatePicks, type TeammatePicks } from './team.js';
 import { pickingNeutrals } from '../pick-list.js';
 import { mapOf } from './map.js';
-import { mapRecordFor, mapRecordView } from './past-games.js';
+import { profileFormatOf } from '../analysis/opponent-profile.js';
+import { mapMatchOf, mapRecordFor, mapRecordView } from './past-games.js';
 import { keepPickable } from './where.js';
 import { resolveTeams } from './team-source.js';
 import { capturePicksAdvice, picksAdviceLog } from './decision-capture.js';
@@ -342,7 +343,14 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
               mapRecord:
                 record === 'unreadable'
                   ? record
-                  : mapRecordView(record, { bonusName, full: rung === 'full', graph: graphOf(map), picks: plan.groups.primary.territoryIds }),
+                  : mapRecordView(record, {
+                      bonusName,
+                      full: rung === 'full',
+                      graph: graphOf(map),
+                      picks: plan.groups.primary.territoryIds,
+                      // #437: only the games of this game's format and settings.
+                      match: mapMatchOf(profileFormatOf(game.players), game.settings),
+                    }),
             }
           : {}),
         ...(rung === 'full' ? { settings } : {}),

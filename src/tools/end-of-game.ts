@@ -20,8 +20,9 @@
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { BoardState } from '../board.js';
 import { decisionTruth } from '../analysis/decision-truth.js';
-import { captureFinished, outcomeOf, type FinishedCapture } from '../analysis/finished-game.js';
-import { compactDecisionLog, decisionLogMode, finishDecisionLogs, recordTruth } from '../decision-log.js';
+import { captureFinished, excludedKind, gameKinds, leftTurnOf, outcomeOf, type FinishedCapture, type GameKind } from '../analysis/finished-game.js';
+import { compactDecisionLog, decisionLogMode, finishDecisionLogs, readDecisionLog, recordTruth, type DecisionLog } from '../decision-log.js';
+import { LOTTERY_MAX_TERRITORIES } from '../open-games.js';
 import { teammatesOf } from '../teams.js';
 import {
   aggregateCalibration,
@@ -35,7 +36,7 @@ import {
 import type { MapGraph } from '../analysis/graph.js';
 import { profileFormatOf } from '../analysis/opponent-profile.js';
 import { trackGame, type MyOrders, type TurnBoard } from '../analysis/opponents.js';
-import { recordLessons, recordMapGame } from '../lessons-store.js';
+import { recordLessons, recordLessonsExcluded, recordMapExcluded, recordMapGame } from '../lessons-store.js';
 import { endingOf, foldGame, markHistoryFolded, profileFileState, type FoldSeat } from '../profile-store.js';
 import type { WarappClient } from '../client.js';
 import {
@@ -61,6 +62,7 @@ import { profileEnabled } from '../profile-store.js';
 import { nameFreeSettings } from '../replay.js';
 import { historyBoards, historyReport, readBoardHistory, readCachedOrders, readCachedPlayer } from '../trend.js';
 import { graphOf } from './common.js';
+import { settingsKey } from './decision-capture.js';
 import { mapOf } from './map.js';
 import { cardsInPlay, foldFinished, observeSettings, profiledOpponents, type FinishedFold } from './profile-hook.js';
 import { keptTeams } from './team-source.js';
@@ -109,9 +111,9 @@ export interface EndOfGameResult {
  * `nothing`: no opponent turn observed.
  */
 export interface Processed {
-  profiles: 'folded' | 'nothing' | 'no-map' | 'teams-unknown' | 'failed';
-  map: 'kept' | 'no-map' | 'failed';
-  lessons: 'kept' | 'no-map' | 'failed';
+  profiles: 'folded' | 'nothing' | 'no-map' | 'teams-unknown' | 'failed' | 'excluded';
+  map: 'kept' | 'no-map' | 'failed' | 'excluded';
+  lessons: 'kept' | 'no-map' | 'failed' | 'excluded';
 }
 
 export interface EndOfGameDeps {
@@ -208,6 +210,8 @@ export async function endOfGame(
   // pass), dropping nothing: an `include_history` retry can still write the truth and compact.
   const closeOnly = () => finishDecisionLogs(dataDir, [gameId], me, { mode: decisionLogModeOf(env) });
   let read: Game | undefined;
+  // #437: the kind this pass keeps the game apart for (no profile fold either).
+  let kept: ReturnType<typeof excludedKind>;
   try {
     const salt = await playerSaltForWrite(dataDir);
     if (!salt) return { status: 'unavailable' };
@@ -254,6 +258,7 @@ export async function endOfGame(
       read = game;
       const shown = game ?? seen;
       const { record, history } = await buildRecord(dataDir, salt, me, gameId, game, shown, failure);
+      kept = excludedKind(record.kinds ?? []);
       try {
         const protect = opts.protectIds ? new Set(opts.protectIds.map((id) => finishedPath(dataDir, salt, me, id))) : undefined;
         await writeFinishedRecord(dataDir, path, record, opts.keep, protect);
@@ -273,7 +278,8 @@ export async function endOfGame(
     });
     if (opts.fold && (result.status === 'captured' || result.status === 'history-unreadable')) {
       const game = read ?? seen;
-      if (game) result.profileFold = await foldFinished(dataDir, env, game);
+      if (kept) result.profileFold = { status: 'nothing', reason: 'excluded', note: EXCLUDED_FOLD_NOTE };
+      else if (game) result.profileFold = await foldFinished(dataDir, env, game);
     }
     return result;
   } catch {
@@ -283,12 +289,61 @@ export async function endOfGame(
   }
 }
 
+/** #437: the fold's note on a lottery or no-show game. */
+export const EXCLUDED_FOLD_NOTE = 'A lottery or no-show game teaches nothing of its players: it is counted apart, never folded.';
+
 /** What a captured history hands to {@link processHistory}. */
 interface CapturedHistory {
   capture: FinishedCapture;
   boards: { turn: number; board: BoardState }[];
   orders: ReadonlyMap<number, MyOrders>;
   graph: MapGraph | undefined;
+  /** #437: the game's kinds. */
+  kinds: GameKind[];
+}
+
+/** What this server kept of a game as me, for its kind and the turn my seat left (#437). */
+interface KeptFacts {
+  log: DecisionLog | undefined;
+  hasBoards: boolean;
+  orders: ReadonlyMap<number, MyOrders>;
+  /** The turn being played when the log saw my seat leave (my surrender, or my seat booted or surrendered). */
+  leftTurn: number | undefined;
+}
+
+const LEAVING: ReadonlySet<string> = new Set(['surrender-accepted', 'booted', 'my-surrender']);
+
+async function keptFacts(dataDir: string, gameId: number, me: number): Promise<KeptFacts> {
+  const hasBoards = (await readCachedPlayer(dataDir, gameId).catch(() => undefined)) === me;
+  const orders = hasBoards ? await readCachedOrders(dataDir, gameId, me).catch(() => new Map<number, MyOrders>()) : new Map<number, MyOrders>();
+  const log = await readDecisionLog(dataDir, gameId, me).catch(() => undefined);
+  const left = (log?.events ?? [])
+    .filter((e) => LEAVING.has(e.kind) && (e.player === me || (e.kind === 'my-surrender' && e.player === undefined)))
+    .map((e) => e.turn)
+    .filter((t) => Number.isInteger(t));
+  return { log, hasBoards, orders, leftTurn: left.length ? Math.min(...left) : undefined };
+}
+
+/** The game's kinds (#437) from what was read and what this server kept. */
+function kindsOf(game: Game | undefined, me: number, capture: FinishedCapture | undefined, facts: KeptFacts): GameKind[] {
+  const committed = new Set(facts.orders.keys());
+  for (const [k, e] of Object.entries(facts.log?.turns ?? {})) if (e.sent) committed.add(Number(k));
+  const s = game?.settings;
+  const result = capture?.outcome.result ?? (game ? outcomeOf(game.players, me) : 'unknown');
+  const outTurn = capture?.outcome.outTurn ?? null;
+  return gameKinds({
+    result,
+    team: game ? profileFormatOf(game.players) === 'team' : false,
+    territories: game?.map?.territories.length,
+    joinLottery: facts.log?.join?.lottery,
+    lotteryShape: s?.minimumArmyBonus === 0 && (s.overriddenBonuses?.size ?? 0) > 0,
+    lotteryMaxTerritories: LOTTERY_MAX_TERRITORIES,
+    hasLog: facts.log !== undefined,
+    hasBoards: facts.hasBoards,
+    committedTurns: committed.size,
+    leftTurn: capture?.outcome.leftTurn ?? leftTurnOf(result, outTurn, facts.leftTurn),
+    numberOfTurns: game?.numberOfTurns ?? null,
+  });
 }
 
 /** The record of one pass: the capture when the history read, else what the reads that came say. */
@@ -315,27 +370,35 @@ async function buildRecord(
     mapId: shown?.settings?.mapId ?? shown?.map?.id,
     picks,
   };
-  if (!read) return { record: finishedRecordOf({ ...common, status: 'read-failed', failure, capture: capture(shown, me, [], new Map(), undefined) }) };
+  // #437: what this server kept of the game: its kind, and the turn my seat left.
+  const facts = await keptFacts(dataDir, gameId, me);
+  if (!read) {
+    const c = capture(shown, me, [], new Map(), undefined, facts.leftTurn);
+    return { record: finishedRecordOf({ ...common, status: 'read-failed', failure, capture: c, kinds: kindsOf(shown, me, c, facts) }) };
+  }
   const report = historyReport(read);
-  const orders = (await readCachedPlayer(dataDir, gameId)) === me ? await readCachedOrders(dataDir, gameId, me) : new Map();
+  const orders = facts.orders;
   const map = read.map ? mapOf(read) : undefined;
   if ('unreadable' in report) {
     const u = report.unreadable;
+    const c = capture(read, me, [], orders, undefined, facts.leftTurn);
     return {
       record: finishedRecordOf({
         ...common,
         status: 'history-unreadable',
         failure: { reason: u.reason, keys: u.keys, ...(u.layout ? { layout: u.layout } : {}), ...(u.shape ? { shape: u.shape } : {}), ...(u.turns !== undefined ? { turns: u.turns } : {}) },
-        capture: capture(read, me, [], orders, undefined),
+        capture: c,
+        kinds: kindsOf(read, me, c, facts),
       }),
     };
   }
   const boards = historyBoards(read.history, read.players, read.numberOfTurns !== undefined ? { numberOfTurns: read.numberOfTurns } : {});
   const graph = map ? graphOf(map) : undefined;
-  const captured = capture(read, me, boards, orders, graph)!;
+  const captured = capture(read, me, boards, orders, graph, facts.leftTurn)!;
+  const kinds = kindsOf(read, me, captured, facts);
   return {
-    record: finishedRecordOf({ ...common, status: 'captured', layout: report.read.layout, noMap: !map, capture: captured, boards }),
-    history: { capture: captured, boards, orders, graph },
+    record: finishedRecordOf({ ...common, status: 'captured', layout: report.read.layout, noMap: !map, capture: captured, boards, kinds }),
+    history: { capture: captured, boards, orders, graph, kinds },
   };
 }
 
@@ -347,6 +410,15 @@ async function buildRecord(
  * boards scored against the truth by coverage). Never throws.
  */
 async function processHistory(dataDir: string, env: EnvSource, salt: string, me: number, gameId: number, game: Game, h: CapturedHistory): Promise<Processed> {
+  const key = finishedGameKey(salt, me, gameId);
+  const mapId = game.settings?.mapId ?? game.map?.id;
+  // #437: a lottery or no-show game is counted apart: never in the lessons, the map record or the profiles.
+  const apart = excludedKind(h.kinds);
+  if (apart) {
+    const map = mapId !== undefined ? await recordMapExcluded(dataDir, mapId, key, apart) : 'excluded';
+    const lessons = await recordLessonsExcluded(dataDir, key, apart);
+    return { profiles: 'excluded', map, lessons };
+  }
   const out: Processed = { profiles: 'no-map', map: 'no-map', lessons: 'no-map' };
   const g = h.graph;
   if (!g) return out;
@@ -356,15 +428,14 @@ async function processHistory(dataDir: string, env: EnvSource, salt: string, me:
   const seated = resolved.players.filter((p) => holdsSeat(p.state));
   const format = profileFormatOf(resolved.players);
   const opponents = mine ? profiledOpponents(resolved, mine) : resolved.players.filter((p) => p.id !== me).map((p) => p.id);
-  const key = finishedGameKey(salt, me, gameId);
   const c = h.capture;
   try {
     out.profiles = !teams?.known || !mine ? 'teams-unknown' : await foldHistory(dataDir, env, me, gameId, resolved, opponents, format, seated.length, h);
   } catch {
     out.profiles = 'failed';
   }
-  const mapId = game.settings?.mapId ?? game.map?.id;
   if (mapId !== undefined) {
+    const s = game.settings;
     out.map = await recordMapGame(dataDir, mapId, {
       key,
       format,
@@ -372,6 +443,13 @@ async function processHistory(dataDir: string, env: EnvSource, salt: string, me:
       result: c.outcome.result,
       turns: c.outcome.turn,
       ...mapFacts(g, me, c.outcome.winners, c.starts, c.turns),
+      kinds: h.kinds,
+      // #437: the views read only the games of the current game's format and settings.
+      settings: {
+        key: settingsKey(game),
+        ...(s?.localDeployments !== undefined ? { localDeployments: s.localDeployments } : {}),
+        ...(s?.commanders !== undefined ? { commanders: s.commanders } : {}),
+      },
     });
   }
   try {
@@ -406,9 +484,11 @@ async function processHistory(dataDir: string, env: EnvSource, salt: string, me:
         graph: g,
         settings: game.settings,
         numberOfTurns: c.outcome.turn,
-        outTurn: c.outcome.outTurn,
+        // #437: a surrender's or a boot's turn is the one my seat left (the log's events), not only the history's.
+        outTurn: c.outcome.leftTurn ?? c.outcome.outTurn,
       }),
       calibration: aggregateCalibration(samples),
+      kinds: h.kinds,
     });
   } catch {
     out.lessons = 'failed';
@@ -511,6 +591,7 @@ function capture(
   boards: Parameters<typeof captureFinished>[0]['boards'],
   orders: Parameters<typeof captureFinished>[0]['orders'],
   graph: Parameters<typeof captureFinished>[0]['graph'],
+  leftTurn: number | undefined,
 ): FinishedCapture | undefined {
   if (!game) return undefined;
   return captureFinished({
@@ -521,6 +602,7 @@ function capture(
     numberOfTurns: game.numberOfTurns,
     boards,
     orders,
+    leftTurn,
   });
 }
 

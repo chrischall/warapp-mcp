@@ -107,7 +107,9 @@ export type BackfillGap =
   | 'teams-unknown'
   | 'no-map'
   | 'failed'
-  | 'no-data-dir';
+  | 'no-data-dir'
+  /** #437: a lottery or no-show game, counted apart (the end-of-game pass never folds it). */
+  | 'excluded';
 
 /** The note on a finished game with nothing to fold (#264). */
 export const NOTHING_TO_FOLD = 'Nothing of this game could be counted: counts start with games played on this build.';

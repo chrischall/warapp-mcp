@@ -11,6 +11,11 @@
 //   `MAX_LESSON_ENTRIES`) holds the same counts for that game alone, so processing it again replaces
 //   its share, never adds it twice; a dropped entry's counts stay in the totals.
 //
+// - #437: a lottery or no-show game (`excludedKind`) is in neither store's figures: each keeps
+//   `excluded: { lottery, noShow, keys }` instead (a game counted apart once; one counted before is taken
+//   back out). Map entries keep the game's kinds and settings key and flags, and the views read only the
+//   games matching the current game's format and settings (`MapMatch`).
+//
 // Every game is keyed by `finishedGameKey` (an HMAC of my account and the game under the one shared
 // salt): no game or player id, no name, no clock. Territory, bonus and map ids are the map's own,
 // public data. 0600 files in 0700 folders, atomic writes under the in-process path lock; a file that
@@ -19,7 +24,7 @@
 // Profiles and lessons INFORM ONLY (P1): no planner decision reads any of this.
 import { readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { FinishedOutcome } from './analysis/finished-game.js';
+import { GAME_KINDS, type FinishedOutcome, type GameKind } from './analysis/finished-game.js';
 import {
   addCalibration,
   COVERAGE_BUCKETS,
@@ -54,6 +59,8 @@ const isFormat = (v: unknown): v is ProfileFormat => PROFILE_FORMATS.includes(v 
 const RESULTS: readonly FinishedOutcome[] = ['won', 'lost', 'surrendered', 'eliminated', 'booted', 'ended-by-vote', 'unknown'];
 const isResult = (v: unknown): v is FinishedOutcome => RESULTS.includes(v as FinishedOutcome);
 const CAUSES: readonly LessonCause[] = ['commander', 'last-territories', 'unknown', 'surrendered', 'booted', 'still-holding'];
+const kindsOf = (v: unknown): GameKind[] | undefined =>
+  Array.isArray(v) && v.every((k) => GAME_KINDS.includes(k as GameKind)) ? (v as GameKind[]) : undefined;
 
 /** Read a store: `missing`, the parsed object, or `unreadable` (exists, not JSON or not an object). */
 async function readStore(path: string): Promise<Rec | 'missing' | 'unreadable'> {
@@ -79,6 +86,56 @@ const bumpCount = (c: Record<string, number>, k: string, by: number) => {
   else delete c[k];
 };
 
+// ---- #437: games counted apart ----
+
+/** Excluded games' keys kept per store (the newest), so a game is never counted apart twice. */
+export const MAX_EXCLUDED_KEYS = 500;
+
+export type ExcludedKind = 'lottery' | 'no-show';
+
+/**
+ * Lottery and no-show games (#437, `EXCLUDED_KINDS`): kept out of the games, outcomes and entries, counted
+ * here instead. `keys` (game keys with their kind, oldest first) make the counts idempotent; a key dropped
+ * past {@link MAX_EXCLUDED_KEYS} stays counted.
+ */
+export interface ExcludedGames {
+  lottery: number;
+  noShow: number;
+  keys: { key: string; kind: ExcludedKind }[];
+}
+
+const isExcludedKey = (k: unknown): k is { key: string; kind: ExcludedKind } =>
+  isRec(k) && typeof k.key === 'string' && HASH.test(k.key) && (k.kind === 'lottery' || k.kind === 'no-show');
+
+/** The excluded block as stored: absent → `null`; malformed → `undefined`. */
+function excludedOf(v: unknown): ExcludedGames | null | undefined {
+  if (v === undefined) return null;
+  if (!isRec(v) || !isInt(v.lottery) || !isInt(v.noShow) || !Array.isArray(v.keys) || !v.keys.every(isExcludedKey)) return undefined;
+  return { lottery: v.lottery, noShow: v.noShow, keys: v.keys.map((k) => ({ key: k.key, kind: k.kind })) };
+}
+
+const bump = (e: ExcludedGames, kind: ExcludedKind, by: number): Pick<ExcludedGames, 'lottery' | 'noShow'> => ({
+  lottery: e.lottery + (kind === 'lottery' ? by : 0),
+  noShow: e.noShow + (kind === 'no-show' ? by : 0),
+});
+
+/** `ex` with `key` counted apart as `kind` (a key there under another kind moves; the same: unchanged). */
+function withExcluded(ex: ExcludedGames | undefined, key: string, kind: ExcludedKind): ExcludedGames {
+  const e = withoutExcluded(ex, key, kind) ?? { lottery: 0, noShow: 0, keys: [] };
+  if (e.keys.some((k) => k.key === key)) return e;
+  return { ...bump(e, kind, 1), keys: [...e.keys, { key, kind }].slice(-MAX_EXCLUDED_KEYS) };
+}
+
+/** `ex` without `key` (a game counted apart before, now counted otherwise), unless it is kept as `keep`. */
+function withoutExcluded(ex: ExcludedGames | undefined, key: string, keep?: ExcludedKind): ExcludedGames | undefined {
+  const old = ex?.keys.find((k) => k.key === key);
+  if (!ex || !old || old.kind === keep) return ex;
+  return { ...bump(ex, old.kind, -1), keys: ex.keys.filter((k) => k.key !== key) };
+}
+
+/** The counts a summary shows (absent when nothing was counted apart). */
+const excludedCounts = (ex: ExcludedGames | undefined) => (ex && (ex.lottery || ex.noShow) ? { excluded: { lottery: ex.lottery, noShow: ex.noShow } } : {});
+
 // ---- the per-map record ----
 
 /** One finished game on a map, name-free. */
@@ -91,6 +148,17 @@ export interface MapEntry {
   turns: number | null;
   me: MapGameFacts['me'];
   winners: MapGameFacts['winners'];
+  /** #437: the game's kinds (`gameKinds`; never a lottery or no-show: those are counted apart). */
+  kinds?: GameKind[];
+  /** #437: the game's settings key (`settingsKey`, `null` without settings) and the flags the views filter on. */
+  settings?: MapEntrySettings;
+}
+
+/** #437: a map entry's settings: the name-free settings key and the flags its pace depends on. */
+export interface MapEntrySettings {
+  key: string | null;
+  localDeployments?: boolean;
+  commanders?: boolean;
 }
 
 export interface MapRecord {
@@ -101,6 +169,21 @@ export interface MapRecord {
   /** My results over those games. */
   outcomes: Record<string, number>;
   entries: MapEntry[];
+  /** #437: lottery and no-show games, counted apart (never in `games`, `outcomes` or `entries`). */
+  excluded?: ExcludedGames;
+}
+
+const SETTINGS_KEY = /^sha256:[0-9a-f]{16}$/;
+
+/** A map entry's settings as stored; `undefined` when malformed. */
+function entrySettingsOf(v: unknown): MapEntrySettings | undefined {
+  if (!isRec(v) || !(v.key === null || (typeof v.key === 'string' && SETTINGS_KEY.test(v.key)))) return undefined;
+  if ((v.localDeployments !== undefined && typeof v.localDeployments !== 'boolean') || (v.commanders !== undefined && typeof v.commanders !== 'boolean')) return undefined;
+  return {
+    key: v.key,
+    ...(typeof v.localDeployments === 'boolean' ? { localDeployments: v.localDeployments } : {}),
+    ...(typeof v.commanders === 'boolean' ? { commanders: v.commanders } : {}),
+  };
 }
 
 const regionOf = (v: unknown): StartRegion | undefined => (isRec(v) && ints(v.territories) && ints(v.bonuses) ? { territories: v.territories, bonuses: v.bonuses } : undefined);
@@ -117,6 +200,10 @@ function mapEntryOf(v: unknown): MapEntry | undefined {
     if (!r || !isRec(w) || !intOrNull(w.income4) || !intOrNull(w.income8)) return undefined;
     winners.push({ ...r, income4: w.income4, income8: w.income8 });
   }
+  const kinds = kindsOf(v.kinds);
+  const settings = entrySettingsOf(v.settings);
+  // An additive field that does not read leaves the entry out, as any malformed field does.
+  if ((v.kinds !== undefined && !kinds) || (v.settings !== undefined && !settings)) return undefined;
   return {
     key: v.key,
     format: v.format,
@@ -125,6 +212,8 @@ function mapEntryOf(v: unknown): MapEntry | undefined {
     turns: v.turns,
     me: { ...mine, income: m.income as (number | null)[], income4: m.income4, income8: m.income8 },
     winners,
+    ...(kinds ? { kinds } : {}),
+    ...(settings ? { settings } : {}),
   };
 }
 
@@ -135,9 +224,10 @@ export async function readMapRecord(dir: string, mapId: number): Promise<MapReco
     if (v === 'unreadable') return v;
     if (v === 'missing') return { version: 1, mapId, games: 0, outcomes: {}, entries: [] };
     const outcomes = countsOf(v.outcomes);
-    if (v.version !== 1 || v.mapId !== mapId || !isInt(v.games) || !outcomes) return 'unreadable';
+    const excluded = excludedOf(v.excluded);
+    if (v.version !== 1 || v.mapId !== mapId || !isInt(v.games) || !outcomes || excluded === undefined) return 'unreadable';
     const entries = (Array.isArray(v.entries) ? v.entries : []).map(mapEntryOf).filter((e): e is MapEntry => e !== undefined);
-    return { version: 1, mapId, games: v.games, outcomes, entries };
+    return { version: 1, mapId, games: v.games, outcomes, entries, ...(excluded ? { excluded } : {}) };
   } catch {
     return 'unreadable';
   }
@@ -159,10 +249,39 @@ export async function recordMapGame(dir: string, mapId: number, entry: MapEntry,
       else rec.games++;
       bumpCount(rec.outcomes, entry.result, 1);
       rec.entries = [...rec.entries.filter((e) => e.key !== entry.key), entry].slice(-MAX_MAP_ENTRIES);
-      await writeJsonAtomic(path, mapRecordDir(dir), rec);
+      // #437: a game counted apart before is counted as a game now.
+      const excluded = withoutExcluded(rec.excluded, entry.key);
+      await writeJsonAtomic(path, mapRecordDir(dir), { ...rec, ...(excluded ? { excluded } : {}) });
       return 'kept' as const;
     });
     if (r === 'kept') await pruneMapRecords(dir, keep, path).catch(() => undefined);
+    return r;
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * #437: count a lottery or no-show game apart in its map's record: never in its games, outcomes or entries
+ * (a game counted there before is taken back out), once per game. `excluded`, or `failed` (an unreadable
+ * record is never overwritten; a failed write). Never throws.
+ */
+export async function recordMapExcluded(dir: string, mapId: number, key: string, kind: ExcludedKind, keep = MAX_MAP_RECORDS): Promise<'excluded' | 'failed'> {
+  const path = mapRecordPath(dir, mapId);
+  try {
+    const r = await withPathLock(path, async () => {
+      const rec = await readMapRecord(dir, mapId);
+      if (rec === 'unreadable') return 'failed' as const;
+      const old = rec.entries.find((e) => e.key === key);
+      if (old) {
+        bumpCount(rec.outcomes, old.result, -1);
+        rec.games = Math.max(0, rec.games - 1);
+        rec.entries = rec.entries.filter((e) => e.key !== key);
+      }
+      await writeJsonAtomic(path, mapRecordDir(dir), { ...rec, excluded: withExcluded(rec.excluded, key, kind) });
+      return 'excluded' as const;
+    });
+    if (r === 'excluded') await pruneMapRecords(dir, keep, path).catch(() => undefined);
     return r;
   } catch {
     return 'failed';
@@ -199,32 +318,92 @@ const median = (xs: readonly number[]): number | null => {
   return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 };
 
-/** What a map's record says in short: games, my results, and the winners' pace beside mine (medians over the kept games). Pure. */
-export function mapRecordSummary(rec: MapRecord): {
+/**
+ * #437: which of a map's games a view reads: the current game's format, and its Local Deployment and
+ * Commanders settings when given. An entry that kept no such flag (kept before #437) matches on it.
+ */
+export interface MapMatch {
+  format?: ProfileFormat;
+  localDeployments?: boolean | undefined;
+  commanders?: boolean | undefined;
+}
+
+/** The match without its unset fields. */
+const matchBy = (m: MapMatch): MapMatch => ({
+  ...(m.format !== undefined ? { format: m.format } : {}),
+  ...(m.localDeployments !== undefined ? { localDeployments: m.localDeployments } : {}),
+  ...(m.commanders !== undefined ? { commanders: m.commanders } : {}),
+});
+
+/** The entries `match` reads, and how many matched only because a flag was not kept. Pure. */
+export function matchedEntries(rec: MapRecord, match?: MapMatch): { entries: MapEntry[]; settingsUnknown: number } {
+  if (!match) return { entries: rec.entries, settingsUnknown: 0 };
+  const m = matchBy(match);
+  let settingsUnknown = 0;
+  const entries = rec.entries.filter((e) => {
+    if (m.format !== undefined && e.format !== m.format) return false;
+    let unknown = false;
+    for (const flag of ['localDeployments', 'commanders'] as const) {
+      if (m[flag] === undefined) continue;
+      const kept = e.settings?.[flag];
+      if (kept === undefined) unknown = true;
+      else if (kept !== m[flag]) return false;
+    }
+    if (unknown) settingsUnknown++;
+    return true;
+  });
+  return { entries, settingsUnknown };
+}
+
+/** The outcomes of `entries`. */
+function outcomesOf(entries: readonly MapEntry[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const e of entries) bumpCount(out, e.result, 1);
+  return out;
+}
+
+/**
+ * What a map's record says in short: games, my results, and the winners' pace beside mine (medians over the
+ * kept games). With `match` (#437), only the games of the current game's format (and settings): their games,
+ * results and pace, and `matched` says how many of the kept entries matched. `excluded`: lottery and no-show
+ * games counted apart. Pure.
+ */
+export function mapRecordSummary(
+  rec: MapRecord,
+  match?: MapMatch,
+): {
   games: number;
   outcomes: Record<string, number>;
   pace: { winners: { income4: number | null; income8: number | null }; mine: { income4: number | null; income8: number | null } };
+  matched?: { by: MapMatch; entries: number; of: number; settingsUnknown: number };
+  excluded?: { lottery: number; noShow: number };
 } {
   const of = (xs: (number | null)[]) => median(xs.filter((x): x is number => x !== null));
-  const winners = rec.entries.flatMap((e) => e.winners);
+  const { entries, settingsUnknown } = matchedEntries(rec, match);
+  const winners = entries.flatMap((e) => e.winners);
   return {
-    games: rec.games,
-    outcomes: rec.outcomes,
+    games: match ? entries.length : rec.games,
+    outcomes: match ? outcomesOf(entries) : rec.outcomes,
     pace: {
       winners: { income4: of(winners.map((w) => w.income4)), income8: of(winners.map((w) => w.income8)) },
-      mine: { income4: of(rec.entries.map((e) => e.me.income4)), income8: of(rec.entries.map((e) => e.me.income8)) },
+      mine: { income4: of(entries.map((e) => e.me.income4)), income8: of(entries.map((e) => e.me.income8)) },
     },
+    ...(match ? { matched: { by: matchBy(match), entries: entries.length, of: rec.entries.length, settingsUnknown } } : {}),
+    ...excludedCounts(rec.excluded),
   };
 }
 
 /** My results per bonus my start touched, and how often each bonus held a winner's start (#312 E3), most games first then by id. Pure. */
-export function mapRecordStarts(rec: MapRecord): {
+export function mapRecordStarts(
+  rec: MapRecord,
+  match?: MapMatch,
+): {
   mine: { bonusId: number; games: number; outcomes: Record<string, number> }[];
   winners: { bonusId: number; games: number }[];
 } {
   const mine = new Map<number, { games: number; outcomes: Record<string, number> }>();
   const winners = new Map<number, number>();
-  for (const e of rec.entries) {
+  for (const e of matchedEntries(rec, match).entries) {
     for (const b of e.me.bonuses) {
       const x = mine.get(b) ?? { games: 0, outcomes: {} };
       x.games++;
@@ -254,6 +433,8 @@ export interface LessonEntry {
   howLost: LessonLoss | null;
   /** The tracker's estimates against the truth, by coverage bucket (aggregates of the game's turns). */
   calibration: Calibration;
+  /** #437: the game's kinds (`gameKinds`; never a lottery or no-show: those are counted apart). */
+  kinds?: GameKind[];
 }
 
 /** The totals of one format. */
@@ -271,6 +452,8 @@ export interface LessonsFile {
   version: 1;
   byFormat: Partial<Record<ProfileFormat, LessonTotals>>;
   entries: LessonEntry[];
+  /** #437: lottery and no-show games, counted apart (never in a total or an entry). */
+  excluded?: ExcludedGames;
 }
 
 function statsOf(v: unknown): RatioStats | undefined {
@@ -300,8 +483,9 @@ function lessonEntryOf(v: unknown): LessonEntry | undefined {
   if (!isRec(v) || typeof v.key !== 'string' || !HASH.test(v.key) || !isFormat(v.format) || !isInt(v.seats) || !isResult(v.result) || !intOrNull(v.flatAfterTurn)) return undefined;
   const loss = lossOf(v.howLost);
   const calibration = calibrationOf(v.calibration);
-  if (loss === undefined || !calibration) return undefined;
-  return { key: v.key, format: v.format, seats: v.seats, result: v.result, flatAfterTurn: v.flatAfterTurn, howLost: loss, calibration };
+  const kinds = kindsOf(v.kinds);
+  if (loss === undefined || !calibration || (v.kinds !== undefined && !kinds)) return undefined;
+  return { key: v.key, format: v.format, seats: v.seats, result: v.result, flatAfterTurn: v.flatAfterTurn, howLost: loss, calibration, ...(kinds ? { kinds } : {}) };
 }
 
 function totalsOf(v: unknown): LessonTotals | undefined {
@@ -320,7 +504,8 @@ export async function readLessons(dir: string): Promise<LessonsFile | 'unreadabl
     const v = await readStore(lessonsPath(dir));
     if (v === 'unreadable') return v;
     if (v === 'missing') return { version: 1, byFormat: {}, entries: [] };
-    if (v.version !== 1 || !isRec(v.byFormat)) return 'unreadable';
+    const excluded = excludedOf(v.excluded);
+    if (v.version !== 1 || !isRec(v.byFormat) || excluded === undefined) return 'unreadable';
     const byFormat: LessonsFile['byFormat'] = {};
     for (const [k, t] of Object.entries(v.byFormat)) {
       const totals = totalsOf(t);
@@ -328,7 +513,7 @@ export async function readLessons(dir: string): Promise<LessonsFile | 'unreadabl
       byFormat[k] = totals;
     }
     const entries = (Array.isArray(v.entries) ? v.entries : []).map(lessonEntryOf).filter((e): e is LessonEntry => e !== undefined);
-    return { version: 1, byFormat, entries };
+    return { version: 1, byFormat, entries, ...(excluded ? { excluded } : {}) };
   } catch {
     return 'unreadable';
   }
@@ -368,8 +553,38 @@ export async function recordLessons(dir: string, entry: LessonEntry): Promise<'k
       applyEntry(t, entry, 1);
       file.byFormat[entry.format] = t;
       file.entries = [...file.entries.filter((e) => e.key !== entry.key), entry].slice(-MAX_LESSON_ENTRIES);
-      await writeJsonAtomic(path, dir, file);
+      // #437: a game counted apart before is counted as a game now.
+      const excluded = withoutExcluded(file.excluded, entry.key);
+      await writeJsonAtomic(path, dir, { ...file, ...(excluded ? { excluded } : {}) });
       return 'kept' as const;
+    });
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * #437: count a lottery or no-show game apart: never in a format's totals or the entries (a game counted
+ * there before has its share taken back), once per game. `excluded`, or `failed` (an unreadable store is
+ * never overwritten; a failed write). Never throws.
+ */
+export async function recordLessonsExcluded(dir: string, key: string, kind: ExcludedKind): Promise<'excluded' | 'failed'> {
+  const path = lessonsPath(dir);
+  try {
+    return await withPathLock(path, async () => {
+      const file = await readLessons(dir);
+      if (file === 'unreadable') return 'failed' as const;
+      const old = file.entries.find((e) => e.key === key);
+      if (old) {
+        const t = file.byFormat[old.format];
+        if (t) {
+          applyEntry(t, old, -1);
+          if (t.games <= 0) delete file.byFormat[old.format];
+        }
+        file.entries = file.entries.filter((e) => e.key !== key);
+      }
+      await writeJsonAtomic(path, dir, { ...file, excluded: withExcluded(file.excluded, key, kind) });
+      return 'excluded' as const;
     });
   } catch {
     return 'failed';
@@ -415,6 +630,8 @@ export function lessonsSummary(file: LessonsFile): {
   games: number;
   byFormat: Partial<Record<ProfileFormat, LessonsFormatSummary>>;
   calibration: ReturnType<typeof calibrationSummary>;
+  /** #437: lottery and no-show games counted apart (in no figure above). */
+  excluded?: { lottery: number; noShow: number };
 } {
   const byFormat: Partial<Record<ProfileFormat, LessonsFormatSummary>> = {};
   let games = 0;
@@ -432,5 +649,5 @@ export function lessonsSummary(file: LessonsFile): {
       calibration: calibrationSummary(t.calibration),
     };
   }
-  return { games, byFormat, calibration: calibrationSummary(all) };
+  return { games, byFormat, calibration: calibrationSummary(all), ...excludedCounts(file.excluded) };
 }

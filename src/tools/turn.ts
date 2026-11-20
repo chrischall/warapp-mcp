@@ -112,7 +112,8 @@ import { recordProfile } from './profile-hook.js';
 import { confidentHabits, counterOf, neighboursOf, readOpponents, type OpponentRead } from './profile-reads.js';
 import { mapOf } from './map.js';
 import { PACE_TURNS } from '../analysis/game-lessons.js';
-import { mapRecordFor, paceView } from './past-games.js';
+import { profileFormatOf } from '../analysis/opponent-profile.js';
+import { mapMatchOf, mapRecordFor, paceView } from './past-games.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
 import {
@@ -2838,7 +2839,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const paceRecord = PACE_TURNS.includes(turnsCompleted(game) as (typeof PACE_TURNS)[number])
         ? await mapRecordFor(ctx.dataDir, opts.env, game.settings?.mapId)
         : undefined;
-      const pace = paceRecord && paceRecord !== 'unreadable' ? paceView(paceRecord, turnsCompleted(game), myIncome) : undefined;
+      const pace = paceRecord && paceRecord !== 'unreadable' ? paceView(paceRecord, turnsCompleted(game), myIncome, mapMatchOf(profileFormatOf(game.players), game.settings)) : undefined;
 
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, turn: currentTurn(game) },

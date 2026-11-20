@@ -1273,6 +1273,29 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   left out); the value never changes for it. **#312 item 4 is only partly met:** the calibration from past games is
   reported in `warapp_track_opponents` full (`pastGames`) only; the outlook and the estimate warnings
   (`warapp_plan_turn`'s) do not report it yet.
+  **Finished-record and aggregate hygiene (#437 task 4, `docs/PLAN-DECISION-LOG-V2.md`; additive, every `version`
+  stays 1, older records and stores read):** each finished record carries `kinds` (`gameKinds` in
+  `src/analysis/finished-game.ts`): `lottery` (a map of at most `LOTTERY_MAX_TERRITORIES` territories; without the map,
+  the decision log's join context read it as one, or the settings fit the lottery shape), `no-show` (a decision log or
+  board cache is kept for the game, no won result, and no turn committed — no cached orders, no logged `sent` — or a
+  boot seen while turn 1 or 2 was played, or a boot ending the game within one turn), `legacy` (no decision log and no
+  board cache: never a no-show for want of orders), `team`. A lottery or no-show game (`excludedKind`, lottery first)
+  is counted apart: `processHistory` writes `recordMapExcluded` / `recordLessonsExcluded` instead (`processed` all
+  `excluded`; a game counted before has its share taken back), folds no history profile, and the sweep's live fold
+  reports `profileFold: { status: 'nothing', reason: 'excluded' }`. Both stores keep `excluded: { lottery, noShow, keys }`
+  (keys with their kind, at most `MAX_EXCLUDED_KEYS`, so a game is counted apart once; a game later counted as a game
+  leaves it); `lessonsSummary`, `mapRecordSummary` and the views show `excluded` with `EXCLUDED_NOTE`. The other
+  `foldFinished` triggers (warapp_get_game, warapp_profile_opponents) still fold such a game's live profile file.
+  `outcome.leftTurn` (`leftTurnOf`): for a surrender or a boot the turn being played when the decision log's events saw
+  my seat leave (`my-surrender`, my seat's `surrender-accepted` / `booted`; the earliest), else the history's out turn;
+  for an elimination the out turn. It is the lessons' `howLost.turn` for a surrender or boot, and `failedAttacks` drops
+  my orders of that turn and later (they never ran). `PlayerTurn.armies` leaves out a territory whose count did not read
+  on a board that hides nothing (where a commander stands in a finished history) and counts it in `armiesUnread`;
+  only a fogged territory makes it `null`. Map entries keep `kinds` and `settings: { key (`settingsKey`), localDeployments?,
+  commanders? }`; `mapRecordSummary` / `mapRecordStarts` take a `MapMatch` (`mapMatchOf`: the current game's format,
+  Local Deployment and Commanders — an entry that kept no flag matches on it, counted in `settingsUnknown`), and
+  warapp_plan_picks' `mapRecord` and warapp_plan_turn's `pace` read only the matching games, with `matched: { by,
+  entries, of, settingsUnknown, note }`; warapp_map_stats (no game) reads them all.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in

@@ -6,7 +6,10 @@ import type { BoardState, TerritoryState } from '../../src/board.js';
 import type { MyOrders } from '../../src/analysis/opponents.js';
 import {
   captureFinished,
+  excludedKind,
   failedAttacks,
+  gameKinds,
+  leftTurnOf,
   outcomeOf,
   outTurnOf,
   startsOf,
@@ -69,10 +72,23 @@ describe('turnIncomes', () => {
     expect(per.get(ME)!.income).toBe(3 + 3);
   });
   it('a player with no land earns nothing; hidden armies read as null', () => {
-    const b = board(t(1, ME, null), t(4, 'neutral', 2));
+    const b = board({ ...t(1, ME, null), fogLevel: 'OwnerOnly' }, t(4, 'neutral', 2));
     const out = turnIncomes(G, b, [ME, FOE], SETTINGS);
     expect(out.get(ME)!.armies).toBeNull();
     expect(out.get(FOE)).toEqual({ income: 0, territories: 0, armies: 0, bonuses: [] });
+  });
+});
+
+describe('#437: a count that did not read where no fog hides it (a commander)', () => {
+  it('is left out of the sum and counted apart, so the armies are never null for it', () => {
+    const b = board(t(1, ME, null), t(2, ME, 4), t(5, FOE, null), t(6, FOE, 3));
+    const out = turnIncomes(G, b, [ME, FOE], SETTINGS);
+    expect(out.get(ME)).toEqual({ income: 8, territories: 2, armies: 4, bonuses: [100], armiesUnread: 1 });
+    expect(out.get(FOE)).toEqual({ income: 9, territories: 2, armies: 3, bonuses: [200], armiesUnread: 1 });
+  });
+  it('a fogged one still makes the sum unknown', () => {
+    const b = board({ ...t(1, ME, null), fogLevel: 'Fogged' }, t(2, ME, null));
+    expect(turnIncomes(G, b, [ME], SETTINGS).get(ME)).toMatchObject({ armies: null, armiesUnread: 1 });
   });
 });
 
@@ -137,12 +153,97 @@ describe('captureFinished', () => {
       boards,
       orders: new Map(),
     });
-    expect(c.outcome).toEqual({ result: 'won', turn: 1, outTurn: null, winners: [ME] });
+    expect(c.outcome).toEqual({ result: 'won', turn: 1, outTurn: null, leftTurn: null, winners: [ME] });
     expect(c.starts).toEqual(new Map([[ME, [1]], [FOE, [6]]]));
     expect(c.turns.map((x) => [x.afterTurn, x.players.get(ME)!.income, x.players.get(FOE)!.income])).toEqual([
       [0, 5, 5],
       [1, 8, 9],
     ]);
     expect(c.failedAttacks).toEqual([]);
+  });
+});
+
+describe('#437: the turn my seat left, and no exit-turn artefacts', () => {
+  const before = board(t(1, ME, 6), t(2, ME, 8), t(3, FOE, 7));
+  const boards = [
+    { turn: 2, board: before },
+    { turn: 3, board: board(t(1, ME, 6), t(2, ME, 4), t(3, FOE, 3)) },
+    { turn: 4, board: board(t(1, ME, 6), t(2, ME, 4), t(3, FOE, 9)) },
+  ];
+  const attack: MyOrders = { deploys: [], moves: [{ from: 2, to: 3, armies: 4 }] };
+  const orders = new Map([
+    [3, attack],
+    [4, attack],
+  ]);
+  const run = (state: string, leftTurn?: number | null) =>
+    captureFinished({
+      graph: G,
+      settings: SETTINGS,
+      me: ME,
+      players: [
+        { id: ME, state },
+        { id: FOE, state: 'Won' },
+      ],
+      numberOfTurns: 4,
+      boards,
+      orders,
+      leftTurn,
+    });
+  it('a surrender keeps the turn it left on, and drops the failed attacks of that turn and after', () => {
+    const c = run('SurrenderAccepted', 4);
+    expect(c.outcome).toMatchObject({ result: 'surrendered', outTurn: null, leftTurn: 4 });
+    expect(c.failedAttacks.map((f) => f.turn)).toEqual([3]);
+  });
+  it('a boot does too; without a known turn nothing is dropped', () => {
+    expect(run('Booted', 3).failedAttacks).toEqual([]);
+    const c = run('Booted');
+    expect(c.outcome.leftTurn).toBeNull();
+    expect(c.failedAttacks.map((f) => f.turn)).toEqual([3, 4]);
+  });
+  it('an elimination is out on its out turn and keeps its orders (they ran)', () => {
+    expect(leftTurnOf('eliminated', 7, 5)).toBe(7);
+    expect(leftTurnOf('surrendered', 7, undefined)).toBe(7);
+    expect(leftTurnOf('won', null, 3)).toBeNull();
+    expect(run('Eliminated').failedAttacks.map((f) => f.turn)).toEqual([3, 4]);
+  });
+});
+
+describe('#437: gameKinds', () => {
+  const base = {
+    result: 'lost' as const,
+    team: false,
+    territories: 40,
+    lotteryMaxTerritories: 4,
+    hasLog: true,
+    hasBoards: true,
+    committedTurns: 5,
+    leftTurn: null,
+    numberOfTurns: 20,
+  };
+  it('a normal game has no kind', () => {
+    expect(gameKinds(base)).toEqual([]);
+    expect(excludedKind([])).toBeUndefined();
+  });
+  it('lottery: a tiny map, else the lobby read as one or the lottery shape without the map', () => {
+    expect(gameKinds({ ...base, territories: 2 })).toEqual(['lottery']);
+    expect(gameKinds({ ...base, territories: undefined, joinLottery: null })).toEqual(['lottery']);
+    expect(gameKinds({ ...base, territories: undefined, lotteryShape: true })).toEqual(['lottery']);
+    expect(gameKinds({ ...base, territories: 40, joinLottery: null })).toEqual([]);
+  });
+  it('no-show: never committed a turn (where this server kept the game), or booted before turn 2', () => {
+    expect(gameKinds({ ...base, committedTurns: 0 })).toEqual(['no-show']);
+    expect(gameKinds({ ...base, committedTurns: 0, result: 'won' })).toEqual([]);
+    expect(gameKinds({ ...base, result: 'booted', leftTurn: 2, committedTurns: 1 })).toEqual(['no-show']);
+    expect(gameKinds({ ...base, result: 'booted', leftTurn: 3, committedTurns: 2 })).toEqual([]);
+    expect(gameKinds({ ...base, result: 'booted', numberOfTurns: 0, committedTurns: 0, hasLog: false, hasBoards: false })).toEqual(['no-show', 'legacy']);
+  });
+  it('legacy: neither a decision log nor a board cache (never a no-show for want of cached orders); team', () => {
+    expect(gameKinds({ ...base, hasLog: false, hasBoards: false, committedTurns: 0 })).toEqual(['legacy']);
+    expect(gameKinds({ ...base, team: true })).toEqual(['team']);
+  });
+  it('the kind kept apart: lottery before no-show', () => {
+    expect(excludedKind(['lottery', 'no-show'])).toBe('lottery');
+    expect(excludedKind(['no-show', 'legacy'])).toBe('no-show');
+    expect(excludedKind(['legacy', 'team'])).toBeUndefined();
   });
 });
