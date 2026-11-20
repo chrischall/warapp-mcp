@@ -6,8 +6,8 @@
 //
 // Read-only: it plans as warapp_plan_turn would (livePlanSetup, award not read and not written) and writes
 // nothing — no board cache, no award, no outlook. UNVERIFIED live: the teams (V1, via resolveTeams), the
-// teammates' entered orders (V5) and picks (V5/V6), what a move onto a teammate does (V7) and how the team hand
-// is keyed (V8). The pure parts are src/analysis/team-brief.ts.
+// teammates' entered orders (V5) and picks (V5/V6) and what a move onto a teammate does (V7); how the team hand
+// is keyed is verified (V8, #310). The pure parts are src/analysis/team-brief.ts.
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';

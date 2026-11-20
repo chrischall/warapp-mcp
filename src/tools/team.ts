@@ -4,7 +4,7 @@
 //
 // UNVERIFIED live: GameFeed's player `team` (V1; without it the team comes from GetMyGames' GameInfoPlayer,
 // read from the bundle), the teammate orders in LatestGameInfo (V5), GetTerritoryPicks with a teammate's id
-// (V6) and how a team's hand is keyed (#163, V8). Every read here is tolerant: what cannot be read is
+// (V6). How a team's hand is keyed is VERIFIED (V8, #310). Every read here is tolerant: what cannot be read is
 // unknown (`null`), never an error — except a game that is not a team game, which is refused.
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -33,7 +33,7 @@ const NOTES = [
     'means unknown — none entered, or war.app did not send them — never "nothing entered".',
   "While distributing, a teammate's picks not in the board are asked with GetTerritoryPicks and the teammate's id " +
     '(UNVERIFIED, V6); a refusal reads as unknown.',
-  "The team's hand is every card under me and my teammates; how war.app keys a team's hand is UNVERIFIED (#163).",
+  "The team's hand is every card under me and my teammates: war.app keeps each player's cards under that player's id (`heldBy`), and the limit is the team's (V8, verified).",
 ];
 
 const DISTRIBUTING = 'DistributingTerritories';
@@ -158,6 +158,12 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
       }
 
       const owners = handOwners(game, me);
+      const heldBy = new Map<number, number>(
+        [me, ...mates].flatMap((p) => {
+          const id = inGameOf(p);
+          return id === undefined ? [] : [[id, p.id] as [number, number]];
+        }),
+      );
       // No card in play is known from the settings, board or not; `null` is a hand that could not be read.
       const hand =
         game.settings && !rules.inPlay.length
@@ -166,7 +172,12 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
           ? null
           : {
               readable: handReadable(info, owners),
-              cards: readHand(info, owners).map((c) => ({ id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}) })),
+              // V8 (#310): war.app keeps each player's cards under that player's id; the team's hand is all of
+              // them. `heldBy` is the GameFeed id of the player whose entry holds the card.
+              cards: readHand(info, owners).map((c) => {
+                const holder = c.owner !== undefined ? heldBy.get(c.owner) : undefined;
+                return { id: c.id, name: c.name, ...(c.armies !== undefined ? { armies: c.armies } : {}), ...(holder !== undefined ? { heldBy: holder } : {}) };
+              }),
               ...(rules.maxCardsHold !== undefined ? { limit: rules.maxCardsHold } : {}),
             };
 

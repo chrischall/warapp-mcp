@@ -1,7 +1,7 @@
 // PLAN-TEAMS C3.7: the team hand against my teammates' entered card plays (synthetic GUIDs and ids).
 import { describe, expect, it } from 'vitest';
 import type { Card } from '../src/cards.js';
-import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../src/team-cards.js';
+import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardLimit, teamCardRoles, teamHandLeft, unclaimedFirst } from '../src/team-cards.js';
 import type { TeamCardPlay, TeammateOrders } from '../src/team-orders.js';
 
 const G = (n: number) => n.toString(16).padStart(32, '0');
@@ -88,5 +88,39 @@ describe('claimedCardUses (G3): my orders against what my teammates entered', ()
   it('puts the unclaimed cards first, so a card named by its type is one nobody entered', () => {
     expect(unclaimedFirst([R1, R2, OP, OD], claimed)).toEqual([R2, OP, R1, OD]);
     expect(unclaimedFirst([R1, R2], [])).toEqual([R1, R2]);
+  });
+});
+
+// V8 (#310), from the client bundle's GameValidateOrders and seen on a live team board: each player's cards sit under
+// that player's id and the team's hand is all of them; the committed teammates' plays and discards leave it first;
+// war.app refuses (error 51) a hand still over MaxCardsHold only from the last of the team to commit.
+describe('teamCardLimit', () => {
+  const SP: Card = { id: G(5), type: 2, name: 'Spy' };
+  const rules = { maxCardsHold: 3, inPlay: [] };
+  const mate = (id: number, committed: boolean, state = 'Playing') => ({ id, hasCommittedOrders: committed, state });
+
+  it('counts the whole team hand, and binds only when every teammate still playing has committed', () => {
+    const hand = [R1, R2, OP, OD, SP];
+    expect(teamCardLimit(hand, rules, [mate(11, false)], [entry(11, [])])).toMatchObject({ shed: 2, lastToCommit: false, ordersRead: true, binding: false });
+    expect(teamCardLimit(hand, rules, [mate(11, true)], [entry(11, [])])).toMatchObject({ shed: 2, lastToCommit: true, ordersRead: true, binding: true });
+    // A teammate out of the game does not wait to commit.
+    expect(teamCardLimit(hand, rules, [mate(11, false, 'Eliminated')], [])).toMatchObject({ lastToCommit: true, binding: true });
+  });
+
+  it("takes a committed teammate's plays and discards out first, never an uncommitted one's", () => {
+    const hand = [R1, R2, OP, OD, SP];
+    const read = [entry(11, [{ cardId: R1.id, type: 1, name: 'Reinforcement' }], [{ cardId: OD.id }]), entry(12, [{ cardId: SP.id, type: 2, name: 'Spy' }])];
+    const r = teamCardLimit(hand, rules, [mate(11, true), mate(12, false)], read);
+    expect(r.left.map((c) => c.id)).toEqual([R2.id, OP.id, SP.id]);
+    expect(r).toMatchObject({ shed: 0, binding: false });
+    // Once both have committed, the second one's play leaves the hand too.
+    expect(teamCardLimit(hand, rules, [mate(11, true), mate(12, true)], read)).toMatchObject({ shed: 0, binding: true });
+    expect(teamCardLimit(hand, rules, [mate(11, true), mate(12, true)], read).left).toHaveLength(2);
+  });
+
+  it("never binds on a committed teammate's orders it could not read", () => {
+    const hand = [R1, R2, OP, OD, SP];
+    expect(teamCardLimit(hand, rules, [mate(11, true)], undefined)).toMatchObject({ shed: 2, lastToCommit: true, ordersRead: false, binding: false });
+    expect(teamCardLimit(hand, rules, [mate(11, true)], [{ playerId: 11, orders: null, picks: null }]).binding).toBe(false);
   });
 });

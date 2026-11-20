@@ -2641,8 +2641,13 @@ describe('cards in the turn tools', () => {
     ['a card both played and discarded', [{ id: OP, type: 4 }], [{ kind: 'card', card: OP }, { kind: 'discard', card: OP }, { kind: 'deploy', territory: 159, armies: 5 }], /used twice/],
   ];
 
-  describe('submit_turn in a team game (#163): the hard refusal counts only my cards', () => {
-    const teams = () => (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+  describe("submit_turn in a team game (#163, V8 #310): the team's hand against the team's limit", () => {
+    const teams = (bobCommitted = false) =>
+      (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({
+        ...p,
+        team: i < 2 ? '0' : '1',
+        ...(i === 1 && bobCommitted ? { hasCommittedOrders: 'True' } : {}),
+      }));
     function teamServer(mine: SyntheticCard[], mate: SyntheticCard[], entered?: SyntheticTeammateOrders) {
       const sent: Uint8Array[] = [];
       const warapp = routes({
@@ -2659,27 +2664,56 @@ describe('cards in the turn tools', () => {
       return { sent, warapp };
     }
 
-    it("warns, not refuses, when only the team's gathered hand is over the limit", async () => {
-      const s = teamServer(
-        [
-          { id: OP, type: 4 },
-          { id: OD, type: 5 },
-          { id: BL, type: 12 },
-        ],
-        [
-          { id: BL2, type: 12 },
-          { id: AL, type: 6 },
-          { id: SP, type: 2 },
-        ],
-      );
+    const MINE: SyntheticCard[] = [
+      { id: OP, type: 4 },
+      { id: OD, type: 5 },
+      { id: BL, type: 12 },
+    ];
+    const BOBS: SyntheticCard[] = [
+      { id: BL2, type: 12 },
+      { id: AL, type: 6 },
+      { id: SP, type: 2 },
+    ];
+
+    it("warns, not refuses, when the team's hand is over the limit and a teammate has yet to commit", async () => {
+      const s = teamServer(MINE, BOBS);
       const feed = { players: teams(), settings: modelledSettings() };
       h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
       const preview = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
       expect(preview.isError).toBeFalsy();
       const w = payload<{ preview: { warnings?: string[] } }>(preview).preview.warnings?.join('\n');
       expect(w).toMatch(/team's hand .*6 cards.*limit is 5/);
-      expect(w).toMatch(/not yet verified/);
+      expect(w).toMatch(/last of the team to commit/);
       expect(s.sent).toEqual([]);
+    });
+
+    it("refuses (error 51) when the team's hand is over the limit and every teammate has committed", async () => {
+      const s = teamServer(MINE, BOBS, { orders: [{ kind: 'deploy', territory: 158, armies: 5 }] });
+      const feed = { players: teams(true), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toMatch(/Your team holds 6, every teammate has committed and you are the last to; the limit is 5/);
+      expect(s.sent).toEqual([]);
+    });
+
+    it("takes a committed teammate's entered discard out of the team's hand first", async () => {
+      const s = teamServer(MINE, BOBS, { orders: [{ kind: 'discard', card: SP }] });
+      const feed = { players: teams(true), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const preview = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
+      expect(preview.isError).toBeFalsy();
+      const w = payload<{ preview: { warnings?: string[] } }>(preview).preview.warnings?.join('\n') ?? '';
+      expect(w).not.toMatch(/team's hand .*limit/);
+    });
+
+    it('does not refuse my own cards over the limit while a teammate has yet to commit', async () => {
+      const s = teamServer([...MINE, ...BOBS], []);
+      const feed = { players: teams(), settings: modelledSettings() };
+      h = await liveHarness({ feed: [game('Playing', feed), game('Playing', feed), game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
+      const preview = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
+      expect(preview.isError).toBeFalsy();
+      expect(payload<{ preview: { warnings?: string[] } }>(preview).preview.warnings?.join('\n')).toMatch(/team's hand .*6 cards.*limit is 5/);
     });
 
     it("warns when the orders play or discard a card read only under a teammate (V8)", async () => {
@@ -2758,23 +2792,13 @@ describe('cards in the turn tools', () => {
       });
     });
 
-    it('still refuses when my own cards are over the limit', async () => {
-      const s = teamServer(
-        [
-          { id: OP, type: 4 },
-          { id: OD, type: 5 },
-          { id: BL, type: 12 },
-          { id: BL2, type: 12 },
-          { id: AL, type: 6 },
-          { id: SP, type: 2 },
-        ],
-        [{ id: GF, type: 7 }],
-      );
-      const feed = { players: teams(), settings: modelledSettings() };
+    it("refuses my own cards over the limit once every teammate has committed, counting the teammate's too", async () => {
+      const s = teamServer([...MINE, ...BOBS], [{ id: GF, type: 7 }], { orders: [] });
+      const feed = { players: teams(true), settings: modelledSettings() };
       h = await liveHarness({ feed: [game('Playing', feed)], pages: ME_PAGE, warapp: s.warapp });
       const res = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 159, armies: 5 }] });
       expect(res.isError).toBe(true);
-      expect(textOf(res)).toMatch(/You hold 6; the limit is 5/);
+      expect(textOf(res)).toMatch(/Your team holds 7, every teammate has committed and you are the last to; the limit is 5, so 2 cards/);
       expect(s.sent).toEqual([]);
     });
   });

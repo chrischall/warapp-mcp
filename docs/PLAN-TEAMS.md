@@ -115,11 +115,11 @@ path stays soft.
 | V1 | GameFeed player `team` in a real team game | Team detection (C1) |
 | V2 | Does GameFeed `GetChat=true` return team and private messages, and with which fields | Chat channels (A1) |
 | V3 | `SendChat`: public, private recipient, and the team channel value | Team-chat sending (A1) |
-| V4 | `GameRefresh` (39) reply `GameDetailsAndChat`: the chat message class and its fields — **public messages verified live 2026-11-14** (count, time, turn, sender, channel matched GameFeed `GetChat=true` in two games; a game with no chat reads 0); team and private channels still open | Chat channels (A1) |
+| V4 | `GameRefresh` (39) reply `GameDetailsAndChat`: the chat message class and its fields — **public messages verified live 2026-11-14** (count, time, turn, sender, channel matched GameFeed `GetChat=true` in two games; a game with no chat reads 0); a team message verified live 2026-11-19 through RetrieveChat (#363); **private still open** (#387): on 2026-11-19 five live free-for-alls were read, four with private messaging off and one with it on, where the private history answered for every seat and returned no private message — no live private message has yet been seen to decode | Chat channels (A1) |
 | V5 | Teammate orders in `LatestGameInfo`: present before the teammate commits? | Team read (C1) |
 | V6 | `GetTerritoryPicks` with a teammate's player id | Team picks (C2) |
 | V7 | What a plain move onto a teammate's territory does; `attack_teammates` (#165) | Team planner (C3) |
-| V8 | How a team's hand and its limit are keyed (#163) | Team cards (C3, D) |
+| V8 | How a team's hand and its limit are keyed (#163) — **verified 2026-11-19** (#310): the standing keeps each player's cards (`PlayerCards`) under that player's id, none repeated (a live 2v2 board read two cards under me and three under my teammate); the client bundle's `GameValidateOrders` merges every teammate's entry into one hand, takes out a committed teammate's entered plays and discards, accepts a play of any card in it, and refuses (error 51) a hand still over `MaxCardsHold` only from the last of the team to commit. The refusal itself has not been drawn live (no turn was sent) | Team cards (C3, D) |
 | V9 | Gift, Diplomacy, Sanctions, Spy, Airlift play orders — **Airlift verified live 2026-11-16** (#296); **Diplomacy verified live 2026-11-18** (#369: played through `warapp_submit_turn`, in force on later boards until the turn expected); Sanctions played once 2026-11-18, effect not yet checked; the others still open | Part D |
 | V10 | Which pushed method, if any, announces a chat message | Chat push (A1) |
 
@@ -672,7 +672,10 @@ and are advisory: neither is ever in `orders` until V7 is verified. **Cards (C3.
 `teamCardClaims` reads my teammates' entered card plays and discards; `teamHandLeft` takes from the team hand
 the card each names (else, for a play naming only its type, the first card of that type), and the plan's card
 choice (`chooseCardPlays`, Order Priority, the card advice) works on the rest, so the team never plays one
-card twice and a teammate's discard counts toward the limit (V8: how the team hand is keyed is unverified).
+card twice and a teammate's discard counts toward the limit (V8, verified #310: each player's cards sit under
+that player's id and the hand is all of them). `teamCardLimit` applies the team's limit as war.app's order check
+does: the team's hand less the committed teammates' entered plays and discards, binding only the last of the
+team to commit (`warapp_submit_turn` refuses then; while a teammate has yet to commit it warns).
 `warapp_plan_turn` warns per claimed card and reports `cards.team.roles` in a team game with a hand: who plays
 each card (a teammate for what they entered, me for my plays and discards, nobody for a card held).
 `warapp_submit_turn` and `warapp_check_plan` (G3) warn when my own orders play or discard a claimed card
@@ -730,8 +733,9 @@ passed over unless the truce is in notice or leaves a border it presses uncovere
 which. The leader is the profile's FFA ranking, else visible armies + 3 × visible income. Airlift targets
 a falling border of mine or a teammate's (their entered deploys counted), from a source with armies to
 spare after what it must hold; Gift gives the members that complete a teammate's nearer bonus (C3.3). A
-team hand's cards carry the id they were read under (V8 unverified); only mine are played, discarded or
-advised. No planner rule changed: the golden corpus is unchanged.
+team hand's cards carry the id they were read under (V8, verified #310; `warapp_get_team` shows it as `heldBy`);
+only mine are played, discarded or advised: war.app's order check would take a teammate's card, but the planner
+leaves it to them. No planner rule changed: the golden corpus is unchanged.
 
 *As built (D3):* `src/analysis/cards-in-effect.ts` (pure) decides which decoded active cards are sure
 (the turn known; the card in play with a `Duration`; its `untilTurn` after this turn and at most
