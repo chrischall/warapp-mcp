@@ -6,7 +6,8 @@
 // them and refuses when no surrender is pending from that player or my acceptance is not owed; a
 // finished game and a game I am not playing are refused first. The preview says what accepting does
 // here: whose seat, whether its land turns neutral or goes to an AI, who borders that land (from the
-// live board when it reads), whether it goes through now or others still owe theirs, whether it
+// live board when it reads; #417: and that its land behind the fog is unknown, the standing carrying no
+// per-player count), whether it goes through now or others still owe theirs, whether it
 // leaves only my side playing (a win), and in a free-for-all one advice line naming the neighbour
 // that gains most (strategy note ffa-surrender-veto).
 //
@@ -16,7 +17,7 @@
 import { CONFIRM_INJECTION_RULE, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { surrenderLand, winsOnAcceptance, type SurrenderLand } from '../analysis/accept-surrender.js';
+import { hiddenLandLine, surrenderLand, winsOnAcceptance, type SurrenderLand } from '../analysis/accept-surrender.js';
 import { parseGameId } from '../client.js';
 import { inGameOf, playersByInGameId } from '../live.js';
 import type { Game, Player } from '../normalize.js';
@@ -129,15 +130,17 @@ function adviceOf(opts: {
   if (!opts.land) return `${cite} Who borders its land is unknown: the live board could not be read.`;
   const top = opts.land.neighbours[0];
   const ai = opts.toAI === true ? ' Its land goes to an AI, which keeps playing it, so it is not up for taking at once.' : '';
-  if (!top) return `${cite} No player borders its land in view, so no neighbour gains it at once.${ai}`;
+  // #417: say plainly that its land behind the fog is not counted.
+  const hidden = opts.land.hiddenLand === null ? ' Its land behind the fog is unknown (#417): only what is in view is counted.' : '';
+  if (!top) return `${cite} No player borders its land in view, so no neighbour gains it at once.${ai}${hidden}`;
   const mine = opts.land.neighbours.find((n) => n.inGameId === opts.meInGame)?.bordering ?? 0;
   const fog = opts.land.hiddenNeighbours ? ` (${opts.land.hiddenNeighbours} territories beside it are hidden by fog)` : '';
   if (top.inGameId === opts.meInGame) {
-    return `${cite} You border its land with the most territories (${top.bordering})${fog}, so of its neighbours you gain most from it.${ai}`;
+    return `${cite} You border its land with the most territories (${top.bordering})${fog}, so of its neighbours you gain most from it.${ai}${hidden}`;
   }
   return (
     `${cite} ${opts.idOf(top.inGameId)} borders its land with the most territories (${top.bordering}; you: ${mine})${fog}, ` +
-    `so it gains most from it.${ai}`
+    `so it gains most from it.${ai}${hidden}`
   );
 }
 
@@ -156,7 +159,8 @@ export function registerAcceptSurrenderTool(server: McpServer, ctx: LiveContext)
         'player, when your acceptance is not owed (already given, or your seat cannot accept), in a finished game, ' +
         'and in a game you are not playing. `player` names the surrendering player (name or id); it may be omitted ' +
         'when one surrender is pending. The preview says what accepting does: whose seat, whether its land turns ' +
-        'neutral or goes to an AI, which players border that land (live board), whether it goes through now or ' +
+        'neutral or goes to an AI, which players border that land (live board) and how much of it the fog may hide ' +
+        '(the count behind the fog is unknown: only the land in view is counted), whether it goes through now or ' +
         'others still owe their acceptance, whether it leaves only your side playing (a win), and in a free-for-all ' +
         `one advice line naming the neighbour that gains most (strategy note ${FFA_SURRENDER_NOTE}). Accepting is the ` +
         "owner's decision. The outcome is read back from GameFeed and the game details (`accepted`, `pending` — others " +
@@ -282,6 +286,10 @@ export function registerAcceptSurrenderTool(server: McpServer, ctx: LiveContext)
                       };
                     }),
                     hiddenNeighbours: land.hiddenNeighbours,
+                    // #417: what the fog hides of its land: unknown (null) under any fog, said plainly.
+                    hiddenLand: land.hiddenLand,
+                    hiddenOnBoard: land.hiddenOnBoard,
+                    hiddenLine: hiddenLandLine(land),
                   }
                 : null,
               othersStillToAccept,

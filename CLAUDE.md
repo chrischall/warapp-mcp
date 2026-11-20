@@ -609,7 +609,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   acceptance not owed (already given, or my seat cannot accept). The preview (`src/analysis/accept-surrender.ts`,
   pure): whose `seat` (`player`, `inGameId`, name through `untrustedText`), `landBecomes` (`AI` / `neutral` /
   `null`, from `SurrenderedPlayersTurnIntoAIs`, not for a seat already an AI), `land` (from the live board, else
-  `null`: its territories in view and `borderedBy`, each neighbour by how many of ITS territories border that land),
+  `null`: its territories in view and `borderedBy`, each neighbour by how many of ITS territories border that land;
+  #417: `hiddenLand` — 0 when the board hides no territory, else `null`, said plainly in `hiddenLine` and the advice:
+  the standing carries no per-player territory count, so its land behind the fog is unknown — and `hiddenOnBoard`,
+  the map's territories the board does not show, the bound),
   `othersStillToAccept` (`{ player, inGameId }` each) / `goesThroughNow`, `winsGame` (no seat off my side left, a seat handed to an AI counting as
   one unless the AIs give up when one human remains; `null` when it hangs on an unread setting or teams I could not
   read) and one `advice` line: the win, or in a free-for-all the neighbour with the most bordering territories, citing

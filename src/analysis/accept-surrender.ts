@@ -2,7 +2,9 @@
 // once it goes through, and the one advice line warapp_accept_surrender's preview gives.
 //
 // The land is what the live board shows the surrendering player holding (fogged territories are
-// not counted: under fog it may hold more). A neighbour's weight is the number of ITS territories
+// not counted: under fog it may hold more). #417: how much it holds behind the fog is unknown — the
+// standing carries no per-player count — so the preview says so plainly, with the board's hidden
+// territories as the bound (`hiddenLand`, `hiddenOnBoard`, `hiddenLandLine`). A neighbour's weight is the number of ITS territories
 // that border that land: the player with the most stands to gain most once the land is up for
 // taking (strategy note `ffa-surrender-veto`).
 
@@ -24,6 +26,16 @@ export interface SurrenderLand {
   neighbours: LandNeighbour[];
   /** Territories next to its land whose owner the fog hides. */
   hiddenNeighbours: number;
+  /**
+   * #417: the map's territories whose owner the board does not show (fogged, or not on it at all): its
+   * hidden land is at most this many.
+   */
+  hiddenOnBoard: number;
+  /**
+   * #417: how many of its territories the fog hides — 0 when the board hides none, else `null`: the live
+   * board's standing carries no per-player territory count (only each territory's owner, hidden under fog).
+   */
+  hiddenLand: number | null;
 }
 
 /** {@link SurrenderLand} for in-game player `who`, from the live board and the map's adjacency. */
@@ -53,7 +65,24 @@ export function surrenderLand(
   }
   const neighbours = [...borderingOf].map(([inGameId, set]) => ({ inGameId, bordering: set.size }));
   neighbours.sort((a, b) => b.bordering - a.bordering || a.inGameId - b.inGameId);
-  return { territories: land, neighbours, hiddenNeighbours: hidden.size };
+  // #417: every territory of the map whose owner the board does not show.
+  const ids = new Set([...adjacency.keys(), ...territories.map((t) => t.territoryId)]);
+  let hiddenOnBoard = 0;
+  for (const id of ids) {
+    const t = byId.get(id);
+    if (!t || t.fogged || t.owner < 0) hiddenOnBoard++;
+  }
+  return { territories: land, neighbours, hiddenNeighbours: hidden.size, hiddenOnBoard, hiddenLand: hiddenOnBoard === 0 ? 0 : null };
+}
+
+/** #417: the preview's plain line on the surrendering player's land the fog hides. */
+export function hiddenLandLine(land: SurrenderLand): string {
+  const inView = `${land.territories.length} in view ${land.territories.length === 1 ? 'is' : 'are'}`;
+  if (land.hiddenLand === 0) return `The fog hides none of the board: its land is the ${inView.replace(/ (is|are)$/, '')}.`;
+  return (
+    `How many of its territories the fog hides is unknown: the live board gives no per-player count, and ${land.hiddenOnBoard} ` +
+    `territories on the board are hidden, so its hidden land is anywhere from 0 to that. Only the ${inView} counted here.`
+  );
 }
 
 /** A seat still playing, as the after-acceptance count needs it. */
