@@ -26,6 +26,7 @@ import type { Breakable, Targets } from './targets.js';
 import type { Threats } from './threats.js';
 import { commanderStaysLine, commanderTransit } from './commander.js';
 import { byNum, pct } from './util.js';
+import { STRIKE_SHARE, stockpileOf } from './stockpile.js';
 
 
 /** The strike stack rule 0p.3c built this turn (#72), and the leftover it got. */
@@ -39,10 +40,7 @@ export interface StrikeStack {
   facing?: string;
 }
 
-/** #421: armies of mine in view, in turns of my income, that make a stockpile on a flat income. */
-export const STOCKPILE_TURNS = 4;
-/** #421: the visible-army lead over one opponent beside me that turns a stockpile into a strike stack facing it. */
-export const STOCKPILE_LEAD = 2;
+export { STOCKPILE_LEAD, STOCKPILE_TURNS } from './stockpile.js';
 
 /** Who a strike stack faces, for the rationale: the siege target, a stockpile's (#421) or the strongest opponent. */
 export function stackFacing(pc: PlanCtx, s: Pick<StrikeStack, 'player' | 'facing'>) {
@@ -1005,29 +1003,10 @@ export function chooseStrikeStack(
   // armies in view mine outnumber STOCKPILE_LEAD× or more (the fewest first, then id). Visible armies
   // only, never an income estimate: the pile is spent where it dominates. Not under No-Split (an order
   // carries the whole stack), and never on my commander's territory.
-  const stockpile = (() => {
-    if (siege || noSplit || !auto || profile.format === '1v1' || goal === 'defend' || !pc.incomeTrend?.flat || income <= 0)
-      return undefined;
-    const by = new Map<number, number>();
-    let my = 0;
-    for (const [id, st] of state) {
-      if (st.owner.kind !== 'player' || st.armies === null) continue;
-      if (pc.mineSet.has(id)) my += st.armies + unitsAt(id);
-      else by.set(st.owner.playerId, (by.get(st.owner.playerId) ?? 0) + st.armies + unitsAt(id));
-    }
-    if (my < STOCKPILE_TURNS * income) return undefined;
-    const p = [...facing]
-      .filter((q) => pc.foe(q) && my >= STOCKPILE_LEAD * (by.get(q) ?? 0))
-      .sort((a, b) => (by.get(a) ?? 0) - (by.get(b) ?? 0) || a - b)[0];
-    if (p === undefined) return undefined;
-    const turns = Math.round((my / income) * 10) / 10;
-    const ratio = by.get(p) ? `${(Math.round((my / by.get(p)!) * 10) / 10).toFixed(1)}×` : 'unbounded';
-    return {
-      p,
-      why: `the opponent whose armies in view mine outnumber ${ratio} (#421)`,
-      line: `${my} armies of mine stand on the board, ${turns} turns of my flat ${income} income, ${ratio} player ${p}'s in view`,
-    };
-  })();
+  const stockpile = stockpileOf({
+    territories: state, mineSet: pc.mineSet, unitsAt, foe: pc.foe, income, ...(pc.incomeTrend ? { incomeTrend: pc.incomeTrend } : {}),
+    auto, goal, noSplit, format: profile.format, siege: siege !== undefined, facing,
+  });
   if ((auto && profile.format === '1v1' && goal !== 'defend' && facing.size) || siege || stockpile) {
     const player = siege
       ? { p: siege.target, e: estimates.get(siege.target) }
@@ -1139,6 +1118,13 @@ export function chooseStrikeStack(
         ...(stockpile ? { facing: stockpile.why } : {}),
       };
   }
+  // #421 (owner decision, 2026-11-20): the share the estimates phase held out of captures.
+  if (pc.strikeShare > 0)
+    rationale.push(
+      stack
+        ? `Strike share (#421): ${pc.strikeShare} of my flat ${income} income (${STRIKE_SHARE * 100}%) was held out of captures for the strike stack on ${label(stack.id)}, ahead of comfort margins; holds took their exact need first.`
+        : `Strike share (#421): ${pc.strikeShare} of my flat ${income} income (${STRIKE_SHARE * 100}%) was held out of captures for a strike stack, but no border could carry one this turn: it goes to the leftover as usual.`,
+    );
   return { stack, smallExpansion };
 }
 

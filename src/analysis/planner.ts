@@ -208,6 +208,9 @@
 //          builds the same stack facing the opponent beside me whose visible armies mine outnumber
 //          STOCKPILE_LEAD× (fewest first, then id; never an income estimate), never on my commander's
 //          territory, and spends it as above ("Stockpile (#421): …").
+//          #421, the strike share: in contact on a flat income (a stack built as above), STRIKE_SHARE
+//          of the income is held out of captures for the stack (holds keep their exact need first),
+//          unless that lowers next income (`planShare`) ("Strike share (#421): …").
 //       3d. Decided (#201): given `options.outlook` (#178) reporting winning or losing, the game is
 //          decided, and every payback test (PAYBACK_TURNS everywhere it appears in these rules)
 //          counts the turns it has left instead: the loser's strength over the winner's income a
@@ -1782,10 +1785,10 @@ const allInOutcome = new WeakMap<TurnPlan, ReadonlyMap<number, AllInTry>>();
  */
 function planPushed(input: PlanInput): TurnPlan {
   const turn = input.turn;
-  if (!input.bonusAttempts || turn === undefined) return planSettled(input);
+  if (!input.bonusAttempts || turn === undefined) return planShare(input);
   const judged = judgeAttempts(input.bonusAttempts, turn, input.graph, input.board, input.me);
   const verdicts = bonusVerdicts(judged, turn).filter((v) => input.graph.bonusById.has(v.bonusId));
-  if (!verdicts.length) return planSettled(input);
+  if (!verdicts.length) return planShare(input);
   const entries = new Map<number, BonusPushEntry>();
   for (const v of verdicts)
     if (v.kind === 'dropped') entries.set(v.bonusId, { ...v });
@@ -1811,7 +1814,7 @@ function planPushed(input: PlanInput): TurnPlan {
   for (;;) {
     const ids = new Set(allIn.map((v) => v.bonusId));
     const focus = [...new Set([...(input.options?.focusBonusIds ?? []), ...ids])];
-    plan = planSettled({
+    plan = planShare({
       ...input,
       bonusPush: { allIn: ids, dropped: new Set([...entries.keys()]) },
       options: { ...input.options, ...(ids.size ? { focusBonusIds: focus } : {}) },
@@ -1865,6 +1868,26 @@ function planPushed(input: PlanInput): TurnPlan {
   }
   plan.bonusPush = push;
   return plan;
+}
+
+/** #421: per plan, the strike share its pass held out of captures (absent when none). */
+const shareOutcome = new WeakMap<TurnPlan, number>();
+
+/**
+ * #421 (owner decision, 2026-11-20): the strike share is held out of captures, ahead of comfort margins,
+ * but never at the cost of next income — when the plan without it earns more next turn (a completion the
+ * share starves), that plan stands and says why.
+ */
+function planShare(input: PlanInput): TurnPlan {
+  const plan = planSettled(input);
+  const share = shareOutcome.get(plan);
+  if (!share) return plan;
+  const without = planSettled({ ...input, options: { ...input.options, strikeShare: false } });
+  if (without.expected.nextIncome <= plan.expected.nextIncome) return plan;
+  without.rationale.push(
+    `Strike share (#421) not held this turn: holding ${share} of the income out of captures for the strike stack would lower next income from ${without.expected.nextIncome} to ${plan.expected.nextIncome} (a capture it starves completes a bonus).`,
+  );
+  return without;
 }
 
 function planSettled(input: PlanInput): TurnPlan {
@@ -3326,6 +3349,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (u.contested && !u.conceded) for (const m of u.members) if (!heldBorders.has(m.id)) unheld.add(m.id);
   runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
   if (tgt.allInTries.size) allInOutcome.set(plan, tgt.allInTries);
+  if (pc.strikeShare > 0) shareOutcome.set(plan, pc.strikeShare);
   // #274: a plan that walks my commander says so first.
   if (pc.commanderAt?.retreat) plan.warnings.unshift(commanderMoveWarning(pc.commanderAt.retreat, label));
   return plan;

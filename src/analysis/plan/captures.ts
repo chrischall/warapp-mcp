@@ -588,7 +588,8 @@ export function captureHelper(
     }
     return true;
   };
-  if (reserve) rationale.push(`Hold a reserve of ${reserve} out of captures.`);
+  // #421: the strike share is said on its own line (planner.ts), not as the caller's reserve.
+  if (reserve - pc.strikeShare) rationale.push(`Hold a reserve of ${reserve - pc.strikeShare} out of captures.`);
 
   // ---- 3a. combined (multi-source) captures (R4) ----
   /**

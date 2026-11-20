@@ -1846,7 +1846,8 @@ export function reconsiderAndGarrison(
       if (!todo.length || split) continue;
       const cost = todo.reduce((n, x) => n + x.d, 0);
       const worth = b.value + have / paybackTurns;
-      if (cost > paybackTurns * b.value || cost > CONCEDE_FACTOR * worth || cost > ps.budget - reserve) continue;
+      // #421: the strike share holds back captures only, never this garrison.
+      if (cost > paybackTurns * b.value || cost > CONCEDE_FACTOR * worth || cost > ps.budget - (reserve - pc.strikeShare)) continue;
       // The pools are checked for the members together: each may fit the free pool on its own
       // while together they overdraw it.
       if (!fitsTogether(todo)) continue;

@@ -1847,7 +1847,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     "Stockpile (#421)" rationale line (`chooseStrikeStack`, `stackFacing`, `plan/strike.ts`). The golden corpus
     carries no income history, so it is byte-identical; with a flat history injected on its 1,839 plans of turn
     ≥ 5, 7 changed orders: 2 captures gained, none lost, next income never lower, no concession, warnings 1 added
-    and 1 removed. Left for later: a fixed share of income for the stack, breaks and all-in completions.
+    and 1 removed. The rule lives in `plan/stockpile.ts` (`pileOf`, `stockpileOf`, `strikeShareOf`; pure, shared by
+    the estimates and strike phases). **The strike share (#421, owner decision of 2026-11-20):** in contact on a
+    flat income — wherever rule 0p.3c builds a strike stack (a 1v1 adapting with a foe's visible territory beside
+    mine, a siege on such a foe, or the stockpile) — `STRIKE_SHARE` (25%) of my income, rounded down, is held out of
+    captures (`PlanCtx.strikeShare`, added to `reserve`, which holds back captures only: holds and the #122
+    garrison keep their exact need first), so the leftover gives it to the stack ahead of comfort margins, with a
+    "Strike share (#421)" line. Never at the cost of next income: `planShare` (planner.ts) replans with
+    `PlanOptions.strikeShare: false` and keeps that plan when it earns more next turn (a completion the share
+    starved), saying so. Golden byte-identical (no history); with a flat history injected on every plan of turn
+    ≥ 5, 115 plans changed (the line), 5 in their orders: captures +2/−4 (advances that no longer fit), next
+    income and concessions unchanged. Left for later: breaks and all-in completions.
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and

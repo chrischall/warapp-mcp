@@ -5,6 +5,7 @@
 // rationale and warnings that state them. Pure: it reads the input and writes only
 // `state.warnings` / `state.rationale`.
 import { siegeFit, siegeOf, type Siege } from './siege.js';
+import { strikeShareOf } from './stockpile.js';
 import type { BoardState } from '../../board.js';
 import { armiesForGold } from '../../commerce.js';
 import { holdsSeat } from '../../player-states.js';
@@ -853,7 +854,22 @@ function standingCtx(o: OpponentsCtx, b: BoardCtx): StandingCtx {
 export function planContext(input: PlanInput): PlanCtx {
   const o = opponentsCtx(input);
   const b = boardCtx(input, o);
-  return { ...o, ...b, ...combatCtx(o, b), ...standingCtx(o, b) };
+  const c = combatCtx(o, b);
+  // #421 (owner decision, 2026-11-20): in contact on a flat income the strike share is held out of
+  // captures (the reserve holds back captures only, so holds keep their exact need first).
+  const contact = new Set<number>();
+  for (const id of b.mine)
+    for (const n of neighborsOf(o.g, id)) {
+      const st = b.territories.get(n);
+      if (st?.owner.kind === 'player' && st.armies !== null && o.foe(st.owner.playerId)) contact.add(st.owner.playerId);
+    }
+  const strikeShare = o.opts.strikeShare === false ? 0 : strikeShareOf({
+    territories: b.territories, mineSet: b.mineSet, unitsAt: b.unitsAt, foe: o.foe, income: o.income,
+    ...(o.incomeTrend ? { incomeTrend: o.incomeTrend } : {}), auto: o.auto, goal: o.goal, noSplit: c.noSplit,
+    format: o.profile.format, siege: o.siege?.target, contact,
+  });
+  const reserve = Math.min(o.income, o.reserve + strikeShare);
+  return { ...o, ...b, ...c, ...standingCtx(o, b), reserve, strikeShare: reserve - o.reserve };
 }
 
 /**

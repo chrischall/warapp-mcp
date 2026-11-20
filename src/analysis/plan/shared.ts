@@ -294,6 +294,11 @@ export interface PlanOptions {
    * plain holds take at most half my income, 70% when behind. Tests of earlier hold rules use it.
    */
   holdCap?: boolean;
+  /**
+   * #421: `false` holds no strike share out of captures (`planShare` replans so when holding it would
+   * lower next income). Default: in contact on a flat income, 25% of income goes to the strike stack.
+   */
+  strikeShare?: boolean;
   /** #382: `false` keeps the profile from picking the siege (adapting with no goal). Default: it picks it when it fits. */
   siegeAuto?: boolean;
   /**
