@@ -822,3 +822,50 @@ describe('packaging for the decision log (#412)', () => {
     expect(submit).toContain('override_reason');
   });
 });
+
+describe('packaging for chat as game information (#415)', () => {
+  const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const readme = doc('../README.md');
+  const claude = doc('../CLAUDE.md');
+  const skill = doc('../skills/warapp-mcp/SKILL.md');
+  const flat = (s: string) => s.replace(/\s+/g, ' ');
+
+  it('README lists WARAPP_CHAT_AUTOMATION among the variables, off by default', () => {
+    const vars = readme.slice(readme.indexOf('| Variable |'), readme.indexOf('The server starts without credentials'));
+    const row = vars.split('\n').find((l) => l.startsWith('| `WARAPP_CHAT_AUTOMATION` |')) ?? '';
+    expect(row).not.toBe('');
+    expect(row).toMatch(/off/);
+    expect(row).toMatch(/confirm/);
+  });
+
+  it('README names the intent and advice fields on the chat tools and the plan, and the automated send', () => {
+    const rowOf = (tool: string) => readme.split('\n').find((l) => l.startsWith(`| \`${tool}\` |`)) ?? '';
+    for (const tool of ['warapp_get_chat', 'warapp_chat_inbox', 'warapp_plan_turn']) {
+      const row = rowOf(tool);
+      expect(row, tool).toContain('`intent`');
+      expect(row, tool).toContain('`advice`');
+    }
+    const send = rowOf('warapp_send_chat');
+    expect(send).toContain('`automated`');
+    expect(send).toContain('WARAPP_CHAT_AUTOMATION');
+    const all = flat(readme);
+    for (const s of ['`stance`', '`reasons`', '`draft`', '`priceWith`', '`noteIds`', '`automation`', '`send`']) expect(all, s).toContain(s);
+  });
+
+  it('the skill says to read the advice every turn, as information about the sender, with the stances and the gate', () => {
+    const start = skill.indexOf('## Chat and diplomacy');
+    const section = flat(skill.slice(start, skill.indexOf('\n## ', start + 1)));
+    expect(section).toMatch(/`advice` every turn/);
+    expect(section).toMatch(/reveals about the sender/);
+    for (const s of ['`ignore`', '`vague`', '`share`', '`price`', '`report`']) expect(section, s).toContain(s);
+    expect(section).toContain('WARAPP_CHAT_AUTOMATION');
+    expect(section).toMatch(/off by default/i);
+  });
+
+  it('CLAUDE.md: D2 is off unless WARAPP_CHAT_AUTOMATION=on, the classifier and advice are described, the write count is unchanged', () => {
+    const all = flat(claude);
+    expect(all).toContain('D2 automated chat is off unless `WARAPP_CHAT_AUTOMATION=on`');
+    for (const s of ['src/analysis/chat-intent.ts', 'src/analysis/chat-advice.ts', 'src/analysis/chat-read.ts', 'src/chat-automation.ts']) expect(all, s).toContain(s);
+    expect(all).toContain('**Fourteen tools write, all confirm-gated:**');
+  });
+});

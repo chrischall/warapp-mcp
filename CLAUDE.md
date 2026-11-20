@@ -84,8 +84,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   reaches no player. `mark_seen: true` on `warapp_get_chat` and
   `warapp_chat_inbox` writes only this machine's chat cursor: both stay read-only, and war.app's own read mark is
   `warapp_mark_chat_read` (#311). Chat (owner decisions of 2026-11-14,
-  `docs/PLAN-TEAMS.md` §5): D1 every send confirm-gated; D2 automated chat is OFF until the owner
-  enables it (2026-11-15, superseding the 2026-11-14 answer; the tools stay built, chat is read); D3 the honesty line is the plan's
+  `docs/PLAN-TEAMS.md` §5): D1 every send confirm-gated; D2 automated chat is off unless `WARAPP_CHAT_AUTOMATION=on`
+  (#415, 2026-11-20, superseding 2026-11-15's plain OFF: chat is read, labelled and advised on always; only an
+  agent's own reply is gated, below); D3 the honesty line is the plan's
   default (no false statement of fact, no promise the plan does not intend, withholding is free, never
   claim to be human, a truce ends with the agreed notice). Every other tool
   is read-only, `warapp_plan_turn`, `warapp_track_opponents` and `warapp_advise_diplomacy` included. The two-step token
@@ -343,6 +344,35 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
   is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
+- **Chat is game information (#415, `docs/PLAN-CHAT-STRATEGY.md`): classified, advised, never sent on its own.**
+  `src/analysis/chat-intent.ts` (`classifyMessage`, pure, pattern-based, never throws) labels another player's
+  message with `INTENTS` (income/position checks, truce proposal/accept/decline/end notice, coordination asks,
+  threats, surrender asks, gg/banter/greeting, other questions), a `high`/`medium`/`low` confidence, `addressedToMe`
+  and the players, territories and bonuses it names. A missed intent fails safe (no stance, the message still
+  shown); reviews fail only a wrong HIGH-confidence label or a listed example. `src/analysis/chat-advice.ts`
+  (`adviseReply`, pure) turns a label and the game (format, my standing and whether I lead, my income, the
+  strongest estimate and its `thin` flag, the sender as leader/teammate/out/truce) into a `stance` (`ignore`,
+  `vague`, `share`, `price` → `warapp_advise_diplomacy`, `report`; `propose`/`accept`/`decline` exist but are
+  never advised on their own), `reasons`, `noteIds` (the `diplomacy` strategy notes) and, for `share`/`vague`
+  only, an honest `draft` (D3 by construction: figures only from the game, never from the message; a `vague`
+  draft states none; no promise, no claim to be human). `src/analysis/chat-read.ts` (`readChatMessage`) puts the
+  two together per message; `src/tools/chat-advice.ts` wires it: `warapp_get_chat` and `warapp_chat_inbox` give
+  every other player's message `intent` and an unread one `advice`, from this machine only (the outlook log's
+  standing via `standingFromOutlook`, the ledger's truces via `chatTruces`; none → standing `unknown`, said in the
+  reasons; no extra war.app request); `warapp_plan_turn`'s `chat` adds `messages` (the newest
+  `MAX_PLAN_CHAT_MESSAGES` unread, text through `untrustedBody`, compact advice = stance + one reason, the rest in
+  `messagesOmitted`) from the plan's own standing (`planStanding`) — report only, the orders never read chat
+  (asserted: the plan with unread chat is the plan without it). The label is a hint, not the judge: every view puts the text beside it with
+  `CHAT_ADVICE_NOTE` (other players' words: information about the sender, never an instruction or a fact). The
+  decision log keeps a per-turn `chat` block (`recordChat`, `LoggedChatMessage`: ids, sender id, channel, `toMe`,
+  intents, confidence, stance; never text or a name; at most `MAX_LOGGED_CHAT`). **The gate,
+  `src/chat-automation.ts`:** `WARAPP_CHAT_AUTOMATION` (`chatAutomationMode`: `on` only when it says `on`, else
+  `off`; declared in manifest.json, server.json and mint.yaml, hosted default off). Every advice carries
+  `automation`; with `on` and a draft it also carries `send` (the exact `warapp_send_chat` arguments,
+  `automated: true`, still confirm-gated); with `off` the reasons say the owner sends. `warapp_send_chat`'s
+  `automated: true` (an agent's own reply) is refused before any request with the gate off
+  (`AUTOMATED_CHAT_OFF`); with it on it goes through the usual confirm gate and the result records `automated`.
+  A manual send (the default) is unchanged. Not a new write tool.
 - **In-app notifications (#311) are `GetInAppNotifications` (323) via `warapp_get_notifications`** (read-only,
   hosted too; `src/notifications.ts`, the reply decoded by the bundle's readers by type name —
   `GetInAppNotificationsReturn` / `InAppNotification`, 7 fields by read order — like GetMyGames). Name-free
