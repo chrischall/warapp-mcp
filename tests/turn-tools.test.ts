@@ -1085,7 +1085,9 @@ describe('warapp_plan_turn — threat trend', () => {
     const full = payload<{ chat: { messages: Array<{ advice: Record<string, unknown> }> } }>(
       await h.call('warapp_plan_turn', { game_id: GAME, view: 'full' }),
     );
-    expect(full.chat.messages[0]!.advice).toMatchObject({ stance: 'price', priceWith: 'warapp_advise_diplomacy', noteIds: expect.any(Array), reasons: expect.any(Array) });
+    expect(full.chat.messages[0]!.advice).toMatchObject({ stance: 'price', priceWith: 'warapp_advise_diplomacy', noteIds: expect.any(Array), reasons: expect.any(Array), automation: 'off' });
+    // #415 task 4: the gate is off by default, so no `send` block.
+    expect(full.chat.messages[0]!.advice).not.toHaveProperty('send');
 
     // #412: the decision log keeps ids and labels only, never the text or a name.
     const log = readFileSync(join(h.dataDir, 'decisions', `${GAME}.json`), 'utf8');

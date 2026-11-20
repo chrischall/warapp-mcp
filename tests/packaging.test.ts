@@ -182,6 +182,26 @@ describe('packaging for the browser bridge (phase 2)', () => {
     expect(mint).toMatch(/^\s+- name: WARAPP_WS_PORT$/m);
   });
 
+  it('WARAPP_CHAT_AUTOMATION is declared everywhere, optional and off by default (#415)', () => {
+    const manifest = read('../manifest.json') as {
+      server: { mcp_config: { env: Record<string, string> } };
+      user_config: Record<string, { required?: boolean; description?: string }>;
+    };
+    const ref = manifest.server.mcp_config.env.WARAPP_CHAT_AUTOMATION;
+    expect(ref).toMatch(/^\$\{user_config\.(\w+)\}$/);
+    const key = /user_config\.(\w+)/.exec(ref!)![1]!;
+    expect(manifest.user_config[key]?.required).toBe(false);
+    expect(manifest.user_config[key]?.description).toMatch(/off by default/i);
+    const server = read('../server.json') as {
+      packages: Array<{ environmentVariables: Array<{ name: string; isRequired: boolean; description: string }> }>;
+    };
+    const v = server.packages[0]!.environmentVariables.find((e) => e.name === 'WARAPP_CHAT_AUTOMATION');
+    expect(v?.isRequired).toBe(false);
+    expect(v?.description).toMatch(/off by default/i);
+    const entry = mint.slice(mint.indexOf('- name: WARAPP_CHAT_AUTOMATION'));
+    expect(entry).toMatch(/^- name: WARAPP_CHAT_AUTOMATION\n\s+required: false\n\s+help: >-[\s\S]*?off by default/i);
+  });
+
   it('manifest.json and server.json expose WARAPP_WS_PORT as optional', () => {
     const manifest = read('../manifest.json') as {
       server: { mcp_config: { env: Record<string, string> } };

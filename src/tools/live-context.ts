@@ -2,6 +2,7 @@
 // chat), the web-client RPC channel through the bridge (board, picks, sends),
 // and the client bundle whose readers decode the board.
 import { McpToolError, type EnvSource } from '@chrischall/mcp-utils';
+import { chatAutomationMode, type ChatAutomation } from '../chat-automation.js';
 import type { WarappClient } from '../client.js';
 import { dataDir } from '../config.js';
 import { type DecisionLogMode, decisionLogMode } from '../decision-log.js';
@@ -56,6 +57,8 @@ export interface LiveContext {
   dataDir?: string;
   /** The decision log's mode (#412, `WARAPP_DECISION_LOG`); absent: read from the process environment. */
   decisionLog?: DecisionLogMode;
+  /** The chat automation gate (#415, `WARAPP_CHAT_AUTOMATION`); absent: read from the process environment. */
+  chatAutomation?: ChatAutomation;
   /** A hosted child (src/hosted.ts): no session is ever linked there, so no hint suggests linking one. */
   hosted?: boolean;
   /** A hosted child signed in by mcp-host (a captured WARAPP_AUTH_TOKEN, #333): hints point at its "Sign in". */
@@ -300,6 +303,7 @@ export function createLiveContext(opts: LiveContextOptions): LiveContext {
     fetchPage: fetchText,
     dataDir: dir,
     decisionLog: decisionLogMode(opts.env ?? process.env),
+    chatAutomation: chatAutomationMode(opts.env ?? process.env),
     hosted: isHosted(opts.env ?? process.env),
     hostSignIn: hostedSession(opts.env ?? process.env) !== null,
     client: opts.client,

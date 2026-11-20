@@ -59,6 +59,7 @@ import { requireApprovedAccount, type LiveContext } from './live-context.js';
 import { resolvePlayer } from './resolve.js';
 import { defineGatedWrite, requireMe, sendAndVerify } from './write-kit.js';
 import { CHAT_ADVICE_NOTE, chatAdviceContext, chatReader } from './chat-advice.js';
+import { AUTOMATED_CHAT_OFF, chatAutomationMode } from '../chat-automation.js';
 import type { ChatReading } from '../analysis/chat-read.js';
 import { resolveTeams } from './team-source.js';
 
@@ -472,6 +473,8 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
     meInGame?: number;
     /** The account the plan read and the gate bound (its GameFeed id). */
     account: string;
+    /** #415: an automated reply (WARAPP_CHAT_AUTOMATION on), recorded in the result. */
+    automated?: true;
     /** B4: the message's declared commitments, checked; recorded once it is sent. */
     commitments?: Pick<MessageCommitments, 'turn' | 'commitments' | 'players'> & { records: NonNullable<MessageCommitments['checks'][number]['record']>[] };
   }
@@ -518,6 +521,8 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
         'orders already submitted) and the agreement ledger, a commitment they do not carry refuses the send, and once ' +
         'the message is confirmed or accepted they are recorded in the ledger as yours (a propose or accept creates or ' +
         'advances the agreement, a notice moves it to notice-by-me); warapp_submit_turn warns when later orders break one. ' +
+        'Pass `automated: true` for a reply the owner did not tell you to send (e.g. an advice\'s `send`): it is refused ' +
+        'unless WARAPP_CHAT_AUTOMATION is on (off by default: the owner sends replies), and even then it is confirm-gated. ' +
         `${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Send a war.app chat message',
@@ -538,8 +543,22 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
           .optional()
           .describe('A player (name or GameFeed id) to message privately. Omit to post to a channel.'),
         commitments: commitmentsArg,
+        automated: z
+          .boolean()
+          .optional()
+          .describe(
+            'true when you send a reply the owner did not tell you to send (an automated reply). Refused unless ' +
+              'WARAPP_CHAT_AUTOMATION is on; default false (a send the owner asked for).',
+          ),
       }),
-      async plan({ game_id, message, channel, to, commitments }) {
+      async plan({ game_id, message, channel, to, commitments, automated }) {
+        // #415: an automated reply is refused with the gate off, before any request.
+        const auto = automated === true;
+        if (auto && (ctx.chatAutomation ?? chatAutomationMode(opts.env ?? process.env)) !== 'on') {
+          throw new McpToolError(`Refused: ${AUTOMATED_CHAT_OFF}. Nothing was sent.`, {
+            hint: 'Report the message and the advice to the owner and let them send the reply; or the owner turns WARAPP_CHAT_AUTOMATION on.',
+          });
+        }
         const gameId = parseGameId(game_id);
         const privately = to !== undefined && String(to).trim() !== '';
         if (privately && channel === 'team') {
@@ -653,6 +672,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
                   : 'Other players will see this message; it cannot be unsent.',
               game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state },
               ...(shownRecipient ? { recipient: shownRecipient } : {}),
+              ...(auto ? { automated: true, automatedNote: 'An automated reply (WARAPP_CHAT_AUTOMATION is on): the owner did not ask for this message.' } : {}),
               ...(promised
                 ? {
                     commitments: {
@@ -673,6 +693,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
             channel: chatChannel,
             ...(recipient ? { recipient } : {}),
             ...(meInGame !== undefined ? { meInGame } : {}),
+            ...(auto ? { automated: true as const } : {}),
             account,
             ...(promised
               ? {
@@ -687,10 +708,11 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
           } satisfies ChatState,
         };
       },
-      async execute({ gameId, text, kind, channel, recipient, meInGame, account, commitments }: ChatState) {
+      async execute({ gameId, text, kind, channel, recipient, meInGame, account, commitments, automated }: ChatState) {
         await requireApprovedAccount(ctx, account);
         const to = recipient?.name ?? (kind === 'team' ? `your team (team ${channel})` : 'everyone in the game');
-        const base = { status: 'sent' as const, game: gameId, channel: kind, to };
+        const marked = automated ? { automated: true as const } : {};
+        const base = { status: 'sent' as const, game: gameId, channel: kind, to, ...marked };
         let reply: ReplyEnvelope | undefined;
         const result = await sendAndVerify({
           send: async () => {
@@ -705,6 +727,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
             game: gameId,
             channel: kind,
             to,
+            ...marked,
             warning:
               `war.app did not confirm this message (${failure}), so it may ` +
               'already have been posted. Check warapp_get_chat before sending it again.',

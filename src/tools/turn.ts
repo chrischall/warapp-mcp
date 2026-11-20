@@ -104,6 +104,7 @@ import {
 import { lookupMeta, mintMeta } from './hints.js';
 import { chatSummary } from './chat.js';
 import { chatSeats, planChatView, planStanding } from './chat-advice.js';
+import { chatAutomationMode } from '../chat-automation.js';
 import { readPendingSurrenders, surrenderOwedLine } from './surrender-pending.js';
 import { failureText, loadLiveGame, requireApprovedAccount, standInLine, standInOf, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
@@ -2848,6 +2849,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             {
               players: chatSeats(game),
               meId: me.id,
+              gameId: game.id,
+              automation: ctx.chatAutomation ?? chatAutomationMode(opts.env ?? process.env),
               format: plan.profile.format,
               territories: map.territories.map((t) => ({ id: t.id, name: t.name })),
               bonuses: map.bonuses.map((b) => ({ id: b.id, name: b.name })),

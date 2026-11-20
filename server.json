@@ -67,6 +67,12 @@
           "format": "string"
         },
         {
+          "name": "WARAPP_CHAT_AUTOMATION",
+          "description": "Whether an agent may send chat replies the owner did not ask for. Off by default (chat is read, labelled and advised on; the owner sends every reply); set on to let the advice offer the exact send, which still needs confirming.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "WARAPP_DECISION_LOG",
           "description": "A per-game log of each turn's view, the plan, the orders sent and, once the game ends, the true figures (player ids and numbers, no names or chat), for offline review and replay. On by default; set off to turn it off, or full to keep every turn uncompacted.",
           "isRequired": false,

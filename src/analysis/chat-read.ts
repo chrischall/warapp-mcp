@@ -7,6 +7,7 @@
 // the views carry the message itself beside them, as other players' text. Nothing here sends, marks or writes
 // anything. Pure and deterministic; never throws.
 
+import type { ChatAutomation } from '../chat-automation.js';
 import { carriesTeam, isTeamGame } from '../teams.js';
 import { adviseReply, type ChatAdvice, type ChatAdviceGame, type ChatAdviceSender, type ChatStance } from './chat-advice.js';
 import { classifyMessage, type ChatIntentPlayer, type Intent, type IntentConfidence, type NamedPlace } from './chat-intent.js';
@@ -49,6 +50,10 @@ export interface ChatReadContext {
   truces?: ReadonlyMap<number, ChatTruce>;
   /** The format as the caller knows it (the plan's profile); else read from the seats. */
   format?: GameFormat;
+  /** The game, for the advice's `send` block. */
+  gameId?: number;
+  /** The chat automation gate (`WARAPP_CHAT_AUTOMATION`); absent reads `off`. */
+  automation?: ChatAutomation;
 }
 
 /** One message to read. */
@@ -69,15 +74,48 @@ export interface ChatIntentView {
   confidence: IntentConfidence;
 }
 
+/** The exact warapp_send_chat arguments for an advice's draft (gate on only): still to be confirmed. */
+export interface ChatReplySend {
+  game_id: number;
+  message: string;
+  /** A reply on the team channel. */
+  channel?: 'team';
+  /** A private reply to the sender (GameFeed id). */
+  to?: number;
+  automated: true;
+}
+
+/** An advice as the views carry it: the stance, plus the gate's state and, with it on and a draft, `send`. */
+export type ChatReadAdvice = ChatAdvice & { automation: ChatAutomation; send?: ChatReplySend };
+
 export interface ChatReading {
   intent: ChatIntentView;
   /** Only when asked (an unread message) and the sender is known. */
-  advice?: ChatAdvice;
+  advice?: ChatReadAdvice;
 }
 
 /** What the reasons say when no standing could be read. */
 export const NO_STANDING_REASON =
   'My standing is unknown here (no plan of this game is logged): the stance is worked out with standing `unknown`.';
+
+/** What the reasons say with the automation gate off. */
+export const AUTOMATION_OFF_REASON =
+  'Automated chat is off (WARAPP_CHAT_AUTOMATION): the owner sends any reply; nothing here is sent.';
+
+/** What the reasons say with the gate on and a `send` block. */
+const AUTOMATION_ON_REASON =
+  'Automated chat is on (WARAPP_CHAT_AUTOMATION): `send` holds the warapp_send_chat arguments for the draft, still to be confirmed (every send is confirm-gated).';
+
+/**
+ * Where a reply to a message goes: the sender privately, my team, or the whole game; null when the channel it came
+ * on is unknown (a public reply could carry a private answer to everyone).
+ */
+function replyRoute(channel: ChatReadMessage['channel'], senderId: number): Pick<ChatReplySend, 'channel' | 'to'> | null {
+  if (channel === 'private') return { to: senderId };
+  if (channel === 'team') return { channel: 'team' };
+  if (channel === 'public') return {};
+  return null;
+}
 
 /** States of a player out of the game. */
 const OUT = new Set(['Eliminated', 'SurrenderAccepted', 'Booted', 'EndedByVote', 'Declined', 'RemovedByHost']);
@@ -171,9 +209,20 @@ export function readChatMessage(msg: ChatReadMessage, ctx: ChatReadContext, opts
       },
       channel: msg.channel,
     };
-    const advice = adviseReply(classified, game);
+    const automation: ChatAutomation = c.automation === 'on' ? 'on' : 'off';
+    const advice: ChatReadAdvice = { ...adviseReply(classified, game), automation };
     if (!s) advice.reasons.push(NO_STANDING_REASON);
     else if (classified.intents.some((i) => STANDING_INTENTS.has(i))) advice.reasons.push(`My standing as read from ${s.basis}.`);
+    if (automation === 'off') advice.reasons.push(AUTOMATION_OFF_REASON);
+    else if (advice.draft !== undefined) {
+      const route = replyRoute(msg.channel, senderId);
+      if (route === null) advice.reasons.push('The channel this message came on is unknown, so no `send` is offered: the owner picks where a reply goes.');
+      else if (typeof c.gameId !== 'number') advice.reasons.push('The game is unknown here, so no `send` is offered.');
+      else {
+        advice.send = { game_id: c.gameId, message: advice.draft, ...route, automated: true };
+        advice.reasons.push(AUTOMATION_ON_REASON);
+      }
+    }
     return { intent, advice };
   } catch {
     return { intent: { intents: [], confidence: 'low' } };

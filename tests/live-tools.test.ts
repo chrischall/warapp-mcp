@@ -864,6 +864,21 @@ describe('warapp_get_chat', () => {
       expect(p.messages[0]!.advice.draft ?? '').not.toMatch(/\d/);
     });
 
+    it('the advice says the automation gate: off by default (no send), on gives the exact warapp_send_chat arguments (#415)', async () => {
+      const msgs: SyntheticMessage[] = [{ id: 3, date: at(3), from: BOB.inGame, text: 'income check?', turn: 2 }];
+      type Advice = { automation: string; draft?: string; send?: Record<string, unknown>; reasons: string[] };
+      h = await liveHarness({ feed: [TEAM_GAME()], pages: SIGNED_IN_ANN, warapp: refresh(() => msgs).warapp });
+      const off = payload<{ messages: Array<{ advice: Advice }> }>(await h.call('warapp_get_chat', { game_id: GAME })).messages[0]!.advice;
+      expect(off.automation).toBe('off');
+      expect(off).not.toHaveProperty('send');
+      expect(off.reasons.some((r) => /owner sends/.test(r))).toBe(true);
+      await h.harness.close();
+      h = await liveHarness({ feed: [TEAM_GAME()], pages: SIGNED_IN_ANN, warapp: refresh(() => msgs).warapp, env: { WARAPP_CHAT_AUTOMATION: 'on' } });
+      const on = payload<{ messages: Array<{ advice: Advice }> }>(await h.call('warapp_get_chat', { game_id: GAME })).messages[0]!.advice;
+      expect(on.automation).toBe('on');
+      expect(on.send).toEqual({ game_id: GAME, message: on.draft, automated: true });
+    });
+
     it('channel filters the messages; unread still covers every channel', async () => {
       h = await liveHarness({ feed: [TEAM_GAME()], pages: SIGNED_IN_ANN, warapp: refresh(() => CHAT).warapp });
       const p = payload<{ messages: Array<Record<string, unknown>> } & Record<string, unknown>>(
@@ -1285,6 +1300,45 @@ describe('warapp_send_chat', () => {
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/turns private messaging off \(its PrivateMessaging setting\)/);
     expect(s.sent).toEqual([]);
+  });
+
+  // #415 task 4: an automated reply (one the owner did not tell the agent to send) is behind WARAPP_CHAT_AUTOMATION.
+  describe('the automation gate (WARAPP_CHAT_AUTOMATION)', () => {
+    it('off (unset, off, or anything but on): an automated send is refused before any request', async () => {
+      for (const env of [undefined, { WARAPP_CHAT_AUTOMATION: 'off' }, { WARAPP_CHAT_AUTOMATION: 'maybe' }]) {
+        const s = chatServer();
+        h = await liveHarness({ feed: [game('Playing')], pages: SIGNED_IN_ANN, warapp: s.warapp, ...(env ? { env } : {}) });
+        const res = await h.call('warapp_send_chat', { game_id: GAME, message: 'gl hf', automated: true });
+        expect(res.isError).toBe(true);
+        expect(textOf(res)).toMatch(/automated chat is off \(WARAPP_CHAT_AUTOMATION\); the owner sends replies/);
+        expect(h.calls).toHaveLength(0);
+        expect(h.exchanges).toHaveLength(0);
+        expect(s.sent).toEqual([]);
+        await h.harness.close();
+        h = undefined;
+      }
+    });
+
+    it('off: a manual send (the default, or automated: false) is unchanged', async () => {
+      const s = chatServer();
+      h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp });
+      const p = payload(await confirmed('warapp_send_chat', { game_id: GAME, message: 'gl hf', automated: false }));
+      expect(p).toMatchObject({ status: 'sent', outcome: 'accepted' });
+      expect(p).not.toHaveProperty('automated');
+      expect(s.sent).toHaveLength(1);
+    });
+
+    it('on: an automated send goes through the confirm gate and the result records automated: true', async () => {
+      const s = chatServer();
+      h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp, env: { WARAPP_CHAT_AUTOMATION: 'on' } });
+      const preview = payload<{ preview: Record<string, unknown>; confirmToken?: string }>(await h.call('warapp_send_chat', { game_id: GAME, message: 'gl hf', automated: true }));
+      expect(preview.confirmToken).toEqual(expect.any(String));
+      expect(preview.preview.automated).toBe(true);
+      expect(s.sent).toEqual([]);
+      const p = payload(await confirmed('warapp_send_chat', { game_id: GAME, message: 'gl hf', automated: true }));
+      expect(p).toMatchObject({ status: 'sent', outcome: 'accepted', automated: true });
+      expect(s.sent).toHaveLength(1);
+    });
   });
 
   describe('read back from the reply (the updated message list)', () => {

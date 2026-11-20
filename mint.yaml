@@ -120,6 +120,13 @@ env:
       the game ends, the true figures; ids and numbers, no names). On by
       default, hosted as well. Set off to switch it off, or full to keep every
       turn uncompacted.
+  - name: WARAPP_CHAT_AUTOMATION
+    required: false
+    help: >-
+      Automated chat replies (#415): whether an agent may send a chat reply
+      the owner did not ask for. Off by default, hosted as well: chat is read,
+      labelled and advised on, and the owner sends every reply. Set on to let
+      the advice offer the exact send; every send is still confirm-gated.
   - name: WARAPP_SESSION_FILE
     required: false
     help: >-
