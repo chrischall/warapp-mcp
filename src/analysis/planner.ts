@@ -1388,8 +1388,8 @@
 //     as a neutral (and whose owner the fog does not show as a player now) is costed at that size
 //     instead, never attacked, with a rationale line ("… fogged now, was a neutral of N on the picking
 //     board (#201)"). #417: a fogged member a static seat left (`BoardCtx.vacated`: shown owner-only as
-//     its, or fogged now and the seat's on `previousBoard`) is costed at VACATED_FOG_ARMIES (2)
-//     defenders, never above the costliest member in view (its border stack says nothing about the
+//     its, or fogged now and the seat's when last seen — `foggedLastSeen`, the newest earlier board that
+//     showed it, else `previousBoard`) is costed at VACATED_FOG_ARMIES (2) defenders, never above the costliest member in view (its border stack says nothing about the
 //     land behind it), with a "… was player N's (out, no AI) … (#417)" line; it raises no other fogged
 //     member's figure and gets no wasteland surcharge.
 //  7. Move order (#127; every goal, last). Orders zigzag — the first mover's 1st, the other's
@@ -1622,7 +1622,7 @@ import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { stageTwoMove, twoMoveStages } from './plan/two-move.js';
-import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
+import { addEmptyEnemyTargets, dropEmptyEnemyTargets, foggedLastSeen, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
 import { captureInsteadOfHold } from './plan/capture-instead.js';
@@ -1713,10 +1713,10 @@ function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>
   const vacated = new Map(input.vacated);
   for (const t of input.board.territories)
     if (t.owner.kind === 'player' && seats.has(t.owner.playerId)) vacated.set(t.territoryId, t.owner.playerId);
-  // #417: and the fogged ones the previous board showed a seat holding.
-  const fogged = new Set(input.board.territories.filter((t) => t.owner.kind === 'unknown').map((t) => t.territoryId));
-  for (const t of input.previousBoard?.territories ?? [])
-    if (fogged.has(t.territoryId) && t.owner.kind === 'player' && seats.has(t.owner.playerId)) vacated.set(t.territoryId, t.owner.playerId);
+  // #417: and the fogged ones last seen held by a seat — on the newest earlier board that showed them
+  // (`foggedLastSeen`), not only the previous board, so the pricing outlasts the turn vision was lost.
+  const lastSeen = input.foggedLastSeen ?? foggedLastSeen(input.board, input.previousBoard ? [{ turn: 0, board: input.previousBoard }] : []);
+  for (const [t, p] of lastSeen) if (seats.has(p)) vacated.set(t, p);
   return {
     ...input,
     ...(vacated.size ? { vacated } : {}),

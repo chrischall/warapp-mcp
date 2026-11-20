@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
-import { VACATED_FOG_ARMIES, VACATED_MAX_COST } from '../../src/analysis/plan/vacated.js';
+import { foggedLastSeen, VACATED_FOG_ARMIES, VACATED_MAX_COST } from '../../src/analysis/plan/vacated.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
 
@@ -103,6 +103,35 @@ describe('the race for vacated land (#417)', () => {
     const empty = board([mine(1, 20), held(2, 0, S), fogged(4), fogged(5), neutral(6, 40)]);
     const p = planTurn({ ...input(seen), board: empty });
     expect(text(p)).toMatch(/T4 \(#4\), fogged now, was player 30's \(out, no AI\): .* so it is costed at 1, not at a stack in view \(#417\)\./);
+  });
+
+  // The review's two-turn case: on turn N the seat's land is seen, on N+1 and N+2 it is fogged. On
+  // N+2 the previous board (N+1) shows it fogged too: the sighting comes from the newest earlier
+  // board that showed it, not only from the previous one.
+  it('two fogged turns in a row: the sighting is the newest earlier board that showed it', () => {
+    const lastSeen = foggedLastSeen(now, [
+      { turn: 12, board: seen },
+      { turn: 13, board: now },
+    ]);
+    expect([...lastSeen]).toEqual([
+      [4, S],
+      [5, S],
+    ]);
+    const p = planTurn({ ...input(now), foggedLastSeen: lastSeen });
+    expect(text(p)).toMatch(/B700 \(#700\): T4 \(#4\), fogged now, was player 30's \(out, no AI\): .* so it is costed at 3, not at a stack in view \(#417\)\./);
+    expect(text(p)).not.toMatch(/fogged members? counted at/);
+  });
+
+  it('a newer sighting wins: land seen neutral after the seat held it is no longer the seat\'s', () => {
+    const neutralNow = board([mine(1, 20), held(2, 8, S), neutral(4, 1), neutral(5, 1), neutral(6, 40)]);
+    const lastSeen = foggedLastSeen(now, [
+      { turn: 11, board: seen },
+      { turn: 12, board: neutralNow },
+      { turn: 13, board: now },
+    ]);
+    expect(lastSeen.size).toBe(0);
+    const p = planTurn({ ...input(now), foggedLastSeen: lastSeen });
+    expect(text(p)).not.toMatch(/#417/);
   });
 
   it('without that sighting, a fogged member is still costed at the costliest one in view', () => {

@@ -171,6 +171,7 @@ import { readSiegeMemory, writeSiegeMemory } from '../siege-store.js';
 import { readBonusAttempts, writeBonusAttempts } from '../bonus-attempt-store.js';
 import { rememberBonusAttempts } from '../analysis/plan/bonus-attempts.js';
 import { rememberSiegeTurn, type SiegeMemory } from '../analysis/plan/siege.js';
+import { foggedLastSeen } from '../analysis/plan/vacated.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
@@ -1996,6 +1997,8 @@ export async function livePlanSetup(
   const incomeHistory = commerceRules(game.settings)
     ? []
     : history.boards.map((b) => ({ turn: b.turn, income: incomeDetail(graph, b.board, me.id, game.settings).income }));
+  // #417: who held each fogged territory when an earlier board last showed it (a static seat's stays vacated).
+  const lastSeen = foggedLastSeen(board, history.boards);
   const input: PlanInput = {
     graph,
     board,
@@ -2011,6 +2014,7 @@ export async function livePlanSetup(
     ...(truces?.relations.length ? { relations: truces.relations } : {}),
     settings,
     ...(trend ? { previousBoard: trend.board } : {}),
+    ...(lastSeen.size ? { foggedLastSeen: lastSeen } : {}),
     // #226: my orders on that turn, when this server sent them: a failed attack's kills count back.
     ...(trend && previousOrders ? { previousOrders } : {}),
     ...(repulsed.length ? { repulsed } : {}),

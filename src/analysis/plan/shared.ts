@@ -456,6 +456,12 @@ export interface PlanInput {
    */
   vacated?: ReadonlyMap<number, number>;
   /**
+   * #417: for each territory fogged on `board`, the player who held it on the newest earlier board that
+   * showed it (`foggedLastSeen` in plan/vacated.ts, over my board history). A static seat's fogged land is planned
+   * as vacated from it however long it has been fogged. Absent: `previousBoard` alone is read.
+   */
+  foggedLastSeen?: ReadonlyMap<number, number>;
+  /**
    * #226: my orders on the turn `previousBoard` was played (what warapp_submit_turn sent and cached):
    * a failed attack of mine counts its kills back into the defender's observed deploy
    * ({@link ObserveContext.myOrders}). Unknown orders change nothing.
