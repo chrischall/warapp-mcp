@@ -73,6 +73,12 @@ export interface Truce {
   binds: readonly boolean[];
   /** T4: players a binding truce holds (no front for rule 0p.2). */
   partners: ReadonlySet<number>;
+  /**
+   * #457: players an agreement (not only a card) binds this turn — active or in notice — in any format the
+   * agreement binds (T1's reach): their neutrals are skirted ({@link skirtedNeutrals}) and a neutral taken beside
+   * them is warned of ({@link warnTruceNeutrals}).
+   */
+  keptWith?: ReadonlySet<number>;
   /** T9: players an enforced truce makes no foe this turn. */
   enforced: ReadonlySet<number>;
   /** T9 (D3): enforced players whose card is gone by next turn — still foes for the two-step look-ahead. */
@@ -84,7 +90,7 @@ export interface Truce {
   noTarget: (t: number) => boolean;
   /** #375: a territory the plan was told to avoid (`PlanOptions.avoid`); `noTarget` includes it. */
   avoided: (t: number) => boolean;
-  /** #441: a neutral skipped because taking it would provoke an avoided player (`skirtedNeutrals`); `noTarget` includes it. */
+  /** #441 / #457: a neutral skipped because taking it would provoke an avoided player or a truce partner (`skirtedNeutrals`); `noTarget` includes it. */
   skirted?: ReadonlyMap<number, Skirt>;
   /** #382: a territory of the siege target the siege holds back until its trigger fires; `noTarget` includes it. */
   siegeHeld?: (t: number) => boolean;
@@ -126,11 +132,13 @@ export function avoidedBy(input: PlanInput): (t: number) => boolean {
   return (t) => territories.has(t) || players.has(owner.get(t) ?? Number.NaN);
 }
 
-/** #441: why a neutral is skipped for an avoided player. */
+/** #441: why a neutral is skipped for an avoided player (#457: or a truce partner). */
 export interface Skirt {
   player: number;
   /** `stack`: that player is its only enemy neighbour; `bonus`: it sits in a bonus that player visibly holds most of. */
   why: 'stack' | 'bonus';
+  /** #457: that player is a truce partner (`Truce.keptWith`), not (only) an avoided one. */
+  truce?: true;
 }
 
 /**
@@ -139,16 +147,21 @@ export interface Skirt {
  * player's own territories: taking one beside its stack reads as a provocation and is conceded next turn.
  * Not skipped: a neutral whose capture completes a bonus of mine on its own (every other member mine at the
  * start), or one the capture would hold next turn with what it leaves there alone (the fewest attackers that
- * take it, less the defenders' kills) against every enemy stack beside it plus its owner's deploy. Empty
- * with no avoided player, so every other plan is unchanged.
+ * take it, less the defenders' kills) against every enemy stack beside it plus its owner's deploy.
+ * #457: a truce partner's (`truce`, `Truce.keptWith`) the same way — its enemy neighbours counting the partner
+ * even when a card makes it no foe — except that holding is no reason to take one: to the partner it reads as a
+ * breach either way; only completing a bonus of mine is (`truce: true` on the skirt). Empty with no avoided
+ * player and no truce partner, so every other plan is unchanged.
  */
 export function skirtedNeutrals(
   input: PlanInput,
-  o: { foe: (p: number) => boolean; deployOf: (p: number) => number; settings: PlannerSettings },
+  o: { foe: (p: number) => boolean; deployOf: (p: number) => number; settings: PlannerSettings; truce?: ReadonlySet<number> },
 ): Map<number, Skirt> {
   const out = new Map<number, Skirt>();
   const avoid = new Set(input.options?.avoid?.players ?? []);
-  if (!avoid.size) return out;
+  const partners = o.truce ?? new Set<number>();
+  if (!avoid.size && !partners.size) return out;
+  const watched = [...new Set([...avoid, ...partners])].sort(byNum);
   const { graph: g, board, me } = input;
   const state = new Map(board.territories.map((t) => [t.territoryId, t]));
   const ownerOf = (t: number) => {
@@ -164,20 +177,26 @@ export function skirtedNeutrals(
     if (bonuses.some((b) => b.value > 0 && bonusTerritories(g, b.id).every((x) => x === n || ownerOf(x) === me))) continue;
     const foes = [...new Set(neighborsOf(g, n).flatMap((x) => {
       const p = ownerOf(x);
-      return p !== undefined && o.foe(p) ? [p] : [];
+      return p !== undefined && (o.foe(p) || partners.has(p)) ? [p] : [];
     }))];
+    const of = (player: number, why: Skirt['why']): Skirt => ({ player, why, ...(partners.has(player) ? { truce: true as const } : {}) });
     let skirt: Skirt | undefined;
-    if (foes.length === 1 && avoid.has(foes[0]!)) skirt = { player: foes[0]!, why: 'stack' };
+    if (foes.length === 1 && (avoid.has(foes[0]!) || partners.has(foes[0]!))) skirt = of(foes[0]!, 'stack');
     else
       for (const b of [...bonuses].sort((x, y) => x.id - y.id)) {
         const ts = bonusTerritories(g, b.id);
-        const p = [...avoid].sort(byNum).find((a) => ts.filter((x) => ownerOf(x) === a).length * 2 > ts.length);
+        const p = watched.find((a) => ts.filter((x) => ownerOf(x) === a).length * 2 > ts.length);
         if (p !== undefined) {
-          skirt = { player: p, why: 'bonus' };
+          skirt = of(p, 'bonus');
           break;
         }
       }
     if (!skirt) continue;
+    // #457: a truce partner's is skipped whether or not the capture would hold.
+    if (skirt.truce) {
+      out.set(n, skirt);
+      continue;
+    }
     // It holds next turn with its survivors alone: no provocation that costs it.
     const defenders = st.armies ?? 0;
     const sent = captureCost(defenders, o.settings);
@@ -228,10 +247,13 @@ function truceFrom(input: PlanInput, o: { notFoe: (p: number) => boolean; format
   const partners = new Set<number>();
   const enforced = new Set<number>();
   const lookAheadFoes = new Set<number>();
+  /** #457: the players an agreement (not only a card) binds this turn, in any format. */
+  const keptWith = new Set<number>();
   /** Per partner whose agreement binds (in any format), the territories of theirs covered. */
   const theirs = new Map<number, Set<number>>();
   given.forEach((r, i) => {
     if (!kept[i]) return;
+    if (!r.card) keptWith.add(r.player);
     // T2–T5 and T9 only in a free-for-all; T1 (never a surprise break, D3) wherever the agreement binds.
     if (binds[i]) {
       partners.add(r.player);
@@ -259,7 +281,19 @@ function truceFrom(input: PlanInput, o: { notFoe: (p: number) => boolean; format
   given.forEach((r, i) => {
     if (binds[i] && enforcedNow[i] && (r.enforcedUntil === undefined || (o.turnNow !== null && r.enforcedUntil > o.turnNow + 1))) lookAheadFoes.delete(r.player);
   });
-  return { given, status, binds, partners, enforced, lookAheadFoes, noTarget, avoided: () => false, noFront, format: o.format };
+  return {
+    given,
+    status,
+    binds,
+    partners,
+    ...(keptWith.size ? { keptWith } : {}),
+    enforced,
+    lookAheadFoes,
+    noTarget,
+    avoided: () => false,
+    noFront,
+    format: o.format,
+  };
 }
 
 /**
@@ -839,6 +873,33 @@ export function truceBreakLosses(pc: PlanCtx, plan: { deploys: readonly PlannedD
     }
     return best;
   });
+}
+
+/**
+ * #457: a neutral the plan's final orders attack beside a territory (at the start) of a player an agreement binds
+ * (`Truce.keptWith`): a warning per neutral that it may read as a breach to that player, so the owner can tell it
+ * first. Ascending territory id; nothing with no such agreement.
+ */
+export function warnTruceNeutrals(pc: PlanCtx, plan: { moves: readonly PlannedMove[]; warnings: string[] }): void {
+  const kept = pc.truce.keptWith;
+  if (!kept?.size) return;
+  const ownerOf = (t: number) => {
+    const o = pc.territories.get(t)?.owner;
+    return o?.kind === 'player' ? o.playerId : undefined;
+  };
+  const taken = [...new Set(plan.moves.filter((m) => m.kind === 'attack').map((m) => m.to))].sort(byNum);
+  for (const t of taken) {
+    if (pc.territories.get(t)?.owner.kind !== 'neutral') continue;
+    const beside = [...new Set(neighborsOf(pc.g, t).flatMap((x) => {
+      const p = ownerOf(x);
+      return p !== undefined && kept.has(p) ? [p] : [];
+    }))].sort(byNum);
+    if (!beside.length) continue;
+    const who = beside.map((p) => `player ${p}`).join(' and ');
+    plan.warnings.push(
+      `Taking ${pc.label(t)}, a neutral beside ${beside.map((p) => `player ${p}'s`).join(' and ')} land, may read as a breach to ${who} (a truce binds you): tell ${who} first (#457).`,
+    );
+  }
 }
 
 /**

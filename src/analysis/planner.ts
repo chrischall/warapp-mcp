@@ -1683,7 +1683,7 @@ import { commanderMoveWarning, placeCommanderMove, reserveCommanderMove } from '
 import { finishPlan, reportExpected, reportOffence } from './plan/report.js';
 import { newPlanState } from './plan/state.js';
 import { teamFocusLine, teamReport } from './plan/team.js';
-import { applyBorderCaps, armiesFreed, partnerFronts, reportBreakLosses, reportTruce, trucePass } from './plan/relations.js';
+import { applyBorderCaps, armiesFreed, partnerFronts, reportBreakLosses, reportTruce, trucePass, warnTruceNeutrals } from './plan/relations.js';
 
 export * from './plan/shared.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
@@ -3418,6 +3418,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // PLAN-TEAMS C3.3: the bonuses I share with a teammate (plan/team.ts).
   const team = teamReport(pc, { ps, threats, hd, deploys: plan.deploys });
   if (team) plan.team = team;
+  // #457: a neutral taken beside a truce partner may read as a breach to it (plan/relations.ts).
+  warnTruceNeutrals(pc, plan);
   if (truceReport) {
     // T6: what a break would cost, against the plan's final orders (plan/relations.ts).
     reportBreakLosses(pc, truceReport.relations, plan);

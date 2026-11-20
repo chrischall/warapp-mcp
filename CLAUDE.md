@@ -554,6 +554,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   neutral whose only enemy neighbour is that player, or in a bonus it visibly holds over half of, unless it completes
   a bonus of mine or its minimal capture's survivors alone would hold against the stacks beside it plus the owner's
   deploy; a "Not taking … (#441)" line per one beside my land. No avoided player: golden unchanged.
+  #457: a truce partner's neutrals go the same way while an agreement (not only a card) with it is active or in
+  notice, in any format it binds (`Truce.keptWith`, passed to `skirtedNeutrals` as `truce`; the partner counts as an
+  enemy neighbour even when a card makes it no foe): skipped unless the capture completes a bonus of mine — holding
+  next turn is no exemption, since to the partner it reads as a breach either way (`Skirt.truce`) — with a "Not
+  taking … (#457)" line saying to raise it with the partner. A neutral the final orders do take beside a partner's
+  land gets a warning that it "may read as a breach to player P" (`warnTruceNeutrals`, after `finishPlan`). No
+  relations in the golden corpus: all 6253 plans (2000 synthetic + every suite input) byte-identical.
 - **Pricing a deal (B3): `warapp_advise_diplomacy`, read-only, free-for-alls only** (docs/PLAN-TEAMS.md
   section 8 B3). `priceTruce` (`src/analysis/relations.ts`, pure) diffs two plans on the exact input
   `warapp_plan_turn` builds (`livePlanSetup`, `src/tools/turn.ts`, shared): without the truce and with it (the
