@@ -118,7 +118,8 @@ describe('the map record facts', () => {
     const turns = curveTurns([5, 5, 6, 7, 8, 8, 8, 8, 8, 0], [5, 6, 8, 10, 12, 14, 16, 18, 20, 22]);
     const f = mapFacts(G, ME, [FOE], new Map([[ME, [1]], [FOE, [6]]]), turns);
     expect(f.me).toEqual({ territories: [1], bonuses: [100], income: [5, 5, 6, 7, 8, 8, 8, 8, 8, 0], income4: 8, income8: 8 });
-    expect(f.winners).toEqual([{ territories: [6], bonuses: [200], income4: 12, income8: 20 }]);
+    // #419: each winner's curve is kept as mine is.
+    expect(f.winners).toEqual([{ territories: [6], bonuses: [200], income: [5, 6, 8, 10, 12, 14, 16, 18, 20, 22], income4: 12, income8: 20 }]);
   });
 
   it('a short game has no pace past its last board', () => {

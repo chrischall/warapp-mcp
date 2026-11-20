@@ -3,6 +3,7 @@
 // check (#274), so both size a reply alike.
 import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart, type PlannerSettings } from '../analysis/index.js';
 import type { MapGraph } from '../analysis/graph.js';
+import type { FogPace } from '../analysis/plan/shared.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import type { BoardState } from '../board.js';
@@ -33,6 +34,8 @@ export interface StressOpponentsInput {
   info: unknown;
   /** #166: the opponent's opening simulated from the starts the award proved. */
   opening?: ReadonlyMap<number, number>;
+  /** #419: the past winners' pace at this turn (`fogPaceFor`), as warapp_plan_turn reads it. */
+  mapPace?: FogPace;
   /** Overrides every estimate. */
   enemyDeploy?: number;
   /** #368/#444: the stated incomes applied (`known_income`): each replaces its player's estimate and scales the others' prior. */
@@ -83,6 +86,7 @@ export function stressOpponents(input: StressOpponentsInput) {
       symmetricStart: symmetricStart(game.settings),
       ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
       ...(input.opening ? { opening: input.opening } : {}),
+      ...(input.mapPace ? { mapPace: input.mapPace } : {}),
       ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
       ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
     },

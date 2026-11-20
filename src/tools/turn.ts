@@ -116,7 +116,7 @@ import { confidentHabits, counterOf, neighboursOf, readOpponents, type OpponentR
 import { mapOf } from './map.js';
 import { PACE_TURNS } from '../analysis/game-lessons.js';
 import { profileFormatOf } from '../analysis/opponent-profile.js';
-import { mapMatchOf, mapRecordFor, paceView } from './past-games.js';
+import { fogPaceFor, mapMatchOf, mapRecordFor, outlookCalibrationFor, paceView } from './past-games.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
 import {
@@ -1836,6 +1836,8 @@ export async function livePlanSetup(
     award?: boolean | 'read';
     /** Whether the teams are known (`resolveTeams`); false: the #275 tripwire reads nothing. Default true. */
     teamsKnown?: boolean;
+    /** #419: where `WARAPP_PLAYER_PROFILE` is read for the fog pace; default the process environment. */
+    env?: EnvSource;
   },
 ) {
   const { game, map, me, turn, territories, info, history } = a;
@@ -1914,6 +1916,9 @@ export async function livePlanSetup(
   // #178: won, lost, even or stuck, from my boards over the last turns (a basis, not a verdict).
   // #201: the planner reads it too — a decided game shortens its payback horizon.
   const cardArmies = cardArmyCeiling(game.settings);
+  // #436: past games' estimate ÷ truth per coverage band calibrates the outlook's income estimates (its income
+  // lean and the surrender line only; the planner acts on winning and losing, which never read it).
+  const calibration = await outlookCalibrationFor(ctx.dataDir, a.env, profileFormatOf(game.players));
   const outlookInput = {
     graph,
     me: me.id,
@@ -1923,6 +1928,7 @@ export async function livePlanSetup(
     cards: rules.inPlay.length > 0,
     // #205: what the card clock lets cards add, so a fogged card game can still be bounded.
     ...(cardArmies ? { cardArmies } : {}),
+    ...(calibration ? { calibration } : {}),
   };
   // The plan reads the outlook (#201: winning or losing only); #218 then feeds the outlook the
   // plan's main front, so its front forecast and the plan's front outlook are one computation.
@@ -1930,6 +1936,14 @@ export async function livePlanSetup(
   const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
   // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
   const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
+  // #419: the pace past winners set on this map (else in this format) at this turn: thin evidence's upper bound.
+  const mapPace = await fogPaceFor(
+    ctx.dataDir,
+    a.env,
+    game.settings?.mapId ?? map.id,
+    mapMatchOf(profileFormatOf(game.players), game.settings),
+    turn === null ? null : turn - 1,
+  );
   const gameContext: PlanGameContext = {
     players: game.players.map((p) => ({
       id: p.id,
@@ -1952,6 +1966,7 @@ export async function livePlanSetup(
     ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
     // #166: the opponent's opening simulated from the starts the award proved, as the prior.
     ...(opening ? { opening } : {}),
+    ...(mapPace ? { mapPace } : {}),
     // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
     ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
   };
@@ -2106,6 +2121,8 @@ async function commanderCheck(
     loadAward(ctx.dataDir, a.game, a.me, a.seen, a.turn, { decisionLog: ctx.decisionLog }),
   ]);
   const opening = openingThreat(award, a.game, graph, a.seen, a.turn);
+  // #419: the past winners' pace, as the plan reads it.
+  const mapPace = await fogPaceFor(ctx.dataDir, undefined, a.game.settings?.mapId ?? a.map.id, mapMatchOf(profileFormatOf(a.game.players), a.game.settings), a.turn === null ? null : a.turn - 1);
   // stressOpponents reads a static seat's territories as neutrals (#270), on its own `board` too.
   const so = stressOpponents({
     graph,
@@ -2121,6 +2138,7 @@ async function commanderCheck(
     hand: a.hand,
     info: a.info,
     ...(opening ? { opening } : {}),
+    ...(mapPace ? { mapPace } : {}),
   });
   // #275: an untrusted opponent's reply is sized at least at the figure its tripwire gave it, as
   // warapp_check_plan's stress test tries it (read only: warapp_plan_turn keeps the marks).
@@ -2338,7 +2356,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
-          'armies + 3 × income held over 3 turns of boards, with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; `leaning: behind` when even for 3 turns while a bonus of yours fell on each; thresholds unmeasured, so advice, not a verdict; ' +
+          'armies + 3 × income held over 3 turns of boards — and, #436, where that reads even, ahead/behind/even on my income against the strongest opponent\'s (its range, and its estimate calibrated on past games), or unknown when the range spans both lines or a lead rests on thin evidence; `income`, `pace` (both incomes per turn) and `surrenderLine` (advice only: my income under 2/3 of the strongest estimate for 3 turns with no bonus in reach closing the gap; never acted on) — with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; `leaning: behind` when even for 3 turns while a bonus of yours fell on each; thresholds unmeasured, so advice, not a verdict; ' +
           'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
           'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
@@ -2560,6 +2578,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const siegeMemory = (goal === undefined || goal === 'siege') && ctx.dataDir && turn !== null ? await readSiegeMemory(ctx.dataDir, game.id, me.id) : undefined;
       const setup = await livePlanSetup(ctx, {
         game, map, me, turn, territories, info, history, teamsKnown,
+        ...(opts.env ? { env: opts.env } : {}),
         args: {
           ...(goal !== undefined ? { goal } : {}),
           ...(goal === 'siege' && siege_target !== undefined ? { siegeTarget: siege_target } : {}),
@@ -2879,6 +2898,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       if (siege_target !== undefined && goal !== 'siege')
         warnings.push(`siege_target is ignored: it applies only with goal "siege" (this plan's goal is ${goal ?? 'chosen by the game profile'}).`);
       // #317: a surrender waiting on my acceptance is the first thing said, before the commander's line.
+      // #436: the surrender line, advice only (the server never acts on it): said up front once crossed.
+      if (outlook.surrenderLine?.crossed) warnings.unshift(outlook.surrenderLine.advice);
       const owedLine = surrenderOwedLine(surrenders);
       if (owedLine) warnings.unshift(owedLine);
       // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
@@ -2980,6 +3001,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 ...(outlook.evidence ? { evidence: outlook.evidence } : {}),
                 // #368: even while bonuses kept falling.
                 ...(outlook.leaning ? { leaning: outlook.leaning } : {}),
+                // #436: the incomes compared (range, estimate, lean, trend), the pace line and the surrender line (advice only).
+                ...(outlook.turns.at(-1)?.income ? { income: outlook.turns.at(-1)!.income } : {}),
+                ...(outlook.pace ? { pace: outlook.pace } : {}),
+                ...(outlook.surrenderLine ? { surrenderLine: outlook.surrenderLine } : {}),
               },
         // Part D: the opponent reads (reported only, never planned on); absent when none is at the bar.
         ...(reads?.length

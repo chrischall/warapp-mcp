@@ -3,8 +3,8 @@
 // - `<dataDir>/maps-record/<mapId>.json` (version 1), one per map I finished a game on: the games
 //   kept and their outcomes, and per game (at most `MAX_MAP_ENTRIES`, the oldest dropped first, its
 //   counts kept) the format, seats, my result, my start region (territories and the bonuses they
-//   touch) and income curve, and each winner's start region and income after turns 4 and 8 (the pace
-//   to beat). At most `MAX_MAP_RECORDS` maps, the least recently written dropped first.
+//   touch) and income curve, and each winner's start region, income curve (#419) and income after turns 4
+//   and 8 (the pace to beat). At most `MAX_MAP_RECORDS` maps, the least recently written dropped first.
 // - `<dataDir>/lessons.json` (version 1): per format the games, outcomes, how each lost game was lost
 //   (a cause, never who), the turn my income first went flat, and the tracker's estimates scored
 //   against the true incomes by frontier coverage (#294): aggregates only — a game's entry (at most
@@ -21,7 +21,8 @@
 // public data. 0600 files in 0700 folders, atomic writes under the in-process path lock; a file that
 // exists but does not parse (not JSON, not an object, another version, a malformed total) is never
 // overwritten (`failed`). Off with `WARAPP_PLAYER_PROFILE=off` (the end-of-game pass does not run).
-// Profiles and lessons INFORM ONLY (P1): no planner decision reads any of this.
+// Profiles and lessons INFORM ONLY (P1): no planner decision reads any of this, save the winners' curves
+// (#419, owner decision of 2026-11-20: `mapPaceAt` / `formatPaceAt`, thin evidence's upper bound).
 import { readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { GAME_KINDS, type FinishedOutcome, type GameKind } from './analysis/finished-game.js';
@@ -198,7 +199,9 @@ function mapEntryOf(v: unknown): MapEntry | undefined {
   for (const w of v.winners) {
     const r = regionOf(w);
     if (!r || !isRec(w) || !intOrNull(w.income4) || !intOrNull(w.income8)) return undefined;
-    winners.push({ ...r, income4: w.income4, income8: w.income8 });
+    // #419: the winner's curve, absent on entries kept before it.
+    if (w.income !== undefined && !(Array.isArray(w.income) && w.income.every(intOrNull))) return undefined;
+    winners.push({ ...r, ...(w.income !== undefined ? { income: w.income as (number | null)[] } : {}), income4: w.income4, income8: w.income8 });
   }
   const kinds = kindsOf(v.kinds);
   const settings = entrySettingsOf(v.settings);
@@ -256,6 +259,44 @@ export async function recordMapGame(dir: string, mapId: number, entry: MapEntry,
     });
     if (r === 'kept') await pruneMapRecords(dir, keep, path).catch(() => undefined);
     return r;
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * #419: give a game's winners kept before #419 their income curves, from the history its end-of-game record kept
+ * (`curves`: each winner's start territories and curve). A winner is matched by its start territories, or, with
+ * one winner and one curve, as that one; a winner with a curve keeps it. `filled` when one was added, `unchanged`
+ * when none could be, `missing` without the record or the game, `failed` on an unreadable record (never
+ * overwritten) or a failed write. Never throws.
+ */
+export async function fillWinnerCurves(
+  dir: string,
+  mapId: number,
+  key: string,
+  curves: readonly { territories: readonly number[]; income: (number | null)[] }[],
+): Promise<'filled' | 'unchanged' | 'missing' | 'failed'> {
+  const path = mapRecordPath(dir, mapId);
+  const same = (a: readonly number[], b: readonly number[]) => a.length === b.length && [...a].sort((x, y) => x - y).every((x, i) => x === [...b].sort((p, q) => p - q)[i]);
+  try {
+    return await withPathLock(path, async () => {
+      const rec = await readMapRecord(dir, mapId);
+      if (rec === 'unreadable') return 'failed' as const;
+      const e = rec.entries.find((x) => x.key === key);
+      if (!e) return 'missing' as const;
+      let filled = false;
+      e.winners = e.winners.map((w) => {
+        if (w.income) return w;
+        const c = curves.find((x) => same(x.territories, w.territories)) ?? (e.winners.length === 1 && curves.length === 1 ? curves[0] : undefined);
+        if (!c) return w;
+        filled = true;
+        return { territories: w.territories, bonuses: w.bonuses, income: c.income, income4: w.income4, income8: w.income8 };
+      });
+      if (!filled) return 'unchanged' as const;
+      await writeJsonAtomic(path, mapRecordDir(dir), rec);
+      return 'filled' as const;
+    });
   } catch {
     return 'failed';
   }
@@ -391,6 +432,72 @@ export function mapRecordSummary(
     ...(match ? { matched: { by: matchBy(match), entries: entries.length, of: rec.entries.length, settingsUnknown } } : {}),
     ...excludedCounts(rec.excluded),
   };
+}
+
+// ---- #419: the fog prior's pace ----
+
+/**
+ * #419 (owner decision of 2026-11-20): the past games a pace needs. With fewer on this map (of this format and
+ * settings) the pace is the format's, relative to my income; with fewer there too, none.
+ */
+export const MIN_PACE_GAMES = 3;
+
+/** A game's winner income after `afterTurn` completed turns: the highest of its winners' (`null` when none was kept). */
+function winnerAt(e: MapEntry, afterTurn: number): number | null {
+  let best: number | null = null;
+  for (const w of e.winners) {
+    const x = w.income?.[afterTurn];
+    if (typeof x === 'number' && (best === null || x > best)) best = x;
+  }
+  return best;
+}
+
+/**
+ * #419: the median past winner's income after `afterTurn` completed turns on this map (rounded up), over the
+ * games `match` reads (#437), one figure a game (its highest winner); `null` with fewer than
+ * {@link MIN_PACE_GAMES} games that kept one. Pure.
+ */
+export function mapPaceAt(rec: MapRecord, afterTurn: number, match?: MapMatch): { income: number; games: number } | null {
+  const xs = matchedEntries(rec, match).entries.flatMap((e) => {
+    const w = winnerAt(e, afterTurn);
+    return w === null ? [] : [w];
+  });
+  if (xs.length < MIN_PACE_GAMES) return null;
+  return { income: Math.ceil(median(xs)! - 1e-9), games: xs.length };
+}
+
+/**
+ * #419: the relative per-format pace: the median, over every map's games `match` reads, of the winner's income ÷
+ * mine after `afterTurn` completed turns (a game where I earned nothing then, or either figure is missing, left
+ * out), rounded to 2 places; `null` with fewer than {@link MIN_PACE_GAMES} games. Pure.
+ */
+export function formatPaceAt(recs: readonly MapRecord[], afterTurn: number, match?: MapMatch): { ratio: number; games: number } | null {
+  const xs: number[] = [];
+  for (const rec of recs)
+    for (const e of matchedEntries(rec, match).entries) {
+      const w = winnerAt(e, afterTurn);
+      const m = e.me.income[afterTurn];
+      if (w !== null && typeof m === 'number' && m > 0) xs.push(w / m);
+    }
+  if (xs.length < MIN_PACE_GAMES) return null;
+  return { ratio: Math.round(median(xs)! * 100) / 100, games: xs.length };
+}
+
+/** Every map record kept (unreadable ones left out), by map id. Never throws. */
+export async function readMapRecords(dir: string): Promise<MapRecord[]> {
+  const out: MapRecord[] = [];
+  let names: string[];
+  try {
+    names = await readdir(mapRecordDir(dir));
+  } catch {
+    return out;
+  }
+  const ids = names.filter((n) => /^\d+\.json$/.test(n)).map((n) => Number(n.slice(0, -5))).sort((a, b) => a - b);
+  for (const id of ids) {
+    const r = await readMapRecord(dir, id);
+    if (r !== 'unreadable') out.push(r);
+  }
+  return out;
 }
 
 /** My results per bonus my start touched, and how often each bonus held a winner's start (#312 E3), most games first then by id. Pure. */
@@ -650,4 +757,25 @@ export function lessonsSummary(file: LessonsFile): {
     };
   }
   return { games, byFormat, calibration: calibrationSummary(all), ...excludedCounts(file.excluded) };
+}
+
+/**
+ * #436: the outlook's calibration — per coverage band, past games' tracked income ÷ the true income
+ * (geometric mean and samples): this format's band when it has `min` samples or more, else every format's
+ * band together; a band with fewer than `min` either way is left out. Pure.
+ */
+export function outlookCalibration(file: LessonsFile, format: ProfileFormat, min: number): Partial<Record<(typeof COVERAGE_BUCKETS)[number], { geoMean: number; n: number }>> {
+  let all: Calibration = {};
+  for (const f of PROFILE_FORMATS) {
+    const t = file.byFormat[f];
+    if (t && t.games > 0) all = addCalibration(all, t.calibration);
+  }
+  const own = file.byFormat[format]?.calibration ?? {};
+  const out: Partial<Record<(typeof COVERAGE_BUCKETS)[number], { geoMean: number; n: number }>> = {};
+  for (const k of COVERAGE_BUCKETS) {
+    const x = (own[k]?.n ?? 0) >= min ? own[k]! : all[k];
+    if (!x || x.n < min) continue;
+    out[k] = { geoMean: r2(Math.exp(x.logSum / x.n)), n: x.n };
+  }
+  return out;
 }

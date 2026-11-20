@@ -9,6 +9,7 @@ import { Method } from '../src/protocol/methods.js';
 import { boardAt as rebuiltBoard, decisionLogPath, ordersDiffer, readDecisionLog } from '../src/decision-log.js';
 import { sentOrdersOf } from '../src/tools/turn.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
+import { recordMapGame } from '../src/lessons-store.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
@@ -90,6 +91,23 @@ describe('decision log capture (#412 task 2)', () => {
     const text = fileText();
     expect(text).not.toMatch(/\bAnn\b/);
     expect(text).not.toMatch(/\bBob\b/);
+  });
+
+  it('#419: the plan reads the past winners\' pace on this map at this turn (logged with its input for replay)', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: server() });
+    for (const [i, w] of [9, 12, 30].entries())
+      await recordMapGame(h.dataDir, 39905, {
+        key: String(i + 1).padStart(32, '0'),
+        format: 'ffa',
+        seats: 4,
+        result: 'eliminated',
+        turns: 12,
+        me: { territories: [159], bonuses: [118], income: [5, 5, 6], income4: null, income8: null },
+        winners: [{ territories: [133], bonuses: [116], income: [5, 7, w], income4: null, income8: null }],
+      });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    const e = (await log())!.turns['3']!;
+    expect((e.input as { game?: { mapPace?: unknown } }).game?.mapPace).toEqual({ basis: 'map', afterTurn: 2, games: 3, income: 12 });
   });
 
   it('a what-if plan (an explicit goal or enemy_deploy) is only an observation, and never replaces the planned entry', async () => {

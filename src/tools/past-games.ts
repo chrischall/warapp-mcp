@@ -3,17 +3,34 @@
 // lost, when my income went flat, and the tracker's estimates scored against the true incomes by
 // format and coverage band). Read-only: nothing here writes, requests or throws. Off with
 // `WARAPP_PLAYER_PROFILE=off` and without a data directory. Profiles and lessons INFORM ONLY (owner
-// decision P1): the views go beside a plan's output, never into a planner input.
+// decision P1): the views go beside a plan's output, never into a planner input — save #419's fog pace
+// (`fogPaceFor`, owner decision of 2026-11-20): the past winners' income tops thin evidence's estimate range —
+// and #436's outlook calibration (`outlookCalibrationFor`): the tracker's estimate ÷ truth per coverage band
+// turns the outlook's income estimates into calibrated ones (the outlook's income lean and surrender line only).
 import type { EnvSource } from '@chrischall/mcp-utils';
 import { PACE_TURNS, startRegion } from '../analysis/game-lessons.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { ProfileFormat } from '../analysis/opponent-profile.js';
-import { lessonsSummary, mapRecordStarts, mapRecordSummary, readLessons, readMapRecord, type MapMatch, type MapRecord } from '../lessons-store.js';
+import type { FogPace } from '../analysis/plan/shared.js';
+import { MIN_CALIBRATION_SAMPLES, type OutlookCalibration } from '../analysis/outlook.js';
+import {
+  formatPaceAt,
+  lessonsSummary,
+  outlookCalibration,
+  mapPaceAt,
+  mapRecordStarts,
+  mapRecordSummary,
+  readLessons,
+  readMapRecord,
+  readMapRecords,
+  type MapMatch,
+  type MapRecord,
+} from '../lessons-store.js';
 import { profileEnabled } from '../profile-store.js';
 
 /** The note every view carries: where it comes from, and that no plan reads it. */
 export const PAST_GAMES_NOTE =
-  'From your own finished games (their histories, read once at the end of each game): reported only — no plan, ranking or estimate reads it.';
+  "From your own finished games (their histories, read once at the end of each game): reported only — no plan or ranking reads it; only the past winners' income per turn tops a thinly read opponent's estimate (#419).";
 
 /** #437: the note beside games counted apart. */
 export const EXCLUDED_NOTE = 'Lottery and no-show games are counted apart: they are in no figure here.';
@@ -134,6 +151,48 @@ export async function pastGamesFor(dataDir: string | undefined, env: EnvSource |
         'the tracked income ÷ the true income from the history, and the shares read under half (low) and over 1.5× (high).',
       note: PAST_GAMES_NOTE,
     };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * #419 (owner decision of 2026-11-20): the pace past winners set after `afterTurn` completed turns (the turn
+ * planned − 1), the fog prior's upper bound under thin evidence: this map's median winner over its games `match`
+ * reads when there are `MIN_PACE_GAMES` (3) or more (`map`), else the median winner ÷ mine over every map's
+ * games of the format (`format`), else `undefined` — as with profiling off, no data dir, map or turn. Never throws.
+ */
+export async function fogPaceFor(
+  dataDir: string | undefined,
+  env: EnvSource | undefined,
+  mapId: number | undefined,
+  match: MapMatch,
+  afterTurn: number | null,
+): Promise<FogPace | undefined> {
+  if (!dataDir || mapId === undefined || afterTurn === null || afterTurn < 0 || !profileEnabled(env ?? process.env)) return undefined;
+  try {
+    const rec = await readMapRecord(dataDir, mapId);
+    const own = rec === 'unreadable' ? null : mapPaceAt(rec, afterTurn, match);
+    if (own) return { basis: 'map', afterTurn, games: own.games, income: own.income };
+    const fmt = formatPaceAt(await readMapRecords(dataDir), afterTurn, match);
+    return fmt ? { basis: 'format', afterTurn, games: fmt.games, ratio: fmt.ratio } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * #436 (owner decision of 2026-11-20): the outlook's calibration — past games' tracked income ÷ true income per
+ * coverage band, this format's band with `MIN_CALIBRATION_SAMPLES` or more, else every format's
+ * (`outlookCalibration`); `undefined` when off, without a data dir, unreadable or with no band. Never throws.
+ */
+export async function outlookCalibrationFor(dataDir: string | undefined, env: EnvSource | undefined, format: ProfileFormat): Promise<OutlookCalibration | undefined> {
+  if (!dataDir || !profileEnabled(env ?? process.env)) return undefined;
+  try {
+    const file = await readLessons(dataDir);
+    if (file === 'unreadable') return undefined;
+    const c = outlookCalibration(file, format, MIN_CALIBRATION_SAMPLES);
+    return Object.keys(c).length ? c : undefined;
   } catch {
     return undefined;
   }

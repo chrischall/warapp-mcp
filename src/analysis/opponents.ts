@@ -19,7 +19,13 @@
 //    (`TurnBoard.orders`), they are measurements ({@link measureOrders}): the defenders my failed
 //    attacks killed, what a hold of mine that fell really killed, and what its failed attack on a
 //    hold of mine cost it — and that failed attack bounds the turn's deploy from below (#271,
-//    `repelledFloor`: the attackers my loss needed less its stacks beside the hold). A pattern of
+//    `repelledFloor`: the attackers my loss needed less its stacks beside the hold), and so does a
+//    capture with every source army in view (#418, `captureFloor`): proof may always raise an
+//    estimate — the turn reads at least that, a carry it reaches is confirmed, and the #418 rise cap
+//    never holds the carry below it. Proof may lower an estimate only on a turn with every army it could
+//    have deployed in view (#418, {@link everyArmyInView}): the carry then steps down at most one
+//    {@link RISE_CAP} step a turn toward that turn's reading, never below it (the over-read tripwire,
+//    {@link carryIncome}; `incomeMethod` 'tripped', `incomeTrip`). A pattern of
 //    captures of neutrals in view that needed attackers its stacks in view did not send
 //    ({@link FOG_CAPTURE_MIN} turns in {@link FOG_CAPTURE_TURNS}, #271 `fogCaptures`) is income: those
 //    attackers spread over the turns, a carry no later quiet turn disproves; arrivals from its stacks
@@ -91,16 +97,17 @@
 // (its income is paid at the start of the turn). Armies received, not held: neutral captures
 // cost armies, so it could be banking up to roughly that, minus what its expansion cost. A
 // warning says when the bound beats my largest stack, and separately my total visible armies.
-import type { BoardState } from '../board.js';
+import type { BoardState, TerritoryState } from '../board.js';
 import type { GameMap, GameSettings } from '../normalize.js';
 import { holdsSeat } from '../player-states.js';
 import { carriesTeam, isTeamGame } from '../teams.js';
 import { neutralizeSeats, staticSeats, type SeatEndRules } from './static-seats.js';
 import { bonusTerritories } from './bonuses.js';
-import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from './combat.js';
+import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, guaranteedKills, luckFraction, straightKills } from './combat.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import {
   bombPossibleOn,
+  captureFloor,
   enemyDeployEstimates,
   failedAttackKills,
   frontierCoverage,
@@ -282,6 +289,18 @@ export interface ObservedTurn {
   repelled?: RepelledAttacks | null;
   /** #271 (1): the attackers my losses there needed less its stacks beside them: `raw`, `low` and `high` are at least this. */
   repelledFloor?: number;
+  /** #418: its captures read with every source army in view ({@link captureFloor}); absent with no floor. */
+  proven?: number[];
+  /**
+   * #418: the deploy those captures prove: `raw`, `low` and `high` are at least this, and a carry it
+   * reaches is confirmed ({@link confirmedBy}): proof may always raise an estimate. Absent with no floor.
+   */
+  captureFloor?: number;
+  /**
+   * #418: every army it could have deployed that turn is accounted for in view ({@link everyArmyInView}):
+   * the over-read tripwire may lower the carry toward this turn's reading ({@link carryIncome}).
+   */
+  accounted?: true;
   /**
    * #271 (2): a pattern of such captures ending on this turn: {@link FOG_CAPTURE_MIN} or more turns
    * with one among the last {@link FOG_CAPTURE_TURNS} observed turns (by turn number). `income` is
@@ -433,7 +452,13 @@ export interface OpponentTrack {
    * #418: with `incomeMethod` `'rise-capped'`: what its window read and the income carried before
    * it; the income is {@link RISE_CAP} × that, rounded up. Absent otherwise.
    */
-  incomeRise?: { read: number; before: number };
+  incomeRise?: IncomeRise;
+  /**
+   * #418: with `incomeMethod` `'tripped'`: the over-read tripwire's latest step — the carry it stepped
+   * down `from`, the reading `proven` on turn `turn`, a turn with every army it could deploy in view.
+   * Absent otherwise.
+   */
+  incomeTrip?: IncomeTrip;
   /**
    * Unexplained armies (#123): the income it earned since first seen minus its visible army
    * change, its visible losses and what it may have lost fighting (`combat`) — armies that are
@@ -599,7 +624,7 @@ const byNum = (a: number, b: number) => a - b;
  * broken, or the most it could earn falls below it), `fog-captures` a pattern of captures of neutrals in
  * view that needed attackers out of sight (#271: {@link ObservedTurn.fogCaptures}).
  */
-export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried' | 'fog-captures' | 'rise-capped';
+export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried' | 'fog-captures' | 'rise-capped' | 'tripped';
 
 /**
  * #418: a rise no turn read in full confirmed ({@link confirmedBy}) is held to this many times the
@@ -668,7 +693,7 @@ const turnSpan = (turns: readonly number[]) =>
  */
 export function incomeBasis(
   t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns' | 'observedRange'> &
-    Partial<Pick<OpponentTrack, 'incomeLowered'>> & { incomeRise?: OpponentTrack['incomeRise'] | null },
+    Partial<Pick<OpponentTrack, 'incomeLowered'>> & { incomeRise?: OpponentTrack['incomeRise'] | null; incomeTrip?: IncomeTrip | null },
 ): string | null {
   if (!t.incomeMethod || !t.observedRange || !t.incomeTurns.length) return null;
   const span = turnSpan(t.incomeTurns);
@@ -680,8 +705,14 @@ export function incomeBasis(
   if (t.incomeMethod === 'max-observed') return `max observed over ${span}, ${range}`;
   if (t.incomeMethod === 'rise-capped')
     return t.incomeRise
-      ? `max observed over ${span}, ${range}, held to ${RISE_CAP}× the ~${t.incomeRise.before} before it: no turn read in full reached ${t.incomeRise.read}`
+      ? t.incomeRise.proven !== undefined
+        ? `max observed over ${span}, ${range}, held at the +${t.incomeRise.proven} a capture with every source in view proved (above ${RISE_CAP}× the ~${t.incomeRise.before} before it): no turn read in full reached ${t.incomeRise.read}`
+        : `max observed over ${span}, ${range}, held to ${RISE_CAP}× the ~${t.incomeRise.before} before it: no turn read in full reached ${t.incomeRise.read}`
       : `max observed over ${span}, ${range}, a rise held to ${RISE_CAP}× a turn`;
+  if (t.incomeMethod === 'tripped')
+    return t.incomeTrip
+      ? `stepped down from ~${t.incomeTrip.from} toward +${t.incomeTrip.proven}: every army it could deploy was in view on turn ${t.incomeTrip.turn}, which read +${t.incomeTrip.proven} (one ${RISE_CAP}× step a turn, never below that reading; ${span}, ${range})`
+      : `stepped down toward a turn read with every army it could deploy in view (${span}, ${range})`;
   if (t.incomeMethod === 'stock-flow') return `visible army growth plus losses (fog arrivals left out) over ${span}, ${range}`;
   if (t.incomeMethod === 'fog-captures') return `captures of neutrals in view that needed attackers out of sight, ending in ${span}, ${range}`;
   return `its visible base + bonuses, ${range} over ${span}`;
@@ -1056,18 +1087,129 @@ type Carry = {
   window: ObservedTurn[];
   est: TrackedIncome;
   confirmed: boolean;
-  /** #418: the window read `read`, held to {@link RISE_CAP} × the carry `before` it. */
-  rise?: { read: number; before: number };
+  /** #418: the window read `read`, held to {@link RISE_CAP} × the carry `before` it (or to the `proven` capture floor, when higher). */
+  rise?: IncomeRise;
+  /** #418: the over-read tripwire stepped this carry down ({@link carryIncome}). */
+  trip?: IncomeTrip;
+  /** #418: the ceiling the tripwire left on the readings of the turns up to `through` (returned on the last carry). */
+  ceiling?: TripCeiling;
 };
 
 /**
+ * #418: a rise held while I lead ({@link OpponentTrack.incomeRise}): what the window read, the carry before
+ * it, and — when a capture with every source in view proved more than {@link RISE_CAP} × that — the proof,
+ * which the hold never goes below.
+ */
+export interface IncomeRise {
+  read: number;
+  before: number;
+  proven?: number;
+}
+
+/** #418: one step of the over-read tripwire ({@link OpponentTrack.incomeTrip}). */
+export interface IncomeTrip {
+  from: number;
+  proven: number;
+  turn: number;
+}
+
+/**
+ * #418: after a step down, the readings of the turns up to `through` count at most `value`: the over-read
+ * the tripwire stepped down from stays out of every later window it is still in (else the next turn's
+ * window would read it back whole). Readings of later turns count whole.
+ */
+interface TripCeiling {
+  value: number;
+  through: number;
+  trip: IncomeTrip;
+}
+
+/**
+ * #418: {@link trackedIncome} with the tripwire's ceiling on the readings of the turns it covers: those
+ * count at most its value, the later ones whole; method `tripped` when that lowers the figure.
+ */
+function ceiledIncome(window: readonly ObservedTurn[], visibleIncome: number, ceiling: TripCeiling | null | undefined): TrackedIncome {
+  const est = trackedIncome(window, visibleIncome);
+  if (!ceiling || !window.some((x) => x.from <= ceiling.through)) return est;
+  const later = window.filter((x) => x.from > ceiling.through);
+  const income = Math.max(visibleIncome, Math.min(est.income, ceiling.value), later.length ? trackedIncome(later, visibleIncome).income : 0);
+  return income >= est.income ? est : { ...est, income, method: 'tripped' };
+}
+
+/**
+ * #418, the over-read tripwire (owner decision of 2026-11-20): proof may lower an estimate only when every
+ * army the opponent could have deployed that turn is accounted for in view. Its deploy lands only on its
+ * own territories, so the turn is read in full when every territory it held on either board shows its
+ * armies on both, nothing beside them hides its owner on either board (#294's whole frontier read: a
+ * territory of its cut off in deep fog, beside none of its land in view, is the one gap), and nothing
+ * beside it could hide a fight that cost it armies the board does not show: no third player beside it
+ * (another's attack, or a failed attack of its on another, is unseen), no neutral beside it that shrank or
+ * changed hands (a failed attack of its), no territory of its lost, and — beside my land — my orders known
+ * in full (`sent` and `cards`, so `measureOrders` counts what my attacks killed and what its failed attacks
+ * on me cost) with no card of mine on its land. A failed attack must always show: one army kills at least
+ * one defender ({@link guaranteedKills}); with a capture, luck is off under straight rounding (else its cost
+ * varies). Not in a commerce game with an army price (it may save gold rather than deploy).
+ */
+export function everyArmyInView(
+  g: MapGraph,
+  before: BoardState,
+  after: BoardState,
+  playerId: number,
+  me: number,
+  orders: MyOrders | undefined,
+  settings: PlannerSettings = {},
+): boolean {
+  if (settings.armyCostMultiplier) return false;
+  const was = new Map(before.territories.map((t) => [t.territoryId, t]));
+  const now = new Map(after.territories.map((t) => [t.territoryId, t]));
+  const its = (t: TerritoryState | undefined) => t?.owner.kind === 'player' && t.owner.playerId === playerId;
+  const land = new Set<number>();
+  for (const id of g.territoryById.keys()) if (its(ownerShown(was.get(id))) || its(ownerShown(now.get(id)))) land.add(id);
+  if (!land.size) return false;
+  let captured = false;
+  for (const id of land) {
+    const b = visibleState(was.get(id));
+    const a = visibleState(now.get(id));
+    if (!b || !a || !its(a)) return false;
+    if (!its(b)) captured = true;
+  }
+  let bordersMe = false;
+  for (const id of land)
+    for (const n of neighborsOf(g, id)) {
+      if (land.has(n)) continue;
+      const b = ownerShown(was.get(n));
+      const a = ownerShown(now.get(n));
+      if (!b || !a) return false;
+      for (const o of [b.owner, a.owner]) {
+        if (o.kind !== 'player') continue;
+        if (o.playerId !== me) return false;
+        bordersMe = true;
+      }
+      if (b.owner.kind === 'neutral') {
+        const vb = visibleState(b);
+        const va = visibleState(a);
+        if (a.owner.kind !== 'neutral' || !vb || !va || va.armies! < vb.armies!) return false;
+      }
+    }
+  if (bordersMe) {
+    if (!orders?.sent || !orders.cards) return false;
+    if (orders.cards.some((c) => [c.from, c.to, c.target].some((t) => t !== undefined && land.has(t)))) return false;
+  }
+  const luck = luckFraction(settings.luckModifier);
+  const straight = (settings.roundingMode ?? 'StraightRound') === 'StraightRound';
+  if (captured && (luck > 0 || !straight)) return false;
+  return guaranteedKills(1, settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE, settings.luckModifier, settings.roundingMode) >= 1;
+}
+
+/**
  * #123 review: a turn read in full — no ambiguous army was read as a move out of the fog (the
- * bound cut nothing) — whose observed deploy reaches `income` confirms it. A figure only bound-cut
+ * bound cut nothing) — whose observed deploy reaches `income` confirms it, and so does a pattern of
+ * fog captures (#271) or a capture floor (#418, {@link ObservedTurn.captureFloor}) that reaches it. A figure only bound-cut
  * readings reached (each up to twice the income carried so far) is a guess, however often it
  * compounded.
  */
 const confirmedBy = (window: readonly ObservedTurn[], income: number) =>
-  window.some((x) => (x.fogArmies === 0 && x.observed >= income) || (x.fogCaptures?.income ?? 0) >= income);
+  window.some((x) => (x.fogArmies === 0 && x.observed >= income) || (x.fogCaptures?.income ?? 0) >= income || (x.captureFloor ?? 0) >= income);
 
 /**
  * #119: no decay. Walk the observed turns: each window's figure (as `trackedIncome` reads it)
@@ -1086,9 +1228,17 @@ const confirmedBy = (window: readonly ObservedTurn[], income: number) =>
  * turn's visible income when larger — not above the reading, which an over-read would pass), a window
  * figure above the carry that no turn read in full confirmed rises at most to {@link RISE_CAP} × that
  * figure, rounded up; on a turn read in full that observed less than the carry it does not rise at all.
+ * #418: never below a capture floor in the window (proof may always raise an estimate).
+ *
+ * #418, the over-read tripwire: on a turn with every army it could have deployed in view
+ * ({@link ObservedTurn.accounted}), a carry above that turn's reading steps down at most one step,
+ * to ⌈carry ÷ {@link RISE_CAP}⌉, never below the reading nor its visible income; the readings of the
+ * turns up to it then count at most the stepped figure in every later window ({@link ceiledIncome}),
+ * so the next turn does not read the over-read back.
  */
 function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
   let carry = null as Carry | null;
+  let ceiling = null as TripCeiling | null;
   /**
    * #271 (2): the latest pattern of captures that needed attackers out of sight, as a carry: it is
    * evidence, not a bound-cut guess, so no later turn read in full disproves it; like any carry it
@@ -1098,7 +1248,7 @@ function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
   for (let i = 0; i < observed.length; i++) {
     const x = observed[i]!;
     const window = observed.slice(Math.max(0, i - INCOME_TURNS + 1), i + 1);
-    const est = trackedIncome(window, 0);
+    const est = ceiledIncome(window, 0, ceiling);
     const fresh: Carry = { income: est.income, set: est.income, window, est, confirmed: confirmedBy(window, est.income) };
     if (pattern) pattern = { ...pattern, income: Math.min(x.cap, pattern.income - x.brokenValue) };
     if (x.fogCaptures && x.fogCaptures.income >= (pattern?.income ?? 0)) {
@@ -1113,15 +1263,32 @@ function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
       if (!(disproved || est.income >= kept)) carry = { ...prev, income: kept };
       else {
         const before = Math.max(prev.income, x.visibleIncome);
-        const limit = disproved ? prev.income : Math.ceil(before * RISE_CAP - 1e-9);
+        // #418: proof may always raise an estimate: the hold never goes below a capture floor in the window.
+        const proof = Math.max(0, ...window.map((w) => w.captureFloor ?? 0));
+        const limit = Math.max(disproved ? prev.income : Math.ceil(before * RISE_CAP - 1e-9), proof);
         // #418 review: the lead is judged against the carry before the rise (or its visible income), never
         // against the reading being judged: an over-read above my income must not switch its own cap off.
-        carry = (x.leadIncome ?? 0) > before && !fresh.confirmed && fresh.income > limit ? { ...fresh, income: limit, set: limit, rise: { read: fresh.income, before } } : fresh;
+        carry =
+          (x.leadIncome ?? 0) > before && !fresh.confirmed && fresh.income > limit
+            ? { ...fresh, income: limit, set: limit, rise: { read: fresh.income, before, ...(proof >= limit ? { proven: proof } : {}) } }
+            : fresh;
       }
     }
     if (pattern && pattern.income > carry.income) carry = pattern;
+    // #418, the over-read tripwire: on a turn with every army it could deploy in view, the carry steps
+    // down at most one RISE_CAP step toward that turn's reading, never below it (nor its visible income).
+    // It steps `carry`, never `pattern`: a #271 fog-capture pattern above the stepped figure is restored by
+    // the line above on the next turn, so a pattern-set reading is lowered for that one turn only.
+    if (x.accounted && carry.income > x.observed) {
+      const step = Math.max(x.observed, x.visibleIncome, Math.ceil(carry.income / RISE_CAP - 1e-9));
+      if (step < carry.income) {
+        const trip: IncomeTrip = { from: carry.income, proven: x.observed, turn: x.from };
+        carry = { ...carry, income: step, set: step, trip };
+        ceiling = { value: step, through: x.from, trip };
+      }
+    }
   }
-  return carry;
+  return carry && ceiling ? { ...carry, ceiling } : carry;
 }
 
 /** #250: a turn that reads more than this many times the most it was seen to earn before it is a jump. */
@@ -1507,6 +1674,8 @@ export function trackOpponents(
         ...(expected !== null ? { expected: Math.max(expected, carriedSoFar) } : {}),
         // #293: the same Local Deployment reading the board-only observation used.
         ...(settings.localDeployments ? { localFree: localFreeOn(e.base, DEFAULT_BASE_INCOME, settings.opponentReinforcement, from) } : {}),
+        // #418: a Bomb it may have played halves a capture's defenders before the proof reads them.
+        ...(bombPossibleOn(settings, from) ? { bomb: true } : {}),
       };
       const { signed, ...o } =
         expected !== null && carriedSoFar > expected
@@ -1514,7 +1683,10 @@ export function trackOpponents(
           : { ...e.observation, signed: e.observedRaw! };
       // #271 (1): a failed attack on a hold of mine bounds its deploy from below, fog or not.
       const repelled = orders ? repelledFloor(g, before, after, me, playerId, orders, settings, guard, bombPossibleOn(settings, from)) : null;
-      const floor = repelled?.floor ?? 0;
+      // #418: a capture with every source army in view proves a minimum deploy (my orders known: one
+      // beside my land reads too). Proof may always raise the reading.
+      const proof = captureFloor(g, before, after, playerId, settings, guard, { me, orders, bomb: bombPossibleOn(settings, from) });
+      const floor = Math.max(repelled?.floor ?? 0, proof.floor);
       const raw = Math.max(
         measured ? Math.max(0, observeSigned(g, after, before, playerId, settings, context).signed + measured) : Math.max(0, signed),
         floor,
@@ -1563,7 +1735,9 @@ export function trackOpponents(
         unseenAttackers: o.unseenAttackers,
         unseenAttackerArmies: o.unseenAttackerArmies,
         repelled: repelled?.territories.length ? repelled : null,
-        repelledFloor: floor,
+        repelledFloor: repelled?.floor ?? 0,
+        ...(proof.floor > 0 ? { proven: proof.territories, captureFloor: proof.floor } : {}),
+        ...(everyArmyInView(g, before, after, playerId, me, orders, settings) ? { accounted: true as const } : {}),
         combat: combatLosses(
           g,
           before,
@@ -1603,15 +1777,16 @@ export function trackOpponents(
     const turnsUnseen = visible ? 0 : lastTurn - back;
     const turnsUnseenAtLeast = turnsUnseen > 0 && back >= 1 && !byTurn.has(back);
     const recent = observed.slice(-INCOME_TURNS);
-    const lastWindow = recent.length ? trackedIncome(recent, visibleIncome) : null;
     // #119: no decay ({@link carryIncome}). The last three turns alone read a real 31 as 12 once
     // it aged out.
     const carry = carryIncome(observed);
+    // #418: the readings an over-read tripwire stepped down from count at most its ceiling.
+    const lastWindow = recent.length ? ceiledIncome(recent, visibleIncome, carry?.ceiling) : null;
     const carried = carry !== null && lastWindow !== null && carry.income > lastWindow.income ? carry : null;
     // #418: an unconfirmed rise held below what the last window reads keeps the held figure.
     const held = !carried && carry?.rise && lastWindow !== null && carry.income < lastWindow.income ? carry : null;
     const estimate = carried
-      ? { ...carried.est, income: carried.income, method: 'carried' as IncomeMethod }
+      ? { ...carried.est, income: carried.income, method: (carried.trip ? 'tripped' : 'carried') as IncomeMethod }
       : held
         ? {
             ...held.est,
@@ -1620,6 +1795,7 @@ export function trackOpponents(
           }
         : lastWindow;
     const incomeRise = held && estimate!.method === 'rise-capped' ? held.rise! : null;
+    const incomeTrip = estimate?.method === 'tripped' ? (carried?.trip ?? carry?.ceiling?.trip ?? null) : null;
     const incomeWindow = carried ? carried.window : held ? held.window : recent;
     const income = estimate?.income ?? null;
     // #250: an income set by one turn far above the turns before it, with the evidence for it. Its
@@ -1695,8 +1871,13 @@ export function trackOpponents(
         observedRange: estimate!.observedRange,
         incomeLowered: carried ? carried.set - carried.income : 0,
         incomeRise,
+        incomeTrip,
       });
-      if (incomeRise)
+      if (incomeTrip)
+        notes.push(
+          `Income ~${income} (${basis}): proof lowers an estimate only on a turn with every army it could deploy in view, and then by one step a turn (#418). Each observed deploy is a lower bound under fog.`,
+        );
+      else if (incomeRise)
         notes.push(
           `Income ~${income} (${basis}): a rise is held to ${RISE_CAP}× a turn until a turn read in full (no army read as a move out of the fog) confirms it, since armies walking in beside the fog are read up to twice the income carried (#418). Each observed deploy is a lower bound under fog.`,
         );
@@ -1954,6 +2135,7 @@ export function trackOpponents(
       incomeMethod: estimate?.method ?? null,
       incomeLowered: carried ? carried.set - carried.income : 0,
       ...(incomeRise ? { incomeRise } : {}),
+      ...(incomeTrip ? { incomeTrip } : {}),
       unexplained,
       inferred,
       visible,

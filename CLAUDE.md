@@ -116,7 +116,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`profiles/.store` for the two profile stores). The upload is deleted after an import and when it is no bundle;
   an account or salt refusal keeps it for a retry. `warapp_backfill_history` (not confirm-gated: this server's
   state only, never war.app) runs `sweepFinished` with `limit` (default 10, max 25) and an optional `window` (at
-  most `MAX_FINISHED_RECORDS`), so each game's history is still read once.
+  most `MAX_FINISHED_RECORDS`), so each game's history is still read once; it then fills the winners' income curves
+  of map-record entries kept before #419 from the kept histories (`winnerCurves`, no request).
 - **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing but its verdict to the decision log
   (#437), not the board cache either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
   (`docs/STRATEGY.md` "Turn resolution" links each page: deploys first, then attacks and transfers
@@ -974,7 +975,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   rising track read from more of its frontier only raises the estimate to the lower bound. Its own warning
   names both bounds, the midpoint and `toward`; the source reads `prior` when a prior is in the range and
   the figure lies above the lower bound, else `tracked`; the tracker's coverage note says the planner sizes
-  it toward the midpoint. **A known income (#368,
+  it toward the midpoint. **#419 (owner decision of 2026-11-20): the past winners' pace tops that range.** With
+  the fog prior on, thin evidence's upper bound is the larger of the prior (my income) and the pace past winners
+  set after the turns completed (`FogPace`, `PlanGameContext.mapPace` → `EnemyIncomePrior.winnerPace`; capped, scaled
+  by #444 and only beside the fog as the prior is; it never moves the prior or `priorBlend`): `fogPaceFor`
+  (`src/tools/past-games.ts`, in `livePlanSetup` and `stressOpponents`' callers, so check_plan and the commander
+  check read it too) gives this map's median winner over its games of this format and settings (`mapPaceAt`,
+  `MIN_PACE_GAMES` (3) or more), else my income × the median winner ÷ mine over every map's games of the format
+  (`formatPaceAt`), else none; the warning names the basis (`thinEvidence.pace`). Measured leave-one-out on the
+  calibration inputs (every record so far a loss): 27 of 164 plan estimates rose, 19 closer to truth, geoMean
+  0.600 → 0.609, over-1.5 share unchanged; golden unchanged (no input carries a pace). **A known income (#368,
   `PlanInput.knownIncome`, warapp_plan_turn's and warapp_check_plan's `known_income`, by GameFeed id)**
   replaces that opponent's estimate (`applyKnown`, after Sanctions and the army price; a Reinforcement card
   the clock adds stays on top; `EnemyDeployEstimate.known`), with a warning; `enemy_deploy` wins over it,
@@ -1158,6 +1168,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   golden: 1 plan's rationale; judging the lead by the carry (review fix): calibration unchanged, golden 3
   synthetic plans (readings above my income held: one break attack the plan warned was 0% if reinforced
   dropped, one break target and two ranking incomes lower; next income unchanged);
+  #418 (owner decisions of 2026-11-20): proof may always raise an estimate — a capture with every source
+  army in view (`captureFloor`, `src/analysis/plan/shared.ts`, in `observeDeploy` too: the target a neutral
+  or mine, every neighbour showing its owner and its own their armies, no other player beside it, no
+  Multi-Attack, my orders known in full and untouched beside my land; what stands there plus the attacker the
+  last defender surely killed, at least the fewest armies that kill every defender however split, beyond its
+  stacks beside it less the guard; a possible Bomb halves the defenders) floors the turn's reading
+  (`ObservedTurn.captureFloor`, `proven`), confirms a carry it reaches and is never held below by the rise cap
+  (`incomeRise.proven`); the could-earn cap still applies. Proof may lower one only on a turn with every army
+  it could have deployed in view (`everyArmyInView` → `ObservedTurn.accounted`: its land shown with armies on
+  both boards and nothing beside it hidden — a territory of its in deep fog beside none of its land is the
+  one gap —, no third player beside it, no neutral beside it shrunk or taken, no territory of its lost, my
+  orders known in full and no card of mine on its land when it borders me, a failed attack sure to kill, luck
+  off under straight rounding when it captured, no army price): the over-read tripwire steps the carry down
+  at most one `RISE_CAP` step a turn (⌈carry ÷ 1.3⌉) toward that turn's reading, never below it, and the
+  readings it stepped down from count at most the stepped figure in later windows (`incomeMethod`
+  `tripped`, `incomeTrip`). It steps the carry the window reads, not a #271 fog-capture `pattern`: a pattern
+  above a stepped carry is restored on the next turn (`carryIncome`: `pattern.income > carry.income`), so the
+  tripwire lowers a pattern-set reading for one turn only (the pattern is evidence no quiet turn disproves; it
+  falls only with broken bonuses and the could-earn cap). Measured: calibration 167 samples unchanged (on the recorded games' final
+  tracks 22 of 143 observed turns carry a capture floor, none above the reading it already had, and no
+  turn is accounted); golden 5 synthetic plans' rationale and warnings (the planner's observed line raised
+  by a capture floor), no order, capture, next income or concession changed;
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
   `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;
@@ -1326,7 +1358,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the game. (2) **The map's record** `<dataDir>/maps-record/<mapId>.json`: games, outcomes, and per game (at most
   `MAX_MAP_ENTRIES`, 50) the format, seats, result, turns, my start region (territories and every bonus they touch,
   `startRegion`), my income curve (by completed turns, at most 60 points) and income after turns 4 and 8, and each
-  winner's start region and income after turns 4 and 8 (the pace to beat); at most `MAX_MAP_RECORDS` (200) maps
+  winner's start region, income curve (#419, as mine; an entry kept before it gets one from its end-of-game record's
+  boards through `warapp_backfill_history`'s `winnerCurves`, `backfillWinnerCurves` in `src/tools/map-curves.ts`, winners
+  matched by start territories, no request) and income after turns 4 and 8 (the pace to beat); at most `MAX_MAP_RECORDS` (200) maps
   by last write; `mapRecordSummary` gives the medians. (3) **The lessons** `<dataDir>/lessons.json`: per format the
   games, outcomes, lost games by cause (`lessonLoss`: `howLost` on the history boards — `commander`,
   `last-territories`, `unknown` — or `surrendered`, `booted`, `still-holding`), the turn my income first went flat
@@ -1339,7 +1373,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   entry's counts stay. Both stores: keyed by `finishedGameKey`, no id, name or clock; 0600, atomic, under the path
   lock; a file that does not parse (or a malformed total) is never overwritten (`failed`).
   **Where they are read (#312 E3, `src/tools/past-games.ts`, read-only, never throws; off with profiling off or no data
-  dir; every view carries `PAST_GAMES_NOTE` and none is a planner input — P1, the golden corpus is unchanged):**
+  dir; every view carries `PAST_GAMES_NOTE` and none is a planner input — P1, the golden corpus is unchanged — save
+  #419's fog pace, `fogPaceFor`, above under thin evidence):**
   `warapp_plan_picks`' `mapRecord` (when the map has a game: games, outcomes, `myStarts` — my results per bonus my start
   touched (`mapRecordStarts`), `inPrimary` when this primary touches it — `winnerStarts`, and `pace.afterTurn4/8`: the
   medians of the winners' and my income; compact lists the first `MAP_RECORD_COMPACT` (8) bonuses; `unreadable` when the
@@ -2082,10 +2117,38 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   outlook, the outlook log (per turn and `latest`, without the coverage's words) and the surrender preview
   carry it. Reporting only: it never changes the state, a ratio or any plan.
   **Leaning behind (#368).** Each outlook turn names the positive bonuses my side held in full on the board
-  before and no longer does (`bonusesLost`); when the state is `even` for `OUTLOOK_TURNS` running and every
-  turn of the run lost one, `GameOutlook.leaning` is `{ toward: 'behind', turns, lost }` and the basis says
+  before and no longer does (`bonusesLost`); when the state is `even` on strength for `OUTLOOK_TURNS` running
+  (#436: whatever each turn's income lean, unless the run reports `behind`) and every turn of the run lost one, `GameOutlook.leaning` is `{ toward: 'behind', turns, lost }` and the basis says
   "Leaning behind: …"; plan_turn's compact outlook carries it. Reporting only: the state, its thresholds and
   the profile's standing (#287) are unchanged.
+  **Incomes, their trend, and the surrender line (#436, owner decision of 2026-11-20).** Each turn carries `income`
+  (`OutlookIncome`): my side's income against the strongest opponent side's by estimate — its range (`low` the
+  tracked income, its visible at least; `high` the likely high's income per turn while its evidence is thin, else
+  `low`) and its estimate (the tracked figure ÷ past games' estimate ÷ truth in its coverage band, `calibration`
+  from lessons.json through `outlookCalibrationFor` in `src/tools/past-games.ts`: this format's band with
+  `MIN_CALIBRATION_SAMPLES` (5) or more, else every format's; never below its visible income; uncalibrated, the
+  tracked figure; the estimate and `high` never above what it could earn that turn — `capIncome`, the could-earn
+  bound `paceIncome` keeps to, or `low` when that is higher — since ÷ ~0.3 at low coverage can read an income it cannot
+  reach). Its `lean`: `unknown` when the range spans both lines (`INCOME_BEHIND_RATIO` ⅔ and
+  `INCOME_AHEAD_RATIO` 1.5), `behind`/`ahead` when the whole range, else the estimate, is past one, else `even`
+  unless each side's change per turn over the turns judged (`trend`), one turn on, crosses a line the ratio heads
+  to (`byTrend`). Calibration deepens a deficit the tracked figure shows, never creates one: a `behind` lean on the
+  estimate or its trend, and a turn under the surrender line, also need my income under the tracked figure (the
+  range's `low`); when only the calibrated estimate reads behind the lean is `unknown` (`calibratedOnly`). In-sample
+  replay (10 lost games, 100 turns): truly-even turns past the crossed line 5/25 → 1/25, truly-behind 42/75 → 29/75,
+  games crossed 10 → 9 of 10 (`MIN_CALIBRATION_SAMPLES` stays unmeasured). No lead is claimed at low coverage (any `evidence.thin`): `ahead` reads `unknown`, and a win on
+  the likely high alone is not read (`noLeadClaim`; a win on the bound still is). The lean replaces `even` as the
+  state (winning, losing, stalemate keep their tests; the planner reads only winning and losing), so the state can
+  read `ahead`, `behind`, `unknown`; the chat standing maps them. A turn whose lean replaced `even` carries
+  `strength: 'even'`, and turns even on strength are one run for the hold whatever their leans: the run reports its
+  lean when every turn judged read it, else `even` (a slide reading even, behind, behind holds `even`, and #368's
+  lean behind still reads). `GameOutlook.pace` is the pace line (both incomes
+  and their change per turn) and `surrenderLine` — ADVICE ONLY, the server never acts on it — is present while my
+  income is under ⅔ of the strongest estimate, `crossed` after `SURRENDER_TURNS` (3) turns running with no bonus in
+  reach closing the gap (`bonusesInReach`: every missing member beside my land, its visible defenders below my
+  armies beside them plus my income); plan_turn's compact outlook carries `income`, `pace` and `surrenderLine`, a
+  crossed line is a leading warning, and the outlook log keeps `income` per turn and `latest.surrenderLine`. Play
+  policy (notify the owner, surrender next turn unless he objects) lives outside the repo. Golden unchanged.
 - **One healthcheck for both transports** (`registerAdaptiveHealthcheckTool`): the credential
   probe while the direct leg serves (and until the bridge has carried a request), the bridge probe
   only when this connection's router is on the bridge leg (the fetchproxy bridge is shared

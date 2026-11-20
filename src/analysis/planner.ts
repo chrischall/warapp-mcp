@@ -297,7 +297,14 @@
 //     guard or beside no other player), never a hold an order `moves` does not carry touched (a
 //     Transfer Only, Attack Only or percentage order in `sent`, a card play in `cards`; orders cached
 //     before those were kept read nothing), and on a turn an opponent may have played a Bomb
-//     (`bombPossibleOn`, `PlannerSettings.bombFrom`) after taking out half the hold, rounded up. A
+//     (`bombPossibleOn`, `PlannerSettings.bombFrom`) after taking out half the hold, rounded up. #418
+//     (owner decision of 2026-11-20: proof may always raise an estimate): a capture with every source
+//     army in view (`captureFloor`) bounds it from below too — what stands on the target plus the
+//     attacker its last defender surely killed, and at least the fewest armies that kill every defender
+//     however the attack was split, beyond what its stacks beside the target could send (less the
+//     guard) — counted when the target was a neutral or mine, every neighbour showed its owner and its
+//     own their armies, no other player borders it, Multi-Attack is off, and (beside or out of my land)
+//     my orders are known in full and none touches it; a Bomb it may have played halves the defenders. A
 //     capture of a neutral in view beside the fog that needed more attackers (`fewestAttackersToTake`)
 //     than its stacks in view sent (`unseenAttackers`) reads what stands there beyond those as deploy
 //     within #123's bound, the rest a move out of the fog. Its stacks in view beside a capture, hidden
@@ -348,6 +355,10 @@
 //     its lower bound (visible, tracked, a rising trend's next step) and its upper bound (the fog prior,
 //     else what it could earn), moved toward the lower bound as the coverage nears LOW_COVERAGE
 //     (`thinEvidence`); the warning names both bounds. Unmeasured.
+//     #419 (owner decision of 2026-11-20): with the fog prior on, that upper bound is the larger of the
+//     prior and the pace past winners set at this turn (`PlanGameContext.mapPace`, `FogPace`: this map's
+//     median winner over 3+ games of the format and settings, else my income × the format's median winner ÷
+//     mine), capped and scaled as the prior; the warning names the basis (`thinEvidence.pace`).
 //     In a 1v1 too, so it trades #119's prior back toward tracked figures #119 found 2-3x low:
 //     PRIOR_EVIDENCE_TURNS (4) is unmeasured against a finished 1v1.
 //     #164, exact income: under a fog setting that shows every owner (`OWNERS_SHOWN_FOG`: No, Light

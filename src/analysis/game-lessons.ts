@@ -3,7 +3,8 @@
 // pace), and the lessons kept across games (the turn my income went flat, how I lost, and the tracked
 // estimates scored against the true incomes the history shows, by frontier coverage, #294). No I/O,
 // no clock; ids ascending. The stores (src/lessons-store.ts, src/profile-store.ts) keep these
-// name-free. Profiles and lessons INFORM ONLY (owner decision P1): no planner decision reads them.
+// name-free. Profiles and lessons INFORM ONLY (owner decision P1): no planner decision reads them,
+// save the winners' income curves (#419: the fog pace, thin evidence's upper bound).
 //
 // Turn numbers: a history board is numbered by completed turns (`afterTurn` N is the board turn N + 1
 // is played on); my orders and my cached boards are numbered by the turn played. So the orders of turn
@@ -140,16 +141,27 @@ export const PACE_TURNS = [4, 8] as const;
 
 const incomeAfter = (curve: IncomeCurve, n: number) => curve.find((c) => c.afterTurn === n)?.income ?? null;
 
+/** A curve as a map record keeps it: index = completed turns up to its last board, `null` where none read, at most {@link MAX_CURVE_POINTS}. Pure. */
+export function curvePoints(curve: IncomeCurve): (number | null)[] {
+  const last = Math.min(MAX_CURVE_POINTS, curve.length ? curve.at(-1)!.afterTurn + 1 : 0);
+  return Array.from({ length: last }, (_, i) => incomeAfter(curve, i));
+}
+
 /** A finished game in its map's record, by real ids (the store keeps no player id). */
 export interface MapGameFacts {
   me: StartRegion & { income: (number | null)[]; income4: number | null; income8: number | null };
-  winners: (StartRegion & { income4: number | null; income8: number | null })[];
+  /**
+   * #419: `income` is the winner's curve as mine is kept (index = completed turns, `null` where no board read,
+   * at most {@link MAX_CURVE_POINTS}): the fog prior's pace reads it at the turn planned. Absent on entries kept
+   * before #419.
+   */
+  winners: (StartRegion & { income?: (number | null)[]; income4: number | null; income8: number | null })[];
 }
 
 /**
  * My start region and income curve (index = completed turns, `null` where no board read, at most
- * {@link MAX_CURVE_POINTS}), and each winner's start region and income after turns 4 and 8 (the pace
- * to beat). Pure.
+ * {@link MAX_CURVE_POINTS}), and each winner's start region, income curve (#419, the same shape) and
+ * income after turns 4 and 8 (the pace to beat). Pure.
  */
 export function mapFacts(
   g: MapGraph,
@@ -159,12 +171,13 @@ export function mapFacts(
   turns: readonly { afterTurn: number; players: ReadonlyMap<number, PlayerTurn> }[],
 ): MapGameFacts {
   const mine = incomeCurve(turns, me);
-  const last = Math.min(MAX_CURVE_POINTS, mine.length ? mine.at(-1)!.afterTurn + 1 : 0);
-  const income: (number | null)[] = Array.from({ length: last }, (_, i) => incomeAfter(mine, i));
   const pace = (curve: IncomeCurve) => ({ income4: incomeAfter(curve, PACE_TURNS[0]), income8: incomeAfter(curve, PACE_TURNS[1]) });
   return {
-    me: { ...startRegion(g, starts.get(me) ?? []), income, ...pace(mine) },
-    winners: [...winners].sort((a, b) => a - b).map((w) => ({ ...startRegion(g, starts.get(w) ?? []), ...pace(incomeCurve(turns, w)) })),
+    me: { ...startRegion(g, starts.get(me) ?? []), income: curvePoints(mine), ...pace(mine) },
+    winners: [...winners].sort((a, b) => a - b).map((w) => {
+      const curve = incomeCurve(turns, w);
+      return { ...startRegion(g, starts.get(w) ?? []), income: curvePoints(curve), ...pace(curve) };
+    }),
   };
 }
 

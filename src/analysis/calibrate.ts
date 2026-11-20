@@ -33,7 +33,7 @@ import {
 import type { MapGraph } from './graph.js';
 import { planTurn } from './planner.js';
 import { planEnemyEstimates } from './plan/estimates.js';
-import type { PlannerSettings, PlanInput, TurnPlan } from './plan/shared.js';
+import type { FogPace, PlannerSettings, PlanInput, TurnPlan } from './plan/shared.js';
 import { boardIncome, incomeRules } from './player.js';
 import type { ProfilePlayer } from './profile.js';
 import { simulateTurn, type SimSettings, type SimTerritory } from './turn-sim.js';
@@ -70,6 +70,8 @@ export interface EstimateInput extends CalibrationInput {
   settings: GameSettings | undefined;
   /** Every seat (its final state left out: who is out on a turn is read off the history board). */
   players: readonly ProfilePlayer[];
+  /** #419: the past winners' pace for the turn planned (the map record's, as warapp_plan_turn reads it); none: no pace. */
+  mapPace?: (turn: number) => FogPace | undefined;
 }
 
 /**
@@ -108,6 +110,7 @@ export function estimateSamples(input: EstimateInput): EstimateSample[] {
         symmetricStart: symmetricStart(input.settings),
         ...(uneven ? { unevenStart: uneven } : {}),
         ...(input.settings?.fog !== undefined ? { fog: input.settings.fog } : {}),
+        ...(input.mapPace?.(cur.turn) ? { mapPace: input.mapPace(cur.turn)! } : {}),
       },
       turn: cur.turn,
     });

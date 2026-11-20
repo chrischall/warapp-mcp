@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { gameOutlook, LIKELY_INCOME_MARGIN, OUTLOOK_RATIO, OUTLOOK_TURNS, peerPace } from '../../src/analysis/outlook.js';
+import { gameOutlook, LIKELY_INCOME_MARGIN, OUTLOOK_RATIO, OUTLOOK_TURNS, peerPace, type GameOutlook } from '../../src/analysis/outlook.js';
+import { planTurn } from '../../src/analysis/planner.js';
 import type { TurnBoard } from '../../src/analysis/opponents.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, fogged, mine, neutral } from './helpers.js';
@@ -157,8 +158,12 @@ describe('gameOutlook (#178)', () => {
     expect(s.high).toBeGreaterThanOrEqual(240);
     expect(s).toMatchObject({ playerId: FOE, high: 285 });
     // Turn 10's bound (15 + 9 × 20 + 15 + 3 × 15 = 255) is under my 615 ÷ 2.4, and it really could
-    // hold no more than 210 then: winning that turn is sound. By turn 12 the bound no longer is.
-    expect(o.turns.map((t) => t.state)).toEqual(['winning', 'even', 'even']);
+    // hold no more than 210 then: winning that turn is sound. By turn 12 the bound no longer is, and
+    // (#436) the incomes read behind: its 15 + 5 in view against my 5 + 5.
+    expect(o.turns.map((t) => t.state)).toEqual(['winning', 'behind', 'behind']);
+    expect(o.state).toBeNull();
+    expect(o.heldTurns).toBe(2);
+    expect(o.basis).toMatch(/Behind for 2 of the 3 turns \(winning, behind, behind\), so no state yet/);
   });
 
   it('a bounded opponent with no strength at all is dominated: winning', () => {
@@ -368,15 +373,37 @@ describe('gameOutlook (#178)', () => {
         expect(lone.likely!.high).toBeLessThanOrEqual(lone.strongest!.high!);
       });
 
-      it('a prior can still show an estimated win when I am far ahead of it, labelled a prior', () => {
+      it('#436: a prior far below me is no lead claim while the evidence is thin, labelled a prior', () => {
         const o = gameOutlook({ graph: big, me: ME, boards: turns(9, [issue(2000), issue(2000), issue(2000)]), game: ffa4 });
         const last = o.turns.at(-1)!;
         expect(last.likely).toMatchObject({ playerId: O3, high: 703, source: 'prior' });
         expect(last.ratio.low).toBeLessThan(OUTLOOK_RATIO);
-        expect(last.state).toBe('winning');
-        expect(last.estimated).toBe(true);
-        expect(o.basis).toMatch(/winning rests on it/i);
+        expect(last.likely!.ratio).toBeGreaterThanOrEqual(OUTLOOK_RATIO);
+        expect(last.evidence!.thin).toBe(true);
+        expect(last.state).not.toBe('winning');
+        expect(last.estimated).toBeUndefined();
+        expect(last.income!.noLeadClaim).toBe(true);
+        expect(o.basis).toMatch(/no lead is claimed/i);
         expect(o.basis).toMatch(/even share of the map's income/i);
+      });
+
+      it('#436: the plan reads no decided game on that thin-evidence lead: orders as with no outlook', () => {
+        const boards = turns(9, [issue(2000), issue(2000), issue(2000)]);
+        const o = gameOutlook({ graph: big, me: ME, boards, game: ffa4 });
+        const last = o.turns.at(-1)!;
+        const plan = (outlook?: Pick<GameOutlook, 'state' | 'turns'>) =>
+          planTurn({
+            graph: big,
+            board: boards.at(-1)!.board,
+            me: ME,
+            income: last.income!.mine,
+            settings: { offensiveKillRate: 60, defensiveKillRate: 70, oneArmyStandsGuard: true },
+            game: { players: ffa4.players, turn: last.turn },
+            options: { adapt: true, ...(outlook ? { outlook } : {}) },
+          });
+        const now = plan(o);
+        expect(now.rationale.join('\n')).not.toMatch(/Outlook \(#201\)/);
+        expect({ deploys: now.deploys, moves: now.moves }).toEqual({ deploys: plan().deploys, moves: plan().moves });
       });
 
       it('a measured opponent that drops out of view keeps its tracked pace: losing sight never reads more hopeful', () => {
