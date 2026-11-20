@@ -36,6 +36,8 @@ import { registerTurnTools } from './turn.js';
 import { registerUncommitTool } from './uncommit.js';
 import { registerLeaveGameTool } from './leave-game.js';
 import { registerWhereTool } from './where.js';
+import { registerStateTools } from './state.js';
+import { blobStoreFromEnv, type BlobStore } from '@chrischall/mcp-utils/export';
 import { registerProfileOpponentsTool } from './profile-opponents.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
 import { pushWebSocketLeg } from '../push/websocket.js';
@@ -61,6 +63,8 @@ type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCa
   directFetch?: DirectFetch;
   /** Test seam: warapp_sign_in's sign-in (hosted only; default src/direct/sign-in.ts). */
   signIn?: SignInToolDeps['signIn'];
+  /** The mcp-host blob store (default: from `MCP_BLOB_BASE_URL`; `null`: none). With one, warapp_upload_slots and warapp_import_state are registered. */
+  blobStore?: BlobStore | null;
 };
 
 /** Every tool this server serves. index.ts and the tests share this list. */
@@ -174,6 +178,11 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     ...(env ? { env } : {}),
   });
   registerPushTools(server, live, push, deps.env ? { env: deps.env } : {});
+  // Moving a local install's history in (hosted: only with mcp-host's blob store) and the end-of-game backfill.
+  registerStateTools(server, live, {
+    ...(deps.env ? { env: deps.env } : {}),
+    store: deps.blobStore === undefined ? blobStoreFromEnv(deps.env ?? process.env) : deps.blobStore,
+  });
   // Hosted only: the war.app sign-in mcp-host's authFlow captures the AuthToken from (#333 part B).
   // Locally warapp_link_session stays the way to the direct transport.
   if (hosted) registerSignInTool(server, deps.signIn ? { signIn: deps.signIn } : {});

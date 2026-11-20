@@ -8,8 +8,8 @@ description: This skill should be used when the user asks about a war.app (Warzo
 An advisor. The tools read war.app as the signed-in player (fog of war applies): GameFeed
 for games, maps and chat, and the user's signed-in war.app tab for their games list, player
 scouting, the live board, picks, cards and turn notifications.
-Thirteen tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn`,
-`warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks notifications read), `warapp_delete_notification` (deletes notifications), `warapp_mark_chat_read` (marks a game's chat read on war.app) and `warapp_link_session` (local only: it stores a
+Fourteen tools write, all confirm-gated: `warapp_submit_picks`, `warapp_submit_turn`,
+`warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks notifications read), `warapp_delete_notification` (deletes notifications), `warapp_mark_chat_read` (marks a game's chat read on war.app), `warapp_import_state` (hosted only) and `warapp_link_session` (local only: it stores a
 session cookie on this machine, and a hosted server does not offer it). `warapp_record_agreement` and
 `warapp_record_intel` also write, but only the server's agreement ledger and player record, so it is not confirm-gated. A turn goes plan → review → submit: `warapp_plan_turn` proposes it,
 the user reviews it, and only then does `warapp_submit_turn` commit it.
@@ -1115,13 +1115,26 @@ keep up with a fast opponent.
   (UTC). Convert before presenting.
 - Maps are cached per process, so repeated map questions about one game are cheap.
 
+## Moving local history to the hosted server
+
+When the user moves from a local install to the hosted connector, their history comes with them in
+three steps. On their machine: `npx -y @chrischall/warapp-mcp export-state --out
+~/Downloads/warapp-state.json.gz` (prints counts and sizes only; the file is 0600). On the hosted
+server: `warapp_upload_slots` gives a signed URL and a `curl` to PUT the file with, then
+`warapp_import_state` with the `blob_key` previews (files per store, the bundle's account against the
+signed-in one, the salt) and imports once confirmed. A server that already made its own salt refuses
+until `replace: true`, which backs its hashed stores up into `state-backups/<time>/`; say so before
+passing it. Then `warapp_backfill_history` (up to 25 finished games a call, each history read once)
+until `remaining` is 0. The bundle holds the salt behind the hashed history and never credentials:
+tell the user to delete the local file once imported. Never ask for or show the salt or file contents.
+
 ## In context groups
 
 On a host that serves context groups (mcp-host), every tool here except `warapp_healthcheck`
 is in the **work** group: `warapp_my_games` with **whats-new** (canonical), the other reads
 with intent **lookup** (but `warapp_wait_for_turn`, `warapp_chat_inbox` and `warapp_get_notifications`, intent **whats-new**), `warapp_submit_picks`,
-`warapp_submit_turn`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification`, `warapp_delete_notification`, `warapp_mark_chat_read`, `warapp_record_agreement` and `warapp_record_intel` with **change**, and
-`warapp_send_chat` with **send**:
+`warapp_submit_turn`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification`, `warapp_delete_notification`, `warapp_mark_chat_read`, `warapp_record_agreement`, `warapp_record_intel`, `warapp_backfill_history` and (hosted only) `warapp_import_state` with **change**,
+`warapp_send_chat` with **send**, and (hosted only) `warapp_upload_slots` with **other**:
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_map_stats`, `warapp_analyze_board`, `warapp_plan_route`,
   `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_plan_picks`, `warapp_plan_turn`, `warapp_check_plan`, `warapp_track_opponents`,

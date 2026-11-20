@@ -541,8 +541,13 @@ validates `0 ≤ luck ≤ 1`; `0.16` in its tutorial level), `RoundingMode` is `
   `GetHistory` (`TurnBoard.source: 'history'`) is never observed, since the history's shape is
   UNVERIFIED (below). Part D only reports the read (`warapp_plan_turn`'s `reads`,
   `warapp_advise_diplomacy`'s `habits`, `warapp_scout_player`'s `met`) and adds no request. Reading a
-  finished game's history once (part C, owner decision P2) waits on V1/V2; each fact it relies on is
-  to be marked here, verified or not, when it is built.
+  finished game's history once (part C, owner decision P2) is the end-of-game pass (#312); V1 (un-fogged)
+  is now verified in practice (next item), V2 (orders in a turn entry) is not.
+- **A finished game's `GetHistory` comes back un-fogged — VERIFIED in practice (V1 of
+  `docs/PLAN-PROFILES.md`, 2026-11-19).** The end-of-game pass (#312) captured 36 finished games'
+  histories: about 67,000 board rows, and no row with an unknown owner (every territory's owner and
+  armies shown on every board, whatever the game's fog). Counts only; no capture enters the repo. What a
+  turn entry's orders look like (V2) is a separate question.
 - **`GetHistory` for a game in progress — UNVERIFIED.** `warapp_plan_turn` asks for it (a
   second, best-effort GameFeed call) to find the previous turn's standing for the threat
   trend — only when the previous two turns are not both cached, and it only fills turns the cache lacks:

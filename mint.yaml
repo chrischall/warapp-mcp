@@ -33,9 +33,10 @@ slug: warapp
 # variable is refused.
 summary: >-
   war.app (Warzone) advisor: games waiting on you, maps, scouting, chat and
-  turn plans in your war.app tab. Joining, leaving or surrendering games,
-  accepting surrenders, Begin, picks, turn orders and withdrawals, chat sends,
-  chat read and notification marks and deletes happen only after you confirm.
+  turn plans. Joining, leaving or surrendering games,
+  accepting surrenders, Begin, picks, turn orders, withdrawals, chat sends,
+  chat read and notification marks, deletes and history imports happen only
+  after you confirm.
 examples:
   - prompt: Which of my war.app games are waiting on me?
     note: Lists your games through your war.app tab, the ones waiting on you first.
@@ -149,7 +150,10 @@ state:
     so a known game is not downloaded with its map again after a cold start; and
     each planned game's settings are kept name-free at
     $MCP_DATA_DIR/games/<gameId>.json (players by id only), so the cached boards
-    can be replayed offline.
+    can be replayed offline. A local install's history can be imported into
+    this dir (warapp_import_state, confirm-gated: the salt and the stores
+    keyed by it, a different salt moved aside into
+    $MCP_DATA_DIR/state-backups/<time>/, never deleted).
 
 egress:
   allow:
@@ -160,3 +164,9 @@ egress:
     # The client bundle (https://warappcdn.com/js/Release/ujs.js?v=<n>),
     # downloaded directly once per version (src/tools/live-context.ts).
     - warappcdn.com
+    # Not listed: mcp-host's own blob store (MCP_BLOB_BASE_URL, the gateway
+    # serving this connector; its host differs per deployment).
+    # warapp_upload_slots signs a PUT URL for a state bundle (a local
+    # install's history, `warapp-mcp export-state`), and warapp_import_state
+    # GETs it back and DELETEs it once imported. Signed requests only; no
+    # war.app credential is ever sent there.

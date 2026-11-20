@@ -24,7 +24,7 @@ const WRITES = [
   'warapp_surrender',
   'warapp_uncommit_turn',
 ];
-const LOCAL_WRITES = ['warapp_link_session', 'warapp_record_agreement', 'warapp_record_intel'];
+const LOCAL_WRITES = ['warapp_backfill_history', 'warapp_link_session', 'warapp_record_agreement', 'warapp_record_intel'];
 /** Writes to war.app that change only the account's own state (marking notifications and chat read, #311). */
 const ACCOUNT_WRITES = ['warapp_dismiss_notification', 'warapp_mark_chat_read'];
 /** Writes to war.app that destroy only the account's own data (deleting notifications, #311). */
@@ -56,6 +56,7 @@ describe('tool annotations', () => {
       'warapp_accept_surrender',
       'warapp_advise_diplomacy',
       'warapp_analyze_board',
+      'warapp_backfill_history',
       'warapp_begin_turn',
       'warapp_chat_inbox',
       'warapp_check_plan',

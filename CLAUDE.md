@@ -62,8 +62,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the war.app sign-in that captures the hosted direct leg's token (#333, below). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Thirteen tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_delete_notification` (deletes war.app notifications, for good; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing) and `warapp_link_session` (local only:
+- **Fourteen tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_delete_notification` (deletes war.app notifications, for good; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing), `warapp_import_state` (hosted only: this server's own state; below) and `warapp_link_session` (local only:
   it stores a session cookie on this machine and is not registered hosted), registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
@@ -93,6 +93,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   supplies the token) — so a write preview's sentences name things by id only, and every
   third-party name in a preview or a thrown error goes through `untrustedText` (`src/tools/common.ts`:
   delimited ⟦ ⟧, control characters, quotes and non-ASCII brackets neutralised, capped).
+- **Moving history between servers (`src/state-bundle.ts`, `src/state-cli.ts`, `src/tools/state.ts`).**
+  `warapp-mcp export-state --out <file>` (dispatched in `src/index.ts` before the env file is read: no credential
+  is ever loaded) writes one gzipped JSON bundle, 0600: a manifest (format `warapp-state`, version 1, account id,
+  created time, each file's path, sha256 and size) and the files. It carries only paths the `RULES` table owns:
+  the salt, `relations/players.json`, the account's ledgers, `profiles/players.json` and `population.json`,
+  `lessons.json`, `maps-record/`, `finished/` (processed marks included), and for games still in play only
+  (finished: an end-of-game record or processed mark, else a game record saying `Finished`; no record and no
+  mark: unknown, left out) the boards, game records, outlook, picks, move order, teams, per-game profile turns and
+  siege memory. Never credentials, the bundle cache, the guess salt, chat cursors, maps or stats. The account is
+  `--account`, else the one the board caches' `playerId` names, else the one the per-account file names name.
+  The CLI prints counts and sizes only. Hosted (only with mcp-host's blob store, `blobStoreFromEnv`),
+  `warapp_upload_slots` mints a signed PUT (`mintUploadSlot`) and `warapp_import_state` (confirm-gated, the
+  fourteenth write) reads it back (`resolveUploadSource`), verifies every file (`decodeBundle`: paths, the
+  account of per-account files, size, sha256, JSON, a salt; never echoing contents), refuses another account
+  and a different or malformed salt unless `replace`, which moves `relations/`, `profiles/`, `finished/`,
+  `maps-record/` and `lessons.json` into `state-backups/<time>/` (0700, never deleted). Without `replace` a file
+  that differs is kept; under it the displaced file goes to the backup. The salt is written first (by `link`, never
+  over one made meanwhile), then each file atomically, 0600 in 0700 folders, under its store's path lock
+  (`profiles/.store` for the two profile stores). The upload is deleted after an import and when it is no bundle;
+  an account or salt refusal keeps it for a retry. `warapp_backfill_history` (not confirm-gated: this server's
+  state only, never war.app) runs `sweepFinished` with `limit` (default 10, max 25) and an optional `window` (at
+  most `MAX_FINISHED_RECORDS`), so each game's history is still read once.
 - **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing, not the board cache
   either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
   (`docs/STRATEGY.md` "Turn resolution" links each page: deploys first, then attacks and transfers

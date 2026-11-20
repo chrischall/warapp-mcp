@@ -4,7 +4,7 @@
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
   "version": "0.5.0",
-  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, accepting another player's surrender, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends, marking notifications and chat read, deleting notifications and linking a session (local only) are confirm-gated.",
+  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, accepting another player's surrender, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends, marking notifications and chat read, deleting notifications, importing local history into a hosted server and linking a session (local only) are confirm-gated.",
   "author": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com",
@@ -250,6 +250,10 @@
     {
       "name": "warapp_record_intel",
       "description": "Keep avoid targets and stated incomes from diplomacy in the game's ledger, so every plan applies them by default (nothing is sent to war.app)"
+    },
+    {
+      "name": "warapp_backfill_history",
+      "description": "Give the end-of-game pass to up to 25 finished games per call (each history read once), writing only this server's state"
     },
     {
       "name": "warapp_wait_for_turn",

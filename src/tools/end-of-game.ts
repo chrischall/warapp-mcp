@@ -485,15 +485,21 @@ export const sweepWindow = (keep: number = MAX_FINISHED_RECORDS): number => Math
  * the newest {@link sweepWindow} games (half the record bound): older ones are never its candidates.
  * Its writes never prune a record of a game in that window (`protectIds`), and each call refreshes the
  * window's records, so the records the harness and the reports read stay the newest games'. A game the
- * sweep processed is so never read again (P2).
+ * sweep processed is so never read again (P2). `window` widens (or narrows) it for warapp_backfill_history,
+ * at most `keep` games.
  */
 export async function sweepFinished(
   deps: EndOfGameDeps,
   me: number,
   gameIds: readonly number[],
-  { limit = END_OF_GAME_PER_CALL, keep = MAX_FINISHED_RECORDS }: { limit?: number; keep?: number } = {},
+  {
+    limit = END_OF_GAME_PER_CALL,
+    keep = MAX_FINISHED_RECORDS,
+    window: size,
+  }: { limit?: number; keep?: number; window?: number } = {},
 ): Promise<{ processed: { gameId: number; status: EndOfGameStatus; turns?: number }[]; pending: number }> {
-  const window = gameIds.slice(0, sweepWindow(keep));
+  // warapp_backfill_history may widen the window, never past the record bound (every game in it is protected).
+  const window = gameIds.slice(0, Math.max(1, Math.min(size ?? sweepWindow(keep), keep)));
   const todo: number[] = [];
   for (const id of window) if (await needsEndOfGame(deps.dataDir, deps.env, id, me)) todo.push(id);
   await refreshProcessed(deps, me, window).catch(() => undefined);

@@ -13,11 +13,20 @@
 // user's signed-in war.app tab by the fetchproxy bridge (src/transport-bridge.ts).
 // One bridge per process, started at boot; start() only loads the identity —
 // the port binds on the first request.
+//
+// `warapp-mcp export-state --out <file>` (src/state-cli.ts) writes this install's history for
+// warapp_import_state instead of serving; it is dispatched before the env file is read, so it never
+// loads a credential.
 import { loadDotenvSafely, runMcp } from '@chrischall/mcp-utils';
 import { envFilePath } from './config.js';
+import { runExportCli } from './state-cli.js';
 import { registerAllTools } from './tools/index.js';
 import { createWarappBridge } from './transport-bridge.js';
 import { VERSION } from './version.js';
+
+if (process.argv[2] === 'export-state') {
+  process.exit(await runExportCli(process.argv.slice(3)));
+}
 
 await loadDotenvSafely({ path: envFilePath() });
 
@@ -32,6 +41,6 @@ await runMcp({
   tools: [(server) => registerAllTools(server, { bridge })],
   shutdown: { onSignal: () => bridge.transport().close() },
   banner:
-    `[warapp-mcp] v${VERSION} — war.app (Warzone) advisor; joining, leaving or surrendering a game, accepting a surrender, Begin, picks, turn orders, withdrawing them, chat, marking notifications and chat read, deleting notifications and linking a session are confirm-gated. Set WARAPP_EMAIL and WARAPP_API_TOKEN. ` +
+    `[warapp-mcp] v${VERSION} — war.app (Warzone) advisor; joining, leaving or surrendering a game, accepting a surrender, Begin, picks, turn orders, withdrawing them, chat, marking notifications and chat read, deleting notifications, importing local history and linking a session are confirm-gated. Set WARAPP_EMAIL and WARAPP_API_TOKEN. ` +
     'This project was developed and is maintained by AI (Claude). Use at your own discretion.',
 });
