@@ -1095,7 +1095,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`observeTurn` → `TurnPrimitives` per opponent: contact, `attackedMe` — `null` when it cannot be told —,
   `iAttacked`, `reinforce` — measured only at 0% luck and straight rounding, with an exit for every case the
   arithmetic cannot read —, `stack`, `tookFromMe` / `lostToMe`; visibility through `visibleState` / `ownerShown`)
-  and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake) from the
+  and `habitsOf` recomputes the habits (reinforce, attack, firstStrike, stacking, retaliate, retake, jab — #361) from the
   whole list, so re-deriving never double-counts. A territory an order only `sent` holds (percentage, Attack
   Only, Transfer Only) or my Airlift touches is never read from armies; orders cached without their card plays
   (`MyOrders.cards`, cached since A1) read nothing from armies when the game may have Airlift, and when it
@@ -1373,7 +1373,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     opponent I out-earn or out-army. `TurnPlan.jabs` reports them (`winChance` 0, never in `captures`); a 1-army
     failed attack is no #240 evidence. Measured on the golden corpus with `jabs: true` (6253 plans): jabs on 242,
     279 in all; no other order, capture, next income or warning changed. Golden unchanged (off by default).
-    Not yet: tracking an opponent's own jabs in its profile (`attack` with a 1-army size).
+    An opponent's own jabs are tracked in its profile (#361): the primitive `jabs` (my borders read for
+    `attackedMe` that dropped by exactly what one army kills, exact combat only, else `null`), the habit `jab`
+    (contact turns it jabbed ÷ those read) and the label `jabber` (≥ 0.5 at the confidence bar) with a counter
+    line in the reads. Inform only (P1): the planner does not size refills on it.
   - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
     teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
     warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus

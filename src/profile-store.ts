@@ -140,6 +140,8 @@ function primitivesOf(v: unknown): TurnPrimitives | undefined {
   const took = v.tookFromMe === null ? null : ids(v.tookFromMe);
   const lost = ids(v.lostToMe);
   if (took === undefined || !lost) return undefined;
+  // #361: absent in a record kept before it (unknown); a non-integer makes it unknown too.
+  const jabs = v.jabs === null ? null : isInt(v.jabs) ? v.jabs : undefined;
   return {
     contact: v.contact,
     attackedMe: v.attackedMe as boolean | null,
@@ -148,6 +150,7 @@ function primitivesOf(v: unknown): TurnPrimitives | undefined {
     stack: s === null ? null : { top: (s as Rec).top as number, total: (s as Rec).total as number },
     tookFromMe: took,
     lostToMe: lost,
+    ...(jabs !== undefined ? { jabs } : {}),
   };
 }
 
@@ -454,11 +457,13 @@ function habitsFrom(v: unknown): Habits | undefined {
   const f = rateOf(v.firstStrike);
   const rt = rateOf(v.retaliate);
   const rk = rateOf(v.retake);
+  // #361: absent in counts kept before it: none read.
+  const jb = v.jab === undefined ? { e: 0, n: 0 } : rateOf(v.jab);
   const x = v.reinforceExtra;
   const s = v.stacking;
-  if (!r || !a || !f || !rt || !rk || !num(v.turns)) return undefined;
+  if (!r || !a || !f || !rt || !rk || !jb || !num(v.turns)) return undefined;
   if (!isRec(x) || !num(x.n) || !num(x.sum) || !isRec(s) || !num(s.n) || !num(s.sum) || !num(s.sq)) return undefined;
-  return { reinforce: r, reinforceExtra: { n: x.n, sum: x.sum }, attack: a, firstStrike: f, stacking: { n: s.n, sum: s.sum, sq: s.sq }, retaliate: rt, retake: rk, turns: v.turns };
+  return { reinforce: r, reinforceExtra: { n: x.n, sum: x.sum }, attack: a, firstStrike: f, stacking: { n: s.n, sum: s.sum, sq: s.sq }, retaliate: rt, retake: rk, jab: jb, turns: v.turns };
 }
 
 function totalsFrom(v: unknown): Partial<Record<ProfileFormat, Habits>> {

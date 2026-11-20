@@ -32,6 +32,13 @@ export interface TurnPrimitives {
   tookFromMe: number[] | null;
   /** Territories I took from it, ascending. */
   lostToMe: number[];
+  /**
+   * #361: how many of my borders read for `attackedMe` dropped by exactly what one attacking army kills
+   * (`straightKills(1, offensive rate)`, 1 at 60%: an attack of 1 or 2 armies) — a single-army jab, which at
+   * 0% luck and straight rounding trades one for one. `null` when combat is not exact or no border was read;
+   * absent in a record kept before #361 (unknown).
+   */
+  jabs?: number | null;
 }
 
 export interface ObserveInput {
@@ -212,8 +219,15 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
 
     // attackedMe
     let attackedMe: boolean | null = tookFromMe?.length ? true : null;
-    if (attackedMe === null && orders && !airliftUnknown) {
+    // #361: the borders read whose drop is exactly what one attacking army kills (a single-army jab);
+    // `null` unless combat is exact and at least one border was read.
+    let jabs: number | null = null;
+    if (orders && !airliftUnknown) {
       let tested = false;
+      let dropped = false;
+      let read = 0;
+      let jabbed = 0;
+      const oneKill = straightKills(1, off);
       for (const id of ids) {
         if (untested.has(id)) continue;
         const a = seen(was.get(id));
@@ -240,9 +254,11 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         const transfersIn = into(id).filter((m) => mineWas(m.from));
         if (transfersIn.some((m) => enemiesNext(m.from).size > 0 || !allShown(m.from))) continue;
         const expected = a.armies + (deploys.get(id) ?? 0) - sum(outOf(id)) + sum(transfersIn);
+        read++;
         if (b.armies < expected) {
-          attackedMe = true;
-          break;
+          dropped = true;
+          if (oneKill >= 1 && expected - b.armies === oneKill) jabbed++;
+          continue;
         }
         // A move out that did not surely land (a failed attack, a transfer that met a territory taken
         // first, or a move into a territory another order of mine also entered, which may have been
@@ -255,8 +271,10 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
         const chainedIn = into(id).some((m) => m.armies > 0 && !mineWas(m.from));
         if (!drained && !chainedIn && !outOf(id).some((m) => m.armies > 0 && !landed(m))) tested = true;
       }
+      if (attackedMe === null && dropped) attackedMe = true;
       // A quiet border is a "no" only when captures can be told too (a capture elsewhere would be a yes).
       if (attackedMe === null && tested && tookFromMe !== null) attackedMe = false;
+      if (exact && read > 0) jabs = jabbed;
     }
 
     // reinforce
@@ -328,7 +346,7 @@ export function observeTurn(input: ObserveInput): Map<number, TurnPrimitives> {
     }
     const stack = both >= 2 && total >= 1 ? { top, total } : null;
 
-    result.set(p, { contact, attackedMe, iAttacked, reinforce, stack, tookFromMe, lostToMe });
+    result.set(p, { contact, attackedMe, iAttacked, reinforce, stack, tookFromMe, lostToMe, jabs });
   }
   return result;
 }
@@ -345,7 +363,7 @@ export interface Size {
   sq: number;
 }
 
-export const HABIT_NAMES = ['reinforce', 'attack', 'firstStrike', 'stacking', 'retaliate', 'retake'] as const;
+export const HABIT_NAMES = ['reinforce', 'attack', 'firstStrike', 'stacking', 'retaliate', 'retake', 'jab'] as const;
 export type HabitName = (typeof HABIT_NAMES)[number];
 
 /** One opponent's habits over a game. */
@@ -358,6 +376,8 @@ export interface Habits {
   stacking: Size;
   retaliate: Rate;
   retake: Rate;
+  /** #361: contact turns it jabbed my borders with a single army, out of those whose borders could be read so (exact combat). */
+  jab: Rate;
   /** Turns observed. */
   turns: number;
 }
@@ -380,7 +400,9 @@ export interface ObservedPrimitives {
  * - `retaliate`: turns I attacked it, an event when it attacked me on one of the next two turns;
  *   counted only when both are observed and told, or one says it did;
  * - `retake`: territories I took from it, an event when it took them back within two turns;
- *   counted only when both turns are observed with their captures told, or it did.
+ *   counted only when both turns are observed with their captures told, or it did;
+ * - `jab` (#361): turns in contact whose borders could be read for a single-army jab (exact combat), an
+ *   event when one was.
  */
 export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
   const by = new Map<number, TurnPrimitives>();
@@ -394,6 +416,7 @@ export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
     stacking: { n: 0, sum: 0, sq: 0 },
     retaliate: { e: 0, n: 0 },
     retake: { e: 0, n: 0 },
+    jab: { e: 0, n: 0 },
     turns: order.length,
   };
   /** Whether either of the next two turns says yes (`true`), both say no (`false`), or it cannot be told (`null`). */
@@ -417,6 +440,7 @@ export function habitsOf(turns: readonly ObservedPrimitives[]): Habits {
     h.reinforceExtra.n += p.reinforce.e;
     h.reinforceExtra.sum += p.reinforce.extra;
     if (p.contact && p.attackedMe !== null) count(h.attack, p.attackedMe);
+    if (p.contact && p.jabs != null) count(h.jab, p.jabs > 0);
     if (p.stack && p.stack.total > 0) {
       const share = p.stack.top / p.stack.total;
       h.stacking.n++;
@@ -456,6 +480,7 @@ export const HABIT_DEFAULTS: Readonly<Record<HabitName, number>> = {
   stacking: 0.7,
   retaliate: 0.5,
   retake: 0.4,
+  jab: 0.1,
 };
 /**
  * The least opportunities (readings, for a size) a population pool needs for one habit before its
@@ -487,6 +512,7 @@ export function emptyHabits(): Habits {
     stacking: { n: 0, sum: 0, sq: 0 },
     retaliate: { e: 0, n: 0 },
     retake: { e: 0, n: 0 },
+    jab: { e: 0, n: 0 },
     turns: 0,
   };
 }
@@ -508,6 +534,7 @@ export function addHabits(a: Habits, b: Habits, scale = 1): Habits {
     stacking: { n: tidy(a.stacking.n + scale * b.stacking.n), sum: tidy(a.stacking.sum + scale * b.stacking.sum), sq: tidy(a.stacking.sq + scale * b.stacking.sq) },
     retaliate: rate(a.retaliate, b.retaliate),
     retake: rate(a.retake, b.retake),
+    jab: rate(a.jab, b.jab),
     turns: tidy(a.turns + scale * b.turns),
   };
 }
@@ -596,10 +623,11 @@ export function estimateHabits(h: Habits, priors: EstimatePriors = {}): Record<H
     stacking: blend(size(h), size(past), s.p0, s.from, PROFILE_PRIOR_WEIGHT, priors.pastHistory ? size(priors.pastHistory) : undefined),
     retaliate: rate('retaliate'),
     retake: rate('retake'),
+    jab: rate('jab'),
   };
 }
 
-export const PROFILE_LABELS = ['reinforcer', 'rarely-reinforces', 'stacker', 'spreader', 'rusher', 'turtle', 'avenger', 'retakes'] as const;
+export const PROFILE_LABELS = ['reinforcer', 'rarely-reinforces', 'stacker', 'spreader', 'rusher', 'turtle', 'avenger', 'retakes', 'jabber'] as const;
 export type ProfileLabel = (typeof PROFILE_LABELS)[number];
 
 /** One fixed counter-play line per label the plan gives one (docs/PLAN-PROFILES.md B1; `spreader` has none). */
@@ -611,6 +639,7 @@ export const COUNTER_PLAY: Readonly<Partial<Record<ProfileLabel, string>>> = {
   turtle: 'Out-expand it; a quiet border with it tends to stay quiet.',
   avenger: 'Do not poke; strike only to cripple, and garrison the source.',
   retakes: 'A capture from it needs a garrison that survives its counter.',
+  jabber: 'It jabs a border with one army a turn (one for one at 0% luck): keep an army above the hold there to refill.',
 };
 
 /** Turns back from the one being played within which an attack on me withholds `turtle` (#264). */
@@ -660,5 +689,6 @@ export function labelsOf(e: Record<HabitName, HabitEstimate>, recent: LabelRecen
   if (sure(e.attack) && e.attack.basis === 'this-game' && e.attack.value <= 0.2 && !attackedRecently(recent)) out.push('turtle');
   if (sure(e.retaliate) && e.retaliate.value >= 0.6) out.push('avenger');
   if (sure(e.retake) && e.retake.value >= 0.6) out.push('retakes');
+  if (sure(e.jab) && e.jab.value >= 0.5) out.push('jabber');
   return out;
 }

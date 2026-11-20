@@ -149,6 +149,18 @@ describe('recordBehaviour', () => {
     expect(turns.map((t) => t.primitives.attackedMe)).toEqual([null, null]);
   });
 
+  it('keeps the jab reading (#361), and reads a record kept before it as unknown', async () => {
+    const dir = tmp();
+    await recordBehaviour(dir, input(boards(1, 3)), {});
+    // Exact combat (the settings state no luck), my border read and quiet: no jab, read.
+    expect((await readProfileTurns(dir, GAME, ME, {})).get(OPP)!.map((t) => t.primitives.jabs)).toEqual([0, 0]);
+    const old = { contact: true, attackedMe: true, iAttacked: false, reinforce: { n: 0, e: 0, extra: 0 }, stack: null, tookFromMe: [], lostToMe: [] };
+    writeFileSync(profileGamePath(dir, GAME, ME), JSON.stringify({ version: 1, gameId: GAME, playerId: ME, turns: { '2': { [OPP]: old } } }));
+    const [t] = (await readProfileTurns(dir, GAME, ME, {})).get(OPP)!;
+    expect(t!.primitives).toEqual(old);
+    expect(t!.primitives).not.toHaveProperty('jabs');
+  });
+
   it('reads an unusable file as empty, drops unusable entries, and never throws', async () => {
     const dir = tmp();
     mkdirSync(profileGamesDir(dir), { recursive: true });

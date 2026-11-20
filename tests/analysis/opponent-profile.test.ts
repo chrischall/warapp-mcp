@@ -443,3 +443,46 @@ describe('the estimate and the labels', () => {
     expect(labelsOf(estimateHabits({ ...base, attack: { e: 0, n: 8 } }))).toEqual(['turtle']);
   });
 });
+
+describe('observeTurn: single-army jabs (#361)', () => {
+  // My 10 on 3 beside its 9 on 4, every other neighbour of 3 shown; my orders recorded as none.
+  const none: MyOrders = { deploys: [], moves: [] };
+  const prev = board([...shown, mine(3, 10), its(4, 9)]);
+
+  it('a border that drops by exactly what one army kills (1 at 60%) was jabbed', () => {
+    const p = of(observe(prev, board([...shown, mine(3, 9), its(4, 8)]), none));
+    expect(p).toMatchObject({ attackedMe: true, jabs: 1 });
+  });
+
+  it('a larger drop is an attack, not a jab; a quiet border is no jab', () => {
+    expect(of(observe(prev, board([...shown, mine(3, 7), its(4, 2)]), none))).toMatchObject({ attackedMe: true, jabs: 0 });
+    expect(of(observe(prev, board([...shown, mine(3, 10), its(4, 9)]), none))).toMatchObject({ attackedMe: false, jabs: 0 });
+  });
+
+  it('cannot be read with luck on, weighted rounding or my orders unknown', () => {
+    const after = board([...shown, mine(3, 9), its(4, 8)]);
+    expect(of(observe(prev, after, none, { luckModifier: 0.16 })).jabs).toBeNull();
+    expect(of(observe(prev, after, none, { roundingMode: 'WeightedRandom' })).jabs).toBeNull();
+    expect(of(observe(prev, after)).jabs).toBeNull();
+  });
+});
+
+describe('habitsOf: jab (#361)', () => {
+  it('counts the contact turns it jabbed among those read', () => {
+    const h = habitsOf([
+      { turn: 3, primitives: turn({ contact: true, attackedMe: true, jabs: 1 }) },
+      { turn: 4, primitives: turn({ contact: true, attackedMe: true, jabs: 2 }) },
+      { turn: 5, primitives: turn({ contact: true, attackedMe: false, jabs: 0 }) },
+      { turn: 6, primitives: turn({ contact: true, attackedMe: true, jabs: null }) },
+      // An older record, kept before #361: not read.
+      { turn: 7, primitives: turn({ contact: true, attackedMe: true }) },
+    ]);
+    expect(h.jab).toEqual({ e: 2, n: 3 });
+  });
+
+  it('labels a jabber at the confidence bar', () => {
+    const base = habitsOf([]);
+    expect(labelsOf(estimateHabits({ ...base, jab: { e: 6, n: 6 } }))).toEqual(['jabber']);
+    expect(labelsOf(estimateHabits({ ...base, jab: { e: 2, n: 2 } }))).toEqual([]);
+  });
+});
