@@ -123,12 +123,13 @@ describe('frontier cost (#71): every capture pays for the frontier it adds', () 
     // Under expand (defence ignored, as in R3) it is taken, and the warning reports the budget.
     const q = planTurn({ graph: G, board: b, me: ME, income: 5, settings: STD, options: { goal: 'expand', enemyDeploy: 5 } });
     expect(attacks(q).map((m) => m.to).sort()).toEqual([3, 7]);
-    expect(q.frontier).toEqual({ borders: 2, enemyBorders: 1, holdCost: 25, income: 5 });
+    // #288: T1 has nothing left to attack once both fall, so the leftover 5 goes with the two attacks.
+    expect(q.frontier).toEqual({ borders: 2, enemyBorders: 1, holdCost: 22, income: 5 });
     expect(q.warnings).toContain(
-      'Frontier grows faster than income: holding its 1 enemy-facing borders next turn needs 25 at the expected deploy, more than the next income of 5 (0 at the start of the turn).',
+      'Frontier grows faster than income: holding its 1 enemy-facing borders next turn needs 22 at the expected deploy, more than the next income of 5 (0 at the start of the turn).',
     );
     expect(q.rationale).toContain(
-      "Frontier after this plan: 2 borders, 1 facing an enemy, needing 25 next turn to hold at the expected deploy (next income 5); every capture's score paid for the borders it adds.",
+      "Frontier after this plan: 2 borders, 1 facing an enemy, needing 22 next turn to hold at the expected deploy (next income 5); every capture's score paid for the borders it adds.",
     );
   });
 
@@ -169,7 +170,8 @@ describe('frontier cost (#71): every capture pays for the frontier it adds', () 
     const b = board([mine(1, 30), mine(2, 1), neutral(3, 2), mine(4, 1), enemy(5, 4), enemy(6, 4), neutral(7, 4), neutral(8, 2)]);
     const p = planTurn({ graph: FG, board: b, me: ME, income: 5, settings: STD, options: { enemyDeploy: 5 } });
     expect(attacks(p).map((m) => m.to).sort()).toEqual([3, 7]);
-    expect(p.frontier).toEqual({ borders: 2, enemyBorders: 1, holdCost: 6, income: 7 });
+    // #288: T1 has nothing left to attack once T3 and T7 fall, so the leftover goes with both attacks.
+    expect(p.frontier).toEqual({ borders: 2, enemyBorders: 1, holdCost: 3, income: 7 });
     expect(p.rationale.join('\n')).not.toMatch(/Do not take T3/);
     expect(p.warnings.join('\n')).not.toMatch(/Frontier grows faster than income|not taken/);
   });

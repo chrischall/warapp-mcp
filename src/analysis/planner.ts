@@ -1215,7 +1215,11 @@
 //     territory central to what I hold (open, issuing no order; my largest connected holding,
 //     then the fewest hops through my land to its farthest border, then the least sum, then id),
 //     the leftover stays on that centre ("no front to go to: it stays central …"; rule 6 moves
-//     the armies already there, never the leftover) — else the
+//     the armies already there, never the leftover); #288: when that source faces no threat, holds
+//     no commander of mine and has nothing left to attack once this turn's captures land (every
+//     neighbour mine or captured), the leftover goes with its attacks on neutrals whose targets have
+//     a step onward (equal shares, most steps onward first; not under No-Split, not a combined
+//     capture: "and send it with the attack on …") — else the
 //     border with the most fogged neighbours, else my biggest stack.
 //     #303 (plan/leftover.ts `flatSave`): when my income is flat (`PlanInput.incomeHistory` → `PlanCtx.incomeTrend`,
 //     #312's rule: the last FLAT_TURNS + 1 turns consecutive and within FLAT_TOLERANCE of the first) and the step

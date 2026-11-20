@@ -371,7 +371,8 @@ describe('#107: never stand still, live shapes', () => {
     it('in the opening, one capture that grows the frontier beats standing still, and the rationale says so', () => {
       const p = planTurn({ graph: fg, board: b, me: ME, income: 5, settings: CAP, game: SEVEN });
       expect(p.profile.phase).toBe('opening');
-      expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 6 })]);
+      // #288: T1 has nothing left to attack once T3 falls, so the leftover 5 goes with the attack.
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 11 })]);
       const r = p.rationale.join('\n');
       expect(r).toMatch(/rule 4d's frontier stop is waived for this one capture: in the opening, one capture that grows the frontier is better than none/);
       expect(r).not.toMatch(/Do not take T3 \(#3\)/);
