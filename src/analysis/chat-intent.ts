@@ -135,12 +135,16 @@ const safeString = (v: unknown): string => {
   }
 };
 
-/** Lower-case words only: delimiters and apostrophes dropped, every other mark a space. */
+/**
+ * Lower-case words only: delimiters and apostrophes dropped, every other mark a space. The quote
+ * look-alikes `untrustedText` writes are letters (ʼ U+02BC, ʺ U+02BA: Lm), so they are named here:
+ * the apostrophe joins its word ("donʼt" → "dont"), the double quote separates ("ʺAlphaʺ" → "alpha").
+ */
 function flatten(raw: string): string {
   return raw
     .slice(0, MAX_TEXT * 2)
     .normalize('NFKC')
-    .replace(/[⟦⟧]/g, ' ')
+    .replace(/[⟦⟧ʺ]/g, ' ')
     .toLowerCase()
     .replace(/['`‘’ʼ′]/g, '')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
@@ -174,7 +178,25 @@ const ACCEPT_WORD = /\b(accept|accepted|accepting|agree|agreed|deal|confirmed)\b
 const DECLINE_WITH_TRUCE = /\bno (truce|nap|peace|deal|alliance)\b|\b(decline|declined|reject|rejected|refuse|refused)\b|\bnot interested\b/;
 const REPLY_ACCEPT =
   /^(deal|agreed|agree|ok|okay|k|kk|sure|yes|yep|yeah|yup|accepted|i accept|i agree|fine|alright|sounds good|done|you got a deal)\b/;
-const REPLY_DECLINE = /^(no|nope|nah|no thanks|no deal|not interested|pass|no way|i decline|declined)\b|\bnot interested\b/;
+/** A bare decline at the start of a reply (longest wordings first, so the rest is what follows the whole phrase). */
+const REPLY_DECLINE_START = /^(no thanks|no deal|no way|not interested|i decline|declined|nope|nah|pass|no)\b/;
+/** Most words after a bare decline for it still to be a reply ("nah im good"), not another sentence ("no way you are winning"). */
+const REPLY_DECLINE_REST = 2;
+/** Refusing a truce: a negated want of one ("i dont want a truce", "no want peace"). */
+const NEGATED_WANT = new RegExp(
+  `\\b(i )?(dont|do not|did not|didnt|not|no|never|wont|will not)( really| even)? (want|wanna|need)( to make| to have)?( a| an| any| the| your| this| that| our| ur)? ${TRUCE_NOUN}\\b`,
+);
+const NEGATED_WANT_ALL = new RegExp(NEGATED_WANT.source, 'g');
+
+/** A bare decline of my open proposal: short, or what follows still speaks of the deal. */
+function replyDeclines(s: string): boolean {
+  if (/\bnot interested\b/.test(s)) return true;
+  const m = REPLY_DECLINE_START.exec(s);
+  if (!m) return false;
+  const rest = s.slice(m[0].length).trim();
+  if (!rest) return true;
+  return rest.split(' ').length <= REPLY_DECLINE_REST || TRUCE_WORD.test(rest) || /\bdeal\b/.test(rest);
+}
 
 type Strength = 'high' | 'medium';
 
@@ -183,26 +205,33 @@ interface Truce {
   accept: Strength | null;
   decline: Strength | null;
   end: Strength | null;
+  /** The proposal is the mutual no-attack wording, which reads like a threat and is not one. */
+  mutual: boolean;
 }
 
 /** The truce intents of one flattened, substituted text; `proposalOpen` reads a bare reply as one. */
 function truceOf(s: string, hasQuestion: boolean, proposalOpen: boolean, hostile = false): Truce {
-  const r: Truce = { proposal: null, accept: null, decline: null, end: null };
+  const r: Truce = { proposal: null, accept: null, decline: null, end: null, mutual: false };
   const truce = TRUCE_WORD.test(s);
-  const offer = hasQuestion || OFFER_WORD.test(s);
+  const refused = truce && NEGATED_WANT.test(s);
+  // A negated want offers nothing: "i dont want a truce" is no offer, whatever else the message says.
+  const offer = hasQuestion || OFFER_WORD.test(s.replace(NEGATED_WANT_ALL, ' '));
   if (GIVING_NOTICE.test(s)) r.end = truce ? 'high' : 'medium';
   else if (truce && TRUCE_ENDED.test(s)) r.end = 'high';
   // An end word near a truce word, said of something else ("done fighting", "then it ends"): only when not an offer.
   else if (truce && !offer && TRUCE_END.test(s)) r.end = 'medium';
-  if (proposalOpen && REPLY_DECLINE.test(s)) r.decline = 'high';
-  else if (truce && DECLINE_WITH_TRUCE.test(s)) r.decline = 'medium';
+  if (proposalOpen && replyDeclines(s)) r.decline = 'high';
+  else if (truce && (refused || DECLINE_WITH_TRUCE.test(s))) r.decline = 'medium';
   if (!r.decline) {
     // A bare "ok" with a threat in it does not accept anything.
     if (proposalOpen && !hostile && REPLY_ACCEPT.test(s)) r.accept = 'high';
     else if (truce && ACCEPT_WORD.test(s) && !ASK_TO_ACCEPT.test(s)) r.accept = 'medium';
   }
   if (!r.end && !r.decline && !r.accept) {
-    if (MUTUAL_NO_ATTACK.test(s)) r.proposal = 'high';
+    if (MUTUAL_NO_ATTACK.test(s)) {
+      r.proposal = 'high';
+      r.mutual = true;
+    }
     else if (truce) r.proposal = offer ? 'high' : 'medium';
     else if (offer && !hostile && PEACE_OVERTURE.test(s)) r.proposal = 'medium';
   }
@@ -328,8 +357,8 @@ export function classifyMessage(text: string, ctx: ChatIntentContext): Classifie
     put('truce-decline', truce.decline);
     put('truce-end-notice', truce.end);
     put('coordination-ask', coordinationAsk(s));
-    // A mutual no-attack offer is a proposal, not a threat.
-    if (!truce.proposal) put('threat', threatStrength);
+    // A mutual no-attack offer is a proposal, not a threat; a coercive one ("… if you dont accept truce") is both.
+    if (!truce.mutual) put('threat', threatStrength);
     put('surrender-ask', surrenderAsk(s));
     put('gg', gg(s));
     put('banter', banter(s));

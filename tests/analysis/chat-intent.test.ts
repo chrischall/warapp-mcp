@@ -1,6 +1,7 @@
 // #415 task 1: classify another player's chat message by what it asks of me (synthetic names only).
 import { describe, expect, it } from 'vitest';
 import { type ChatIntentContext, classifyMessage, describeIntent, INTENTS, type Intent } from '../../src/analysis/chat-intent.js';
+import { untrustedBody } from '../../src/tools/common.js';
 
 const CTX: ChatIntentContext = {
   players: [
@@ -232,7 +233,8 @@ describe('classifyMessage: cleaned text and robustness', () => {
 
 // Review of task 1: wordings near another intent, the ones Tasks 2 and 4b will meet (each read raw and cleaned).
 describe('classifyMessage: near-miss wordings', () => {
-  const cleaned = (t: string): string => `⟦${t.replace(/'/g, 'ʼ')}⟧`;
+  // The cleaned form is exactly what the chat tools hand out (#415 review 2).
+  const cleaned = (t: string): string => untrustedBody(t);
   const both = (t: string, ctx: ChatIntentContext = CTX) => [classifyMessage(t, ctx), classifyMessage(cleaned(t), ctx)];
 
   describe('a truce offer with an end in it is a proposal, not an end notice', () => {
@@ -285,5 +287,80 @@ describe('classifyMessage: near-miss wordings', () => {
 
   describe('"i give up" counts only when it ends the message or comes with gg', () => {
     cases('surrender-ask', ['i give up', 'i give up gg', 'I give up, accept it'], ['i give up on you lol', 'i quit trying to understand this map']);
+  });
+});
+
+// Review 2 of task 1: the cleaned text read in full, refusals, bare replies and coercion.
+describe('classifyMessage: review 2', () => {
+  const both = (t: string, ctx: ChatIntentContext = CTX) => [classifyMessage(t, ctx), classifyMessage(untrustedBody(t), ctx)];
+  const proposed: ChatIntentContext = { ...CTX, myRecentMessages: ['truce?'] };
+
+  describe('quoted words survive the cleaning', () => {
+    for (const t of ['"Bluefox" is winning, everyone attack him', '“Bluefox” is winning, everyone attack him', '«Bluefox» is winning']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) {
+          expect(r.mentions.players).toEqual([1]);
+          expect(r.addressedToMe).toBe(true);
+        }
+      });
+    }
+    it('reads a quoted keyword', () => {
+      for (const r of both('"truce"?')) expect(r.intents).toContain('truce-proposal');
+      for (const r of both('want a "truce" with ″Redcrane″?')) {
+        expect(r.intents).toContain('truce-proposal');
+        expect(r.mentions.players).toEqual([2]);
+      }
+    });
+    it('reads a quoted territory', () => {
+      for (const r of both("get out of 'New Zealand'")) expect(r.mentions.territories).toEqual([11]);
+    });
+  });
+
+  describe('a refusal is never a high-confidence proposal', () => {
+    for (const t of ['i dont want a truce', "i don't want peace", 'i do not want a nap', 'not want truce', 'no want peace', 'i dont wanna truce']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) {
+          expect(r.intents).not.toContain('truce-proposal');
+          expect(r.intents).toContain('truce-decline');
+        }
+      });
+    }
+    cases('truce-proposal', ['want a truce?', 'do you want peace', 'i want a truce'], []);
+  });
+
+  describe('a bare decline counts only as a short reply', () => {
+    for (const t of ['no way you are winning', 'no idea what you mean', 'no i think Redcrane is lying to everyone']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t, proposed)) {
+          expect(r.intents).not.toContain('truce-decline');
+          expect(r.addressedToMe).toBe(false);
+        }
+      });
+    }
+    for (const t of ['no', 'nope', 'no thanks', 'no way', 'nah im good', 'no deal', 'no thanks, no truce for you']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t, proposed)) {
+          expect(r.intents).toContain('truce-decline');
+          expect(r.confidence).toBe('high');
+          expect(r.addressedToMe).toBe(true);
+        }
+      });
+    }
+  });
+
+  describe('a threat is dropped only for the mutual no-attack wording', () => {
+    for (const t of ['i will attack you if you dont accept truce', 'accept a truce or else', 'truce or ill crush you']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) expect(r.intents).toContain('threat');
+      });
+    }
+    for (const t of ['dont attack me and i wont attack you', 'dont hit me, i will not hit you']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) {
+          expect(r.intents).not.toContain('threat');
+          expect(r.intents).toContain('truce-proposal');
+        }
+      });
+    }
   });
 });
