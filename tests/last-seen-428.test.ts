@@ -31,4 +31,13 @@ describe('fogSightings', () => {
     // An owner-only sighting gives no count: the older neutral 7 is never used against a newer owner.
     expect([...countsOf(s)].sort((a, b) => a[0] - b[0])).toEqual([[3, { armies: 2, owner: null }], [4, { armies: 9, owner: 20 }]]);
   });
+
+  it('takes no army count from a GameFeed history board (unverified in play), only its owner', () => {
+    const hist = [{ turn: 2, board: board([mine(4, 9, 20), neutral(3, 2)]), source: 'history' as const }];
+    const s = fogSightings(now, hist);
+    expect(s.get(4)).toEqual({ owner: 20, armies: null });
+    expect(s.get(3)).toEqual({ owner: null, armies: null });
+    expect(countsOf(s).size).toBe(0);
+    expect(ownersOf(s)).toEqual(new Map([[4, 20]]));
+  });
 });

@@ -1546,7 +1546,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     settings give), and only without any of those at the bonus's costliest visible missing member (65
     finished-game plans counted every one at 208). The sightings are one source with #417's: `fogSightings`
     (plan/vacated.ts) over my board history gives each fogged territory's newest sighting (owner, and armies when
-    shown); `foggedLastSeen` is its owners, `lastSeen` its counts. Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input 1017 of 6253 plans, 722
+    shown — never from a GameFeed history board, unverified in play: those give the owner only); `foggedLastSeen` is its owners, `lastSeen` its counts. Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input 1017 of 6253 plans, 722
     orders, captures +21/−2, next income lower on 1; with sightings from each input's previous board, 51 plans, 34 orders,
     captures +1. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures

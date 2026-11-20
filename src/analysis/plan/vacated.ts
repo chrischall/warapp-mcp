@@ -43,15 +43,19 @@ export interface FogSighting {
  * its owner (`boards` in any order; boards that fog it too are skipped): the owner, and the armies that
  * board showed (`null` when only its owner was shown). The one source of both {@link foggedLastSeen}
  * (#417, who held it) and the planner's last-seen price (#428, `PlanOptions.lastSeen`), so they never
- * read different boards.
+ * read different boards. A GameFeed history board (`source: 'history'`) gives its owner only: no army count.
  */
-export function fogSightings(board: BoardState, boards: readonly { turn: number; board: BoardState }[]): Map<number, FogSighting> {
+export function fogSightings(
+  board: BoardState,
+  boards: readonly { turn: number; board: BoardState; source?: string }[],
+): Map<number, FogSighting> {
   const fogged = new Set(board.territories.filter((t) => t.owner.kind === 'unknown').map((t) => t.territoryId));
   const out = new Map<number, FogSighting>();
   for (const b of [...boards].sort((x, y) => y.turn - x.turn))
     for (const t of b.board.territories) {
       if (!fogged.has(t.territoryId) || out.has(t.territoryId) || t.owner.kind === 'unknown') continue;
-      const armies = visibleState(t)?.armies ?? null;
+      // A GameFeed history board (unverified while the game is played) gives the owner, never a count.
+      const armies = b.source === 'history' ? null : (visibleState(t)?.armies ?? null);
       out.set(t.territoryId, { owner: t.owner.kind === 'player' ? t.owner.playerId : null, armies });
     }
   return out;
@@ -63,7 +67,7 @@ export function fogSightings(board: BoardState, boards: readonly { turn: number;
  * neutral, or no earlier board showed it. A static seat's land stays costed as vacated however many
  * turns it has been out of view, not only on the turn after vision was lost. The owners of {@link fogSightings}.
  */
-export function foggedLastSeen(board: BoardState, boards: readonly { turn: number; board: BoardState }[]): Map<number, number> {
+export function foggedLastSeen(board: BoardState, boards: readonly { turn: number; board: BoardState; source?: string }[]): Map<number, number> {
   return ownersOf(fogSightings(board, boards));
 }
 
