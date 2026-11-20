@@ -140,6 +140,18 @@ describe('#382 siege goal', () => {
     expect(p.rationale.join('\n')).toMatch(/Assault held/);
   });
 
+  it('#361: jabs a break member it cannot take this turn with one army from the strike stack\'s spare', () => {
+    const b = board(BOARD.territories.map((t) => (t.territoryId === 2 ? mine(2, 35) : t.territoryId === 13 ? enemy(13, 30) : t)));
+    const p = planTurn({ ...input(), board: b });
+    // T13 (30) needs 50, more than the strike stack T2 can send: one army from what T2 has beyond its
+    // hold wears it down by one for the break (#361), and nothing else of the target is jabbed.
+    expect(p.jabs).toEqual([{ from: 2, to: 13, player: ENEMY, defenders: 30, kills: 1, loses: 1, why: 'siege-break' }]);
+    expect(attacks(p).filter((m) => m.to === 13)).toEqual([expect.objectContaining({ from: 2, armies: 1, winChance: 0 })]);
+    expect(attacks(p).map((m) => m.to)).not.toContain(17);
+    // `jabs: false` turns them off under a siege too.
+    expect(planTurn({ ...input(), board: b, options: { goal: 'siege', jabs: false } }).jabs).toBeUndefined();
+  });
+
   it('balanced on the same board carries no siege', () => {
     const p = planTurn(input({ goal: 'balanced' }));
     expect(p.goal).toBe('balanced');

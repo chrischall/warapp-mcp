@@ -1555,6 +1555,7 @@ import { neighborsOf } from './graph.js';
 import { forecastBorder, mainFront, type FrontStack } from './exchange.js';
 import { byNum, pct } from './plan/util.js';
 import { SIEGE_BREAK_WEIGHT } from './plan/siege.js';
+import { planJabs } from './plan/jabs.js';
 import {
   BREAK_WEIGHT,
   MIN_EXPANSION_SHARE,
@@ -2993,6 +2994,31 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${aim >= 1 ? 'be sure' : `reach ${pct(aim)}`}` : ''}.`;
   }
 
+  // ---- #361: single-army jabs from the armies still idle beyond each hold (plan/jabs.ts) ----
+  const jabsOn = pc.opts.jabs ?? pc.siege !== undefined;
+  // A jab never brings on #128's or #314's warning: a border that holds against two opponents
+  // attacking it together keeps what holds it so, and one whose hold leaves enough that the attack's
+  // survivors cannot take it next turn keeps that too (report.ts's #314 test).
+  const thin = (x: number, have: number): boolean => {
+    const b = borders.get(x);
+    if (!b || conceded.has(x) || b.movable <= 0) return false;
+    const take = toTake(have);
+    if (take === null || take <= b.threat) return false;
+    const mineAfter = Math.max(0, have - straightKills(b.threat, rates.offensiveKillRate));
+    const hisAfter = Math.max(0, b.threat - straightKills(have, rates.defensiveKillRate));
+    const next = toTake(mineAfter);
+    return next !== null && next <= hisAfter;
+  };
+  const jabSpare = (x: number): number => {
+    let spare = spareBeyondHold(x);
+    const now = hd.stayAt(x) + unitsAt(x);
+    if (!thin(x, now)) while (spare > 0 && thin(x, now - spare)) spare--;
+    const pile = threats.forceAt(x, (n) => captured.has(n), { trend: true, allPlayers: true, pileOn: true });
+    if (!pile?.split || pile.split.players.length < 2) return spare;
+    return now > pile.split.takes ? Math.min(spare, now - pile.split.takes - 1) : spare;
+  };
+  const jabs = jabsOn ? planJabs(pc, ps, jabSpare, keepWhole, (t) => tgt.repulsed.has(t), pc.siege ? strikeStack?.id : undefined) : [];
+
 
   // ---- Order Priority for a strike (rule 1s) (plan/move-order.ts) ----
   const { strikeCard, strikeWho } = strikeOrderPriority(pc, ps, threats, hd, struck);
@@ -3012,6 +3038,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const plan = finishPlan(pc, ps, pass, threats, hd, tgt, expected, sentAt, slotOf, facesEnemy, exits);
   // #218: the main front's forecast at my whole income, for the game outlook to share.
   if (ps.front) plan.front = ps.front;
+  if (jabs.length) plan.jabs = jabs;
   // #303: my income over the last turns, as rule 5's flat-income saving (plan/leftover.ts) read it.
   if (pc.incomeTrend) plan.incomeTrend = pc.incomeTrend;
   // PLAN-TEAMS C3.3: the bonuses I share with a teammate (plan/team.ts).

@@ -1667,6 +1667,8 @@ export interface LivePlanArgs {
   avoid?: { territories: readonly number[]; players: readonly number[] };
   /** #382: under `goal: 'siege'`, the player besieged (`siege_target`, a GameFeed id). */
   siegeTarget?: number;
+  /** #361: single-army jabs (`jabs`): `true` on, `false` off; default on under goal siege only. */
+  jabs?: boolean;
   /** #382: the siege's memory kept for this game (src/siege-store.ts). */
   siegeMemory?: SiegeMemory;
 }
@@ -1896,6 +1898,7 @@ export async function livePlanSetup(
       ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
       ...(a.args?.avoid ? { avoid: a.args.avoid } : {}),
       ...(a.args?.siegeTarget !== undefined ? { siegeTarget: a.args.siegeTarget } : {}),
+      ...(a.args?.jabs !== undefined ? { jabs: a.args.jabs } : {}),
       // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
       ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
       // #215 review: from the award (unverified), the schedule and card advice use it, holds do not.
@@ -2324,6 +2327,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           .describe(
             "With goal siege: the player to besiege (GameFeed player id). Default: the strongest opponent bordering my territories.",
           ),
+        jabs: z
+          .boolean()
+          .optional()
+          .describe(
+            'Single-army jabs (#361): only at 0% luck under straight rounding, where one attacking army kills ' +
+              'round(1 × the offensive kill rate) = 1 defender and dies, a one-for-one trade. When on, armies still idle ' +
+              'beyond a border\'s hold jab enemy stacks of 2 or more (one army each, at most one per stack) of an opponent ' +
+              'I out-earn or out-army, or the siege target\'s bonus members; reported as `jabs`, attrition, never captures. ' +
+              'Default: on under goal siege, off otherwise.',
+          ),
         known_income: knownIncomeArg,
         avoid_territories: avoidTerritoriesArg,
         avoid_players: avoidPlayersArg,
@@ -2346,7 +2359,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ),
       }),
     },
-    async ({ game_id, player, goal, siege_target, focus, reserve, enemy_deploy, known_income, avoid_territories, avoid_players, min_win_chance, first_mover, view }) => {
+    async ({ game_id, player, goal, siege_target, jabs, focus, reserve, enemy_deploy, known_income, avoid_territories, avoid_players, min_win_chance, first_mover, view }) => {
       // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
       const feed = await ctx.client.getGame(game_id, { settings: true, chat: true });
       requireTurnPhase(feed);
@@ -2378,6 +2391,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         args: {
           ...(goal !== undefined ? { goal } : {}),
           ...(goal === 'siege' && siege_target !== undefined ? { siegeTarget: siege_target } : {}),
+          ...(jabs !== undefined ? { jabs } : {}),
           ...(siegeMemory ? { siegeMemory } : {}),
           focusBonusIds,
           ...(reserve !== undefined ? { reserve } : {}),
@@ -2681,6 +2695,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         goalSource: goal !== undefined ? 'explicit' : 'profile',
         // #382: the siege's state (goal siege only).
         ...(plan.siege ? { siege: plan.siege } : {}),
+        // #361: the single-army jabs among the orders (attrition, never captures); absent with none.
+        ...(plan.jabs ? { jabs: plan.jabs } : {}),
         // #276: the guard case first, on or off, with what it means for interior defence.
         profile:
           rung === 'full'

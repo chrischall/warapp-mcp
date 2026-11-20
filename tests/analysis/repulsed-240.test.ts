@@ -95,6 +95,15 @@ describe('#240: repulsedAttacks reads failed attacks of mine whose target its ow
     ]);
   });
 
+  it('#361: single-army jabs are no evidence (they never try to take it): refilled twice, not repulsed', () => {
+    const boards: TurnBoard[] = [
+      { turn: 16, board: at(12), orders: attackC(1) },
+      { turn: 17, board: at(14), orders: attackC(1) },
+      { turn: 18, board: at(16) },
+    ];
+    expect(repulsedAttacks(g, boards, ME, RATES)).toEqual([]);
+  });
+
   it('one failed attack only is no evidence', () => {
     const boards: TurnBoard[] = [{ turn: 16, board: at(12) }, { turn: 17, board: at(15), orders: attackC(25) }, { turn: 18, board: at(17) }];
     expect(repulsedAttacks(g, boards, ME, RATES)).toEqual([]);
