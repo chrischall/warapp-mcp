@@ -869,3 +869,29 @@ describe('packaging for chat as game information (#415)', () => {
     expect(all).toContain('**Fourteen tools write, all confirm-gated:**');
   });
 });
+
+describe('packaging for the decision log v2 (#437)', () => {
+  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const plan412 = readFileSync(new URL('../docs/PLAN-DECISIONS-412.md', import.meta.url), 'utf8');
+  const section = (() => {
+    const start = readme.indexOf('## Decision log');
+    return start === -1 ? '' : readme.slice(start, readme.indexOf('\n## ', start + 1));
+  })();
+
+  it('README names the v2 fields, the kind tags and the review export', () => {
+    for (const s of ['scripts/review-export.mjs', '--boards', 'index.json', 'lottery', 'no-show', 'legacy', 'events', 'picks', 'join', 'checks', 'firstMover']) {
+      expect(section, s).toContain(s);
+    }
+  });
+
+  it('CLAUDE.md documents the review export beside the decision log', () => {
+    const start = claude.indexOf('- **The decision log (#412');
+    const bullet = claude.slice(start, claude.indexOf('\n- **', start + 1));
+    for (const s of ['scripts/review-export.mjs', 'src/review-export.ts', 'reviewGame', 'exportReview']) expect(bullet, s).toContain(s);
+  });
+
+  it('the #412 design record says v2 extends it', () => {
+    expect(plan412).toContain('docs/PLAN-DECISION-LOG-V2.md');
+  });
+});

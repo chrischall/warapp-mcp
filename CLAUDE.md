@@ -117,8 +117,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   an account or salt refusal keeps it for a retry. `warapp_backfill_history` (not confirm-gated: this server's
   state only, never war.app) runs `sweepFinished` with `limit` (default 10, max 25) and an optional `window` (at
   most `MAX_FINISHED_RECORDS`), so each game's history is still read once.
-- **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing, not the board cache
-  either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
+- **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing but its verdict to the decision log
+  (#437), not the board cache either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
   (`docs/STRATEGY.md` "Turn resolution" links each page: deploys first, then attacks and transfers
   in the zigzag, an order that moves no armies taking no slot; attack or transfer decided when the
   order runs; the guard army, which an arrived army can be and a commander cannot; each army
@@ -287,7 +287,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   a kept inferred turn; the award; a kept award turn. Disagreement is a warning; `firstMover` reports
   `{ who, source, from?, line }` (`line`: "You move first on turn N (…)"). The game history is not
   read for it (UNVERIFIED whether an in-progress `GetHistory` carries the orders in the order they ran).
-  `warapp_check_plan` writes nothing and still tries both orders unless `first_mover` is given.
+  `warapp_check_plan` writes no move order and still tries both orders unless `first_mover` is given.
 - **Chat has channels (part A1 of `docs/PLAN-TEAMS.md`).** The `GameRefresh` read of **public** messages is
   VERIFIED LIVE 2026-11-14 (count, time, turn, sender and channel matched GameFeed `GetChat=true`); team and
   private channels, `mark_seen` / the cursor, `warapp_plan_turn`'s `chat.unread`, `chatActivity` and sending
@@ -1303,6 +1303,37 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   left out); the value never changes for it. **#312 item 4 is only partly met:** the calibration from past games is
   reported in `warapp_track_opponents` full (`pastGames`) only; the outlook and the estimate warnings
   (`warapp_plan_turn`'s) do not report it yet.
+  **Finished-record and aggregate hygiene (#437 task 4, `docs/PLAN-DECISION-LOG-V2.md`; additive, every `version`
+  stays 1, older records and stores read):** each finished record carries `kinds` (`gameKinds` in
+  `src/analysis/finished-game.ts`): `lottery` (a map of at most `LOTTERY_MAX_TERRITORIES` territories; without the map,
+  the decision log's join context read it as one, or the settings fit the lottery shape), `no-show` (a decision log or
+  board cache is kept for the game, no won result, and no turn committed — no cached orders, no logged `sent` — or a
+  boot seen while turn 1 or 2 was played, or a boot ending the game within one turn), `legacy` (no decision log and no
+  board cache: never a no-show for want of orders), `team`. A lottery or no-show game (`excludedKind`, lottery first)
+  is counted apart: `processHistory` writes `recordMapExcluded` / `recordLessonsExcluded` instead (`processed` all
+  `excluded`; a game counted before has its share taken back), folds no history profile, and the sweep's live fold
+  reports `profileFold: { status: 'nothing', reason: 'excluded' }`. Both stores keep `excluded: { lottery, noShow, keys }`
+  (keys with their kind, at most `MAX_EXCLUDED_KEYS`, so a game is counted apart once; a game later counted as a game
+  leaves it); `lessonsSummary`, `mapRecordSummary` and the views show `excluded` with `EXCLUDED_NOTE`. Every other
+  profile fold skips such a game too, whichever tool reads it first (`foldExclusion` in `src/tools/game-kind.ts`, shared
+  with the pass's `kindsOf`: the kinds of the game's finished record when there is one, else read now from the game and
+  what this server kept as the cached account — its map's size, the log's `join.lottery`, the orders and seat events;
+  with no cached account only the map size or the lottery settings shape): `foldFinished` (warapp_get_game,
+  warapp_profile_opponents) answers `{ status: 'nothing', reason: 'excluded' }`, and the file-only folds
+  (warapp_wait_for_turn's read, a game-ended notification) go through `foldKeptProfile`, which folds nothing for it.
+  `outcome.leftTurn` (`leftTurnOf`): for a surrender or a boot the turn being played when the decision log's events saw
+  my seat leave (`my-surrender`, my seat's `surrender-accepted` / `booted`; the earliest), else the history's out turn;
+  for an elimination the out turn. It is the lessons' `howLost.turn` for a surrender or boot, and `failedAttacks` drops
+  my orders of that turn and later (they never ran). `PlayerTurn.armies` leaves out a territory whose count did not read
+  on a board that hides nothing (where a commander stands in a finished history) and counts it in `armiesUnread`;
+  only a fogged territory makes it `null`. The decision log's truth carries the same `armiesUnread` beside `armies`
+  (`mine` and each opponent), so a figure that leaves a territory out reads as a lower bound, never a definite count.
+  **Not yet done:** counting the commander's standing itself — GameFeed's raw value for a territory with a commander
+  has not been captured, so its armies are unread rather than parsed. Map entries keep `kinds` and `settings: { key (`settingsKey`), localDeployments?,
+  commanders? }`; `mapRecordSummary` / `mapRecordStarts` take a `MapMatch` (`mapMatchOf`: the current game's format,
+  Local Deployment and Commanders — an entry that kept no flag matches on it, counted in `settingsUnknown`), and
+  warapp_plan_picks' `mapRecord` and warapp_plan_turn's `pace` read only the matching games, with `matched: { by,
+  entries, of, settingsUnknown, note }`; warapp_map_stats (no game) reads them all.
 - **Locating opponents (`src/analysis/whereabouts.ts`, pure; `warapp_locate_opponents` in
   `src/tools/where.ts`, read-only)** reads the same board history and tracks, plus the starts the
   award proves (`loadAward`), the pickable territories kept in the pick record (`pickable` in
@@ -2114,6 +2145,65 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   score against `next`, the estimate accuracy against the truth and `--export-fixtures`. The invariant — unchanged code
   and no scenario reproduce the logged deploys and moves — is tested from the capture (`tests/decision-replay-tools.test.ts`).
   How to run: `docs/PLAN-PROFILES.md` "Replaying the decision log". No planner decision reads the log.
+  **v2 per-turn additions (#437 task 1, `docs/PLAN-DECISION-LOG-V2.md`; additive, `version` stays 1, older entries read
+  as they are):** `planner.build` (`src/build-id.ts`, read once per process: `git:<sha>` from this package's own `.git`
+  — a worktree's `.git` file, its common dir and packed refs followed, no process spawned; never the `.git` of a project
+  it is installed inside — else `sha256:<16 hex>` of the running bundle); `times` (ISO wall-clock: `plannedAt` by
+  `recordDecision`, `sentAt` by `recordSubmission`, and from the game read `turnStartedAt` — GameFeed's `lastTurnTime`,
+  read as the turn's start, unverified — and `bootAt.auto`/`direct` from AutoBoot/DirectBoot); `firstMover` (`{ who,
+  source, verified }`, `null` unknown); `cards` (`hand`: my cards by type and count; `advice`: per card advised its kind,
+  target ids, player and a reason code, never prose, `cardAdviceLog`; `played`/`discarded` from `sent`); `checks.submit`
+  (the commander check — `null` without one — the weakest 5 headroom rows as `takeAt` and what each protects, the
+  below-plan rows and the chat commitments the orders break, by id) and `checks.checkPlan` (`warapp_check_plan`'s `safe`,
+  the worst reply in numbers, `harmful`/`considered`, the `atRisk` counts, `whatIf` under `enemy_deploy` or
+  `known_income`; `recordCheck`, the latest run per turn wins, starting an entry when the turn has none, and a plan of
+  the turn after it keeps it). The pure shapers are in `src/tools/decision-capture.ts`; compaction keeps all of them.
+  **v2 per-game additions (#437 task 2; additive, `version` stays 1):** `events` (`{ turn, kind, player?, detail?, at }`,
+  `turn` the turn being played when seen — completed + 1, 0 before turn 1 —; the newest `MAX_GAME_EVENTS` = 500 kept,
+  `eventsDropped` counting the rest; never twice for the same change): seat changes diffed against `seats` (each seat's
+  last state word and turned-AI flag, by GameFeed id; `seatEvents`: `booted`, `surrender-accepted`, `eliminated`,
+  `ended-by-vote`, `turned-ai`, any other non-`Playing`/`Invited` word as `seat-state` with the word — a non-word reads
+  `other`; at first sight a seat already out is an event too) on EVERY GameFeed game read (`WarappClient.observeGames` →
+  `captureSeats`, wired in `src/tools/index.ts`; as the log's own account when seated, else the signed-in account only
+  when a read already gave it — `LiveContext.cachedInviteToken`, never a request — and the game not `Finished`, which
+  starts a log; an unchanged read is skipped by an in-process signature); `surrender-pending` (player, `owed` /
+  `not-owed` / `unknown`) from `readPendingSurrenders` (warapp_wait_for_turn, warapp_plan_turn; warapp_my_games' list
+  read carries no GameFeed ids and logs nothing); `surrender-accepted-by-me` (warapp_accept_surrender `confirmed`); and
+  `my-surrender` (warapp_surrender `surrendered` or `pending`, `detail`: status, my income and the highest-income opponent
+  from the outlook log's latest evidence, its state and turn, `mySurrenderDetail`). `join` (warapp_join_game `confirmed`,
+  `joinContextLog`): `settingsKey` (`sha256:<16 hex>` of `nameFreeSettings`, keys sorted; `null` when GameFeed could not read
+  the lobby), `flags` (format, seats, pace, boot minutes, and from GameFeed LD, commanders, kill rates, luck, fog, cards)
+  and `policy` (`policyChecks` in `src/open-games.ts`: `broke`/`passed`/`unchecked` by code — commerce, mods,
+  custom-scenario, neutral-cost, seats, boot-time, lottery), `lottery` when marked. `opponents` (by GameFeed id:
+  `firstSeen` turn, `ai` for an AI seat; warapp_scout_player with `game_id` adds `level`, `ranked`, `bootRatePct`,
+  `readTurn` to a log that exists, as its account — no extra request; GameFeed's player carries no level). A log holding
+  only these (a lobby joined) is finished and compacted like any other (`hasContent`). All kept through compaction.
+  **v2 picks phase (#437 task 3; additive, `version` stays 1):** `picks` on the log — `advice` (warapp_plan_picks,
+  `picksAdviceLog` → `capturePicksAdvice`: players, territory limit, `maxPicks`, `spread`, the list, primary and fallback
+  ids, the first `LOGGED_PICK_SCORES` = 10 picks' scores, both group scores, the warnings by code (`pickWarningCode`,
+  each once, unknown wording `other`), the award `outcomes`/`orders` judged/`worst`/`reordered` (`null` when not judged),
+  coverage numbers, the `alternative` when offered, and in a team game the teammates' ids, lists read and `mirrored`;
+  never a reason, rationale or name; a re-plan replaces it, `advices` counting; logged as the log's own account when
+  seated, else the signed-in seat by `myInviteToken` — cached, so usually no request; neither seated: nothing),
+  `submitted` (warapp_submit_picks after a send that did not throw, `capturePicksSent`: `sent`, `readBack` or `null`,
+  `verified`, `outcome`; the latest send wins, `submits` counting; a preview logs nothing) and `award` (`loadAward` on
+  turn 1 when it writes the reading, `capturePicksAward`: `turn` and the `AwardReading` or `null`; written once, never
+  over one kept). Each starts a log; a log holding only `picks` is finished and compacted like any other; kept through
+  compaction.
+  **The review export (#437 task 5, `scripts/review-export.mjs`, LOCAL dev script like the replay: never a tool, never
+  in CI; logic in `src/review-export.ts`, tested in `tests/review-export.test.ts`).** `reviewGame` joins one game from
+  the data dir alone: the decision log (each turn without its encoded `board` and replay `input` — `hasInput` says
+  whether one was kept; `boards: true`/`--boards` adds `boardAt`'s board whole, `null` on a broken chain — plus
+  `accuracySummary`, `truthMissing`, `events`, `eventsDropped`, `seats`, `join`, `opponents`, `picks`), the
+  finished record, the map-record and lessons entries by `finishedGameKey` (`{ entry }`, or `{ entry: null, excluded }`
+  for a game counted apart), the settings record's game by ids only, the stored map's name and size, and
+  `kinds`/`format`/`outcome`/`turns` read off them; `sources` says per source `present`/`missing`/`unreadable`
+  (`excluded` for the two keyed stores). My account is the log's, else the board cache's, else — a legacy game — the
+  settings record seat whose `finishedPath` exists. `reviewGameIds` lists every game with a log (readable or not) or a
+  settings record; `exportReview` writes `game-<id>.json` and `index.json` (one line per game: id, kinds, format, map
+  id and name, outcome, turns, sources), pretty JSON, atomic, 0600, into a folder it makes 0700 and refuses when an
+  existing one is readable by others (never chmod-ed). No request; nothing written to the data dir (reading a stored
+  map touches its mtime, as every reader does). Name-free like its sources.
 - **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
   `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's

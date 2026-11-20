@@ -22,6 +22,11 @@ export interface OpponentTruth {
   income: number;
   /** `null` when the history hid any of its armies. */
   armies: number | null;
+  /**
+   * #437: its territories in view whose count did not read (where a commander stood): `armies` leaves them
+   * out, so it is a lower bound then. Absent when every count read.
+   */
+  armiesUnread?: number;
   territories: number;
   bonuses: number[];
   /** Its true start-of-turn armies on each territory my logged board showed fogged or owner-only: `[territory, armies]`. */
@@ -32,7 +37,8 @@ export interface OpponentTruth {
 export interface TurnTruth {
   /** The history board read (completed turns): the turn − 1. */
   board: number;
-  mine: { income: number; armies: number | null; territories: number };
+  /** `armiesUnread` as {@link OpponentTruth}'s: `armies` is a lower bound when present. */
+  mine: { income: number; armies: number | null; territories: number; armiesUnread?: number };
   opponents: OpponentTruth[];
 }
 
@@ -186,9 +192,18 @@ export function decisionTruth(input: TruthInput): TruthResult {
         .filter((t) => ownerOf(t) === p && t.armies !== null && hiddenOnMine(t.territoryId))
         .map((t) => [t.territoryId, t.armies!] as [number, number])
         .sort((a, b) => a[0] - b[0]);
-      return { player: p, income: x.income, armies: x.armies, territories: x.territories, bonuses: x.bonuses, hidden };
+      return {
+        player: p,
+        income: x.income,
+        armies: x.armies,
+        ...(x.armiesUnread ? { armiesUnread: x.armiesUnread } : {}),
+        territories: x.territories,
+        bonuses: x.bonuses,
+        hidden,
+      };
     });
-    truth.set(turn, { board: turn - 1, mine: { income: mine.income, armies: mine.armies, territories: mine.territories }, opponents });
+    const myUnread = mine.armiesUnread ? { armiesUnread: mine.armiesUnread } : {};
+    truth.set(turn, { board: turn - 1, mine: { income: mine.income, armies: mine.armies, territories: mine.territories, ...myUnread }, opponents });
     if (!logged) continue;
     const myIncome = logged.myIncome ?? mine.income;
     const hiddenStacks = logged.board ? opponents.reduce((s, o) => s + o.hidden.filter(([, a]) => a >= myIncome && a > 0).length, 0) : null;

@@ -39,14 +39,23 @@ export interface PlayerTurn {
   /** Base (or per-territory, when larger) + every bonus held in full: `boardIncome`, cards and the army cap aside. */
   income: number;
   territories: number;
-  /** Armies on its territories; `null` when any of them is hidden. */
+  /**
+   * Armies on its territories; `null` when any of them is hidden by the fog. A territory whose count did
+   * not read on a board that hides nothing (a finished game's history shows every territory, V1; the count
+   * is missing where a commander stands, #437) is left out of the sum and counted in `armiesUnread`.
+   */
   armies: number | null;
+  /** #437: its territories whose army count did not read though no fog hid it (a commander's); absent when none. */
+  armiesUnread?: number;
   /** The bonuses it holds in full, ascending ids. */
   bonuses: number[];
 }
 
 const ownerOf = (t: TerritoryState | undefined): number | undefined =>
   t?.owner.kind === 'player' ? t.owner.playerId : undefined;
+
+/** A fog level that hides a territory's armies (fogged or owner-only, by word or number). */
+const hidesArmies = (level: string | undefined): boolean => level !== undefined && (/fog|owneronly/i.test(level) || level === '3' || level === '4');
 
 /**
  * Each of `players` on `board`: its income by THE income rule (`boardIncome`, src/analysis/player.ts:
@@ -62,11 +71,16 @@ export function turnIncomes(
 ): Map<number, PlayerTurn> {
   const held = new Map<number, Set<number>>(players.map((p) => [p, new Set<number>()]));
   const armies = new Map<number, number | null>(players.map((p) => [p, 0]));
+  const unread = new Map<number, number>();
   for (const t of board.territories) {
     const o = ownerOf(t);
     if (o === undefined || !held.has(o) || !g.territoryById.has(t.territoryId)) continue;
     held.get(o)!.add(t.territoryId);
     const a = armies.get(o)!;
+    if (t.armies === null && !hidesArmies(t.fogLevel)) {
+      unread.set(o, (unread.get(o) ?? 0) + 1);
+      continue;
+    }
     armies.set(o, a === null || t.armies === null ? null : a + t.armies);
   }
   const rules = incomeRules(settings);
@@ -78,11 +92,13 @@ export function turnIncomes(
       continue;
     }
     const inc = boardIncome(g, land, rules);
+    const u = unread.get(p);
     out.set(p, {
       income: inc.total,
       territories: land.size,
       armies: armies.get(p)!,
       bonuses: inc.bonuses.map((b) => b.bonusId).sort((a, b) => a - b),
+      ...(u ? { armiesUnread: u } : {}),
     });
   }
   return out;
@@ -181,6 +197,23 @@ export interface CaptureInput {
   boards: Boards;
   /** My cached orders by the turn played. */
   orders: ReadonlyMap<number, MyOrders>;
+  /**
+   * #437: the turn being played when my seat left the game (a surrender or a boot), when known from the
+   * decision log's events (GameFeed); a history board cannot tell it, since such a seat keeps its land.
+   */
+  leftTurn?: number | null | undefined;
+}
+
+/** Outcomes in which my seat left the game, so my orders of that turn never ran (#437). */
+const LEFT: ReadonlySet<FinishedOutcome> = new Set(['surrendered', 'booted']);
+
+/**
+ * The turn being played when my seat left (#437): for a surrender or a boot, `leftTurn` (the decision log's
+ * events), else my out turn on the history; for an elimination, my out turn; `null` otherwise or unknown. Pure.
+ */
+export function leftTurnOf(result: FinishedOutcome, outTurn: number | null, leftTurn: number | null | undefined): number | null {
+  if (LEFT.has(result)) return leftTurn ?? outTurn;
+  return result === 'eliminated' ? outTurn : null;
 }
 
 /** A finished game's capture, by real ids (the store keys them). */
@@ -191,6 +224,8 @@ export interface FinishedCapture {
     turn: number | null;
     /** The first history board on which I held no land after holding some; `null` when never (or no history). */
     outTurn: number | null;
+    /** #437: the turn being played when my seat left ({@link leftTurnOf}); `null` when it did not, or unknown. */
+    leftTurn: number | null;
     winners: number[];
   };
   starts: Map<number, number[]>;
@@ -203,15 +238,82 @@ export interface FinishedCapture {
 export function captureFinished(input: CaptureInput): FinishedCapture {
   const ids = input.players.map((p) => p.id).sort((a, b) => a - b);
   const boards = ascending(input.boards);
+  const result = outcomeOf(input.players, input.me);
+  const outTurn = outTurnOf(boards, input.me);
+  const leftTurn = leftTurnOf(result, outTurn, input.leftTurn);
+  // #437: my orders of the turn my seat left (a surrender or a boot) never ran: no failed attack of theirs.
+  const ran = LEFT.has(result) && leftTurn !== null ? (f: FailedAttack) => f.turn < leftTurn : () => true;
   return {
     outcome: {
-      result: outcomeOf(input.players, input.me),
+      result,
       turn: input.numberOfTurns ?? null,
-      outTurn: outTurnOf(boards, input.me),
+      outTurn,
+      leftTurn,
       winners: input.players.filter((p) => p.state === 'Won').map((p) => p.id).sort((a, b) => a - b),
     },
     starts: startsOf(boards, ids),
     turns: input.graph ? boards.map(({ turn, board }) => ({ afterTurn: turn, players: turnIncomes(input.graph!, board, ids, input.settings) })) : [],
-    failedAttacks: failedAttacks(boards, input.orders, input.me),
+    failedAttacks: failedAttacks(boards, input.orders, input.me).filter(ran),
   };
+}
+
+// ---- #437: the game's kind ----
+
+/**
+ * What kind of game a finished one was (#437): `lottery` (a map of at most `LOTTERY_MAX_TERRITORIES`
+ * territories, or the lobby joined was read as one), `no-show` (I never committed a turn, or my seat was
+ * booted before turn 2 was played), `legacy` (no decision log and no board cache: played before this server
+ * kept either), `team`. Lottery and no-show games teach nothing, so the lessons, the map record and the
+ * profile folds count them apart.
+ */
+export type GameKind = 'lottery' | 'no-show' | 'legacy' | 'team';
+export const GAME_KINDS: readonly GameKind[] = ['lottery', 'no-show', 'legacy', 'team'];
+/** The kinds kept out of the lessons, the map record and the profile folds. */
+export const EXCLUDED_KINDS: readonly GameKind[] = ['lottery', 'no-show'];
+
+/** What {@link gameKinds} reads. */
+export interface KindInput {
+  result: FinishedOutcome;
+  /** The game's format (`profileFormatOf`). */
+  team: boolean;
+  /** The map's territory count, when the map was had. */
+  territories?: number | undefined;
+  /** The lobby joined, as the decision log's join context read it (`true`: a lottery, `null`: likely one). */
+  joinLottery?: true | null | undefined;
+  /** Without the map: the settings fit the lottery shape (base income 0 and overridden bonuses). */
+  lotteryShape?: boolean;
+  lotteryMaxTerritories: number;
+  /** A decision log kept for the game. */
+  hasLog: boolean;
+  /** A board cache kept for the game as me. */
+  hasBoards: boolean;
+  /** Turns whose orders I committed (cached orders or the log's sent orders). */
+  committedTurns: number;
+  /** The turn being played when my seat left ({@link leftTurnOf}). */
+  leftTurn: number | null;
+  /** The game's completed turns at the finish. */
+  numberOfTurns: number | null;
+}
+
+/** The kinds of a finished game ({@link GameKind}), in {@link GAME_KINDS} order. Pure. */
+export function gameKinds(k: KindInput): GameKind[] {
+  const out = new Set<GameKind>();
+  const lottery =
+    k.territories !== undefined ? k.territories <= k.lotteryMaxTerritories : k.joinLottery !== undefined || k.lotteryShape === true;
+  if (lottery) out.add('lottery');
+  const legacy = !k.hasLog && !k.hasBoards;
+  // Never committed: only where this server kept the game (a legacy game's orders were never cached).
+  const neverCommitted = !legacy && k.committedTurns === 0 && k.result !== 'won';
+  // Booted before turn 2 was played: seen booted while turn 1 or 2 was being played (a boot at turn 1's
+  // deadline is first seen on turn 2), or the game ended with at most one turn completed.
+  const bootedEarly = k.result === 'booted' && ((k.leftTurn !== null && k.leftTurn <= 2) || (k.numberOfTurns !== null && k.numberOfTurns <= 1));
+  if (neverCommitted || bootedEarly) out.add('no-show');
+  if (legacy) out.add('legacy');
+  if (k.team) out.add('team');
+  return GAME_KINDS.filter((x) => out.has(x));
+}
+
+/** The kind a game is kept apart for (lottery first), or `undefined` when it counts. Pure. */
+export function excludedKind(kinds: readonly GameKind[]): 'lottery' | 'no-show' | undefined {
+  return kinds.includes('lottery') ? 'lottery' : kinds.includes('no-show') ? 'no-show' : undefined;
 }

@@ -185,7 +185,17 @@ describe('warapp_plan_turn', () => {
     expect(plain).not.toHaveProperty('pace');
     expect(await recordMapGame(h.dataDir, 39905, entry)).toBe('kept');
     const p = payload<PlanPayload & { pace?: Record<string, unknown> }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    expect(p.pace).toEqual({ afterTurn: 4, mine: 5, winners: 13, myPast: 7, games: 1, behindWinners: true, note: expect.stringMatching(/reported only/) });
+    expect(p.pace).toEqual({
+      afterTurn: 4,
+      mine: 5,
+      winners: 13,
+      myPast: 7,
+      games: 1,
+      behindWinners: true,
+      // #437: only the games of this game's format and settings (the entry kept no settings: it matches, unknown).
+      matched: { by: { format: 'ffa', localDeployments: false, commanders: false }, entries: 1, of: 1, settingsUnknown: 1, note: expect.any(String) },
+      note: expect.stringMatching(/reported only/),
+    });
     // Inform only: the orders are the plan's own.
     expect(p.orders).toEqual(plain.orders);
     expect(p.deploys).toEqual(plain.deploys);

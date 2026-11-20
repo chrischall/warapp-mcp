@@ -160,3 +160,11 @@ caps/pruning order, `off` mode writes nothing.
 - README: the new `warapp_submit_turn` inputs; a short "Decision log" section (what is kept, the env
   switch, the caps, the replay script). Keep this file (docs/PLAN-DECISIONS-412.md) as the design record.
 - `npm test` green; `npm run build` green; `node scripts/replay-decisions.mjs --help` works after build.
+
+## Extended by v2 (#437)
+
+`docs/PLAN-DECISION-LOG-V2.md` extends this design, additively (the log `version` stays 1, old logs read as
+they are): per turn the planner build, wall-clock `times`, `firstMover`, `cards` and `checks`; per game
+`events`, `seats`, `join`, `opponents` and the `picks` phase; the finished record's game kinds (lottery,
+no-show, legacy, team) kept out of the aggregates; and `scripts/review-export.mjs`, which joins each game's
+log with its end-of-game record and aggregate entries into one file per game for a strategy review.
