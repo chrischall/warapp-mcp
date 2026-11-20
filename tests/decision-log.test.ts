@@ -12,14 +12,19 @@ import {
   boardAt,
   decisionLogMode,
   decisionLogPath,
+  decisionOutcome,
   decodeInput,
+  fillOutcome,
   listDecisionLogs,
+  ordersDiffer,
   pruneDecisionLogs,
   readDecisionLog,
   recordDecision,
   recordObservation,
+  recordObservations,
   recordOutcome,
   recordSent,
+  recordSubmission,
   updateDecisionLog,
 } from '../src/decision-log.js';
 import { VERSION } from '../src/version.js';
@@ -467,5 +472,140 @@ describe('listing and pruning decision logs', () => {
     expect(removed).toEqual([1]);
     expect(await pruneDecisionLogs(dir, { maxBytes: 0 })).toEqual([2]);
     expect((await listDecisionLogs(dir)).map((l) => l.gameId)).toEqual([3]);
+  });
+});
+
+describe('capture helpers (#412 task 2)', () => {
+  it('keeps the board the planner read when it differs from the board seen (proven starts in the fog), and decodes it', async () => {
+    const seen = boardOn(2);
+    const planned: BoardState = { ...seen, territories: seen.territories.map((x) => (x.territoryId === 5 ? t(5, FOE, 8) : x)) };
+    await recordDecision(dir, GAME, ME, { turn: 2, board: seen, plannedBoard: planned, input: input(2, { board: planned }), plan: plan(2) });
+    const l = (await readDecisionLog(dir, GAME))!;
+    expect(boardAt(l, 2)).toEqual(seen);
+    const back = decodeInput(l.turns['2']!.input!, boardAt(l, 2)!, input(2).graph);
+    expect(back.board).toEqual(planned);
+    expect(back.previousBoard).toEqual(boardOn(1));
+    // The same board: nothing extra kept.
+    await recordDecision(dir, GAME, ME, { turn: 3, board: boardOn(3), plannedBoard: boardOn(3), input: input(3), plan: plan(3) });
+    expect((await readDecisionLog(dir, GAME))!.turns['3']!.input!.plannedBoard).toBeUndefined();
+  });
+
+  it('logs several observations in one write; a history board never replaces a board already logged', async () => {
+    await recordObservation(dir, GAME, ME, 2, boardOn(2), 'live');
+    expect(
+      await recordObservations(dir, GAME, ME, [
+        { turn: 1, board: boardOn(1), source: 'history' },
+        { turn: 2, board: boardOn(9), source: 'history' },
+      ]),
+    ).toBe(true);
+    const log = (await readDecisionLog(dir, GAME))!;
+    expect(log.turns['1']).toMatchObject({ kind: 'observed', source: 'history' });
+    expect(log.turns['2']).toMatchObject({ kind: 'observed', source: 'live' });
+    expect(boardAt(log, 1)).toEqual(boardOn(1));
+    expect(boardAt(log, 2)).toEqual(boardOn(2));
+    // Nothing new: nothing written.
+    expect(await recordObservations(dir, GAME, ME, [{ turn: 2, board: boardOn(9), source: 'history' }])).toBe(false);
+    expect(await recordObservations(dir, GAME, ME, [])).toBe(false);
+  });
+
+  it('works out what happened next: income, territories gained and lost, the captures made and missed, the bonuses held', () => {
+    const before = boardOn(1);
+    const after: BoardState = { source: 'gamefeed', verified: true, territories: [t(1, ME, 7), t(2, FOE, 3), t(3, FOE, 4), t(4, ME, 2), t(5, 'fog', null)] };
+    const bonuses = new Map<number, readonly number[]>([
+      [10, [1, 4]],
+      [11, [1, 2]],
+      [12, []],
+    ]);
+    expect(decisionOutcome({ before, after, me: ME, income: 7, captures: [4, 3], bonuses })).toEqual({
+      income: 7,
+      gained: [4],
+      lost: [2],
+      capturesMade: [4],
+      capturesMissed: [3],
+      bonusesHeld: [10],
+      eliminated: false,
+    });
+    // No land left: eliminated.
+    const gone: BoardState = { ...after, territories: after.territories.map((x) => (x.owner.kind === 'player' && x.owner.playerId === ME ? t(x.territoryId, FOE, 1) : x)) };
+    expect(decisionOutcome({ before, after: gone, me: ME, income: null, captures: [], bonuses })).toMatchObject({ eliminated: true, income: null, gained: [] });
+  });
+
+  it('fills the outcome of a logged turn once, from its own board, never over one already filled', async () => {
+    await record(1);
+    const seen: unknown[] = [];
+    expect(
+      await fillOutcome(dir, GAME, ME, 1, (entry, board) => {
+        seen.push(entry.decision?.expected.captures, board);
+        return { income: 6, gained: [], lost: [], capturesMade: [4], capturesMissed: [], bonusesHeld: [], eliminated: false };
+      }),
+    ).toBe(true);
+    expect(seen).toEqual([[4], boardOn(1)]);
+    expect((await readDecisionLog(dir, GAME))!.turns['1']!.next?.income).toBe(6);
+    expect(await fillOutcome(dir, GAME, ME, 1, () => ({ income: 9, gained: [], lost: [], capturesMade: [], capturesMissed: [], bonusesHeld: [], eliminated: false }))).toBe(false);
+    expect((await readDecisionLog(dir, GAME))!.turns['1']!.next?.income).toBe(6);
+    // A turn with no entry, or whose maker declines: nothing.
+    expect(await fillOutcome(dir, GAME, ME, 5, () => undefined)).toBe(false);
+  });
+
+  it('tells sent orders from the decision: deploys merged per territory in any order, moves in order, a percent or mode move always differs', () => {
+    const d = plan(1, {
+      deploys: [
+        { territoryId: 1, armies: 3 },
+        { territoryId: 2, armies: 2 },
+      ],
+      moves: [
+        { from: 1, to: 4, armies: 4, kind: 'attack', reason: 'a' },
+        { from: 2, to: 3, armies: 2, kind: 'attack', reason: 'b' },
+      ],
+    });
+    const same = {
+      deploys: [
+        { territoryId: 2, armies: 1 },
+        { territoryId: 1, armies: 3 },
+        { territoryId: 2, armies: 1 },
+      ],
+      moves: [
+        { from: 1, to: 4, armies: 4 },
+        { from: 2, to: 3, armies: 2 },
+      ],
+    };
+    expect(ordersDiffer(d, same)).toBe(false);
+    expect(ordersDiffer(d, { ...same, deploys: [{ territoryId: 1, armies: 5 }] })).toBe(true);
+    expect(ordersDiffer(d, { ...same, moves: [...same.moves].reverse() })).toBe(true);
+    expect(ordersDiffer(d, { ...same, moves: [same.moves[0]!, { ...same.moves[1]!, exact: false }] })).toBe(true);
+  });
+
+  it('records a submission: sent alone when it matches the decision, an override (by the agent unless said) when it differs', async () => {
+    await record(1);
+    const orders = { deploys: [{ territoryId: 1, armies: 5 }], moves: [{ from: 1, to: 4, armies: 4 }] };
+    const sent = { deploys: orders.deploys, moves: orders.moves };
+    expect(await recordSubmission(dir, GAME, ME, 1, { sent, orders, reason: 'ignored: the plan was followed' })).toBe(true);
+    let e = (await readDecisionLog(dir, GAME))!.turns['1']!;
+    expect(e.sent).toEqual(sent);
+    expect(e.override).toBeUndefined();
+    expect(e.decision?.goal).toBe('balanced');
+    const other = { deploys: [{ territoryId: 2, armies: 5 }], moves: [] };
+    await recordSubmission(dir, GAME, ME, 1, { sent: other, orders: other, reason: 'Keep 2 safe.' });
+    e = (await readDecisionLog(dir, GAME))!.turns['1']!;
+    expect(e.sent).toEqual(other);
+    expect(e.override).toEqual({ by: 'agent', reason: 'Keep 2 safe.' });
+    await recordSubmission(dir, GAME, ME, 1, { sent: other, orders: other, by: 'hand' });
+    expect((await readDecisionLog(dir, GAME))!.turns['1']!.override).toEqual({ by: 'hand' });
+  });
+
+  it('records a submission with no logged decision: an override only when the caller says the orders came from outside the planner', async () => {
+    const sent = { deploys: [{ territoryId: 2, armies: 5 }], moves: [] };
+    await recordObservation(dir, GAME, ME, 2, boardOn(2), 'live');
+    await recordSubmission(dir, GAME, ME, 2, { sent, orders: sent });
+    let e = (await readDecisionLog(dir, GAME))!.turns['2']!;
+    expect(e).toMatchObject({ kind: 'observed', sent });
+    expect(e.override).toBeUndefined();
+    expect(boardAt((await readDecisionLog(dir, GAME))!, 2)).toEqual(boardOn(2));
+    await recordSubmission(dir, GAME, ME, 3, { sent, orders: sent, reason: 'By hand in the client.' });
+    e = (await readDecisionLog(dir, GAME))!.turns['3']!;
+    expect(e).toEqual({ sent, override: { by: 'hand', reason: 'By hand in the client.' } });
+    await recordSubmission(dir, GAME, ME, 4, { sent, orders: sent, by: 'agent' });
+    expect((await readDecisionLog(dir, GAME))!.turns['4']!.override).toEqual({ by: 'agent' });
+    expect(await recordSubmission(dir, GAME, ME, 5, { sent, orders: sent }, { mode: 'off' })).toBe(false);
   });
 });

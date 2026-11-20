@@ -18,6 +18,7 @@ import { pastGamesFor } from './past-games.js';
 import { profileFormatOf } from '../analysis/opponent-profile.js';
 import { recordProfile } from './profile-hook.js';
 import { boardHistory, currentTurn, plannerSettings, requireTurnPhase } from './turn.js';
+import { captureObservation } from './decision-capture.js';
 import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -81,6 +82,7 @@ export function registerOpponentsTool(server: McpServer, ctx: LiveContext, deps:
       const tracks = trackOpponents(graph, boards, me.id, settings, trackGame(game.players, game.settings, map, game.endRules));
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+        await captureObservation(ctx, game.id, me.id, [{ turn, board, source: 'live' }]);
         await writeGameRecord(ctx.dataDir, game);
         await recordProfile(ctx.dataDir, deps.env, game, me, boards, teamsKnown);
       }

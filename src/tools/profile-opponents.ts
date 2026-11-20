@@ -28,6 +28,7 @@ import { foldFinished, recordProfile } from './profile-hook.js';
 import { counterOf, readOpponents } from './profile-reads.js';
 import { resolveTeamsFor } from './team-source.js';
 import { boardHistory, currentTurn, requireTurnPhase } from './turn.js';
+import { captureObservation } from './decision-capture.js';
 
 const VIEWS = ['compact', 'full'] as const;
 
@@ -93,6 +94,7 @@ export function registerProfileOpponentsTool(server: McpServer, ctx: LiveContext
       const boards: TurnBoard[] = turn !== null ? [...history.boards, { turn, board }] : [];
       if (ctx.dataDir && turn !== null) {
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, board);
+        await captureObservation(ctx, game.id, me.id, [{ turn, board, source: 'live' }]);
         await writeGameRecord(ctx.dataDir, game);
         await recordProfile(ctx.dataDir, env, game, me, boards, teamsKnown);
       }

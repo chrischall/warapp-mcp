@@ -103,7 +103,7 @@ export interface StoredPreviousBoard {
  * `teammateOrders` (ids only) are kept here, never on the stored board, and `decodeInput` puts them back on
  * the rebuilt board: the planner reads them, and no store can rebuild them.
  */
-export type LoggedInput = Rec & { previousBoard?: StoredPreviousBoard; teammateOrders?: unknown };
+export type LoggedInput = Rec & { previousBoard?: StoredPreviousBoard; teammateOrders?: unknown; plannedBoard?: StoredPreviousBoard };
 
 /** The keys of `PlanInput` that are not kept in {@link LoggedInput}. */
 const INPUT_DROPPED = new Set(['graph', 'board', 'vacated', 'bonusPush', 'previousBoard']);
@@ -179,6 +179,11 @@ export interface DecisionRecord {
   board: BoardState;
   /** The input the planner was called with. */
   input: PlanInput;
+  /**
+   * The board the planner read when it is not `board` (the award of picks fills proven starts into the
+   * fog): kept in the input as a change against `board`, and `decodeInput` plans on it again.
+   */
+  plannedBoard?: BoardState;
   plan: TurnPlan;
   outlookState?: OutlookState | null;
   /** The game's players, for scrubbing names; only ids are ever written. */
@@ -309,12 +314,13 @@ export function encodeInput(input: PlanInput): LoggedInput {
 
 /** The planner's input rebuilt from a kept one, this turn's board and the map's graph. */
 export function decodeInput(logged: LoggedInput, board: BoardState, graph: PlanInput['graph']): PlanInput {
-  const { previousBoard, teammateOrders, ...rest } = logged;
+  const { previousBoard, teammateOrders, plannedBoard, ...rest } = logged;
   const out = decodeValue(rest) as Rec;
+  const planned = isRec(plannedBoard) && Array.isArray(plannedBoard.changed) ? patch(board, plannedBoard) : board;
   return {
     ...(out as unknown as PlanInput),
     graph,
-    board: Array.isArray(teammateOrders) ? { ...board, teammateOrders: decodeValue(teammateOrders) as BoardState['teammateOrders'] } : board,
+    board: Array.isArray(teammateOrders) ? { ...planned, teammateOrders: decodeValue(teammateOrders) as BoardState['teammateOrders'] } : planned,
     ...(isRec(previousBoard) && Array.isArray(previousBoard.changed) ? { previousBoard: patch(board, previousBoard) } : {}),
   };
 }
@@ -453,10 +459,15 @@ export async function recordDecision(
   try {
     const board = plainBoard(rec.board);
     const teammateOrders = rec.input.board.teammateOrders ?? rec.board.teammateOrders;
+    const input = encodeInput({ ...rec.input, board: teammateOrders ? { ...board, teammateOrders } : board });
+    if (rec.plannedBoard) {
+      const d = diff(board, plainBoard(rec.plannedBoard));
+      if (d.changed.length || d.removed) input.plannedBoard = { source: rec.plannedBoard.source, verified: rec.plannedBoard.verified, ...d };
+    }
     const entry: DecisionEntry = scrubNames(
       {
         kind: 'planned',
-        input: encodeInput({ ...rec.input, board: teammateOrders ? { ...board, teammateOrders } : board }),
+        input,
         planner: { version: VERSION },
         decision: decisionOf(rec.plan, rec.outlookState),
       },
@@ -480,11 +491,58 @@ export async function recordDecision(
   }
 }
 
+/** One board seen but not planned, for {@link recordObservations}. */
+export interface Observation {
+  turn: number;
+  board: BoardState;
+  source: ObservationSource;
+}
+
 /**
- * Log the board of a turn seen but not planned (no-gaps rule (a)): an observation entry, keeping any sent
- * orders and override already logged for the turn. Never overwrites a planned entry (`false` then); a
- * later {@link recordDecision} of the turn upgrades it. `true` when written. Never throws.
+ * Log the boards of turns seen but not planned (no-gaps rule (a)), in one write: an observation entry
+ * each, keeping any sent orders and override already logged for the turn. Never overwrites a planned
+ * entry, and a board filled from history never replaces a board already logged (a live one is the
+ * better view); a later {@link recordDecision} of the turn upgrades it. `true` when written (`false`
+ * when nothing was new). Never throws.
  */
+export async function recordObservations(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  seen: readonly Observation[],
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  try {
+    const items = seen.map((o) => ({ turn: o.turn, board: plainBoard(o.board), source: o.source }));
+    if (!items.length) return false;
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        const turns = { ...log.turns };
+        const boards = decodeBoards(log);
+        let changed = false;
+        for (const o of items) {
+          const was = turns[String(o.turn)];
+          if (was?.kind === 'planned' || was?.decision) continue;
+          if (o.source === 'history' && was?.board) continue;
+          boards.set(o.turn, o.board);
+          turns[String(o.turn)] = { ...was, kind: 'observed', source: o.source };
+          changed = true;
+        }
+        if (!changed) return undefined;
+        encodeBoards(turns, boards);
+        return { ...log, turns };
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** {@link recordObservations} of one board. */
 export async function recordObservation(
   dir: string,
   gameId: number,
@@ -494,26 +552,7 @@ export async function recordObservation(
   source: ObservationSource,
   opts: DecisionLogOptions = {},
 ): Promise<boolean> {
-  try {
-    const plain = plainBoard(board);
-    return await updateDecisionLog(
-      dir,
-      gameId,
-      playerId,
-      (log) => {
-        const was = log.turns[String(turn)];
-        if (was?.kind === 'planned' || was?.decision) return undefined;
-        const boards = decodeBoards(log);
-        boards.set(turn, plain);
-        const turns = { ...log.turns, [String(turn)]: { ...was, kind: 'observed' as const, source } };
-        encodeBoards(turns, boards);
-        return { ...log, turns };
-      },
-      opts,
-    );
-  } catch {
-    return false;
-  }
+  return recordObservations(dir, gameId, playerId, [{ turn, board, source }], opts);
 }
 
 export interface RecordSentOptions extends DecisionLogOptions {
@@ -571,6 +610,141 @@ export async function recordOutcome(
     },
     opts,
   );
+}
+
+/**
+ * Fill what happened after `turn` with `make(entry, board)` (the turn's own entry and its rebuilt board),
+ * under one lock: nothing when the turn has no entry, already has its outcome, or `make` gives none.
+ * `true` when written. Never throws.
+ */
+export async function fillOutcome(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  turn: number,
+  make: (entry: DecisionEntry, board: BoardState | undefined) => DecisionOutcome | undefined,
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  return updateDecisionLog(
+    dir,
+    gameId,
+    playerId,
+    (log) => {
+      const e = log.turns[String(turn)];
+      if (!e || e.next) return undefined;
+      const next = make(e, boardAt(log, turn));
+      return next ? { ...log, turns: { ...log.turns, [String(turn)]: { ...e, next: encodeValue(next) as DecisionOutcome } } } : undefined;
+    },
+    opts,
+  );
+}
+
+const mine = (b: BoardState, me: number): Set<number> =>
+  new Set(b.territories.flatMap((x) => (x.owner.kind === 'player' && x.owner.playerId === me ? [x.territoryId] : [])));
+const byNum = (a: number, b: number) => a - b;
+
+/**
+ * What happened after a turn, from its board (`before`) and the following turn's (`after`): the income
+ * then (`null`: unread), the territories gained and lost, which of the plan's `captures` I held, the
+ * bonuses (id → every member territory) I held in full, and whether I had no territory left.
+ */
+export function decisionOutcome(a: {
+  before: BoardState | undefined;
+  after: BoardState;
+  me: number;
+  income: number | null;
+  captures: readonly number[];
+  bonuses: ReadonlyMap<number, readonly number[]>;
+}): DecisionOutcome {
+  const now = mine(a.after, a.me);
+  const was = a.before ? mine(a.before, a.me) : undefined;
+  return {
+    income: a.income,
+    gained: was ? [...now].filter((id) => !was.has(id)).sort(byNum) : [],
+    lost: was ? [...was].filter((id) => !now.has(id)).sort(byNum) : [],
+    capturesMade: a.captures.filter((id) => now.has(id)),
+    capturesMissed: a.captures.filter((id) => !now.has(id)),
+    bonusesHeld: [...a.bonuses]
+      .filter(([, ts]) => ts.length > 0 && ts.every((id) => now.has(id)))
+      .map(([id]) => id)
+      .sort(byNum),
+    eliminated: now.size === 0,
+  };
+}
+
+/** Orders as sent, for {@link ordersDiffer}: a move with `exact: false` (a percentage or a mode) is never the planner's. */
+export interface SentOrders {
+  deploys: readonly { territoryId: number; armies: number }[];
+  moves: readonly { from: number; to: number; armies: number; exact?: boolean }[];
+}
+
+/**
+ * Whether the orders sent differ from a decision's: the deploys compared per territory (merged, in any
+ * order), the moves one by one in the order sent; a percentage or mode move always differs. Card plays
+ * are not compared (the planner plays none).
+ */
+export function ordersDiffer(decision: Pick<LoggedDecision, 'deploys' | 'moves'>, sent: SentOrders): boolean {
+  const sum = (ds: readonly { territoryId: number; armies: number }[]) => {
+    const m = new Map<number, number>();
+    for (const d of ds) m.set(d.territoryId, (m.get(d.territoryId) ?? 0) + d.armies);
+    return JSON.stringify([...m].filter(([, n]) => n !== 0).sort(([x], [y]) => x - y));
+  };
+  if (sum(decision.deploys) !== sum(sent.deploys)) return true;
+  if (decision.moves.length !== sent.moves.length) return true;
+  return sent.moves.some((m, i) => {
+    const d = decision.moves[i]!;
+    return m.exact === false || m.from !== d.from || m.to !== d.to || m.armies !== d.armies;
+  });
+}
+
+/** What {@link recordSubmission} logs. */
+export interface Submission {
+  /** The orders as kept (`myOrdersOf`). */
+  sent: MyOrders;
+  /** The same orders for comparing with the decision. */
+  orders: SentOrders;
+  /** Who chose orders that differ, when the caller says. */
+  by?: 'hand' | 'agent';
+  /** Why, when the caller says (kept as given, names scrubbed). */
+  reason?: string;
+  /** The game's players, for scrubbing names from the reason; only ids are ever written. */
+  players?: readonly { id: number; name?: string }[];
+}
+
+/**
+ * Log the orders sent on `turn` (one lock: read, compare, write). Against a logged decision an override
+ * is kept only when the orders differ (`by` the agent unless said); with no decision logged, only when
+ * the caller says who chose them or why (`by` hand unless said): orders from outside the planner. An
+ * entry (an observation's board, say) keeps everything else; a turn with none gets one. `true` when
+ * written. Never throws.
+ */
+export async function recordSubmission(
+  dir: string,
+  gameId: number,
+  playerId: number,
+  turn: number,
+  sub: Submission,
+  opts: DecisionLogOptions = {},
+): Promise<boolean> {
+  try {
+    const kept = encodeValue(sub.sent) as MyOrders;
+    const reason = sub.reason !== undefined ? scrubNames(String(sub.reason), sub.players) : undefined;
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        const { override: _old, ...was } = log.turns[String(turn)] ?? {};
+        const decided = was.decision;
+        const by = decided ? (ordersDiffer(decided, sub.orders) ? (sub.by ?? 'agent') : undefined) : sub.by !== undefined || reason !== undefined ? (sub.by ?? 'hand') : undefined;
+        const override: DecisionOverride | undefined = by ? { by, ...(reason !== undefined ? { reason } : {}) } : undefined;
+        return { ...log, turns: { ...log.turns, [String(turn)]: { ...was, sent: kept, ...(override ? { override } : {}) } } };
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
