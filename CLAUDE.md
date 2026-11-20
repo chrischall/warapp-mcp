@@ -2129,7 +2129,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   reach). Its `lean`: `unknown` when the range spans both lines (`INCOME_BEHIND_RATIO` ⅔ and
   `INCOME_AHEAD_RATIO` 1.5), `behind`/`ahead` when the whole range, else the estimate, is past one, else `even`
   unless each side's change per turn over the turns judged (`trend`), one turn on, crosses a line the ratio heads
-  to (`byTrend`). No lead is claimed at low coverage (any `evidence.thin`): `ahead` reads `unknown`, and a win on
+  to (`byTrend`). Calibration deepens a deficit the tracked figure shows, never creates one: a `behind` lean on the
+  estimate or its trend, and a turn under the surrender line, also need my income under the tracked figure (the
+  range's `low`); when only the calibrated estimate reads behind the lean is `unknown` (`calibratedOnly`). In-sample
+  replay (10 lost games, 100 turns): truly-even turns past the crossed line 5/25 → 1/25, truly-behind 42/75 → 29/75,
+  games crossed 10 → 9 of 10 (`MIN_CALIBRATION_SAMPLES` stays unmeasured). No lead is claimed at low coverage (any `evidence.thin`): `ahead` reads `unknown`, and a win on
   the likely high alone is not read (`noLeadClaim`; a win on the bound still is). The lean replaces `even` as the
   state (winning, losing, stalemate keep their tests; the planner reads only winning and losing), so the state can
   read `ahead`, `behind`, `unknown`; the chat standing maps them. A turn whose lean replaced `even` carries

@@ -115,6 +115,32 @@ describe('outlook incomes (#436)', () => {
     expect(o.surrenderLine?.crossed ?? false).toBe(false);
   });
 
+  it('calibration deepens a deficit the tracked figure shows, never creates one: no behind lean or surrender turn on it alone', () => {
+    // Me on T1–T3 with no West bonus (income 5) against the foe's tracked 5 under fog; past games read its band at 0.5×.
+    const g = buildGraph(line(0, 0));
+    const boards = turns(4, [leadingThin(10, 10), leadingThin(10, 12), leadingThin(10, 14)]);
+    const o = gameOutlook({ graph: g, me: ME, boards, game: { ...game, start }, calibration: { '25-50': { geoMean: 0.5, n: 20 } } });
+    const inc = o.turns.at(-1)!.income!;
+    expect(inc).toMatchObject({ mine: 5, theirs: { low: 5, estimate: 10 }, calibrated: true });
+    // Mine is under two-thirds of the calibrated 10 but not under the tracked 5: the two disagree, so unknown.
+    expect(inc.ratio.estimate!).toBeLessThanOrEqual(INCOME_BEHIND_RATIO);
+    expect(inc.lean).toBe('unknown');
+    expect(inc.calibratedOnly).toBe(true);
+    expect(o.surrenderLine).toBeUndefined();
+    expect(o.basis).toMatch(/unknown: only the calibrated estimate reads behind/);
+  });
+
+  it('a calibrated estimate under the line counts when the tracked figure already shows me behind', () => {
+    // The foe's T6 grows 7 a turn: tracked 7 against my 5 (behind, but above two-thirds); calibrated 10.
+    const g = buildGraph(line(0, 0));
+    const boards = turns(4, [leadingThin(10, 10), leadingThin(10, 17), leadingThin(10, 24)]);
+    const o = gameOutlook({ graph: g, me: ME, boards, game: { ...game, start }, calibration: { '25-50': { geoMean: 0.7, n: 20 } } });
+    const inc = o.turns.at(-1)!.income!;
+    expect(inc).toMatchObject({ mine: 5, theirs: { low: 7, estimate: 10 }, calibrated: true, lean: 'behind' });
+    expect(inc.calibratedOnly).toBeUndefined();
+    expect(o.surrenderLine).toMatchObject({ crossed: false, turnsBelow: 2, calibrated: true });
+  });
+
   it('gives a pace line: both incomes and their change per turn', () => {
     const grow = [trailing(10, 10), trailing(10, 10), board([mine(1, 10), mine(2, 10), mine(3, 2), neutral(4, 2), neutral(5, 2), foe(6, 10), foe(7, 10), foe(8, 10)])];
     const o = gameOutlook({ graph: buildGraph(line()), me: ME, boards: turns(4, grow), game });

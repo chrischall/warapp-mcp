@@ -182,6 +182,12 @@ export interface OutlookIncome {
   byTrend?: true;
   /** A lead (an `ahead` lean, or a win on the likely high) was not claimed: the evidence is thin. */
   noLeadClaim?: true;
+  /**
+   * Only the calibrated estimate read behind; the tracked figure (the range's low) did not have me under it,
+   * so the lean is `unknown` and the turn is not under the surrender line (calibration deepens a deficit the
+   * tracked figure shows, never creates one).
+   */
+  calibratedOnly?: true;
 }
 
 /** #436: a bonus I could complete next turn (see the header). */
@@ -984,6 +990,11 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
 
   // #436: each turn's income lean, with each side's change per turn over the turns judged up to it; it
   // replaces an `even` state (winning, losing and stalemate keep their own tests).
+  // Calibration deepens a deficit the tracked figure shows, never creates one: a behind lean on the
+  // calibrated estimate (or its trend), and a turn under the surrender line, need my income under the
+  // tracked figure (the range's low) too. In-sample, on 10 lost games, past games' estimate ÷ truth alone put
+  // 5 of 25 truly-even turns past the surrender line; with this rule 1 (see CLAUDE.md, #436).
+  const trackedBehind = (inc: OutlookIncome) => inc.mine < inc.theirs.low;
   const first = turns[0];
   for (const t of turns) {
     const inc = t.income;
@@ -998,7 +1009,13 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     if (spans) lean = 'unknown';
     else if (r.high !== null && r.high <= INCOME_BEHIND_RATIO) lean = 'behind';
     else if (r.low === null || r.low >= INCOME_AHEAD_RATIO) lean = 'ahead';
-    else if (r.estimate !== null && r.estimate <= INCOME_BEHIND_RATIO) lean = 'behind';
+    else if (r.estimate !== null && r.estimate <= INCOME_BEHIND_RATIO) {
+      if (trackedBehind(inc)) lean = 'behind';
+      else {
+        lean = 'unknown';
+        inc.calibratedOnly = true;
+      }
+    }
     else if (r.estimate === null || r.estimate >= INCOME_AHEAD_RATIO) lean = 'ahead';
     else {
       lean = 'even';
@@ -1007,7 +1024,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         const mineNext = Math.max(0, inc.mine + inc.trend.mine);
         const theirsNext = Math.max(0, inc.theirs.estimate + inc.trend.theirs);
         const next = theirsNext > 0 ? mineNext / theirsNext : null;
-        if (next !== null && r.estimate < 1 && next <= INCOME_BEHIND_RATIO) lean = 'behind';
+        if (next !== null && r.estimate < 1 && next <= INCOME_BEHIND_RATIO && trackedBehind(inc)) lean = 'behind';
         else if ((next === null || next >= INCOME_AHEAD_RATIO) && r.estimate > 1) lean = 'ahead';
         if (lean !== 'even') inc.byTrend = true;
       }
@@ -1077,7 +1094,8 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         }
       : undefined;
   // #436: the surrender line (advice only): my income under the line for SURRENDER_TURNS turns running.
-  const below = (t: OutlookTurn) => !!t.income && t.income.mine < INCOME_BEHIND_RATIO * t.income.theirs.estimate;
+  const below = (t: OutlookTurn) =>
+    !!t.income && t.income.mine < INCOME_BEHIND_RATIO * t.income.theirs.estimate && trackedBehind(t.income);
   let turnsBelow = 0;
   for (let i = turns.length - 1; i >= 0 && below(turns[i]!) && (i === turns.length - 1 || turns[i + 1]!.turn === turns[i]!.turn + 1); i--) turnsBelow++;
   let surrenderLine: SurrenderLine | undefined;
@@ -1175,7 +1193,9 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
         inc.lean === 'unknown'
           ? inc.noLeadClaim
             ? 'unknown: the evidence is thin, so no lead is claimed'
-            : `unknown: the range spans both thresholds (${round2(INCOME_BEHIND_RATIO)}× and ${INCOME_AHEAD_RATIO}×)`
+            : inc.calibratedOnly
+              ? `unknown: only the calibrated estimate reads behind (mine under ${round2(INCOME_BEHIND_RATIO)}× of it), not the tracked ${t.low}, so it is not counted against the surrender line`
+              : `unknown: the range spans both thresholds (${round2(INCOME_BEHIND_RATIO)}× and ${INCOME_AHEAD_RATIO}×)`
           : `${inc.lean}${inc.byTrend ? ' on the trend' : ''}`;
       reading += ` On incomes: ${teamGame ? "my team's" : 'mine'} ${inc.mine} against the strongest, ${whose}, at ${range}${inc.calibrated ? ", calibrated on past games' estimate ÷ truth" : ''}: ${leanText}.`;
       if (inc.noLeadClaim && inc.lean !== 'unknown') reading += ' No lead is claimed on the likely high: the evidence is thin.';
