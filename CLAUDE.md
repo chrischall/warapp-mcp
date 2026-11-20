@@ -1409,6 +1409,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     plain size still on it, and the leftover there is not kept from the #226 margin (`repulsedSurplus`,
     `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes" (only when that size is
     the whole deploy estimate).
+  - **One deploy reinforces one target (#277, `src/analysis/plan/second-sizing.ts`).** Once every attack is sized
+    (after the #226 margin and #240's drops; not under No-Split or Local Deployment), when two or more attacks on one
+    player's territories are each sized for its whole deploy, the one sending the most keeps its size and the others
+    may give up what they send beyond their bare size, and beyond their source's deploy, which moves with it. A held
+    bonus (rule 1h's unit) no order leaves, whose threatened borders together lack at most that and `PAYBACK_TURNS` ×
+    its value, gets those deploys and is held, no longer conceded ("Fund held bonus … (#277)"). Golden unchanged.
   - **A hold is sized for the worse move order (#215).** Armies withdrawn into a border land by my
     own order, after the opponent's first attack when it moves first: unless `movesFirst` is true,
     the leftover makes each open border that falls without them hold on its own (when it can
