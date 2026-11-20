@@ -69,7 +69,7 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
       const n = (avail.get(x) ?? 0) - (noSplit ? 0 : coverOf(x));
       if (n <= 0) continue;
       for (const t of neighborsOf(g, x)) {
-        if (mineSet.has(t) || captured.has(t) || spared.has(t) || tried.has(t) || pc.truce.noTarget(t)) continue;
+        if (mineSet.has(t) || captured.has(t) || spared.has(t) || tried.has(t) || pc.truce.noTarget(t) || tgt.droppedMembers.has(t)) continue;
         const st = state.get(t);
         if (!st || st.armies === null || uncounted(t) || unitsAt(t) > 0) continue;
         if (st.owner.kind === 'player' && (goal === 'expand' || !foe(st.owner.playerId))) continue;

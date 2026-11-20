@@ -1461,6 +1461,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     plain size still on it, and the leftover there is not kept from the #226 margin (`repulsedSurplus`,
     `plan/leftover.ts`); the strike stack's attack on one is reported as sized for the deploy, no "assumes" (only when that size is
     the whole deploy estimate).
+    **All-in or drop a contested bonus (#298, `src/analysis/plan/bonus-attempts.ts`; owner defaults of 2026-11-20).** An
+    attempt is a turn whose plan expected to complete (`expected.bonusesCompleted`) a bonus with a member another player
+    held; it failed when the next turn's board does not show the bonus all mine. The memory is
+    `<dataDir>/bonus-attempts/<gameId>-<myId>.json` (`src/bonus-attempt-store.ts`, the siege store's pattern: ids and
+    numbers only, 0600, atomic, path-locked; read in `livePlanSetup`, written by warapp_plan_turn on a plan that is not a
+    what-if). After `FAILED_ATTEMPTS` (2) failed attempts on consecutive turns the bonus is pushed all-in once (focused,
+    every missing member in view and beside mine, each one a player holds sized for its defenders plus its owner's deploy
+    — #368's middle figure — taken at that size or not at all, as #240's sure size; the whole at most
+    `ALL_IN_VALUE_TURNS` (2) × its value and my income) when that plan takes every missing member; otherwise, and after
+    an all-in that failed, it is dropped for `DROP_TURNS` (3) turns, this one included: not scored, and rule 4e's
+    contact fallback, #203's lead steps and #272's attack out of a conceded border never go into its missing members.
+    warapp_plan_turn reports `bonusPush`, and a rationale line names the failed turns. No memory, no change (golden).
   - **One deploy reinforces one target (#277, `src/analysis/plan/second-sizing.ts`).** Once every attack is sized
     (after the #226 margin and #240's drops; not under No-Split or Local Deployment), when two or more attacks on one
     player's territories are each sized for its whole deploy, the one sending the most keeps its size and the others

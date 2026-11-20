@@ -445,6 +445,8 @@ export function neverStandStill(
           if (st?.owner.kind !== 'player' || !foe(st.owner.playerId) || st.armies === null || uncounted(t)) continue;
           // B2 (T1): never a truce's covered territory.
           if (pc.truce.noTarget(t)) continue;
+          // #298: nor a missing member of a bonus dropped after repeated failed attempts.
+          if (tgt.droppedMembers.has(t)) continue;
           // An enemy commander is rule 1s's, sized for its owner's full deploy: never a fallback.
           if (unitsAt(t) > 0) continue;
           const sources = neighborsOf(g, t).filter((n) => mineSet.has(n));
