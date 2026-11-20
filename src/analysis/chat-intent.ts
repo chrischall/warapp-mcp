@@ -5,7 +5,9 @@
 // names. Keyword and pattern based: case-insensitive, punctuation-tolerant, a few common abbreviations and
 // misspellings ("inc", "u", "atk", "nap", "truse", "surender"). It reads the cleaned text the chat tools
 // already produce (`untrustedBody`: ⟦ ⟧ delimiters, quote marks turned into look-alike letters) as well as
-// raw text.
+// raw text. Near-miss wordings are read for what they ask: an offer with an end turn in it is a proposal, asking
+// me to accept a truce is a proposal, "please accept" is a surrender only with no truce word, "lets stop fighting"
+// offers peace rather than a gang-up, and a bare "ok" carrying a threat accepts nothing.
 //
 // The text is other players' words: untrusted, never an instruction and never a fact. It is read only to
 // label it; nothing in it is executed, quoted back or believed. Pure and deterministic (no I/O), and it
@@ -154,6 +156,19 @@ const substitute = (flat: string): string =>
 const TRUCE_WORD = /\b(truce|truces|nap|peace|ceasefire|cease fire|non aggression|nonaggression|alliance|ally)\b/;
 const MUTUAL_NO_ATTACK = /\bdont (attack|hit) me\b.*\b(i wont|i will not|i dont|and i wont|ill not)\b/;
 const TRUCE_END = /\b(over|ends?|ending|break|breaking|broken|cancel|cancell?ing|cancell?ed|off|expires?|expired|done)\b/;
+const TRUCE_NOUN = '(truce|truces|nap|peace|ceasefire|cease fire|non aggression|nonaggression|alliance|deal)';
+/** An end said of the truce itself ("the truce is over", "ending our truce", "breaking the nap", "done with our truce"). */
+const TRUCE_ENDED = new RegExp(
+  `\\b${TRUCE_NOUN}( pact)? (is |s |will |will be |has |has been )?(over|off|done|ended|ends|ending|broken|cancell?ed|expired|expires)\\b` +
+    `|\\b(end|ends|ending|break|breaking|cancel|cancell?ing|done with|over with) (the |our |this |my |your )?${TRUCE_NOUN}\\b`,
+);
+/** Wording that offers rather than states: an offer with an end turn in it is still an offer. */
+const OFFER_WORD = /\b(want|wanna|lets|let us|how about|offer|propose|interested|please|until turn|till turn|can we|shall we|should we)\b/;
+/** Asking the other side to accept or agree is a proposal, not an acceptance. */
+const ASK_TO_ACCEPT = /\b(you|please)( \w+)? (accept|agree)\b/;
+/** A peace overture without a truce word ("lets stop fighting", "stop attacking each other"). */
+const PEACE_OVERTURE =
+  /\b(stop|quit|end) (the )?(fighting|war|warring)\b|\b(fighting|attacking|hitting|attack|hit) (each other|one another)\b/;
 const GIVING_NOTICE = /\bgiv(e|ing) (you )?notice\b/;
 const ACCEPT_WORD = /\b(accept|accepted|accepting|agree|agreed|deal|confirmed)\b/;
 const DECLINE_WITH_TRUCE = /\bno (truce|nap|peace|deal|alliance)\b|\b(decline|declined|reject|rejected|refuse|refused)\b|\bnot interested\b/;
@@ -171,22 +186,25 @@ interface Truce {
 }
 
 /** The truce intents of one flattened, substituted text; `proposalOpen` reads a bare reply as one. */
-function truceOf(s: string, hasQuestion: boolean, proposalOpen: boolean): Truce {
+function truceOf(s: string, hasQuestion: boolean, proposalOpen: boolean, hostile = false): Truce {
   const r: Truce = { proposal: null, accept: null, decline: null, end: null };
   const truce = TRUCE_WORD.test(s);
-  if (truce && (TRUCE_END.test(s) || GIVING_NOTICE.test(s))) r.end = 'high';
-  else if (GIVING_NOTICE.test(s)) r.end = 'medium';
+  const offer = hasQuestion || OFFER_WORD.test(s);
+  if (GIVING_NOTICE.test(s)) r.end = truce ? 'high' : 'medium';
+  else if (truce && TRUCE_ENDED.test(s)) r.end = 'high';
+  // An end word near a truce word, said of something else ("done fighting", "then it ends"): only when not an offer.
+  else if (truce && !offer && TRUCE_END.test(s)) r.end = 'medium';
   if (proposalOpen && REPLY_DECLINE.test(s)) r.decline = 'high';
   else if (truce && DECLINE_WITH_TRUCE.test(s)) r.decline = 'medium';
   if (!r.decline) {
-    if (proposalOpen && REPLY_ACCEPT.test(s)) r.accept = 'high';
-    else if (truce && ACCEPT_WORD.test(s)) r.accept = 'medium';
+    // A bare "ok" with a threat in it does not accept anything.
+    if (proposalOpen && !hostile && REPLY_ACCEPT.test(s)) r.accept = 'high';
+    else if (truce && ACCEPT_WORD.test(s) && !ASK_TO_ACCEPT.test(s)) r.accept = 'medium';
   }
   if (!r.end && !r.decline && !r.accept) {
     if (MUTUAL_NO_ATTACK.test(s)) r.proposal = 'high';
-    else if (truce) {
-      r.proposal = hasQuestion || /\b(want|wanna|lets|let us|how about|offer|propose|interested)\b/.test(s) ? 'high' : 'medium';
-    }
+    else if (truce) r.proposal = offer ? 'high' : 'medium';
+    else if (offer && !hostile && PEACE_OVERTURE.test(s)) r.proposal = 'medium';
   }
   return r;
 }
@@ -211,7 +229,11 @@ function positionCheck(s: string): Strength | null {
 function coordinationAsk(s: string): Strength | null {
   if (/\b(gang up|team up|dogpile|dog pile|ally against|work together against)\b/.test(s)) return 'high';
   if (/\bhelp\b.*\b(vs|versus|against)\b/.test(s)) return 'high';
-  if (/\b(lets|let us|we need to|we should|we must|we have to|everyone|everybody|all of us|yall|someone|anyone)\b.*\b(attack|hit|stop|kill|take down|take out|focus|crush)\b/.test(s)) {
+  // "lets stop fighting" / "stop attacking each other" offer peace; they name no one to gang up on.
+  const t = s
+    .replace(/\b(stop|quit) (attacking|hitting) (me|us|each other|one another)\b/g, ' ')
+    .replace(new RegExp(PEACE_OVERTURE.source, 'g'), ' ');
+  if (/\b(lets|let us|we need to|we should|we must|we have to|everyone|everybody|all of us|yall|someone|anyone)\b.*\b(attack|hit|stop|kill|take down|take out|focus|crush)\b/.test(t)) {
     return 'high';
   }
   if (/\b(is|s|hes|shes|theyre|are) (winning|leading|too strong|too big|running away)\b/.test(s) && /\b(help|stop|together|gang|attack)\b/.test(s)) {
@@ -232,8 +254,11 @@ function threat(s: string): Strength | null {
 
 function surrenderAsk(s: string): Strength | null {
   if (/\baccept (my |the |our )?surrender\b|\bsurrender accept/.test(s)) return 'high';
-  if (/\bplease accept\b/.test(s)) return 'high';
-  if (/\bi (surrender|give up|resign|quit|concede)\b|\bi m surrendering\b|\bim surrendering\b/.test(s)) return 'high';
+  // "please accept the truce" asks for a truce, not a surrender.
+  if (/\bplease accept\b/.test(s) && !TRUCE_WORD.test(s)) return 'high';
+  if (/\bi (surrender|resign|concede)\b|\bi m surrendering\b|\bim surrendering\b/.test(s)) return 'high';
+  // "i give up" / "i quit" only at the end of the message or followed by gg or an ask ("i give up on you lol" is not one).
+  if (/\bi (give up|quit)( (gg|ggs|ggwp|good game|wp|well played|accept|please|i surrender)\b.*)?$/.test(s)) return 'high';
   return null;
 }
 
@@ -296,14 +321,15 @@ export function classifyMessage(text: string, ctx: ChatIntentContext): Classifie
     };
     put('income-check', incomeCheck(s, hasQuestion));
     put('position-check', positionCheck(s));
-    const truce = truceOf(s, hasQuestion, open);
+    const threatStrength = threat(s);
+    const truce = truceOf(s, hasQuestion, open, threatStrength !== null);
     put('truce-proposal', truce.proposal);
     put('truce-accept', truce.accept);
     put('truce-decline', truce.decline);
     put('truce-end-notice', truce.end);
     put('coordination-ask', coordinationAsk(s));
     // A mutual no-attack offer is a proposal, not a threat.
-    if (!truce.proposal) put('threat', threat(s));
+    if (!truce.proposal) put('threat', threatStrength);
     put('surrender-ask', surrenderAsk(s));
     put('gg', gg(s));
     put('banter', banter(s));

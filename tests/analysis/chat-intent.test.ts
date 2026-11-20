@@ -229,3 +229,61 @@ describe('classifyMessage: cleaned text and robustness', () => {
     expect(new Set(r.intents).size).toBe(r.intents.length);
   });
 });
+
+// Review of task 1: wordings near another intent, the ones Tasks 2 and 4b will meet (each read raw and cleaned).
+describe('classifyMessage: near-miss wordings', () => {
+  const cleaned = (t: string): string => `⟦${t.replace(/'/g, 'ʼ')}⟧`;
+  const both = (t: string, ctx: ChatIntentContext = CTX) => [classifyMessage(t, ctx), classifyMessage(cleaned(t), ctx)];
+
+  describe('a truce offer with an end in it is a proposal, not an end notice', () => {
+    for (const t of ['want a truce until turn 10, then it ends?', 'truce? we are done fighting each other', 'peace? i am done with war']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) {
+          expect(r.intents).not.toContain('truce-end-notice');
+          expect(r.intents).toContain('truce-proposal');
+        }
+      });
+    }
+    cases('truce-end-notice', ['truce is done', 'i am done with our truce', 'nap off'], []);
+  });
+
+  describe('asking me to accept a truce is a proposal, not an acceptance', () => {
+    for (const t of ['will you accept a truce?', 'do you accept peace?', 'would you agree to a nap?', 'please accept the truce', 'please accept my truce offer']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) {
+          expect(r.intents).not.toContain('truce-accept');
+          expect(r.intents).not.toContain('surrender-ask');
+          expect(r.intents).toContain('truce-proposal');
+        }
+      });
+    }
+  });
+
+  describe('"please accept" is a surrender only without a truce word', () => {
+    cases('surrender-ask', ['please accept', 'please accept, i give up', 'pls accept my surrender'], ['please accept the truce', 'please accept my truce offer']);
+  });
+
+  describe('a peace overture is not a coordination ask', () => {
+    for (const t of ['lets stop fighting', 'lets stop attacking each other']) {
+      it(JSON.stringify(t), () => {
+        for (const r of both(t)) expect(r.intents).not.toContain('coordination-ask');
+      });
+    }
+    cases('coordination-ask', ['lets stop Redcrane', 'we need to stop Bluefox', 'everyone attack Green Owl'], []);
+  });
+
+  describe('a threat in reply to my proposal is not an acceptance', () => {
+    const proposed: ChatIntentContext = { ...CTX, myRecentMessages: ['truce?'] };
+    it('"ok I will attack you now"', () => {
+      for (const r of both('ok I will attack you now', proposed)) {
+        expect(r.intents).not.toContain('truce-accept');
+        expect(r.intents).toContain('threat');
+      }
+    });
+    cases('truce-accept', ['ok', 'ok deal'], [], proposed);
+  });
+
+  describe('"i give up" counts only when it ends the message or comes with gg', () => {
+    cases('surrender-ask', ['i give up', 'i give up gg', 'I give up, accept it'], ['i give up on you lol', 'i quit trying to understand this map']);
+  });
+});
