@@ -280,8 +280,14 @@ describe('#167: the army lead under fog', () => {
       income: 10,
       settings: STD,
       game: { players: [{ id: ME }, { id: 20 }, { id: 30 }], turn: 8 },
-      options: { adapt: true },
+      // #382: the profile's siege off, so rule 0p.2 is what this test reads (with it on, below, the +40 leader's
+      // 5-army break is the siege's own: no second front).
+      options: { adapt: true, siegeAuto: false },
     });
+    const sieged = planTurn({ ...i(40), options: { adapt: true } });
+    expect(sieged.siege).toMatchObject({ target: 20, brokenThisTurn: [{ bonusId: 902, value: 40 }] });
+    const orders = (p: TurnPlan) => p.moves.map((x) => [x.kind, x.from, x.to, x.armies]);
+    expect(orders(sieged)).toEqual(orders(planTurn(i(40))));
     const strong = planTurn(i(40));
     expect(strong.profile.ranking?.myRank).toBeGreaterThan(1);
     expect(why(strong)).not.toMatch(/FFA army lead/);

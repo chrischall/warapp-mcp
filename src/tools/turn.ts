@@ -150,6 +150,7 @@ import { withTeammateOrders } from '../team-orders.js';
 import { claimedCardUses, claimedCardWarning, teamCardClaims, teamCardRoles, teamHandLeft, unclaimedFirst } from '../team-cards.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
+import { resolveIntel } from '../analysis/intel.js';
 import { readSiegeMemory, writeSiegeMemory } from '../siege-store.js';
 import { rememberSiegeTurn, type SiegeMemory } from '../analysis/plan/siege.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
@@ -2187,7 +2188,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
           'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
-          '"profile"): defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
+          '"profile"): siege when it fits (in contact, not ahead, one target — in an FFA the leader, earning 1.5× any other ' +
+          'opponent beside me — with a sure break costing at most 2 turns of its bonus and at most my income; handed back ' +
+          'once its assault trigger fires), else defend when behind outside a 1v1, else balanced — in an FFA with two or more opponents, no ' +
           'second front; in a 1v1, one strike stack facing the opponent; ahead in a 1v1, fog pressure ' +
           `up to ${AHEAD_PRESSURE_FACTOR}× a typical neutral capture. Goals: "balanced" (default) — income per army ` +
           'across holds, bonuses and breaking enemy bonuses, at least 30% on expansion; "expand" — neutrals only; ' +
@@ -2275,7 +2278,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           .enum(GOALS)
           .optional()
           .describe(
-            'Omit to let the game profile pick (defend when behind on income outside a 1v1, else balanced, tuned to the format). ' +
+            'Omit to let the game profile pick (siege when it fits, else defend when behind on income outside a 1v1, else balanced, tuned to the format). ' +
               'balanced (default): best income per army across holds, bonuses and breaking enemy bonuses; expand: take ' +
               'neutrals only; complete-bonus: also attack players to finish bonuses; defend: hold threatened borders first; ' +
               "siege: against one opponent (siege_target), fund its cheapest bonus breaks first and build one strike stack " +
@@ -2384,8 +2387,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #317: a surrender waiting on my acceptance (the game details; null when unreadable). Never throws.
         readPendingSurrenders(ctx, game, me),
       ]);
+      // #386: the avoid targets and stated incomes warapp_record_intel kept, applied unless an argument of
+      // that kind is given (an explicit one replaces the stored list); a stale stored income is left out.
+      const intel = resolveIntel(ctx.dataDir ? (await readLedger(ctx.dataDir, game.id, me.id))?.intel : undefined, turn, {
+        ...(known_income !== undefined ? { knownIncome: known_income } : {}),
+        ...(avoid_territories !== undefined ? { avoidTerritories: avoid_territories } : {}),
+        ...(avoid_players !== undefined ? { avoidPlayers: avoid_players } : {}),
+      });
+      const knownIncome = intel.knownIncome;
+      const avoidTerritories = intel.avoidTerritories;
+      const avoidPlayers = intel.avoidPlayers;
       // #382: the siege's memory, kept per game while a siege runs.
-      const siegeMemory = goal === 'siege' && ctx.dataDir && turn !== null ? await readSiegeMemory(ctx.dataDir, game.id, me.id) : undefined;
+      const siegeMemory = (goal === undefined || goal === 'siege') && ctx.dataDir && turn !== null ? await readSiegeMemory(ctx.dataDir, game.id, me.id) : undefined;
       const setup = await livePlanSetup(ctx, {
         game, map, me, turn, territories, info, history, teamsKnown,
         args: {
@@ -2398,9 +2411,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
           ...(min_win_chance !== undefined ? { minWinChance: min_win_chance } : {}),
           ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
-          ...(known_income?.length ? { knownIncome: known_income } : {}),
-          ...(avoid_territories?.length || avoid_players?.length
-            ? { avoid: { territories: (avoid_territories ?? []).map((t) => resolveTerritory(map, t).id), players: avoid_players ?? [] } }
+          ...(knownIncome?.length ? { knownIncome } : {}),
+          ...(avoidTerritories?.length || avoidPlayers?.length
+            ? { avoid: { territories: (avoidTerritories ?? []).map((t) => resolveTerritory(map, t).id), players: avoidPlayers ?? [] } }
             : {}),
         },
       });
@@ -2509,6 +2522,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           // Under enemy_deploy the planner ignores the mark (#275 review): say what the what-if used.
           enemy_deploy,
         ),
+        ...intel.warnings,
         ...(me.hasCommittedOrders
           ? [
               'You have already committed orders this turn; warapp_submit_turn will refuse until you withdraw them ' +
@@ -2694,6 +2708,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(chat ? { chat } : {}),
         // #317: the surrenders pending (the game details; null: unreadable, never "none").
         surrenderPending: surrenders,
+        // #386: the intel warapp_record_intel kept and what this plan did with it (absent when none is kept).
+        ...(intel.report ? { intel: intel.report } : {}),
         goal: plan.goal,
         goalSource: goal !== undefined ? 'explicit' : 'profile',
         // #382: the siege's state (goal siege only).

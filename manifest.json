@@ -248,6 +248,10 @@
       "description": "Record a truce or a change to one in the server's agreement ledger and the partner's name-free cross-game record (nothing is sent to war.app)"
     },
     {
+      "name": "warapp_record_intel",
+      "description": "Keep avoid targets and stated incomes from diplomacy in the game's ledger, so every plan applies them by default (nothing is sent to war.app)"
+    },
+    {
       "name": "warapp_wait_for_turn",
       "description": "Wait until one of your games is waiting on you, woken by war.app's push notifications"
     },

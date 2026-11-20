@@ -402,7 +402,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (no other opponent ≥ 0.5 × the larger income) and `trust`. Refused: me, an AI, a player out, a
   teammate, a 1v1, two left, and no third player or team outside me, my team and the partner's; an
   `until_turn` before this turn. Massing needs its growing pairs to end at the newest board. The ledger's `usage`
-  logs per planned turn (not a what-if plan) the armies each honoured truce freed and what a break would cost (T6: `lossIfBroken` armies, `incomeLostIfBroken`). Its read-modify-write runs
+  logs per planned turn (not a what-if plan) the armies each honoured truce freed and what a break would cost (T6: `lossIfBroken` armies, `incomeLostIfBroken`).
+  Its `intel` (#386, `warapp_record_intel`, not confirm-gated; pure part `src/analysis/intel.ts`) keeps avoid territories
+  (`promisedTo`), avoid players (a reason code from `AVOID_REASONS`, never free text) and stated incomes with their turn;
+  `warapp_plan_turn` and `warapp_check_plan` apply it by default (`resolveIntel`, reported as `intel`): an explicit
+  `avoid_territories` / `avoid_players` / `known_income` replaces the stored list of its kind for that call (`[]` included), and
+  an income more than `INCOME_STALE_TURNS` (3) turns old is not applied (a warning). Its read-modify-write runs
   under an in-process per-path lock (`src/path-lock.ts`; another process sharing the data dir is not
   covered). **The cross-game player record** (owner decision D5 of 2026-11-14: on, local AND hosted —
   registered and enabled on a hosted child, in its per-user data dir) is `src/player-record-store.ts` at
@@ -1325,7 +1330,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     attacks it on top of its hold (hold + capture deployed there, so it still holds if the
     member is reinforced and the attack fails); unable to afford both, it just holds — never
     a capture instead of the hold. `defend` holds first, `expand` never attacks players.
-  - **`siege` (#382, `src/analysis/plan/siege.ts`, explicit only: the profile never picks it)** plans as
+  - **`siege` (#382, `src/analysis/plan/siege.ts`; explicit, or picked by the profile when it fits)** plans as
     `balanced` (`pc.goal` reads `balanced`; `pc.siege` carries the rest; the plan reports `goal: 'siege'`)
     against one opponent (`siegeTarget`, else the strongest in contact): its breaks score `SIEGE_BREAK_WEIGHT`
     (3) × a 1v1 break and never count as a second front; until the trigger its territories outside its
@@ -1339,8 +1344,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     planned) and passes it back as `PlanInput.siegeMemory`; `priorSiegeTurns` keeps only the same target's turns before
     this one, none when the newest is more than `SIEGE_MEMORY_GAP` (3) turns back; re-planning a turn replaces it; an
     `enemy_deploy` what-if writes nothing. `siege.memory` reports `startedTurn`, `turns`, `startIncome`,
-    `opponentIncomeTrend`, `broken` (per bonus, its turns) and `rebroken`. `TurnPlan.siege` reports it; golden unchanged.
-    Not yet: a profile-picked siege.
+    `opponentIncomeTrend`, `broken` (per bonus, its turns) and `rebroken`. `TurnPlan.siege` reports it.
+    **The profile's siege (`siegeFit`):** adapting with no goal (`PlanOptions.siegeAuto: false` turns it off) the
+    profile picks it, over its own goal (a `defend` included: the siege plans as balanced), when against the strongest
+    opponent in contact: the format is a 1v1 or an FFA (not teams), phase `contact`/`late`, standing `even` or
+    `behind`; in an FFA the target is the strength leader (`ranking.commonThreat`) and earns ≥ `SIEGE_FFA_DOMINANCE`
+    (1.5) × every other opponent in contact; and a sure break (every member in view, a member next to mine) costs
+    ≤ `SIEGE_FIT_TURNS` (2) × its bonus (1 × once retaken on `SIEGE_RETAKEN_TURNS` (2) earlier siege turns) and ≤ my
+    income. Once the trigger fires it hands back (a rationale line), and any turn the fit fails the profile's own goal
+    plays. `siege.auto` and the first rationale line say why. Golden: 6 of 611 adapting boards pick it, with the
+    same deploys and moves (the goal, rationale and siege report change), and 9 more carry the hand-back line; most
+    not-ahead contact boards have no sure break in reach.
   - **Single-army jabs (#361, `src/analysis/plan/jabs.ts`), at 0% luck under straight rounding only**, where one
     army kills round(1 × the offensive rate) ≥ 1 and dies: a one-for-one trade (seen live: 75 → 74, 19 → 18). On
     under `siege` (`PlanOptions.jabs` / plan_turn's `jabs`: `true` on, `false` off; off otherwise). After the #226
