@@ -738,7 +738,10 @@
 //     while one capture makes another complete. R3 does not refuse it (the armies would otherwise
 //     leave a border the plan gives up), and a completed bonus keeps the border (rule 1c). Live, the
 //     last empty members of a bonus stood beside a conceded border: one was taken, the other refused
-//     ("a conceded border never attacks out for a capture that only costs nothing").
+//     ("a conceded border never attacks out for a capture that only costs nothing"). #286: a border
+//     rule 1c will keep (a positive bonus containing it already completed by this turn's captures)
+//     is no source: its armies would not withdraw (live, a kept +2 member sent 3 into an uneconomic
+//     bonus and ended 1 army short of its hold).
 //  1i. Income at risk (#109). `expected.nextIncome` is next turn's income if every territory
 //     the plan keeps and captures is held — the borders it concedes included, withdrawn from
 //     or not. A conceded border is not kept, so the plan also reports
