@@ -693,9 +693,10 @@ export function closestBonus(
   // While no bonus is held (and in the opening and expansion phases), expansion goes to the bonus
   // closest to completion — fewest turns to finish at this income (its armies to finish, counting
   // the members I hold, over the income) — then the next closest, instead of one capture into each
-  // of several large bonuses by value per army. Bonuses as close as each other keep the score order
-  // (value per army, rule 4), except that a bonus advanced last turn (a member captured since
-  // `previousBoard`) keeps priority unless another is strictly closer. Focused bonuses come first.
+  // of several large bonuses by value per army. Bonuses as close as each other go by the income per
+  // army of every bonus their capture completes (#438: a pair bonus on top of a single-territory one
+  // counts), then a bonus advanced last turn (a member captured since `previousBoard`) first, then the
+  // score order (value per army, rule 4). Focused bonuses come first.
   const holdsBonus = g.map.bonuses.some((b) => {
     const ts = bonusTs.get(b.id)!;
     return b.value > 0 && ts.length > 0 && ts.every((t) => mineSet.has(t));
@@ -726,12 +727,27 @@ export function closestBonus(
   /** Turns to finish a bonus at this income, and at least its depth (with no income, its armies to finish). */
   const turnsOf = (p: BonusPlan) => (income > 0 ? Math.max(Math.ceil(p.cost / income), depthOf(p)) : p.cost);
   const scoreRank = new Map(plans.map((p, i) => [p.bonusId, i]));
-  /** Bonus plans closest to completion first (focus first; ties: advanced last turn, then the score order). */
+  /**
+   * #438: every bonus a plan's capture completes — each plan whose missing members are all among
+   * its own (a pair bonus beside a single-territory one) — with their net income added up.
+   */
+  const completesWith = (p: BonusPlan) => plans.filter((q) => q.remaining.every((t) => p.remaining.includes(t)));
+  const incomeOf = (p: BonusPlan) => completesWith(p).reduce((n, q) => n + q.net, 0);
+  /** #438: that income per army, on the score's cost (`ratio`, scaled from this bonus's net to the sum). */
+  const perArmy = (p: BonusPlan) => {
+    const r = prev.ratio(p);
+    return Number.isFinite(r) && p.net > 0 ? (r * incomeOf(p)) / p.net : r;
+  };
+  /**
+   * Bonus plans closest to completion first (focus first; ties: the income per army of every bonus
+   * the capture completes, #438, then advanced last turn, then the score order).
+   */
   const byCloseness = committing
     ? [...plans].sort(
         (a, b) =>
           Number(b.focus) - Number(a.focus) ||
           turnsOf(a) - turnsOf(b) ||
+          perArmy(b) - perArmy(a) ||
           Number(advancedLast.has(b.bonusId)) - Number(advancedLast.has(a.bonusId)) ||
           scoreRank.get(a.bonusId)! - scoreRank.get(b.bonusId)!,
       )
@@ -756,6 +772,20 @@ export function closestBonus(
         .join(', ')} — and a farther bonus gets only armies the closer ones cannot use.`,
     );
     const top = byCloseness.find((p) => !p.focus);
+    // #438: a capture that completes more than one bonus says what they add up to per army.
+    const said = new Set<string>();
+    for (const p of byCloseness) {
+      const all = completesWith(p);
+      const key = [...p.remaining].sort((x, y) => x - y).join(',');
+      // Only where it ranks: another bonus as close that this capture does not complete.
+      const rivals = byCloseness.some((q) => !all.includes(q) && !q.focus && turnsOf(q) === turnsOf(p));
+      if (all.length < 2 || !rivals || said.has(key)) continue;
+      said.add(key);
+      const names = all.map((q) => bonusName(q.bonusId));
+      rationale.push(
+        `${names.slice(0, -1).join(', ')} and ${names.at(-1)} complete together for ${p.cost} armies: +${incomeOf(p)} next-turn income, ${(incomeOf(p) / p.cost).toFixed(2)} per army — ranked on that among bonuses as close (#438).`,
+      );
+    }
     for (const p of byCloseness.filter((x) => advancedLast.has(x.bonusId))) {
       if (p === top)
         rationale.push(

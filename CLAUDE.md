@@ -1424,8 +1424,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     teammate territory is unknown (team vision unverified). Absent outside a team game.
   - **Commit to the closest bonus (#101, rule 4f).** While no bonus is held, and in the opening
     and expansion phases, completions and advances go to the bonus fewest turns from completion
-    first (equally close ones by score); a bonus advanced last turn keeps priority unless another
-    is strictly closer. "N armies to finish" counts fogged members at the bonus's costliest
+    first; equally close ones by the income per army (on the score's cost) of every bonus the capture
+    completes (#438: a pair bonus on top of a single-territory one adds up; a "complete together" line
+    when another bonus as close competes), then a bonus advanced last turn, then the score. Golden: 14 of
+    6253 plans' orders changed, captures, next income and warnings unchanged. "N armies to finish" counts fogged members at the bonus's costliest
     visible missing member. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
     are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land

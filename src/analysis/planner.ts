@@ -1142,10 +1142,12 @@
 //     this income (armies to finish, counting the members I hold, over the income — and never
 //     fewer than its depth, #125: the farthest missing member's distance from what I hold, since
 //     a capture's armies attack no further this turn; "N turns (N layers deep)"), so a farther
-//     bonus gets only armies the closer ones cannot use; bonuses as close as each other keep the
-//     score order. Given `previousBoard`, a bonus advanced last turn (a member captured since) keeps
-//     priority unless another is strictly closer; the rationale lists the order and says which
-//     kept or gave way. Armies to finish count every missing member: a fogged one at its bonus's
+//     bonus gets only armies the closer ones cannot use; bonuses as close as each other go by the
+//     income per army of every bonus their capture completes (#438: each bonus whose missing members
+//     are all among its own, net values summed, over the score's cost; a "complete together" line
+//     names it when another as close competes), then — given `previousBoard` — a bonus advanced last
+//     turn (a member captured since), then the score order; the rationale lists the order and says
+//     which advanced bonus kept or gave way. Armies to finish count every missing member: a fogged one at its bonus's
 //     costliest visible missing member (counted as free before, the figure jumped when it came into
 //     view), named in every "N armies to finish".
 //  3b. One surplus per territory (#121). A border that holds at the start of the turn (its armies
