@@ -118,3 +118,41 @@ describe('#420: a held bonus\'s gate is funded first, outside the cap', () => {
     expect(capLines(p)).toEqual([]);
   });
 });
+
+// My commander's hold (review of #420): my commander on T1 (10 armies) faces the opponent's 40 on T11 and
+// takes 10 of my 20 to hold — the whole cap of 10 on its own. My plain T2 and T3 (3 each, shielding 30 on T22
+// and T23) face its 6-stacks and need 4 each. Counted toward the cap, the commander's 10 would concede one
+// of them; it is funded outside the cap, so both hold, as they do with the cap off.
+const g3 = buildGraph(
+  makeMap(
+    [1, 2, 3, 4, 5, 11, 12, 13, 22, 23],
+    [[1, 4], [4, 5], [5, 2], [5, 3], [1, 11], [2, 12], [3, 13], [2, 22], [3, 23]],
+    [],
+  ),
+);
+const commanderBoard = (holdCap?: false): PlanInput => ({
+  graph: g3,
+  board: board([
+    { ...mine(1, 10), specialUnits: [{ kind: 'commander', id: 'c'.repeat(32), playerId: ME }] },
+    mine(2, 3), mine(3, 3), mine(4, 1), mine(5, 1), foe(11, 40), foe(12, 6), foe(13, 6), mine(22, 30), mine(23, 30),
+  ]),
+  me: ME,
+  income: 20,
+  settings: STD,
+  game: { players: [{ id: ME }, { id: FOE }], turn: 8 },
+  options: { goal: 'balanced', enemyDeploy: 5, commanderWalks: false, ...(holdCap === false ? { holdCap } : {}) },
+});
+
+describe('#420: my commander\'s hold is funded outside the cap', () => {
+  it('the commander takes the whole cap and both plain holds still fit it', () => {
+    const p = planTurn(commanderBoard());
+    const off = planTurn(commanderBoard(false));
+    expect(p.profile.standing).toBe('ahead');
+    expect(p.rationale.join('\n')).toMatch(/Deploy 10 to T1 \(#1\): my commander stands there, so it must hold/);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 4 to T2 \(#2\) so it holds/);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 4 to T3 \(#3\) so it holds/);
+    expect(p.conceded).toEqual([]);
+    expect(capLines(p)).toEqual([]);
+    expect(p.deploys).toEqual(off.deploys);
+  });
+});
