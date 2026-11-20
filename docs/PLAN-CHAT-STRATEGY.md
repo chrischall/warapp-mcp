@@ -105,9 +105,36 @@ note-id test passes. `noteIds` in the advice name the relevant notes.
 - Tests: gate parsing (unset/off/on/garbage→off), refusal with off, pass-through with on, advice `send` only
   with on.
 
+### Task 4b — chat can block a turn (owner request 2026-11-20: "chat rarely blocks a turn, but can under very
+certain circumstances. Gate that as well; off by default.")
+
+- Second, independent gate `WARAPP_CHAT_BLOCKS_TURN` = `off` (default) | `on` (declared in manifest.json,
+  server.json, mint.yaml like the first; hosted default off).
+- Pure `chatBlocks(messages, game) → { reason, messageIds, intent }[]` in `src/analysis/chat-advice.ts` (or a
+  sibling): a message blocks ONLY when ALL of these hold — it is from another player, unread (not marked seen
+  by the chat cursor), sent this turn or the previous one, classified with `high` confidence, AND it is one of
+  these narrow cases:
+  1. `truce-end-notice` or `truce-proposal`/`truce-accept` from a player I have an active or in-notice
+     agreement with, or a pending proposal of mine to (the turn's truce terms may have changed);
+  2. `threat` or `coordination-ask` that names me (by my name or "you" in a private message to me) from a
+     player in contact this turn;
+  3. `surrender-ask` in a game where `surrenderPending` shows my acceptance owed;
+  4. a private message to me (`toMe`) from a teammate in a team game asking about orders/cards/gifts this turn.
+  Everything else (income checks, banter, gg, public chatter, old messages, low/medium confidence) never blocks.
+- `warapp_submit_turn`: compute the blocks from the chat it can read cheaply (the same read `warapp_plan_turn`
+  uses — GameFeed's chat from its game read, plus the cursor; no extra request when avoidable). With the gate
+  `off`: never refuse; the preview carries a `chatWarnings` line per would-be block ("would block with
+  WARAPP_CHAT_BLOCKS_TURN=on: …"). With `on`: refuse BEFORE sending, naming each message by id, sender id,
+  intent and why, unless the call passes `chat_reviewed: true` (recorded in the result as `chatReviewed`), or
+  the messages have since been marked seen. Never parse chat into orders; never change the orders.
+- `warapp_plan_turn` reports the same `chatBlocks` (report only) so the caller sees it before submitting.
+- Tests: each of the four cases blocks only with every condition met; each near-miss (read, old, medium
+  confidence, wrong sender, income check, public banter) does not; gate off → warning only, never refuses;
+  gate on → refuses, `chat_reviewed: true` passes; no extra GameFeed request beyond the existing read.
+
 ## Task 5 — docs and skill
 
-- CLAUDE.md: update the chat bullet (D2 now "off unless WARAPP_CHAT_AUTOMATION=on"), describe the
+- CLAUDE.md: update the chat bullet (D2 now "off unless WARAPP_CHAT_AUTOMATION=on"; the turn block behind WARAPP_CHAT_BLOCKS_TURN, off by default), describe the
   classifier/advice/gate briefly in the repo's style; the write-tool count is unchanged.
 - skills/warapp-mcp/SKILL.md "Chat and diplomacy": read the `advice` every turn, treat chat as game
   information (what a message reveals about the sender), the stances, the gate (default off: report to the
