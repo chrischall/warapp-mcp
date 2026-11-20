@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../../src/analysis/card-threats.js';
+import { blockadeOffer, bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../../src/analysis/card-threats.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral, tinyMap } from './helpers.js';
 
@@ -148,6 +148,49 @@ describe('wallOffer (#163)', () => {
     expect(wallOffer(cb([neutral(3, 2), myCommander(mine(4, 10)), enemy(5, 30), neutral(6, 2)]), 3, [4])).toBeUndefined();
     expect(wallOffer(cb([mine(1, 2), mine(2, 2), mine(3, 10), enemy(4, 30), neutral(5, 2)]), 3, [3])).toBeUndefined();
     expect(wallOffer(cb([neutral(3, 2), mine(4, 10), enemy(5, 30), neutral(6, 2)]), 1, [4])).toBeUndefined();
+  });
+});
+
+describe('blockadeOffer (#434): a Blockade on the one gate into a held bonus the plan concedes', () => {
+  // I hold bonus A (1, 2, 3) and its gate 4; the stack on 5 (10 + 5 deploy, ~14) reaches A only through 4.
+  const gate = (armies: number, over: Partial<CardBoard> = {}) =>
+    cb([mine(1, 2), mine(2, 2), mine(3, 2), mine(4, armies), enemy(5, 10), neutral(6, 2), neutral(7, 2)], over);
+
+  it('walls the gate when its armies × the multiplier stop the stack beside it', () => {
+    expect(blockadeOffer(gate(4), 3, [4])).toEqual({
+      territory: 4,
+      armies: 4,
+      wall: 12,
+      player: ENEMY,
+      reach: 14,
+      opens: { ids: [1, 2, 3], bonuses: [101], income: 3 },
+      commander: false,
+    });
+  });
+
+  it('sizes the wall on what the plan leaves there: deploys in, moves out (the card runs after the moves)', () => {
+    const over = { deploys: [{ territoryId: 4, armies: 3 }], moves: [{ from: 4, to: 3, armies: 2, kind: 'transfer' as const }] };
+    expect(blockadeOffer(gate(4, over), 3, [4])).toMatchObject({ territory: 4, armies: 5, wall: 15 });
+  });
+
+  it('never when the wall would not stop the stack, or the plan does not concede the gate', () => {
+    expect(blockadeOffer(gate(2), 3, [4])).toBeUndefined();
+    expect(blockadeOffer(gate(4), 3, [])).toBeUndefined();
+  });
+
+  it('never on a member of a bonus I hold: the wall gives it away and breaks the bonus', () => {
+    // 3 is A's own member facing the stack on 4: walling it would break A.
+    expect(blockadeOffer(cb([mine(1, 2), mine(2, 2), mine(3, 6), enemy(4, 10), neutral(5, 2), neutral(6, 2), neutral(7, 2)]), 3, [3])).toBeUndefined();
+    // 4 and 5 make bonus B (+2), held: neither is walled.
+    expect(blockadeOffer(cb([mine(1, 2), mine(2, 2), mine(3, 2), mine(4, 6), mine(5, 6), enemy(6, 10), neutral(7, 2)]), 3, [4, 5])).toBeUndefined();
+  });
+
+  it('never on my commander, nor on a border that is no gate (nothing held lies only behind it)', () => {
+    expect(blockadeOffer(gate(4, {}), 3, [4])).toBeDefined();
+    expect(blockadeOffer(cb([mine(1, 2), mine(2, 2), mine(3, 2), myCommander(mine(4, 4)), enemy(5, 10), neutral(6, 2), neutral(7, 2)]), 3, [4])).toBeUndefined();
+    // With 2 in the fog A is not held whole, and nothing held lies only behind 4.
+    const fog = { territoryId: 2, owner: { kind: 'unknown' as const }, armies: null };
+    expect(blockadeOffer(cb([mine(1, 2), fog, mine(3, 2), mine(4, 4), enemy(5, 10), neutral(6, 2), neutral(7, 2)]), 3, [4])).toBeUndefined();
   });
 });
 

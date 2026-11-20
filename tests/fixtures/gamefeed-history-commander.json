@@ -1,0 +1,19 @@
+{
+  "_note": "#437: the raw shape of a finished Commanders game's GameFeed history (GetHistory=true), VERIFIED live 2026-11-20 on a three-player free-for-all (Commanders on, 5 armies per start, the guard off). Player ids and unit GUIDs are made up; the strings are laid out exactly as sent. A territory where a commander stands sends `armies` as \"<N>|cmdr,<GUID>,<owner id>,\": N is the plain armies alone (every start reads 5, the commander's included; after all 5 are sent out it reads 0), the commander is the extra unit after the bar.",
+  "standing0": [
+    { "terrID": 1, "ownedBy": "1001", "armies": "5", "fogLevel": "Visible" },
+    { "terrID": 2, "ownedBy": "Neutral", "armies": "0", "fogLevel": "Visible" },
+    { "terrID": 3, "ownedBy": "1001", "armies": "5|cmdr,11111111-2222-3333-4444-555555555555,1001,", "fogLevel": "Visible" },
+    { "terrID": 4, "ownedBy": "1002", "armies": "5", "fogLevel": "Visible" },
+    { "terrID": 5, "ownedBy": "1002", "armies": "5|cmdr,66666666-7777-8888-9999-aaaaaaaaaaaa,1002,", "fogLevel": "Visible" },
+    { "terrID": 6, "ownedBy": "1003", "armies": "5|cmdr,bbbbbbbb-cccc-dddd-eeee-ffffffffffff,1003,", "fogLevel": "Visible" }
+  ],
+  "standing1": [
+    { "terrID": 1, "ownedBy": "1001", "armies": "5", "fogLevel": "Visible" },
+    { "terrID": 2, "ownedBy": "1001", "armies": "3", "fogLevel": "Visible" },
+    { "terrID": 3, "ownedBy": "1001", "armies": "0|cmdr,11111111-2222-3333-4444-555555555555,1001,", "fogLevel": "Visible" },
+    { "terrID": 4, "ownedBy": "1002", "armies": "5", "fogLevel": "Visible" },
+    { "terrID": 5, "ownedBy": "1002", "armies": "492|cmdr,66666666-7777-8888-9999-aaaaaaaaaaaa,1002,", "fogLevel": "Visible" },
+    { "terrID": 6, "ownedBy": "1003", "armies": "16|cmdr,bbbbbbbb-cccc-dddd-eeee-ffffffffffff,1003,", "fogLevel": "Visible" }
+  ]
+}

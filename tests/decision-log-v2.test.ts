@@ -221,6 +221,7 @@ describe('the pure capture helpers', () => {
       orderDelay: { card: 'x', before: 2, attacks: [1], order: { kind: 'card', card: 'x', before: 2 } },
       bomb: { target: 7, kind: 'commander', why: 'Halving 7 leaves …' },
       emergencyBlockade: { territory: 4, givesUp: 3, wall: 9, player: FOE, reach: 6, kills: 5, protects: { territories: [], bonuses: [], income: 0, commander: false }, order: { kind: 'card', card: 'y', target: 4 } },
+      blockade: { territory: 5, armies: 4, wall: 12, player: FOE, reach: 9, bonuses: [9], income: 3, behind: [6], commander: false, order: { kind: 'card', card: 'z', target: 5 } },
       diplomacy: { player: FOE, borders: [1, 2], armies: 8, overTruce: 'notice', order: {} },
       sanctions: { player: FOE, order: {} },
       airlift: { from: 1, to: 2, armies: 4, order: {} },
@@ -234,6 +235,7 @@ describe('the pure capture helpers', () => {
       { kind: 'orderDelay', targets: [], reason: 'delay-attacks', before: 2 },
       { kind: 'bomb', targets: [7], reason: 'commander' },
       { kind: 'emergencyBlockade', targets: [4], player: FOE, reason: 'conceded-wall' },
+      { kind: 'blockade', targets: [5], player: FOE, reason: 'gate' },
       { kind: 'diplomacy', targets: [1, 2], player: FOE, reason: 'over-truce' },
       { kind: 'sanctions', targets: [], player: FOE, reason: 'strongest' },
       { kind: 'airlift', targets: [1, 2], reason: 'border' },
@@ -243,6 +245,10 @@ describe('the pure capture helpers', () => {
       { kind: 'surveillance', targets: [9], reason: 'fog' },
     ]);
     expect(JSON.stringify(out)).not.toMatch(/Halving/);
+    // #434: a redeploy says where from and to.
+    expect(cardAdviceLog({ airlift: { from: 7, to: 4, armies: 8, redeploy: { source: 'disconnected', target: 'border' }, order: {} } })).toEqual([
+      { kind: 'airlift', targets: [7, 4], reason: 'disconnected-to-border' },
+    ]);
   });
 
   it('headroomLog: the weakest five rows (none taking last), each with what it protects', () => {

@@ -27,7 +27,7 @@ export interface TerritoryState {
   armies: number | null;
   /** The feed's fog level for this territory (e.g. `Visible`, `Fogged`), when sent. */
   fogLevel?: string;
-  /** Special units standing here (live board only); absent when there are none. */
+  /** Special units standing here (the live board, and since #437 a GameFeed history's commanders); absent when there are none. */
   specialUnits?: BoardSpecialUnit[];
   /** #332, commerce games: the cities here (live board only); absent when there are none. */
   cities?: number;
@@ -92,15 +92,44 @@ function armiesOf(v: unknown): number | null {
   return asInt(v) ?? null;
 }
 
+/** #437: the unit tags GameFeed's history writes after the bar; only `cmdr` is VERIFIED live (2026-11-20). */
+const UNIT_TAGS: Readonly<Record<string, BoardSpecialUnit['kind']>> = { cmdr: 'commander' };
+
+/**
+ * #437, VERIFIED live 2026-11-20 (a finished Commanders game's GameFeed history): a territory where a special
+ * unit stands sends `armies` as `"<N>|cmdr,<GUID>,<owner id>,"` — N the plain armies alone (every start read 5,
+ * the commander's too, and 0 once its armies left), then per unit its tag, GUID and owner (a GameFeed id),
+ * each followed by a comma. Returns `undefined` for any other value; units that do not read are dropped.
+ */
+function unitArmiesOf(v: unknown): { armies: number | null; units: BoardSpecialUnit[] } | undefined {
+  if (typeof v !== 'string') return undefined;
+  const bar = v.indexOf('|');
+  if (bar < 0) return undefined;
+  const armies = asInt(v.slice(0, bar).trim()) ?? null;
+  const fields = v.slice(bar + 1).split(',');
+  const units: BoardSpecialUnit[] = [];
+  for (let i = 0; i + 2 < fields.length; i += 3) {
+    const tag = fields[i]!.trim();
+    const id = fields[i + 1]!.trim();
+    const playerId = asInt(fields[i + 2]!.trim());
+    if (!tag || !id || playerId === undefined) break;
+    units.push({ kind: UNIT_TAGS[tag] ?? 'unknown', id, playerId });
+  }
+  return { armies, units };
+}
+
 function entryOf(raw: unknown, fallbackId?: number): TerritoryState | undefined {
   if (!isRec(raw)) return undefined;
   const territoryId = asInt(pick(raw, ID_KEYS)) ?? fallbackId;
   if (territoryId === undefined) return undefined;
+  const rawArmies = pick(raw, ARMY_KEYS);
+  const withUnits = unitArmiesOf(rawArmies);
   const entry: TerritoryState = {
     territoryId,
     owner: ownerOf(pick(raw, OWNER_KEYS)),
-    armies: armiesOf(pick(raw, ARMY_KEYS)),
+    armies: withUnits ? withUnits.armies : armiesOf(rawArmies),
   };
+  if (withUnits?.units.length) entry.specialUnits = withUnits.units;
   const fog = pick(raw, FOG_KEYS);
   if ((typeof fog === 'string' && fog) || typeof fog === 'number') {
     const level = String(fog).trim();
@@ -112,7 +141,11 @@ function entryOf(raw: unknown, fallbackId?: number): TerritoryState | undefined 
     if (/fog/i.test(level) || level === '4') {
       entry.owner = { kind: 'unknown' };
       entry.armies = null;
-    } else if (/owneronly/i.test(level) || level === '3') entry.armies = null;
+      delete entry.specialUnits;
+    } else if (/owneronly/i.test(level) || level === '3') {
+      entry.armies = null;
+      delete entry.specialUnits;
+    }
   }
   return entry;
 }

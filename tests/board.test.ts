@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { boardFromStanding } from '../src/board.js';
 
@@ -64,6 +65,45 @@ describe('boardFromStanding (loose — the live in-progress shape is unverified)
   it('reads an armies object ({ numArmies }) as its count', () => {
     const board = boardFromStanding([{ terrID: '1', ownedBy: '1000', armies: { numArmies: '6', specialUnits: [] } }]);
     expect(board?.territories[0]!.armies).toBe(6);
+  });
+
+  // #437, VERIFIED live 2026-11-20 (a finished Commanders game's history): a commander's territory sends its
+  // armies as "<N>|cmdr,<GUID>,<owner>,". N is the plain armies alone; the commander is the unit after the bar.
+  it('#437: reads a history commander territory as its plain armies plus the commander unit', () => {
+    const fx = JSON.parse(readFileSync(new URL('./fixtures/gamefeed-history-commander.json', import.meta.url), 'utf8'));
+    const s0 = boardFromStanding(fx.standing0)!;
+    const at = (b: typeof s0, id: number) => b.territories.find((t) => t.territoryId === id)!;
+    expect(at(s0, 3)).toEqual({
+      territoryId: 3,
+      owner: { kind: 'player', playerId: 1001 },
+      armies: 5,
+      fogLevel: 'Visible',
+      specialUnits: [{ kind: 'commander', id: '11111111-2222-3333-4444-555555555555', playerId: 1001 }],
+    });
+    // A plain territory carries no units.
+    expect(at(s0, 1)).not.toHaveProperty('specialUnits');
+    const s1 = boardFromStanding(fx.standing1)!;
+    expect(at(s1, 3).armies).toBe(0);
+    expect(at(s1, 5).armies).toBe(492);
+    expect(at(s1, 6)).toMatchObject({ armies: 16, specialUnits: [{ kind: 'commander', playerId: 1003 }] });
+  });
+
+  it('#437: an unknown unit tag after the bar is kept as an unknown unit; a suffix that does not read still keeps N', () => {
+    const b = boardFromStanding([
+      { terrID: '1', ownedBy: '1001', armies: '4|boss3,abc,1001,cmdr,def,1001,' },
+      { terrID: '2', ownedBy: '1001', armies: '7|garbage' },
+      { terrID: '3', ownedBy: '1001', armies: 'x|cmdr,abc,1001,' },
+    ])!;
+    expect(b.territories[0]).toMatchObject({
+      armies: 4,
+      specialUnits: [
+        { kind: 'unknown', id: 'abc', playerId: 1001 },
+        { kind: 'commander', id: 'def', playerId: 1001 },
+      ],
+    });
+    expect(b.territories[1]!.armies).toBe(7);
+    expect(b.territories[1]).not.toHaveProperty('specialUnits');
+    expect(b.territories[2]!.armies).toBeNull();
   });
 
   it('skips entries without a territory id and returns undefined when nothing is usable', () => {

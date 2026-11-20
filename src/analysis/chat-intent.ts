@@ -25,6 +25,9 @@
 // restating the agreed end turn ("remember our truce ends turn 10") is medium notice; a reported break ("you broke
 // our truce") is medium notice, never a proposal; peace as a state ("we are at peace") and an alliance against
 // someone ("ally with me against X", a gang-up) offer no truce; "no deal" declines; "I surrender? never" asks none.
+// #460: accepting the terms ("i accept your terms") is a medium truce-accept, and a counter with terms of its own ("if
+// youre good with it, i take X but i wont go to Y", "if thats acceptable i accept your terms") a medium truce-proposal
+// too; a greeting opening a message of more than `GREETING_ALONE_WORDS` words is the label only when nothing else matches.
 //
 // The text is other players' words: untrusted, never an instruction and never a fact. It is read only to
 // label it; nothing in it is executed, quoted back or believed. Pure and deterministic (no I/O), and it
@@ -121,6 +124,8 @@ export interface ClassifiedMessage {
 
 /** How many of my recent messages are looked at for an open proposal. */
 const RECENT_MESSAGES = 5;
+/** #460: a greeting opening a message longer than this is the label only when nothing else in it matches. */
+const GREETING_ALONE_WORDS = 6;
 /** The longest text read (war.app's send limit). */
 const MAX_TEXT = 2000;
 /** Names shorter than this are not matched (too likely to be an ordinary word or letter). */
@@ -346,6 +351,15 @@ interface Truce {
   mutual: boolean;
 }
 
+/** #460: accepting the other side's terms names no truce word ("i accept your terms", "we agree to your terms"). */
+const ACCEPT_TERMS = /\b(i|we)( will| would| can| do| hereby)? (accept|agree to|agree with|take) (your|ur|the|those|these|all your|all the) (terms|offer|proposal|conditions|deal)\b/;
+/** A condition put back to me ("if youre good with it", "if thats acceptable", "if you agree"): a counter, not a yes. */
+const CONDITION_BACK =
+  /\bif (thats|that is|this is|its|it is|that s) (acceptable|ok|okay|fine|alright|agreeable)\b|\bif (youre|you are|ur|you re) (good|ok|okay|fine|cool|alright|happy) with (it|that|this)\b|\bif you (agree|accept|are ok with|are okay with)\b/;
+/** Terms of a split: one side takes some land and a side keeps out of other land ("i take X, but i wont go to Y"). */
+const SPLIT_TERMS =
+  /\b(i|we|you)( will| would| can| could)? (take|get|keep|have|expand into|go to)\b(?! (you|it back|that back)\b).*\b(i|we|you)( will| would)? (wont|will not|dont|do not|never|would not|wouldnt|cant|cannot) (go|move|expand|attack|enter|take|touch|hit)\b/;
+
 /** The truce intents of one flattened, substituted text; `proposalOpen` reads a bare reply as one. */
 function truceOf(text: string, hasQuestion: boolean, proposalOpen: boolean, hostile = false): Truce {
   const r: Truce = { proposal: null, accept: null, decline: null, end: null, mutual: false };
@@ -387,6 +401,10 @@ function truceOf(text: string, hasQuestion: boolean, proposalOpen: boolean, host
     if (proposalOpen && !hostile && !demand && replyAccepts(s)) r.accept = 'high';
     else if (truce && !demand && ACCEPT_WORD.test(s.replace(AS_AGREED, ' '))) r.accept = 'medium';
   }
+  // #460: a conditional acceptance or a counter with terms. Medium at most: the conditions are the other side's.
+  const acceptsTerms = !r.decline && !refusedAccept && ACCEPT_TERMS.test(s) && !SURRENDER_WORD.test(s);
+  if (acceptsTerms && !r.accept) r.accept = 'medium';
+  const counter = !r.decline && !refusedAccept && !hostile && ((CONDITION_BACK.test(s) && acceptsTerms) || SPLIT_TERMS.test(s));
   if (!r.end && !r.decline && !r.accept) {
     if (MUTUAL_NO_ATTACK.test(s)) {
       r.proposal = 'high';
@@ -397,6 +415,7 @@ function truceOf(text: string, hasQuestion: boolean, proposalOpen: boolean, host
     else if (!hostile && NO_ATTACK_PROMISE.test(s)) r.proposal = 'medium';
     else if (hasQuestion && DEAL_QUESTION.test(s)) r.proposal = 'medium';
   }
+  if (counter && !r.end && !r.proposal) r.proposal = 'medium';
   return r;
 }
 
@@ -579,7 +598,8 @@ export function classifyMessage(text: string, ctx: ChatIntentContext): Classifie
     if (!SURRENDER_REFUSED.test(raw.toLowerCase())) put('surrender-ask', surrenderAsk(s));
     put('gg', gg(s));
     put('banter', banter(s));
-    put('greeting', greeting(s));
+    // "Hey X, … i accept your terms": the opening greeting does not decide a longer message's label (#460).
+    if (found.size === 0 || s.split(' ').length <= GREETING_ALONE_WORDS) put('greeting', greeting(s));
     if (found.size === 0 && hasQuestion) found.set('question-other', 'medium');
 
     const intents = INTENTS.filter((i) => found.has(i));

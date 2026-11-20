@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { Writer, type DecodedRequest, type ReplyFrame } from '../src/protocol/codec.js';
-import { Method, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
+import { Method, UNVERIFIED_CARD_PLAYS, writeSendOrdersParams, type TurnOrder } from '../src/protocol/methods.js';
 import { attackSizes, cityPurchaseOf, commerceWarning, hopelessAttackWarning, orderDelayCheck, plannerSettings, turnOrdersArg, validateTurn } from '../src/tools/turn.js';
 import { untrustedText } from '../src/tools/common.js';
 import type { MoveMode } from '../src/tools/order-options.js';
@@ -2407,6 +2407,29 @@ describe('cards in the turn tools', () => {
     expect(p.orders[0]).toEqual({ kind: 'discard', card: SP });
     expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
     expect(p.income).toBe(5);
+  });
+
+  it('#434: plan_turn keeps an advised spy-card play out of the orders while its encoding is unverified live', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: withHand([{ id: SP, type: 2 }]) }) });
+    const p = payload<CardsPayload & { cards: { advice?: { spy?: { player: number; inOrders?: true } } } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(p.cards.advice?.spy).toBeDefined();
+    expect(p.cards.advice?.spy?.inOrders).toBeUndefined();
+    expect(p.orders.some((o) => o.kind === 'card')).toBe(false);
+    // Once Spy is verified live (taken out of the set here, as the one-line change would), the play is in the orders.
+    const unverified = UNVERIFIED_CARD_PLAYS as Set<string>;
+    unverified.delete('Spy');
+    try {
+      const v = payload<CardsPayload & { cards: { advice?: { spy?: { player: number; inOrders?: true } } } }>(
+        await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+      );
+      expect(v.cards.advice?.spy?.inOrders).toBe(true);
+      expect(v.orders).toContainEqual({ kind: 'card', card: SP, player: v.cards.advice!.spy!.player });
+      expect(turnOrdersArg.safeParse(v.orders).success).toBe(true);
+    } finally {
+      unverified.add('Spy');
+    }
   });
 
   it('plan_turn AT the hold limit (5/5) requires nothing', async () => {

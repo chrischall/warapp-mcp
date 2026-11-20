@@ -709,3 +709,68 @@ describe('classifyMessage: review 7', () => {
     cases('surrender-ask', ['i surrender', 'please accept my surrender'], ['I surrender? never', 'you should accept my surrender? no']);
   });
 });
+
+describe('classifyMessage: a conditional acceptance or counter-offer to my truce proposal (#460)', () => {
+  // The live reply, paraphrased, with a synthetic name and synthetic places.
+  const REPLY =
+    "Hey Redcrane, I'm potentially interested, but I need to expand eastward. If you're good with it, I take the rest of " +
+    "North America (Alaska), but I won't go to the islands I see you on now. I have a way to expand eastward via other " +
+    "routes. If that's acceptable, then I accept your terms, but I understand if that's not what you were thinking.";
+  const proposed: ChatIntentContext = { ...CTX, toMe: true, myRecentMessages: ['Truce until turn 12? I stay out of North America.'] };
+
+  it('is no greeting: the opening "Hey" does not decide the label', () => {
+    const r = classifyMessage(REPLY, proposed);
+    expect(r.intents).not.toContain('greeting');
+  });
+
+  it('reads a conditional truce-accept and a counter truce-proposal, at least medium, as a reply to my proposal', () => {
+    const r = classifyMessage(REPLY, proposed);
+    expect(r.intents).toEqual(expect.arrayContaining(['truce-proposal', 'truce-accept']));
+    expect(r.strengths['truce-accept']).toBe('medium');
+    expect(r.strengths['truce-proposal']).toBe('medium');
+    expect(r.confidence).toBe('medium');
+    expect(r.addressedToMe).toBe(true);
+    expect(r.mentions.territories).toEqual([10]);
+    expect(r.mentions.bonuses).toEqual([50]);
+  });
+
+  it('reads it without my proposal in view too (never a high-confidence greeting)', () => {
+    const r = classifyMessage(REPLY, CTX);
+    expect(r.intents).toEqual(expect.arrayContaining(['truce-proposal', 'truce-accept']));
+    expect(r.intents).not.toContain('greeting');
+    expect(r.confidence).not.toBe('high');
+  });
+
+  cases(
+    'truce-accept',
+    ['if thats acceptable then i accept your terms', 'ok i accept your terms', 'we agree to your terms'],
+    ['i will never accept your terms', 'i accept your surrender', 'i dont accept your terms'],
+  );
+  cases(
+    'truce-proposal',
+    [
+      'if youre good with it i take Alaska and i wont go to the islands',
+      'i take North America, you wont go to Alaska',
+      'if thats acceptable then i accept your terms',
+    ],
+    ['i will take you out and you wont stop me', 'if thats acceptable', 'i take it back lol'],
+  );
+
+  describe('near misses', () => {
+    it('a plain "hey there" stays a greeting', () => {
+      expect(classifyMessage('hey there', CTX).intents).toEqual(['greeting']);
+      expect(classifyMessage('hey there', CTX).confidence).toBe('high');
+    });
+    it('a long message that is only banter stays banter', () => {
+      expect(intents('lol that was so lucky, nice roll on that last attack haha wow')).toEqual(['banter']);
+    });
+    it('a long message that only greets stays a greeting', () => {
+      expect(intents('hey everyone, hope you all have a great game today')).toEqual(['greeting']);
+    });
+    it('a greeting opening a long message with something else in it is not the label', () => {
+      const r = classifyMessage('hey Redcrane, what is your income right now? just curious', CTX);
+      expect(r.intents).toContain('income-check');
+      expect(r.intents).not.toContain('greeting');
+    });
+  });
+});

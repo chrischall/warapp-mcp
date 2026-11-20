@@ -5,10 +5,11 @@
 // Gift. Read-only; everything here is advice — of these only the advised Order Delay is added to the
 // orders; my Bomb and Emergency Blockade and the D2 cards carry an `order` to pass to warapp_submit_turn.
 
-import { adviseOrderDelay, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
-import { bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
+import { adviseOrderDelay, CARD_BLOCKADE, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
+import { blockadeOffer, bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
 import { bonusTerritories } from '../analysis/bonuses.js';
 import { diplomacyOpponents, supportAdvice, type SupportView } from './card-support-advice.js';
+export { intelOrders } from './card-support-advice.js';
 import type { TruceCover } from '../analysis/card-support.js';
 import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';
@@ -108,6 +109,24 @@ interface CardAdviceView extends SupportView {
     protects: { territories: number[]; bonuses: { bonus: number; value: number }[]; income: number; commander: boolean };
     order: { kind: 'card'; card: string; target: number };
   };
+  /**
+   * #434: my Blockade on the one gate into held bonuses of mine the plan concedes (never on a member of one).
+   * `order` to pass to warapp_submit_turn; never added to the orders.
+   */
+  blockade?: {
+    territory: number;
+    armies: number;
+    wall: number;
+    player: number;
+    reach: number;
+    /** The held bonuses behind it (every route from an enemy or the fog runs through it) and their income. */
+    bonuses: number[];
+    income: number;
+    /** My territories behind it. */
+    behind: number[];
+    commander: boolean;
+    order: { kind: 'card'; card: string; target: number };
+  };
   active?: Array<{ card: string; players?: number[]; target?: number; playedBy?: number; expiresAfterTurn?: number; untilTurn?: number }>;
 }
 
@@ -132,6 +151,8 @@ export interface CardAdviceInput {
   enforced?: ReadonlySet<number>;
   /** PLAN-TEAMS D3: the plan's income already carries the Sanctions on me. */
   sanctionsApplied?: boolean;
+  /** #434: the card plays not yet verified live (default `UNVERIFIED_CARD_PLAYS`); tests inject their own. */
+  unverifiedPlays?: ReadonlySet<string>;
 }
 
 /**
@@ -280,6 +301,40 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
     }
   }
 
+  // #434: my Blockade on the one gate into held bonuses the plan concedes — never on a member of one.
+  const blockadeCard = held(CARD_BLOCKADE);
+  if (blockadeCard) {
+    const bkMultiplier = multiplier(game.settings, 'BlockadeCard');
+    const offer = bkMultiplier !== undefined ? blockadeOffer(cb, bkMultiplier, plan.conceded) : undefined;
+    if (offer) {
+      view.blockade = {
+        territory: offer.territory,
+        armies: offer.armies,
+        wall: offer.wall,
+        player: offer.player,
+        reach: offer.reach,
+        bonuses: offer.opens.bonuses,
+        income: offer.opens.income,
+        behind: offer.opens.ids,
+        commander: offer.commander,
+        order: { kind: 'card', card: blockadeCard.id, target: offer.territory },
+      };
+      const bonusName = (id: number) => input.graph.map.bonuses.find((b) => b.id === id)?.name ?? `${id}`;
+      const into = [
+        ...offer.opens.bonuses.map((b) => `bonus ${bonusName(b)} (+${input.graph.map.bonuses.find((x) => x.id === b)?.value ?? 0} a turn)`),
+        ...(offer.commander ? ['your commander'] : []),
+      ].join(' and ');
+      warnings.push(
+        `Consider a Blockade on ${label(offer.territory)}: the plan concedes it, and it is the only way into ${into} — every route from an enemy or the fog runs through it. ` +
+          `Its ${offer.armies} armies after the plan × ${bkMultiplier} make a wall of ${offer.wall} that player ${offer.player}'s ~${offer.reach} cannot take. ` +
+          `The wall forms at the end of the turn, so it holds only if ${label(offer.territory)} is still yours then, and it gives the territory and its armies away for good (it turns neutral). ` +
+          'Advice only, not in the orders: pass `cards.advice.blockade.order` to warapp_submit_turn to play it.',
+      );
+    } else if (bkMultiplier === undefined) {
+      warnings.push('You hold a Blockade, but the game does not say its multiplier, so no wall is sized for it.');
+    }
+  }
+
   // The cards in effect (unverified decoding): Diplomacy protecting a player, Sanctions on me.
   if (active.length) {
     view.active = activeView;
@@ -334,7 +389,7 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
       a.card === 'Diplomacy' && a.players?.includes(me.id) && turn !== null && a.untilTurn === turn + 1 ? a.players.filter((p) => p !== me.id) : [],
     ),
   );
-  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, lastTurn, truces: input.truces ?? [] });
+  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, lastTurn, truces: input.truces ?? [], ...(input.unverifiedPlays ? { unverifiedPlays: input.unverifiedPlays } : {}) });
   Object.assign(view, support.view);
   warnings.push(...support.warnings);
   return { view, warnings };

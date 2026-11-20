@@ -1,7 +1,8 @@
 // PLAN-TEAMS D2: where to play my Diplomacy, Sanctions, Airlift and Gift cards this turn, read against the
 // plan (src/analysis/card-support.ts). Advice only, never auto-played: each carries the `order` to pass to
 // warapp_submit_turn as is, whose encodings are UNVERIFIED live (V9) save Airlift's and Diplomacy's (verified
-// live, #296 and #369). Players and territories by id only.
+// live, #296 and #369) — except (#434) a spy card whose play is verified live, which warapp_plan_turn puts
+// into its orders (`intelOrders`). Players and territories by id only.
 
 import { airliftAdvice, diplomacyAdvice, giftAdvice, intelAdvice, sanctionsAdvice, type IntelCard, type Strength, type TruceCover } from '../analysis/card-support.js';
 import type { CardBoard } from '../analysis/card-threats.js';
@@ -10,6 +11,7 @@ import type { TurnPlan } from '../analysis/planner.js';
 import { STRENGTH_INCOME_TURNS } from '../analysis/profile.js';
 import type { Card } from '../cards.js';
 import type { Game, Player } from '../normalize.js';
+import { UNVERIFIED_CARD_PLAYS } from '../protocol/methods.js';
 import { dealtMode } from './map-details.js';
 
 const CARD_SPY = 2;
@@ -30,16 +32,27 @@ type CardOrder = { kind: 'card'; card: string } & Record<string, unknown>;
 export interface SupportView {
   diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; chain?: true; order: CardOrder };
   sanctions?: { player: number; skipped?: string[]; order: CardOrder };
-  airlift?: { from: number; to: number; armies: number; teammate?: number; order: CardOrder };
+  /** `redeploy` (#434): no border falls without it; an idle or cut-off stack goes to the strike stack or the thinnest border. */
+  airlift?: { from: number; to: number; armies: number; teammate?: number; redeploy?: { source: 'idle' | 'disconnected'; target: 'strike' | 'border' }; order: CardOrder };
   gift?: { player: number; bonus: number; territories: number[]; orders: CardOrder[] };
-  /** G2: the information cards, only where they reveal what the plan needs (never with fog off). */
-  spy?: { player: number; order: CardOrder };
-  reconnaissance?: { target: number; order: CardOrder };
-  surveillance?: { bonus: number; order: CardOrder };
+  /**
+   * G2: the information cards, only where they reveal what the plan needs (never with fog off). #434:
+   * `inOrders` when the card's play is verified live (not in `UNVERIFIED_CARD_PLAYS`): warapp_plan_turn then
+   * puts the `order` into its orders ({@link intelOrders}).
+   */
+  spy?: { player: number; inOrders?: true; order: CardOrder };
+  reconnaissance?: { target: number; inOrders?: true; order: CardOrder };
+  surveillance?: { bonus: number; inOrders?: true; order: CardOrder };
+}
+
+/** #434: the advised spy-card plays verified live, which warapp_plan_turn adds to its orders. */
+export function intelOrders(view: Pick<SupportView, 'spy' | 'reconnaissance' | 'surveillance'>): CardOrder[] {
+  return [view.spy, view.reconnaissance, view.surveillance].flatMap((a) => (a?.inOrders ? [a.order] : []));
 }
 
 const PLAY_IT =
   'Advice only, not in the orders: pass its `order` to warapp_submit_turn to play it (the encoding is read from the client, not yet verified live).';
+const IN_ORDERS = 'In the orders: its encoding is verified live. Drop it from the orders to keep the card.';
 
 /** The Sanctions percentage (`SanctionsCard.Percentage`), when the settings carry one. */
 function percentage(game: Pick<Game, 'settings'>): number | undefined {
@@ -83,6 +96,8 @@ interface SupportInput {
   /** #424: of those, the ones whose card's last turn this is (chained rather than passed over). */
   lastTurn?: ReadonlySet<number>;
   truces: readonly TruceCover[];
+  /** #434: the card plays not yet verified live (default `UNVERIFIED_CARD_PLAYS`); a spy card outside it goes into the orders. */
+  unverifiedPlays?: ReadonlySet<string>;
 }
 
 /**
@@ -147,6 +162,7 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
         to: a.to,
         armies: a.armies,
         ...(a.teammate !== undefined ? { teammate: a.teammate } : {}),
+        ...(a.redeploy ? { redeploy: a.redeploy } : {}),
         order: { kind: 'card', card: air.id, from: a.from, to: a.to, armies: a.armies },
       };
       warnings.push(`${a.why} ${PLAY_IT}`);
@@ -168,13 +184,17 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
       held: new Set(intelCards.keys()),
       ...(starts?.length ? { likelyStarts: new Set(starts) } : {}),
     });
+    // #434: a play verified live goes into the orders; until then (all three today) advice only.
+    const unverified = input.unverifiedPlays ?? UNVERIFIED_CARD_PLAYS;
     for (const a of intel.advice) {
       const id = intelCards.get(a.card)!.id;
-      if (a.card === 'Spy' && a.player !== undefined) view.spy = { player: a.player, order: { kind: 'card', card: id, player: a.player } };
+      const live = !unverified.has(a.card);
+      const flag = live ? { inOrders: true as const } : {};
+      if (a.card === 'Spy' && a.player !== undefined) view.spy = { player: a.player, ...flag, order: { kind: 'card', card: id, player: a.player } };
       if (a.card === 'Reconnaissance' && a.target !== undefined)
-        view.reconnaissance = { target: a.target, order: { kind: 'card', card: id, target: a.target } };
-      if (a.card === 'Surveillance' && a.bonus !== undefined) view.surveillance = { bonus: a.bonus, order: { kind: 'card', card: id, bonus: a.bonus } };
-      warnings.push(`${a.why} ${PLAY_IT}`);
+        view.reconnaissance = { target: a.target, ...flag, order: { kind: 'card', card: id, target: a.target } };
+      if (a.card === 'Surveillance' && a.bonus !== undefined) view.surveillance = { bonus: a.bonus, ...flag, order: { kind: 'card', card: id, bonus: a.bonus } };
+      warnings.push(`${a.why} ${live ? IN_ORDERS : PLAY_IT}`);
     }
     warnings.push(...intel.hold);
   }

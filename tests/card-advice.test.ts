@@ -3,7 +3,7 @@ import type { TerritoryState } from '../src/board.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import type { Card, CardChoice } from '../src/cards.js';
 import type { GameSettings, Player } from '../src/normalize.js';
-import { adviseCards, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
+import { adviseCards, intelOrders, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
 import { normalizeSettings } from '../src/normalize.js';
 import { turnOrdersArg } from '../src/tools/turn.js';
 import { board, mine, neutral, tinyMap } from './analysis/helpers.js';
@@ -91,6 +91,40 @@ describe('adviseCards (#163)', () => {
     expect(text).toMatch(/Consider an Emergency Blockade on T4/);
     expect(text).toMatch(/shields T3 \(bonus A, \+3 a turn\) from player 7176543229's ~14/);
     expect(text).toMatch(/gives up T4 and its 6 armies/);
+  });
+
+  it('#434: advises my Blockade on the one gate into a held bonus the plan concedes, never on a member of it, orders unchanged', () => {
+    const bk: Card = { id: 'k'.repeat(32), type: 12, name: 'Blockade' };
+    const game = { players: [ME, FOE], settings: settings({ BlockadeCard: { ...piece, MultiplyAmount: 3 } }) };
+    const plan = { deploys: [{ territoryId: 4, armies: 2 }], moves: [], moveSlots: [], enemyDeploy: 5, conceded: [4] };
+    const before = structuredClone(plan);
+    // A (1, 2, 3) is mine; 4 is its one gate, facing 10 on T5 (~14): 6 × 3 = 18 stops it.
+    const territories = [me(1, 2), me(2, 2), me(3, 2), me(4, 4), foe(5, 10), neutral(6, 2), neutral(7, 2)];
+    const { view, warnings } = adviseCards(input({ territories, plan, game, hand: [bk] }));
+    expect(view.blockade).toMatchObject({
+      territory: 4,
+      armies: 6,
+      wall: 18,
+      player: FOE.id,
+      reach: 14,
+      bonuses: [101],
+      order: { kind: 'card', card: bk.id, target: 4 },
+    });
+    expect(turnOrdersArg.safeParse([view.blockade!.order]).success).toBe(true);
+    const text = warnings.join('\n');
+    expect(text).toMatch(/Consider a Blockade on T4: the plan concedes it, and it is the only way into bonus A \(\+3 a turn\)/);
+    expect(text).toMatch(/Advice only, not in the orders: pass `cards.advice.blockade.order`/);
+    // Advice only: the plan's orders are unchanged.
+    expect(plan).toEqual(before);
+    // Never on a member of a bonus I hold (a real game walled its own bonus): 3 is A's, facing T4's stack.
+    const own = adviseCards(
+      input({ territories: [me(1, 2), me(2, 2), me(3, 6), foe(4, 10), neutral(5, 2), neutral(6, 2), neutral(7, 2)], game, hand: [bk], plan: { ...plan, deploys: [], conceded: [3] } }),
+    );
+    expect(own.view.blockade).toBeUndefined();
+    // No multiplier in the settings: no wall is sized, and it says so.
+    const bare = adviseCards(input({ territories, plan, hand: [bk] }));
+    expect(bare.view.blockade).toBeUndefined();
+    expect(bare.warnings.join('\n')).toMatch(/You hold a Blockade, but the game does not say its multiplier/);
   });
 
   it('advises my Bomb with the order to play it, and no order when it says to hold the card', () => {
@@ -279,6 +313,26 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(off.warnings.join('\n')).not.toMatch(/Spy|Reconnaissance|Surveillance/);
   });
 
+  it('#434: a spy-card play goes into the orders only once its encoding is verified live; today none is', () => {
+    const fog = { territoryId: 3, owner: { kind: 'unknown' as const }, armies: null, fogLevel: 'Fogged' };
+    const territories = [me(1, 5), me(2, 7), fog, neutral(4, 2), neutral(5, 2), neutral(6, 2), foe(7, 3)];
+    const hand = [card(2, 'Spy', 'a'), card(10, 'Reconnaissance', 'b'), card(11, 'Surveillance', 'c')];
+    // The real set: all three unverified, so advice only and no order to add.
+    const real = adviseCards(input({ territories, game: ffa, hand }));
+    expect(real.view.spy?.inOrders ?? real.view.reconnaissance?.inOrders ?? real.view.surveillance?.inOrders).toBeUndefined();
+    expect(intelOrders(real.view)).toEqual([]);
+    // Surveillance verified (an injected set without it): its play goes into the orders, the others stay advice.
+    const verified = adviseCards(input({ territories, game: ffa, hand, unverifiedPlays: new Set(['Spy', 'Reconnaissance']) }));
+    expect(verified.view.surveillance).toEqual({ bonus: 101, inOrders: true, order: { kind: 'card', card: 'c'.repeat(32), bonus: 101 } });
+    expect(intelOrders(verified.view)).toEqual([{ kind: 'card', card: 'c'.repeat(32), bonus: 101 }]);
+    expect(verified.warnings.join('\n')).toMatch(/Surveillance on bonus 101: .*In the orders: its encoding is verified live/);
+    expect(verified.warnings.join('\n')).toMatch(/Spy on player 8811111299: .*Advice only, not in the orders/);
+    // All verified: every advised play is an order, and none with fog off.
+    expect(intelOrders(adviseCards(input({ territories, game: ffa, hand, unverifiedPlays: new Set() })).view)).toHaveLength(3);
+    const off = adviseCards(input({ territories, game: { ...ffa, settings: { ...settings(), fog: 'NoFog' } }, hand, unverifiedPlays: new Set() }));
+    expect(intelOrders(off.view)).toEqual([]);
+  });
+
   it('G2: Sanctions pass over a truce partner, saying why', () => {
     const truces = [{ player: FOE2.id, state: 'active' as const, coveredMine: [4] }];
     const { view, warnings } = adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], truces }));
@@ -290,6 +344,22 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     const territories = [me(1, 20), me(2, 1), me(3, 1), me(4, 2), foe(5, 10), neutral(6, 2)];
     const { view } = adviseCards(input({ territories, hand: [card(6, 'Airlift')] }));
     expect(view.airlift).toEqual({ from: 1, to: 4, armies: 7, order: { kind: 'card', card: 'd'.repeat(32), from: 1, to: 4, armies: 7 } });
+  });
+
+  it('#434: advises an Airlift that flies an idle stack to the strike stack, advice only', () => {
+    const territories = [me(1, 12), me(2, 1), me(3, 1), me(4, 10), foe(5, 3), neutral(6, 2), neutral(7, 2)];
+    const plan = { deploys: [], moves: [{ from: 4, to: 5, armies: 9, kind: 'attack' as const, reason: '' }], moveSlots: ['sure' as const], enemyDeploy: 5, conceded: [] };
+    const before = structuredClone(plan);
+    const { view, warnings } = adviseCards(input({ territories, plan, hand: [card(6, 'Airlift')] }));
+    expect(view.airlift).toEqual({
+      from: 1,
+      to: 4,
+      armies: 11,
+      redeploy: { source: 'idle', target: 'strike' },
+      order: { kind: 'card', card: 'd'.repeat(32), from: 1, to: 4, armies: 11 },
+    });
+    expect(warnings.join('\n')).toMatch(/Airlift 11 from 1 to 4: they sit idle .*Advice only, not in the orders/);
+    expect(plan).toEqual(before);
   });
 
   it("advises a Gift that completes a teammate's bonus, and never a card read under a teammate", () => {

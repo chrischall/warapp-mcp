@@ -797,14 +797,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   of a player at peace with me (#452: a Diplomacy card in force — decoded, or the plan's T9 set — or a binding
   truce; the hold-the-card line names them as passed over), Sanctions
   on the strongest opponent (the FFA ranking, else visible armies + 3 × visible income; on me when the
-  percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it, and a
-  Gift of the members that complete a teammate's nearer bonus. **The spy cards (G2, `intelAdvice`)** only
+  percentage is negative), an Airlift onto a border of mine or a teammate's that falls without it (#434: else
+  `redeploy` — an idle stack, only my land beside it and unused by the plan, two or more steps from the target, or one
+  cut off from my main holdings, with more than `REDEPLOY_MIN_ARMIES` (3) to spare, to the strike stack, else the
+  thinnest border), a
+  Gift of the members that complete a teammate's nearer bonus, and (#434, `blockadeOffer` in `card-threats.ts`) a
+  Blockade (`cards.advice.blockade`) on a border the plan concedes that is the one way into held bonuses or my commander
+  (`opensBehind`, #291), when its armies after the plan × `BlockadeCard.MultiplyAmount` stop the stack beside it —
+  never on a member of a bonus I hold (it breaks the bonus) or my commander's territory. **The spy cards (G2, `intelAdvice`)** only
   where the fog hides what the plan needs, never with fog off: Spy on an opponent out of view (else the
   owner shown beside my most hidden stacks), Surveillance on a bonus I hold half or more of with a fogged
   member (else the most valuable with a hidden border of mine), Reconnaissance on the hidden territory
   beside the most of mine, else (#443) on the hidden territory behind the opponent in contact whose stacks
   tie down the most of my border armies (`pressures`), a distribution-mode start first when the map carries
-  the mode's territories. **A team hand's cards carry `owner`**
+  the mode's territories. #434: an advised spy card whose kind is not in `UNVERIFIED_CARD_PLAYS` is flagged
+  `inOrders` and warapp_plan_turn puts its play into `orders` (`intelOrders`); all three are still in the set, so
+  none is today — verifying one live is removing it from that set. **A team hand's cards carry `owner`**
   (the in-game id read under, mine when under me at all; V8 verified, #310): the planner plays, discards and
   advises only my own, says how many must go from the teammates', and `warapp_submit_turn` warns on a
   teammate's card. An Order Delay that must leave the hand is played where the schedule advises it, not
@@ -1467,12 +1475,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `outcome.leftTurn` (`leftTurnOf`): for a surrender or a boot the turn being played when the decision log's events saw
   my seat leave (`my-surrender`, my seat's `surrender-accepted` / `booted`; the earliest), else the history's out turn;
   for an elimination the out turn. It is the lessons' `howLost.turn` for a surrender or boot, and `failedAttacks` drops
-  my orders of that turn and later (they never ran). `PlayerTurn.armies` leaves out a territory whose count did not read
-  on a board that hides nothing (where a commander stands in a finished history) and counts it in `armiesUnread`;
-  only a fogged territory makes it `null`. The decision log's truth carries the same `armiesUnread` beside `armies`
-  (`mine` and each opponent), so a figure that leaves a territory out reads as a lower bound, never a definite count.
-  **Not yet done:** counting the commander's standing itself — GameFeed's raw value for a territory with a commander
-  has not been captured, so its armies are unread rather than parsed. Map entries keep `kinds` and `settings: { key (`settingsKey`), localDeployments?,
+  my orders of that turn and later (they never ran). **Commander territories in a finished history are counted (#437,
+  VERIFIED live 2026-11-20):** GameFeed sends such a territory's armies as `"<N>|cmdr,<GUID>,<owner id>,"`, N the plain
+  armies alone (the commander is the unit after the bar, fighting as 7, not in N); `boardFromStanding` reads it as
+  `armies: N` plus `specialUnits` (fixture `tests/fixtures/gamefeed-history-commander.json`), so `PlayerTurn.armies` is
+  exact there and `PlayerTurn.commanders` counts the player's own commanders on its land (the decision log's truth
+  carries `commanders` beside `armies`, `mine` and each opponent). `armiesUnread` remains for a count that does not
+  read on a board that hides nothing (records written before this, where a commander stood, carry it: `armies` is a
+  lower bound then); only a fogged territory makes `armies` `null`. Map entries keep `kinds` and `settings: { key (`settingsKey`), localDeployments?,
   commanders? }`; `mapRecordSummary` / `mapRecordStarts` take a `MapMatch` (`mapMatchOf`: the current game's format,
   Local Deployment and Commanders — an entry that kept no flag matches on it, counted in `settingsUnknown`), and
   warapp_plan_picks' `mapRecord` and warapp_plan_turn's `pace` read only the matching games, with `matched: { by,

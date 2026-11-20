@@ -40,13 +40,22 @@ export interface PlayerTurn {
   income: number;
   territories: number;
   /**
-   * Armies on its territories; `null` when any of them is hidden by the fog. A territory whose count did
-   * not read on a board that hides nothing (a finished game's history shows every territory, V1; the count
-   * is missing where a commander stands, #437) is left out of the sum and counted in `armiesUnread`.
+   * Armies on its territories (plain armies: a commander is counted in `commanders`, #437); `null` when any of
+   * them is hidden by the fog. A territory whose count did not read on a board that hides nothing (a finished
+   * game's history shows every territory, V1) is left out of the sum and counted in `armiesUnread`.
    */
   armies: number | null;
-  /** #437: its territories whose army count did not read though no fog hid it (a commander's); absent when none. */
+  /**
+   * #437: its territories whose army count did not read though no fog hid it; absent when none. Records written
+   * before the commander shape was read (VERIFIED live 2026-11-20) set it where a commander stood; a board parsed
+   * now reads that count (the plain armies) and sets `commanders` instead.
+   */
   armiesUnread?: number;
+  /**
+   * #437: its own commanders standing on its land (a commander fights as 7, not counted in `armies`, which are
+   * the plain armies GameFeed sends); absent when none.
+   */
+  commanders?: number;
   /** The bonuses it holds in full, ascending ids. */
   bonuses: number[];
 }
@@ -72,10 +81,13 @@ export function turnIncomes(
   const held = new Map<number, Set<number>>(players.map((p) => [p, new Set<number>()]));
   const armies = new Map<number, number | null>(players.map((p) => [p, 0]));
   const unread = new Map<number, number>();
+  const commanders = new Map<number, number>();
   for (const t of board.territories) {
     const o = ownerOf(t);
     if (o === undefined || !held.has(o) || !g.territoryById.has(t.territoryId)) continue;
     held.get(o)!.add(t.territoryId);
+    const own = t.specialUnits?.filter((u) => u.kind === 'commander' && u.playerId === o).length ?? 0;
+    if (own) commanders.set(o, (commanders.get(o) ?? 0) + own);
     const a = armies.get(o)!;
     if (t.armies === null && !hidesArmies(t.fogLevel)) {
       unread.set(o, (unread.get(o) ?? 0) + 1);
@@ -93,12 +105,14 @@ export function turnIncomes(
     }
     const inc = boardIncome(g, land, rules);
     const u = unread.get(p);
+    const c = commanders.get(p);
     out.set(p, {
       income: inc.total,
       territories: land.size,
       armies: armies.get(p)!,
       bonuses: inc.bonuses.map((b) => b.bonusId).sort((a, b) => a - b),
       ...(u ? { armiesUnread: u } : {}),
+      ...(c ? { commanders: c } : {}),
     });
   }
   return out;

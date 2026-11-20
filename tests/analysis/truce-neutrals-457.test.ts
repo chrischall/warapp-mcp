@@ -86,4 +86,22 @@ describe('a truce partner\'s neutrals (#457)', () => {
     expect(attacks(p)).toContain(2);
     expect(p.warnings.join('\n')).toMatch(/Taking T2 \(#2\), a neutral beside player 20's land, may read as a breach to player 20 \(a truce binds you\): tell player 20 first \(#457\)/);
   });
+  it('does not skirt for a relation that is only a Diplomacy card: no agreement binds, so Truce.keptWith leaves it out', () => {
+    const p = planTurn(input({ relations: [truce({ card: 'Diplomacy', enforced: true, coveredMine: [], coveredTheirs: [] })] }));
+    expect(attacks(p)).toEqual(expect.arrayContaining([2, 5]));
+    expect(p.rationale.join('\n')).not.toMatch(/\(#457\)/);
+    expect(p.warnings.join('\n')).not.toMatch(/may read as a breach/);
+  });
+
+  it('reads a truce in notice whose endsTurn has come as over: its partner\'s neutrals are no longer skipped', () => {
+    // The plan is for turn 5; a notice ending on turn 5 (or before) no longer binds.
+    for (const endsTurn of [5, 4]) {
+      const p = planTurn(input({ relations: [truce({ state: 'notice', endsTurn, noticeBy: 'them' })] }));
+      expect(p.relations?.[0]?.state).toBe('over');
+      expect(attacks(p)).toEqual(expect.arrayContaining([2, 5]));
+      expect(p.rationale.join('\n')).not.toMatch(/Not taking .*\(#457\)/);
+    }
+    // One turn before its end it still binds.
+    expect(attacks(planTurn(input({ relations: [truce({ state: 'notice', endsTurn: 6, noticeBy: 'them' })] })))).not.toContain(2);
+  });
 });
