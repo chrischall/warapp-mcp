@@ -281,6 +281,35 @@ describe('decision log store (#412 task 1)', () => {
     expect(await readDecisionLog(dir, GAME)).toBeUndefined();
   });
 
+  it('never writes over, lists or prunes a log of another version', async () => {
+    await mkdir(join(dir, 'decisions'), { recursive: true });
+    const other = JSON.stringify({ version: DECISION_LOG_VERSION + 1, gameId: GAME, playerId: ME, status: 'finished', turns: { '1': { kind: 'observed' } } });
+    await writeFile(decisionLogPath(dir, GAME), other);
+    const none = JSON.stringify({ gameId: GAME, playerId: ME, status: 'finished', turns: {} });
+    await writeFile(decisionLogPath(dir, GAME + 1), none);
+    expect(await record(2)).toBe(false);
+    expect(await recordSent(dir, GAME, ME, 2, { deploys: [], moves: [] })).toBe(false);
+    expect(await recordObservation(dir, GAME, ME, 2, boardOn(2), 'live')).toBe(false);
+    expect(await recordOutcome(dir, GAME, ME, 1, { income: 5, gained: [], lost: [], capturesMade: [], capturesMissed: [], bonusesHeld: [], eliminated: false })).toBe(false);
+    expect(await updateDecisionLog(dir, GAME, ME, (l) => l)).toBe(false);
+    expect(await recordSent(dir, GAME + 1, ME, 2, { deploys: [], moves: [] })).toBe(false);
+    expect(await readFile(decisionLogPath(dir, GAME), 'utf8')).toBe(other);
+    expect(await readFile(decisionLogPath(dir, GAME + 1), 'utf8')).toBe(none);
+    expect(await readDecisionLog(dir, GAME)).toBeUndefined();
+    expect(await listDecisionLogs(dir)).toEqual([]);
+    expect(await pruneDecisionLogs(dir, { maxGames: 0, maxBytes: 0 })).toEqual([]);
+    expect(await readFile(decisionLogPath(dir, GAME), 'utf8')).toBe(other);
+  });
+
+  it('scrubs player names from an override reason', async () => {
+    const players = [{ id: FOE, name: 'Zebulon Quux' }];
+    const sent = { deploys: [{ territoryId: 2, armies: 5 }], moves: [] };
+    expect(await recordSent(dir, GAME, ME, 3, sent, { by: 'agent', reason: 'Held back: zebulon quux is bluffing.' }, { players })).toBe(true);
+    const text = await readFile(decisionLogPath(dir, GAME), 'utf8');
+    expect(text).not.toMatch(/Zebulon|Quux/i);
+    expect((await readDecisionLog(dir, GAME))!.turns['3']!.override).toEqual({ by: 'agent', reason: `Held back: Player ${FOE} is bluffing.` });
+  });
+
   it("never writes over another account's log", async () => {
     await record(1);
     expect(await recordDecision(dir, GAME, 4004, { turn: 2, board: boardOn(2), input: input(2), plan: plan(2) })).toBe(false);
@@ -405,6 +434,27 @@ describe('listing and pruning decision logs', () => {
     // Only active games left over the cap: nothing more goes.
     expect(await pruneDecisionLogs(dir, { maxGames: 1 })).toEqual([4]);
     expect((await listDecisionLogs(dir)).map((l) => l.gameId)).toEqual([1, 5]);
+  });
+
+  it('lists from the head of each file, never reading a whole large log', async () => {
+    await game(1, 'finished', 10);
+    // A log whose turns are far longer than the head read: its status still lists.
+    await updateDecisionLog(dir, 1, ME, (l) => ({ ...l, turns: { ...l.turns, '2': { kind: 'observed', source: 'live', pad: 'x'.repeat(200_000) } as never } }));
+    const list = await listDecisionLogs(dir);
+    expect(list).toMatchObject([{ gameId: 1, playerId: ME, status: 'finished' }]);
+    expect(list[0]!.bytes).toBeGreaterThan(200_000);
+    // The header is written first, whatever order the mutate returned its keys in.
+    await updateDecisionLog(dir, 1, ME, (l) => ({ turns: l.turns, status: l.status, playerId: l.playerId, gameId: l.gameId, version: l.version }));
+    expect((await readFile(decisionLogPath(dir, 1), 'utf8')).indexOf('"turns"')).toBeGreaterThan((await readFile(decisionLogPath(dir, 1), 'utf8')).indexOf('"status"'));
+  });
+
+  it('never prunes a file whose head lists but whose whole does not parse', async () => {
+    await game(1, 'finished', 10);
+    const whole = await readFile(decisionLogPath(dir, 1), 'utf8');
+    const cut = whole.slice(0, whole.length - 3);
+    await writeFile(decisionLogPath(dir, 1), cut);
+    expect(await pruneDecisionLogs(dir, { maxGames: 0 })).toEqual([]);
+    expect(await readFile(decisionLogPath(dir, 1), 'utf8')).toBe(cut);
   });
 
   it('drops the oldest finished games past the byte cap', async () => {

@@ -16,10 +16,14 @@
 // what `planTurn` sets itself; Maps and Sets are tagged so `decodeInput` restores them.
 //
 // 0600 in a 0700 folder, written atomically under the in-process path lock; best effort (never throws
-// into a tool); a file that exists but does not parse is never overwritten. At most MAX_DECISION_GAMES
-// games and MAX_DECISION_BYTES in all (`pruneDecisionLogs`: the oldest finished games first, never one
-// still running). `WARAPP_DECISION_LOG=off` writes nothing; `full` keeps every turn whole (no compaction).
-import { readdir, readFile, stat, unlink } from 'node:fs/promises';
+// into a tool); a file that exists but does not parse, or carries another `version` (or none: a newer
+// build's, say, sharing the data dir), is never overwritten, listed or pruned. The header (`version`,
+// `gameId`, `playerId`, `status`) is always written before `turns`, so listing reads only the head of each
+// file (`HEAD_BYTES`), never a whole log. At most MAX_DECISION_GAMES games and MAX_DECISION_BYTES in all
+// (`pruneDecisionLogs`: the oldest finished games first, never one still running; a log is parsed whole
+// only just before it is deleted). `WARAPP_DECISION_LOG=off` writes nothing; `full` keeps every turn whole
+// (no compaction).
+import { open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MyOrders } from './analysis/opponents.js';
 import type { OutlookState } from './analysis/outlook.js';
@@ -44,6 +48,8 @@ const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSaf
 export const decisionsDir = (dir: string) => join(dir, 'decisions');
 export const decisionLogPath = (dir: string, gameId: number) => join(decisionsDir(dir), `${gameId}.json`);
 const DECISION_FILE = /^(\d{1,12})\.json$/;
+/** Bytes read from the head of a log to list it: the header comes first, so this always covers it. */
+const HEAD_BYTES = 512;
 
 /** `off`: nothing written; `full`: every turn kept whole; `on`: the default. */
 export type DecisionLogMode = 'on' | 'off' | 'full';
@@ -367,10 +373,10 @@ export function scrubNames<T>(v: T, players: readonly { id: number; name?: strin
 type Read = { kind: 'absent' } | { kind: 'unreadable' } | { kind: 'log'; log: DecisionLog };
 
 function logOf(c: unknown, gameId: number): DecisionLog | undefined {
-  if (!isRec(c) || c.gameId !== gameId || !isInt(c.playerId) || !isRec(c.turns)) return undefined;
+  if (!isRec(c) || c.version !== DECISION_LOG_VERSION || c.gameId !== gameId || !isInt(c.playerId) || !isRec(c.turns)) return undefined;
   const status: DecisionLogStatus = c.status === 'finished' || c.status === 'compacted' ? c.status : 'active';
   return {
-    version: isInt(c.version) ? c.version : DECISION_LOG_VERSION,
+    version: DECISION_LOG_VERSION,
     gameId,
     playerId: c.playerId,
     status,
@@ -423,7 +429,9 @@ export async function updateDecisionLog(
         r.kind === 'log' ? r.log : { version: DECISION_LOG_VERSION, gameId, playerId, status: 'active', turns: {} };
       const next = mutate(current);
       if (!next) return false;
-      await writeJsonAtomic(path, decisionsDir(dir), { ...next, version: DECISION_LOG_VERSION, gameId, playerId });
+      // The header first: listing reads only the head of the file.
+      const { version: _v, gameId: _g, playerId: _p, status, turns, ...rest } = next;
+      await writeJsonAtomic(path, decisionsDir(dir), { version: DECISION_LOG_VERSION, gameId, playerId, status, turns, ...rest });
       return true;
     });
   } catch {
@@ -508,9 +516,15 @@ export async function recordObservation(
   }
 }
 
+export interface RecordSentOptions extends DecisionLogOptions {
+  /** The game's players, for scrubbing names from the override's reason; only ids are ever written. */
+  players?: readonly { id: number; name?: string }[];
+}
+
 /**
  * Log the orders actually sent on `turn`, with `override` when they differ from the decision (or came
- * from outside the planner). Starts an entry when the turn has none. `true` when written. Never throws.
+ * from outside the planner). Starts an entry when the turn has none. Name-free: every name in
+ * `opts.players` is scrubbed from the override's reason. `true` when written. Never throws.
  */
 export async function recordSent(
   dir: string,
@@ -519,10 +533,12 @@ export async function recordSent(
   turn: number,
   sent: MyOrders,
   override?: DecisionOverride,
-  opts: DecisionLogOptions = {},
+  opts: RecordSentOptions = {},
 ): Promise<boolean> {
   const kept = encodeValue(sent) as MyOrders;
-  const ov = override ? { by: override.by, ...(override.reason !== undefined ? { reason: override.reason } : {}) } : undefined;
+  const ov = override
+    ? { by: override.by, ...(override.reason !== undefined ? { reason: scrubNames(String(override.reason), opts.players) } : {}) }
+    : undefined;
   return updateDecisionLog(
     dir,
     gameId,
@@ -568,7 +584,26 @@ export interface DecisionLogListing {
   mtimeMs: number;
 }
 
-/** Every decision log that parses, by game id. Never throws. */
+/**
+ * The header of a log read from its first {@link HEAD_BYTES} bytes (it is written before `turns`): the
+ * text up to `"turns":` closed with an empty `turns`. `undefined` when the head holds no header.
+ */
+async function headOf(path: string, gameId: number): Promise<DecisionLog | undefined> {
+  const fh = await open(path, 'r');
+  let head: string;
+  try {
+    const buf = Buffer.alloc(HEAD_BYTES);
+    const { bytesRead } = await fh.read(buf, 0, HEAD_BYTES, 0);
+    head = buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await fh.close();
+  }
+  const at = head.indexOf('"turns":');
+  if (at < 0) return undefined;
+  return logOf(JSON.parse(`${head.slice(0, at)}"turns":{}}`), gameId);
+}
+
+/** Every decision log whose header reads (from the head of the file only), by game id. Never throws. */
 export async function listDecisionLogs(dir: string): Promise<DecisionLogListing[]> {
   let names: string[];
   try {
@@ -583,8 +618,7 @@ export async function listDecisionLogs(dir: string): Promise<DecisionLogListing[
     const gameId = Number(m[1]);
     try {
       const path = decisionLogPath(dir, gameId);
-      const [s, text] = await Promise.all([stat(path), readFile(path, 'utf8')]);
-      const log = logOf(JSON.parse(text), gameId);
+      const [s, log] = await Promise.all([stat(path), headOf(path, gameId)]);
       if (log) out.push({ gameId, playerId: log.playerId, status: log.status, bytes: s.size, mtimeMs: s.mtimeMs });
     } catch {
       // Unreadable: neither listed nor pruned.
@@ -612,7 +646,14 @@ export async function pruneDecisionLogs(
   for (const l of done) {
     if (count <= maxGames && bytes <= maxBytes) break;
     try {
-      await withPathLock(decisionLogPath(dir, l.gameId), () => unlink(decisionLogPath(dir, l.gameId)));
+      // Parsed whole only now, just before it goes: a file that does not parse is never deleted.
+      const gone = await withPathLock(decisionLogPath(dir, l.gameId), async () => {
+        const r = await readRaw(dir, l.gameId);
+        if (r.kind !== 'log' || r.log.status === 'active') return false;
+        await unlink(decisionLogPath(dir, l.gameId));
+        return true;
+      });
+      if (!gone) continue;
       removed.push(l.gameId);
       count -= 1;
       bytes -= l.bytes;
