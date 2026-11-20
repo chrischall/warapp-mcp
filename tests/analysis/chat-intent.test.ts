@@ -451,3 +451,43 @@ describe('classifyMessage: review 3', () => {
     );
   });
 });
+
+describe('classifyMessage: review 4', () => {
+  const proposed: ChatIntentContext = { ...CTX, myRecentMessages: ['want a truce until turn 10?'] };
+
+  describe('accepting my surrender is no acceptance of my truce, nor a surrender ask', () => {
+    for (const t of ['I accept your surrender', 'i accept ur surrender', 'accepted your surrender', 'i accept your resignation']) {
+      it(JSON.stringify(t), () => {
+        const r = classifyMessage(t, proposed);
+        expect(r.intents).not.toContain('truce-accept');
+        expect(r.intents).not.toContain('surrender-ask');
+        expect(r.confidence).not.toBe('high');
+        expect(r.addressedToMe).toBe(false);
+      });
+    }
+    for (const t of ['i accept', 'i accept your offer', 'i accept the truce', 'accepted, deal']) {
+      it(`${JSON.stringify(t)} still accepts`, () => {
+        const r = classifyMessage(t, proposed);
+        expect(r.intents).toContain('truce-accept');
+        expect(r.confidence).toBe('high');
+      });
+    }
+  });
+
+  describe('"please accept" a deal or offer is no surrender ask', () => {
+    cases('surrender-ask', ['please accept', 'please accept my surrender'], ['please accept the deal', 'please accept my offer', 'pls accept the terms']);
+  });
+
+  describe('lesser misses', () => {
+    it('"yo you are dead" is a greeting and a threat', () => {
+      expect(intents('yo you are dead')).toEqual(expect.arrayContaining(['greeting', 'threat']));
+    });
+    cases('threat', ['u r dead', 'youre toast', 'we should attack you', 'we will crush you', 'lets attack you'], [
+      'are you dead?',
+      'we should not attack you',
+      'we should attack Redcrane',
+      'we will hit you up later',
+    ]);
+    cases('truce-proposal', ['nap?', 'want a nap?', 'nap until turn 8'], ['i need a nap', 'taking a nap brb', 'nap time lol']);
+  });
+});

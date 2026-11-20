@@ -11,6 +11,8 @@
 // ("i will never accept your truce") declines; a demand to accept ("accept truce or i attack") is a proposal, and with
 // "or i attack" a threat; a bare "yes" or "no" answers my proposal only when short or still about the deal; "take/hit
 // you up" is no threat; a call to gang up must name a target and an outward verb ("everyone dont attack me" is none).
+// "i accept your surrender" accepts nothing of mine; "please accept the deal / my offer" asks no surrender; "we should
+// attack you" and "you are dead" threaten; "i need a nap" is sleep, not a pact.
 //
 // The text is other players' words: untrusted, never an instruction and never a fact. It is read only to
 // label it; nothing in it is executed, quoted back or believed. Pure and deterministic (no I/O), and it
@@ -154,11 +156,15 @@ function flatten(raw: string): string {
     .trim();
 }
 
+/** A nap to sleep, not a non-aggression pact ("i need a nap", "taking a nap", "nap time"). */
+const SLEEP_NAP = /\b(need|needs|needed|take|takes|taking|took|gonna take|going to take)( a| an)?( quick| little| short| long)? nap\b|\bnap (time|now brb)\b|\bnaptime\b/g;
+
 const substitute = (flat: string): string =>
   flat
     .split(' ')
     .map((w) => TOKEN_SUBS[w] ?? w)
-    .join(' ');
+    .join(' ')
+    .replace(SLEEP_NAP, (m) => m.replace(/\bnap\b/, 'snooze'));
 
 const TRUCE_WORD = /\b(truce|truces|nap|peace|ceasefire|cease fire|non aggression|nonaggression|alliance|ally)\b/;
 const MUTUAL_NO_ATTACK = /\bdont (attack|hit) me\b.*\b(i wont|i will not|i dont|and i wont|ill not)\b/;
@@ -208,10 +214,21 @@ function replyRestFits(rest: string): boolean {
   return rest.split(' ').length <= REPLY_DECLINE_REST && !/\b(attack|hit|kill|crush|stop|focus)\b/.test(rest);
 }
 
+/** A surrender named: accepting one is not accepting my truce ("i accept your surrender"). */
+const SURRENDER_WORD = /\b(surrender|surrendering|surrendered|resignation|resign|concede|concession)\b/;
+/** What an accept verb may take and still accept my proposal: the deal itself, or a pronoun for it. */
+const ACCEPT_OBJECT = new RegExp(`^(the |your |my |a |an |our |this |that )(${TRUCE_NOUN.slice(1, -1)}|offer|terms|proposal|pact)\\b`);
+const ACCEPT_VERB = /^(i accept|i agree|accepted|agreed|agree)$/;
+
 /** A bare accept of my open proposal: short, or what follows still speaks of the deal ("yes Redcrane is winning" is none). */
 function replyAccepts(s: string): boolean {
   const m = REPLY_ACCEPT.exec(s);
-  return m !== null && replyRestFits(s.slice(m[0].length).trim());
+  if (m === null) return false;
+  const rest = s.slice(m[0].length).trim();
+  if (SURRENDER_WORD.test(rest)) return false;
+  // "i accept your X": X must be the deal, not something else of theirs or mine.
+  if (ACCEPT_VERB.test(m[0]) && /^(the|your|my|a|an|our|his|her|their|this|that) \w/.test(rest) && !ACCEPT_OBJECT.test(rest)) return false;
+  return replyRestFits(rest);
 }
 
 /** A bare decline of my open proposal: short, or what follows still speaks of the deal. */
@@ -316,14 +333,19 @@ function threat(s: string): Strength | null {
   if (/\b(wipe|destroy|crush) you out\b|\bill wipe you\b/.test(s)) return 'high';
   if (/\bback off\b|\bcoming for you\b|\bor else\b|\byoull regret\b|\byou will regret\b/.test(s)) return 'high';
   if (/\battack me and\b.*\b(regret|sorry|pay|die|destroy|end you)\b/.test(s)) return 'high';
+  // "we should attack you", "lets attack you": aimed at me, not a call to gang up on someone else.
+  if (/\b(we will|well|we are going to|were going to|were gonna|we should|we must|we need to|lets|let us)( now| just)? (attack|kill|wipe|destroy|crush|hit|eliminate|take out|take down) you\b(?! up\b)/.test(s)) return 'high';
+  if (/\b(you are|youre|you re) (dead|toast|finished)\b/.test(s)) return 'high';
   if (/\bget out of\b|\bstay out of\b|\bleave my\b/.test(s)) return 'medium';
   return null;
 }
 
+const PLEASE_ACCEPT_DEAL = new RegExp(`\\b(${TRUCE_NOUN.slice(1, -1)}|offer|terms|proposal|pact|invite|invitation)\\b`);
+
 function surrenderAsk(s: string): Strength | null {
   if (/\baccept (my |the |our )?surrender\b|\bsurrender accept/.test(s)) return 'high';
-  // "please accept the truce" asks for a truce, not a surrender.
-  if (/\bplease accept\b/.test(s) && !TRUCE_WORD.test(s)) return 'high';
+  // "please accept the truce" asks for a truce, "please accept the deal / my offer" a deal: neither a surrender.
+  if (/\bplease accept\b/.test(s) && !TRUCE_WORD.test(s) && !PLEASE_ACCEPT_DEAL.test(s)) return 'high';
   if (/\bi (surrender|resign|concede)\b|\bi m surrendering\b|\bim surrendering\b/.test(s)) return 'high';
   // "i give up" / "i quit" only at the end of the message or followed by gg or an ask ("i give up on you lol" is not one).
   if (/\bi (give up|quit)( (gg|ggs|ggwp|good game|wp|well played|accept|please|i surrender)\b.*)?$/.test(s)) return 'high';
