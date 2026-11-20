@@ -2,35 +2,21 @@
 // the evidence my orders left (failed attacks, hold losses, repelled and repulsed attacks, proven captures)
 // and the observed deploy itself (`observeDeploy`, #57, #69, #123). Pure; shared.ts re-exports all of it.
 import type { BoardState, TerritoryState } from '../../board.js';
-import { } from '../../commerce.js';
 import type { MyOrders } from '../opponents.js';
-import { } from '../opponents.js';
-import type { } from '../../normalize.js';
 import { bonusTerritories } from '../bonuses.js';
 import {
-
-
   DEFAULT_DEFENSIVE_KILL_RATE,
   DEFAULT_OFFENSIVE_KILL_RATE,
   fewestAttackersToKill,
   fewestAttackersToTake,
   guaranteedKills,
-
   specialUnitStrength,
   straightKills,
-
-
   type KillRates,
 } from '../combat.js';
 import { neighborsOf, type MapGraph } from '../graph.js';
-import type { } from '../outlook.js';
-import type { } from '../lookahead.js';
-import type { } from '../schedule.js';
 import { byNum } from './util.js';
 import type { PlannerSettings } from './shared.js';
-import type { } from './team.js';
-import type { } from './jabs.js';
-
 
 /**
  * Fog levels that hide a territory's armies. The live board names war.app's StandingFogLevel

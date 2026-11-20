@@ -14,15 +14,10 @@ import {
   armiesToTake,
   DEFAULT_DEFENSIVE_KILL_RATE,
   DEFAULT_OFFENSIVE_KILL_RATE,
-
-
   guaranteedKills,
   luckFraction,
-
-
   winChance,
   type CombatSettings,
-
 } from '../combat.js';
 import { neighborsOf, type MapGraph } from '../graph.js';
 import type { GameOutlook } from '../outlook.js';
