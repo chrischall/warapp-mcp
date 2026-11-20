@@ -1857,7 +1857,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     `PlanOptions.strikeShare: false` and keeps that plan when it earns more next turn (a completion the share
     starved), saying so. Golden byte-identical (no history); with a flat history injected on every plan of turn
     ≥ 5, 115 plans changed (the line), 5 in their orders: captures +2/−4 (advances that no longer fit), next
-    income and concessions unchanged. Left for later: breaks and all-in completions.
+    income and concessions unchanged. **The break spend (#421, owner decision of 2026-11-20):** on the pile (`pileOf`:
+    adapting, not `defend` or No-Split, flat, my armies in view ≥ `STOCKPILE_TURNS` × income; `PlanCtx.pile`, any
+    format) rule 4a's greedy runs the break of the strongest opponent's (highest income estimate, then id)
+    cheapest visible bonus (every member in view, never a probable one; its cheapest member, then value, then id)
+    before every other capture (`Candidate.spend`, moved ahead of the first capture; holds keep their places, and
+    the held-bonus units still fund first at it) and never skips it as a second front, with a "Stockpile spend
+    (#421)" line and the attack's reason naming it. Golden byte-identical; with the flat history injected, 12 plans
+    changed (the line), none in their orders. Left for later: all-in completions.
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and

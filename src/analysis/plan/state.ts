@@ -192,6 +192,8 @@ export type PlanCtx = OpponentsCtx & BoardCtx & CombatCtx & StandingCtx & {
    * flat income, {@link STRIKE_SHARE} of the income goes to the strike stack ahead of comfort margins.
    */
   strikeShare: number;
+  /** #421: a stockpile on a flat income (`pileOf`): my armies in view and how many turns of income they are. */
+  pile?: { my: number; turns: number };
 };
 
 /**

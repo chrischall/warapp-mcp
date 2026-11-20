@@ -211,6 +211,9 @@
 //          #421, the strike share: in contact on a flat income (a stack built as above), STRIKE_SHARE
 //          of the income is held out of captures for the stack (holds keep their exact need first),
 //          unless that lowers next income (`planShare`) ("Strike share (#421): …").
+//          #421, the break spend: on the pile (`pc.pile`), rule 4a runs the break of the strongest
+//          opponent's cheapest visible bonus before every other capture, never skipped as a second
+//          front ("Stockpile spend (#421): …").
 //       3d. Decided (#201): given `options.outlook` (#178) reporting winning or losing, the game is
 //          decided, and every payback test (PAYBACK_TURNS everywhere it appears in these rules)
 //          counts the turns it has left instead: the loser's strength over the winner's income a
@@ -2131,6 +2134,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       prior?: number;
       /** #417: my commander's hold (rule 1k): funded ahead of the 1v1 race, as a held bonus's gate is. */
       critical?: boolean;
+      /** #421: a stockpile spend (the strongest opponent's cheapest visible break): it runs before every other capture. */
+      spend?: boolean;
       run: () => void;
     }
     const rank = { unit: 0, hold: 0, complete: 1, advance: 2, stage: 2, race: 2, break: 3, counter: 3 } as const;
@@ -2298,6 +2303,33 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       });
       return true;
     };
+    /** The member a break of `b` takes: its cheapest visible member (#72: a break only has to land), then the least frontier, then id. */
+    const breakOptionOf = (b: Breakable) =>
+      bonusTerritories(g, b.bonusId)
+        .filter((t) => targets.has(t))
+        .map(breakOption)
+        .sort((a, b) => a.cost - b.cost || a.scoreCost - b.scoreCost || a.t - b.t)[0];
+    // #421 (owner decision, 2026-11-20): on a stockpile (`pc.pile`) the turn spends by breaking the strongest
+    // opponent's cheapest visible bonus (every member in view: never a probable one) — ahead of every other
+    // capture, never skipped as a second front. The strongest is the highest income estimate, then id.
+    const pileBreak = (() => {
+      if (!pc.pile) return undefined;
+      const strongest = pc.estimateList
+        .filter((e) => foe(e.playerId))
+        .sort((a, b) => incomeOfPlayer(b.playerId) - incomeOfPlayer(a.playerId) || a.playerId - b.playerId)[0]?.playerId;
+      if (strongest === undefined) return undefined;
+      return breakable
+        .filter((b) => b.player === strongest && !b.probable)
+        .flatMap((b) => {
+          const o = breakOptionOf(b);
+          return o ? [{ b, o }] : [];
+        })
+        .sort((x, y) => x.o.cost - y.o.cost || y.b.value - x.b.value || x.b.bonusId - y.b.bonusId)[0];
+    })();
+    if (pileBreak)
+      rationale.push(
+        `Stockpile spend (#421): ${pc.pile!.my} armies of mine stand on the board, ${pc.pile!.turns} turns of my flat ${income} income, so the turn tries first to break the strongest opponent's cheapest visible bonus, player ${pileBreak.b.player}'s ${bonusName(pileBreak.b.bonusId)} (+${pileBreak.b.value}) through ${label(pileBreak.o.t)} (${pileBreak.o.cost} armies), before any other capture.`,
+      );
     for (const b of breakable) {
       // Its cheapest visible member (#72: a break only has to land), then the least frontier, then id.
       const options = bonusTerritories(g, b.bonusId)
@@ -2317,18 +2349,23 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         taken: false,
         why: breakReason(b),
       });
+      const spendIt = pileBreak?.b === b;
       // An FFA skips a second-front break, but only one the plan could pay for is named as
-      // skipped: an unaffordable one is dropped quietly (it could not run either way).
-      if (opensSecondFront(b, score) && !affordable(o.t)) {
+      // skipped: an unaffordable one is dropped quietly (it could not run either way). #421: never the stockpile's.
+      if (spendIt) {
+        // #421: the stockpile's break runs whatever its front.
+      } else if (opensSecondFront(b, score) && !affordable(o.t)) {
         skipOffence(o.t, 'not affordable this turn');
         continue;
       }
-      if (secondFront(b, score)) {
+      if (!spendIt && secondFront(b, score)) {
         skipOffence(o.t, `no second front in an FFA: player ${b.player} threatens no bonus of mine`);
         continue;
       }
+      const reasonOf = (r: string) => (spendIt ? `${r} — the stockpile's spend on the strongest opponent (#421)` : r);
       candidates.push({
         kind: 'break',
+        ...(spendIt ? { spend: true } : {}),
         score,
         cost: o.cost,
         id: b.bonusId,
@@ -2345,13 +2382,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
             const was = worstCase.get(o.t);
             targets.set(o.t, { ...tg, cost: o.cost });
             worstCase.set(o.t, defenceAt(o.t) + reinforcementAt(o.t));
-            if (!tryCapture(o.t, `${breakReason(b)}, sized to land against player ${b.player}'s ~${reinforcementAt(o.t)} deploy (#201: I lead this free-for-all)`)) {
+            if (!tryCapture(o.t, reasonOf(`${breakReason(b)}, sized to land against player ${b.player}'s ~${reinforcementAt(o.t)} deploy (#201: I lead this free-for-all)`))) {
               targets.set(o.t, tg);
               if (was === undefined) worstCase.delete(o.t);
               else worstCase.set(o.t, was);
               return;
             }
-          } else if (!tryCapture(o.t, breakReason(b))) return;
+          } else if (!tryCapture(o.t, reasonOf(breakReason(b)))) return;
           ps.anchor ??= moves[moves.length - 1]!.from;
           warnRetake(b, o);
         }),
@@ -2590,6 +2627,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         const sorted = slots.map((i) => candidates[i]!).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
         slots.forEach((i, k) => (candidates[i] = sorted[k]!));
       }
+    }
+    // #421: a stockpile spend runs before every other capture; the holds keep their places.
+    if (candidates.some((c) => c.spend)) {
+      const spends = candidates.filter((c) => c.spend);
+      const rest = candidates.filter((c) => !c.spend);
+      const at = rest.findIndex((c) => c.kind !== 'hold' && c.kind !== 'unit');
+      candidates.splice(0, candidates.length, ...(at < 0 ? [...rest, ...spends] : [...rest.slice(0, at), ...spends, ...rest.slice(at)]));
     }
     // A held-bonus unit that pays for itself is funded before any capture that completes
     // no bonus (an advance or a break, unless focused): at the first such capture, every

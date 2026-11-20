@@ -5,7 +5,7 @@
 // rationale and warnings that state them. Pure: it reads the input and writes only
 // `state.warnings` / `state.rationale`.
 import { siegeFit, siegeOf, type Siege } from './siege.js';
-import { strikeShareOf } from './stockpile.js';
+import { pileOf, strikeShareOf } from './stockpile.js';
 import type { BoardState } from '../../board.js';
 import { armiesForGold } from '../../commerce.js';
 import { holdsSeat } from '../../player-states.js';
@@ -863,13 +863,18 @@ export function planContext(input: PlanInput): PlanCtx {
       const st = b.territories.get(n);
       if (st?.owner.kind === 'player' && st.armies !== null && o.foe(st.owner.playerId)) contact.add(st.owner.playerId);
     }
-  const strikeShare = o.opts.strikeShare === false ? 0 : strikeShareOf({
+  const pileArgs = {
     territories: b.territories, mineSet: b.mineSet, unitsAt: b.unitsAt, foe: o.foe, income: o.income,
     ...(o.incomeTrend ? { incomeTrend: o.incomeTrend } : {}), auto: o.auto, goal: o.goal, noSplit: c.noSplit,
-    format: o.profile.format, siege: o.siege?.target, contact,
-  });
+  };
+  const strikeShare = o.opts.strikeShare === false ? 0 : strikeShareOf({ ...pileArgs, format: o.profile.format, siege: o.siege?.target, contact });
   const reserve = Math.min(o.income, o.reserve + strikeShare);
-  return { ...o, ...b, ...c, ...standingCtx(o, b), reserve, strikeShare: reserve - o.reserve };
+  // #421: the pile itself, for the break and all-in spends.
+  const pile = pileOf(pileArgs);
+  return {
+    ...o, ...b, ...c, ...standingCtx(o, b), reserve, strikeShare: reserve - o.reserve,
+    ...(pile ? { pile: { my: pile.my, turns: pile.turns } } : {}),
+  };
 }
 
 /**
