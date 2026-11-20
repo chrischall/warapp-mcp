@@ -199,6 +199,11 @@
 //          income every turn, breaks the opponent's biggest stack beside it soonest (its owner
 //          deploying there every turn), when that is not the border holding the most armies and
 //          breaks sooner than it ("Strike stack on … (#201): no border can strike this turn; …").
+//          #421: outside a 1v1 (not a siege, not No-Split, not `defend`), a stockpile on a flat income —
+//          my armies in view at least STOCKPILE_TURNS turns of my income while `incomeTrend` is flat —
+//          builds the same stack facing the opponent beside me whose visible armies mine outnumber
+//          STOCKPILE_LEAD× (fewest first, then id; never an income estimate), never on my commander's
+//          territory, and spends it as above ("Stockpile (#421): …").
 //       3d. Decided (#201): given `options.outlook` (#178) reporting winning or losing, the game is
 //          decided, and every payback test (PAYBACK_TURNS everywhere it appears in these rules)
 //          counts the turns it has left instead: the loser's strength over the winner's income a
@@ -989,7 +994,7 @@
 //     would then exceed the next income and the start-of-turn hold cost (in rule 4e's
 //     contact/late fallback it is a cost instead, #114); a warning ("Frontier grows faster than
 //     income") names it, and also fires when the plan's frontier ends so. #281: never a territory a
-//     static seat left (rule 0s) that costs at most VACATED_MAX_COST and borders a live opponent's
+//     static seat left (rule 0s) that costs at most VACATED_MAX_COST (3, #417: what 2 defenders cost) and borders a live opponent's
 //     stack able to take it with what stands there (`denialOf`): that border comes either way, so
 //     it is let through, a line ("Take … though it faces player …") says so, and pass 3 ranks it by
 //     capture cost plus the frontier without its own hold need, less the denial (1 + PAYBACK_TURNS ×
@@ -1382,7 +1387,11 @@
 //     and warapp_submit_picks' preview keep per game), a fogged missing member the picking board showed
 //     as a neutral (and whose owner the fog does not show as a player now) is costed at that size
 //     instead, never attacked, with a rationale line ("… fogged now, was a neutral of N on the picking
-//     board (#201)").
+//     board (#201)"). #417: a fogged member a static seat left (`BoardCtx.vacated`: shown owner-only as
+//     its, or fogged now and the seat's when last seen — `foggedLastSeen`, the newest earlier board that
+//     showed it, else `previousBoard`) is costed at VACATED_FOG_ARMIES (2) defenders, never above the costliest member in view (its border stack says nothing about the
+//     land behind it), with a "… was player N's (out, no AI) … (#417)" line; it raises no other fogged
+//     member's figure and gets no wasteland surcharge.
 //  7. Move order (#127; every goal, last). Orders zigzag — the first mover's 1st, the other's
 //     1st and 2nd, the first mover's 2nd and 3rd, … — so `moves` is scheduled
 //     (`scheduleMoves`, src/analysis/schedule.ts), earliest first: the one order Order Priority
@@ -1601,7 +1610,7 @@ import {
 import { emptyPlan, noteEstimates, planContext } from './plan/estimates.js';
 import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js';
 import { deployBook } from './plan/orders.js';
-import { holdsPhase, type Threatened, type Unit } from './plan/holds.js';
+import { holdsPhase, priorOnlyHold, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
@@ -1613,7 +1622,7 @@ import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
 import { stageTwoMove, twoMoveStages } from './plan/two-move.js';
-import { addEmptyEnemyTargets, dropEmptyEnemyTargets, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
+import { addEmptyEnemyTargets, dropEmptyEnemyTargets, foggedLastSeen, plainOrderCosts, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
 import { captureInsteadOfHold } from './plan/capture-instead.js';
@@ -1704,6 +1713,10 @@ function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>
   const vacated = new Map(input.vacated);
   for (const t of input.board.territories)
     if (t.owner.kind === 'player' && seats.has(t.owner.playerId)) vacated.set(t.territoryId, t.owner.playerId);
+  // #417: and the fogged ones last seen held by a seat — on the newest earlier board that showed them
+  // (`foggedLastSeen`), not only the previous board, so the pricing outlasts the turn vision was lost.
+  const lastSeen = input.foggedLastSeen ?? foggedLastSeen(input.board, input.previousBoard ? [{ turn: 0, board: input.previousBoard }] : []);
+  for (const [t, p] of lastSeen) if (seats.has(p)) vacated.set(t, p);
   return {
     ...input,
     ...(vacated.size ? { vacated } : {}),
@@ -2050,6 +2063,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       target?: number;
       /** PLAN-TEAMS C3.4: the player holding `target`. */
       owner?: number;
+      /** #420: a hold sized only on the fog prior ({@link priorOnlyHold}): the evidence's figure. It ranks after every capture. */
+      prior?: number;
       run: () => void;
     }
     const rank = { unit: 0, hold: 0, complete: 1, advance: 2, stage: 2, break: 3, counter: 3 } as const;
@@ -2346,9 +2361,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           );
       }
     }
-    for (const t of holds)
+    for (const t of holds) {
+      const b = borders.get(t.id);
+      const prior = t.recentFrom === undefined && !t.critical && b ? priorOnlyHold(pc, b, t) : null;
       candidates.push({
         kind: 'hold',
+        ...(prior !== null ? { prior } : {}),
         // A border just taken from a weak opponent is held first: conceding it hands it back.
         score: t.recentFrom !== undefined ? Infinity : t.worth / t.holdCost,
         cost: t.holdCost,
@@ -2375,6 +2393,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           hold(t);
         },
       });
+    }
     // A conceded unit's members, judged on their own now (rule 1a, against what is left).
     const singleNow = (t: Threatened, quiet: boolean) => {
       if (t.critical) return;
@@ -2436,6 +2455,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const teamFocused = (c: Candidate) => Number(c.owner !== undefined && pc.teamFocus.has(c.owner));
     const ahead = (a: Candidate, b: Candidate) =>
       Number(b.focus) - Number(a.focus) ||
+      // #420: a hold sized only on the fog prior ranks after every capture.
+      Number(a.prior !== undefined) - Number(b.prior !== undefined) ||
       // #201: ahead, every held bonus is held for the worst case before any capture (said below).
       (holdPasses === 'worst' ? Number(b.kind === 'unit') - Number(a.kind === 'unit') : 0) ||
       (oneVsOne ? Number(a.kind === 'advance' || a.kind === 'stage') - Number(b.kind === 'advance' || b.kind === 'stage') : 0) ||
@@ -2443,6 +2464,15 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const after = (a: Candidate, b: Candidate) =>
       a.cost - b.cost || a.borders - b.borders || rank[a.kind] - rank[b.kind] || a.id - b.id;
     candidates.sort((a, b) => ahead(a, b) || teamFocused(b) - teamFocused(a) || after(a, b));
+    for (const c of candidates) {
+      if (c.prior === undefined) continue;
+      const passed = candidates.filter((d) => d.kind !== 'hold' && d.kind !== 'unit' && d.score < c.score);
+      if (!passed.length) continue;
+      const b = borders.get(c.id)!;
+      rationale.push(
+        `Hold ${label(c.id)} after the captures (#420): it needs ${c.cost} only against player ${b.player}'s ~${b.deploy}, the fog prior; against the stacks beside it plus the ~${c.prior} the evidence gives, it holds as it stands.`,
+      );
+    }
     if (pc.teamFocus.size)
       for (const [i, c] of candidates.entries()) {
         if (!teamFocused(c)) continue;

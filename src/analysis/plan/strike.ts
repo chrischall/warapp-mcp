@@ -35,6 +35,18 @@ export interface StrikeStack {
   income: number;
   source: string;
   deployed: number;
+  /** #421: who the stack faces and why, when not the strongest opponent or the siege target. */
+  facing?: string;
+}
+
+/** #421: armies of mine in view, in turns of my income, that make a stockpile on a flat income. */
+export const STOCKPILE_TURNS = 4;
+/** #421: the visible-army lead over one opponent beside me that turns a stockpile into a strike stack facing it. */
+export const STOCKPILE_LEAD = 2;
+
+/** Who a strike stack faces, for the rationale: the siege target, a stockpile's (#421) or the strongest opponent. */
+export function stackFacing(pc: PlanCtx, s: Pick<StrikeStack, 'player' | 'facing'>) {
+  return pc.siege?.target === s.player ? 'the siege target' : (s.facing ?? 'the strongest opponent');
 }
 
 export type Strikes = ReturnType<typeof strikesPhase>;
@@ -949,7 +961,7 @@ export function guardOffBreaks(pc: PlanCtx, ps: PlanState, book: DeployBook, hd:
   }
 }
 
-/** Rule 0p.3c (#72, #120, #201): the 1v1 strike stack's border, chosen before the leftover deploy. */
+/** Rule 0p.3c (#72, #120, #201, #421): the strike stack's border (a 1v1, a siege or a stockpile), chosen before the leftover deploy. */
 export function chooseStrikeStack(
   pc: PlanCtx,
   ps: PlanState,
@@ -968,9 +980,9 @@ export function chooseStrikeStack(
   // Concentrate (#72, adapting in a 1v1 facing the opponent): the spare deploys go to one strike stack
   // on the border facing the strongest opponent (the highest income estimate, tracked when its
   // track is trusted), the stack that keeps the most there, rather than to comfort margins.
-  // A 1v1 rule: in an FFA or a team game the comfort margins keep the leftover (several fronts).
+  // A 1v1 rule: in an FFA or a team game the comfort margins keep the leftover (several fronts), unless a stockpile (#421, below).
   // Chosen even when holds and captures leave no leftover (#102): the stack is still spent.
-  let stack: { id: number; player: number; income: number; source: string } | undefined;
+  let stack: Omit<StrikeStack, 'deployed'> | undefined;
   /**
    * No-Split (#124): `x`'s one order when it is a small expansion a strike may take over — a single
    * attack on a neutral that completes no bonus this turn, stages none and is not focused.
@@ -988,10 +1000,40 @@ export function chooseStrikeStack(
   // #382: a siege builds the stack facing its target in any format (its attacks held until the trigger:
   // the target's other territories are no targets then, so the stack only grows or breaks).
   const siege = pc.siege && facing.has(pc.siege.target) ? pc.siege : undefined;
-  if ((auto && profile.format === '1v1' && goal !== 'defend' && facing.size) || siege) {
+  // #421: outside a 1v1, a stockpile on a flat income — my armies in view at least STOCKPILE_TURNS
+  // turns of income while it has not grown — builds the stack facing the opponent beside me whose
+  // armies in view mine outnumber STOCKPILE_LEAD× or more (the fewest first, then id). Visible armies
+  // only, never an income estimate: the pile is spent where it dominates. Not under No-Split (an order
+  // carries the whole stack), and never on my commander's territory.
+  const stockpile = (() => {
+    if (siege || noSplit || !auto || profile.format === '1v1' || goal === 'defend' || !pc.incomeTrend?.flat || income <= 0)
+      return undefined;
+    const by = new Map<number, number>();
+    let my = 0;
+    for (const [id, st] of state) {
+      if (st.owner.kind !== 'player' || st.armies === null) continue;
+      if (pc.mineSet.has(id)) my += st.armies + unitsAt(id);
+      else by.set(st.owner.playerId, (by.get(st.owner.playerId) ?? 0) + st.armies + unitsAt(id));
+    }
+    if (my < STOCKPILE_TURNS * income) return undefined;
+    const p = [...facing]
+      .filter((q) => pc.foe(q) && my >= STOCKPILE_LEAD * (by.get(q) ?? 0))
+      .sort((a, b) => (by.get(a) ?? 0) - (by.get(b) ?? 0) || a - b)[0];
+    if (p === undefined) return undefined;
+    const turns = Math.round((my / income) * 10) / 10;
+    const ratio = by.get(p) ? `${(Math.round((my / by.get(p)!) * 10) / 10).toFixed(1)}×` : 'unbounded';
+    return {
+      p,
+      why: `the opponent whose armies in view mine outnumber ${ratio} (#421)`,
+      line: `${my} armies of mine stand on the board, ${turns} turns of my flat ${income} income, ${ratio} player ${p}'s in view`,
+    };
+  })();
+  if ((auto && profile.format === '1v1' && goal !== 'defend' && facing.size) || siege || stockpile) {
     const player = siege
       ? { p: siege.target, e: estimates.get(siege.target) }
-      : [...facing]
+      : stockpile
+        ? { p: stockpile.p, e: estimates.get(stockpile.p) }
+        : [...facing]
           .map((p) => ({ p, e: estimates.get(p) }))
           .sort((a, b) => (b.e?.estimate ?? 0) - (a.e?.estimate ?? 0) || a.p - b.p)[0]!;
     /** The opponent's territories next to `x` a strike could aim at. */
@@ -1006,6 +1048,8 @@ export function chooseStrikeStack(
           open(x) &&
           // No-Split: a territory whose one order is not a small expansion has nothing left to strike with.
           (!orderOf(x) || smallExpansion(x) !== undefined) &&
+          // #421: a stockpile's stack never stands on my commander's territory.
+          !(stockpile && pc.myCommanders.has(x)) &&
           aims(x).length > 0,
       )
       .sort((a, b) => stackAt(b) - stackAt(a) || a - b);
@@ -1082,12 +1126,17 @@ export function chooseStrikeStack(
         }.`,
       );
     }
+    if (id !== undefined && stockpile)
+      rationale.push(
+        `Stockpile (#421): ${stockpile.line}, so the spare deploys build one strike stack on ${label(id)} facing it, spent on what it can take every turn, rather than comfort margins.`,
+      );
     if (id !== undefined)
       stack = {
         id,
         player: player.p,
         income: player.e?.estimate ?? MIN_ENEMY_DEPLOY,
         source: player.e?.source === 'tracked' ? 'tracked' : player.e?.source === 'observed' ? 'observed' : 'estimated',
+        ...(stockpile ? { facing: stockpile.why } : {}),
       };
   }
   return { stack, smallExpansion };
@@ -1420,7 +1469,7 @@ export function spendStrikeStack(
         why: `not made from the strike stack ${label(S)} — ${refused.get(c.id) ?? 'not worth it'}${effect ? `: ${effect}` : ''}`,
       });
     }
-    const builds = `the spare deploys build one strike stack facing player ${strikeStack.player}, ${pc.siege?.target === strikeStack.player ? 'the siege target' : 'the strongest opponent'} (~${strikeStack.income} income, ${strikeStack.source})`;
+    const builds = `the spare deploys build one strike stack facing player ${strikeStack.player}, ${stackFacing(pc, strikeStack)} (~${strikeStack.income} income, ${strikeStack.source})`;
     if (!taken.length) {
       const held = candidates.length
         ? candidates.map((c) => `${label(c.id)}: ${refused.get(c.id) ?? 'not worth it'}`).join('; ')

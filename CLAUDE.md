@@ -849,7 +849,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   wasteland, no hold beside them, never the standing or the strike stack's direction. Never me or a
   teammate. The board cache keeps what war.app showed. #281: the planner keeps which neutrals a seat
   left (`PlanInput.vacated` → `BoardCtx.vacated`, set by `planTurn`); one costing at most
-  `VACATED_MAX_COST` (2) beside a live stack that can take it with what stands there
+  `VACATED_MAX_COST` (3; #417 raised it from 2 to what `VACATED_FOG_ARMIES` (2) defenders cost) beside a live stack that can take it with what stands there
   (`denialOf`, `src/analysis/plan/vacated.ts`) comes either way, so rule 4d never refuses it on its hold
   cost alone, pass 3 ranks it without that hold need and credits the denial (1 + payback × the bonus
   progress it gives that opponent: it can outrank every plain capture, and a member of my uneconomic
@@ -868,7 +868,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   its check (`outgrows`), so rule 4e's non-contact fallback applies it too. No #281 capture (a denial or
   an empty enemy territory) is sourced from the territory my commander walks from (#282: all that stands
   there is its transit hold, `commanderTransitFrom` / `notFromTransit`); a commander that stays keeps its
-  worst-case hold through `keepOf`, as from any capture.
+  worst-case hold through `keepOf`, as from any capture. #417: `vacated` also takes the territories fogged
+  now that a seat held when last seen (`foggedLastSeen` over my whole board history, `PlanInput.foggedLastSeen` set
+  in `livePlanSetup`: the newest earlier sighting; `previousBoard` only as the fallback), and in "N armies to finish" a fogged member a seat left
+  counts at `VACATED_FOG_ARMIES` defenders, never above the costliest member in view (not at the seat's
+  border stack), with a "… was player N's (out, no AI) … (#417)" line. Golden: 22 of 2000 synthetic plans
+  changed (rationale), 3 plans' orders: +4 captures, none lost, next income and concessions unchanged.
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -943,7 +948,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   visible share of its edge on this board). This applies in a 1v1 too,
   pulling #119's prior back toward the tracked figures #119 found 2–3× low (8 turns with the whole
   frontier read keep a third of the gap): `PRIOR_EVIDENCE_TURNS` is unmeasured, not yet checked
-  against a finished 1v1. **Frontier coverage (#294).** Each observed turn carries `coverage`
+  against a finished 1v1. #420 (`priorOnlyHold`, `plan/holds.ts`): a single-border hold under `balanced` that
+  only the prior makes needed (no usable track; the border holds against its one opponent's stacks plus
+  base + visible bonuses / an observed deploy / a clock card; plain borders only) ranks after every capture
+  in rule 4a's greedy step, with a "(#420)" line when it passed one; held-bonus units and evidence-sized holds keep their rank. **Frontier coverage (#294).** Each observed turn carries `coverage`
   (`frontierCoverage`, pure, in `src/analysis/plan/shared.ts`): its territories in view with a neighbour
   not its own, plus every territory beside them whose owner is hidden (it could hold it: the "~M"), read
   when in view with armies on both boards, and the positive bonuses it could hold with a hidden member;
@@ -956,7 +964,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   its visible income, the tracked figure and — when its tracked figure rose two turns running,
   `risingTracked`: the most it earned over a turn and the two before it, as of each of its last three
   consecutive observed turns — the trend's next step, the newest figure plus the mean rise of the two
-  steps) and an upper bound (the fog prior whole, not `priorBlend`'s shrink, else the most it could earn):
+  steps; #418: no step when my armies on the board are above its in view and my board income above its tracked figure, or — with `LEAD_ARMIES` × its armies in view — above what it earned before the newest rise, so an over-read tracked figure does not switch the gate off; that judgement with a bare army lead moved 3 of 4 changed calibration samples further below truth) and an upper bound (the fog prior whole, not `priorBlend`'s shrink, else the most it could earn):
   the midpoint (rounded up) with none of its frontier read, moving to what the evidence gives without thin
   evidence (`toward`: the track, or `priorBlend`) as the coverage nears `LOW_COVERAGE` — `toward` + (1 −
   coverage ÷ 0.5) × (midpoint − `toward`) — so it never jumps at 0.5; up or down, never the maximum. A
@@ -1138,6 +1146,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   turn, income = the most of the last three observed turns (or its stock and flow when more),
   floored at base + visibly held bonuses — and never decaying (#119): an earlier figure is carried
   until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it;
+  #418: while I lead it on the board read (my armies in view ≥ `LEAD_ARMIES` (3) × its own and my income
+  above the carry before the turn or that turn's visible income — never the reading being judged, which an
+  over-read passes — `ObservedTurn.leadIncome`), a rise no turn read in full confirmed rises at most
+  `RISE_CAP` (1.3) × the carry (or that turn's visible income) a turn, none on a turn read in full that observed
+  less (`incomeMethod` `rise-capped`, `incomeRise`), so walk-ins read up to twice the carry no longer compound;
+  measured on 167 calibration samples: 5 changed, mixed and small (ungated it lowered 45, mostly true rises);
+  golden: 1 plan's rationale; judging the lead by the carry (review fix): calibration unchanged, golden 3
+  synthetic plans (readings above my income held: one break attack the plan warned was 0% if reinforced
+  dropped, one break target and two ranking incomes lower; next income unchanged);
   my own orders on a turn are measurements (`measureOrders`): `warapp_submit_turn` caches the
   deploys and moves it sent beside the boards, and `boardHistory` attaches them as
   `TurnBoard.orders` (orders sent from the web client stay unknown, which changes nothing;
@@ -1728,6 +1745,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     flat history on every plan of turn ≥ 5 it fired on 25 of 6,253 and changed orders on 7, no capture lost, next
     income never lower, no concession added. A completion that takes an opponent's member only reaches it where
     rule 5 already saves toward such a step.
+  - **A stockpile on a flat income is spent (#421).** Outside a 1v1 (no siege, adapting, not `defend`, not
+    No-Split), when `incomeTrend` is flat and my armies in view are at least `STOCKPILE_TURNS` (4) turns of income,
+    rule 0p.3c builds the strike stack facing the opponent beside me whose visible armies mine outnumber
+    `STOCKPILE_LEAD` (2)× (fewest first; visible armies only, never an income estimate; never on my commander's
+    territory): the leftover goes to it ahead of comfort margins and #102 spends it as in a 1v1, with a
+    "Stockpile (#421)" rationale line (`chooseStrikeStack`, `stackFacing`, `plan/strike.ts`). The golden corpus
+    carries no income history, so it is byte-identical; with a flat history injected on its 1,839 plans of turn
+    ≥ 5, 7 changed orders: 2 captures gained, none lost, next income never lower, no concession, warnings 1 added
+    and 1 removed. Left for later: a fixed share of income for the stack, breaks and all-in completions.
   - **One main front (#218).** The planner's front outlook (rule 2f) and the game outlook's front
     forecast use one pair (`mainFront`, `src/analysis/exchange.ts`: the biggest enemy stack next to me
     against my biggest beside it). The plan reports `front` (that forecast with my whole income and

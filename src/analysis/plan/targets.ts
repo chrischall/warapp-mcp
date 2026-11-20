@@ -23,7 +23,7 @@ import type { Holds } from './holds.js';
 import { teammateAt, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
-import { denialsOf, emptyEnemiesOf } from './vacated.js';
+import { denialsOf, emptyEnemiesOf, VACATED_FOG_ARMIES } from './vacated.js';
 import { breakableBonuses, type Breakable } from './siege.js';
 import { ALL_IN_VALUE_TURNS, type AllInTry } from './bonus-attempts.js';
 
@@ -558,9 +558,19 @@ export function bonusScoring(
     // #125: the economy test charges the armies lost, not the armies sent.
     let loss = 0;
     let worstLoss = 0;
+    /** #417: the fogged members a static seat left, each with its cost and loss at VACATED_FOG_ARMIES. */
+    const vacatedFog: { t: number; left: number; c: number; l: number }[] = [];
     for (const t of remaining) {
       const st = state.get(t);
       if (!st || st.owner.kind === 'unknown' || st.armies === null) {
+        // #417: land a static seat left is thin behind its border stack: costed at most at
+        // VACATED_FOG_ARMIES defenders, and never raising what another fogged member counts at.
+        const left = pc.vacated.get(t);
+        if (left !== undefined) {
+          const c = costAt(t, VACATED_FOG_ARMIES) ?? Infinity;
+          vacatedFog.push({ t, left, c, l: Math.min(c - 1, straightKills(VACATED_FOG_ARMIES, rates.defensiveKillRate)) + 1 });
+          continue;
+        }
         // #201: a neutral the picking board showed keeps its size (an owner the fog shows is not one).
         const was = opts.rememberedNeutrals?.get(t);
         if (was === undefined || (st && st.owner.kind === 'player')) {
@@ -594,8 +604,27 @@ export function bonusScoring(
       loss += l;
       worstLoss = Math.max(worstLoss, l);
     }
-    let fogEach = fogged ? (fogged < remaining.length ? worst : Infinity) : 0;
-    let fogLoss = fogged ? (fogged < remaining.length ? worstLoss : Infinity) : 0;
+    // #417: a member a static seat left counts at the lesser of its VACATED_FOG_ARMIES cost and the
+    // costliest member in view; with none in view (only fog), at that cost.
+    const inView = remaining.length - fogged - vacatedFog.length > 0;
+    for (const v of vacatedFog) {
+      const c = inView ? Math.min(v.c, worst) : v.c;
+      cost += c;
+      loss += inView ? Math.min(v.l, worstLoss) : v.l;
+      if (remaining.some(bonusTarget)) {
+        const said = rememberedSaid.get(v.t);
+        const tail = `${label(v.t)}, fogged now, was player ${v.left}'s (out, no AI): its land behind a border stack stands on ${VACATED_FOG_ARMIES} at most, so it is costed at ${c}, not at a stack in view (#417).`;
+        if (said) {
+          said.bonuses.push(`${b.name} (#${b.id})`);
+          rationale[said.at] = `${said.bonuses.join(', ')}: ${tail}`;
+        } else {
+          rememberedSaid.set(v.t, { at: rationale.length, bonuses: [`${b.name} (#${b.id})`] });
+          rationale.push(`${b.name} (#${b.id}): ${tail}`);
+        }
+      }
+    }
+    let fogEach = fogged ? (inView ? worst : Infinity) : 0;
+    let fogLoss = fogged ? (inView ? worstLoss : Infinity) : 0;
     // #167: with automatic Wastelands, a fogged member may be one: its expected surcharge over an
     // ordinary member is (wastelands ÷ territories on the map) × (a wasteland's cost − this one's).
     if (wasteShare > 0 && fogged && Number.isFinite(fogEach)) {

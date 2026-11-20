@@ -31,8 +31,36 @@ import type { Targets } from './targets.js';
 /** The end of every empty enemy capture's reason (#281, the owner's extension): tests and sweeps match on it. */
 export const CHEAP_EXPANSION = 'cheap expansion (#281)';
 
-/** A vacated territory costing at most this many armies to take is cheap enough to deny (#281). */
-export const VACATED_MAX_COST = 2;
+/**
+ * #417: for each territory fogged on `board`, the player who held it on the newest earlier board that
+ * showed it (`boards` in any order; boards that fog it too are skipped). None when that sighting was
+ * neutral, or no earlier board showed it. A static seat's land stays costed as vacated however many
+ * turns it has been out of view, not only on the turn after vision was lost.
+ */
+export function foggedLastSeen(board: BoardState, boards: readonly { turn: number; board: BoardState }[]): Map<number, number> {
+  const fogged = new Set(board.territories.filter((t) => t.owner.kind === 'unknown').map((t) => t.territoryId));
+  const out = new Map<number, number>();
+  const settled = new Set<number>();
+  for (const b of [...boards].sort((x, y) => y.turn - x.turn))
+    for (const t of b.board.territories) {
+      if (!fogged.has(t.territoryId) || settled.has(t.territoryId) || t.owner.kind === 'unknown') continue;
+      settled.add(t.territoryId);
+      if (t.owner.kind === 'player') out.set(t.territoryId, t.owner.playerId);
+    }
+  return out;
+}
+
+/**
+ * A vacated territory costing at most this many armies to take is cheap enough to deny (#281). #417:
+ * raised from 2 to 3, what {@link VACATED_FOG_ARMIES} defenders cost at the default settings.
+ */
+export const VACATED_MAX_COST = 3;
+
+/**
+ * #417: the defenders a static seat's fogged territory is costed at. A seat deploys on its borders, so
+ * its interior stands on 0-2: its border stack in view says nothing about the land behind it.
+ */
+export const VACATED_FOG_ARMIES = 2;
 
 /** What taking a vacated territory denies the opponent beside it (#281). */
 export interface Denial {

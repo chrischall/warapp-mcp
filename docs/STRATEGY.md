@@ -710,7 +710,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
   base + visible bonuses, or what it observed), derived; from the lost games of 2026-11-12/13,
   where the estimate ran 2–3× low. The planner's fog prior (at least my income for an opponent beside the
   fog, in an even-start 1v1 or free-for-all) stays on after a player is out of a free-for-all, that
-  player's share of the hidden board split among the rest (#368). Source: Good 1v1 strategies.
+  player's share of the hidden board split among the rest (#368). A hold only that prior makes needed (the
+  border holds against what the evidence shows) ranks after every capture (#420). Source: Good 1v1 strategies.
 - `reading-who-moves-first` — whose deployment or order runs first shows the first mover; under
   a cyclic (not random) order it alternates, and whoever was awarded first moves second on turn 1;
   under fog, the parity of your own deployments (or moves) before its first visible one of the same
@@ -752,7 +753,7 @@ delays the orders listed after it; under No-Split the whole stack moves).
   contact and after). **Advice only** (the planner does not state that split yet, #294), derived;
   from the lost 1v1s of #300. On thin evidence (under half its frontier read) the planner sizes an opponent at
   the midpoint between what it has seen (its tracked figure, raised to the trend's next step while that
-  rises) and the most it could have (the fog prior, else what it could earn), moving toward what it has seen
+  rises, unless you lead it on income and armies in view — at three to one on armies, on income above what it earned before the rise, however high the rise reads, #418) and the most it could have (the fog prior, else what it could earn), moving toward what it has seen
   as more of the frontier comes into view (#368, the owner's call: choose the middle until we learn
   otherwise), and takes an income you know from `known_income`; incomes stated below mine scale the prior of
   the opponents who said nothing by their ratio to mine, and an untracked one is then sized at the midpoint

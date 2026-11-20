@@ -33,7 +33,7 @@ import { knownFirst, lateArrivals, lateNet, type Holds } from './holds.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';
 import type { PlanCtx, PlanState } from './state.js';
-import type { StrikeStack } from './strike.js';
+import { stackFacing, type StrikeStack } from './strike.js';
 import type { Targets } from './targets.js';
 import type { Border, Threats } from './threats.js';
 
@@ -907,7 +907,7 @@ export function leftoverDeploy(
       lock = true;
       concentrating = true;
       where = stack.id;
-      why = `one strike stack on the border facing player ${stack.player}, ${pc.siege?.target === stack.player ? 'the siege target' : 'the strongest opponent'} (~${stack.income} income, ${stack.source}), not spread`;
+      why = `one strike stack on the border facing player ${stack.player}, ${stackFacing(pc, stack)} (~${stack.income} income, ${stack.source}), not spread`;
     } else if (short[0] && flatSave && saving && open(saving.from) && roomAt(saving.from) > 0) {
       // (Under Local Deployment the leftover may not land there: then the margins stand.)
       // #303: the holds already have their exact armies; the margin over them waits behind the completion.

@@ -207,6 +207,13 @@ export interface ObservedTurn {
    * built by hand.
    */
   coverage?: FrontierCoverage;
+  /**
+   * #418: my income on the later board, when my armies in view there were at least
+   * {@link LEAD_ARMIES} × its own; absent otherwise. While it is above the carry before the turn (or
+   * that turn's visible income), an unconfirmed rise is held ({@link RISE_CAP}), however far the
+   * reading itself goes above it.
+   */
+  leadIncome?: number;
   /** Its observed deploy, capped at what it could earn ({@link ObservedTurn.cap}). */
   observed: number;
   /** The observed deploy before the cap ({@link ObservedTurn.measured} included). */
@@ -423,6 +430,11 @@ export interface OpponentTrack {
    */
   incomeLowered: number;
   /**
+   * #418: with `incomeMethod` `'rise-capped'`: what its window read and the income carried before
+   * it; the income is {@link RISE_CAP} × that, rounded up. Absent otherwise.
+   */
+  incomeRise?: { read: number; before: number };
+  /**
    * Unexplained armies (#123): the income it earned since first seen minus its visible army
    * change, its visible losses and what it may have lost fighting (`combat`) — armies that are
    * in the fog, or were spent there, or a misread (≥ 0); `null` before any observed turn.
@@ -574,7 +586,18 @@ const byNum = (a: number, b: number) => a - b;
  * broken, or the most it could earn falls below it), `fog-captures` a pattern of captures of neutrals in
  * view that needed attackers out of sight (#271: {@link ObservedTurn.fogCaptures}).
  */
-export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried' | 'fog-captures';
+export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried' | 'fog-captures' | 'rise-capped';
+
+/**
+ * #418: a rise no turn read in full confirmed ({@link confirmedBy}) is held to this many times the
+ * income carried before it, each turn: walk-ins beside the fog are read up to twice the carry (#123),
+ * so without it they compounded (10, 20, 40, …) while nothing backed them. Unmeasured beyond #418's
+ * calibration run.
+ */
+export const RISE_CAP = 1.3;
+
+/** #418: my armies in view against its own, at or above which I lead it on the board ({@link ObservedTurn.leadIncome}). */
+export const LEAD_ARMIES = 3;
 
 /** A tracked income and how it was reached ({@link trackedIncome}). */
 interface TrackedIncome {
@@ -631,7 +654,8 @@ const turnSpan = (turns: readonly number[]) =>
  * turns 9–11, observed 3–31"; `null` before any observed turn.
  */
 export function incomeBasis(
-  t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns' | 'observedRange'> & Partial<Pick<OpponentTrack, 'incomeLowered'>>,
+  t: Pick<OpponentTrack, 'incomeMethod' | 'incomeTurns' | 'observedRange'> &
+    Partial<Pick<OpponentTrack, 'incomeLowered'>> & { incomeRise?: OpponentTrack['incomeRise'] | null },
 ): string | null {
   if (!t.incomeMethod || !t.observedRange || !t.incomeTurns.length) return null;
   const span = turnSpan(t.incomeTurns);
@@ -641,6 +665,10 @@ export function incomeBasis(
       ? `carried from ${span}, ${range}, less ${t.incomeLowered} for what it has visibly lost since`
       : `carried from ${span}, ${range}: no bonus it visibly held has been visibly broken since`;
   if (t.incomeMethod === 'max-observed') return `max observed over ${span}, ${range}`;
+  if (t.incomeMethod === 'rise-capped')
+    return t.incomeRise
+      ? `max observed over ${span}, ${range}, held to ${RISE_CAP}× the ~${t.incomeRise.before} before it: no turn read in full reached ${t.incomeRise.read}`
+      : `max observed over ${span}, ${range}, a rise held to ${RISE_CAP}× a turn`;
   if (t.incomeMethod === 'stock-flow') return `visible army growth plus losses (fog arrivals left out) over ${span}, ${range}`;
   if (t.incomeMethod === 'fog-captures') return `captures of neutrals in view that needed attackers out of sight, ending in ${span}, ${range}`;
   return `its visible base + bonuses, ${range} over ${span}`;
@@ -1009,7 +1037,15 @@ function fogCapturePattern(observed: readonly ObservedTurn[]): ObservedTurn['fog
  * `confirmed` when a turn of its window read in full (no army read as a move out of the fog) at
  * least that figure ({@link confirmedBy}).
  */
-type Carry = { income: number; set: number; window: ObservedTurn[]; est: TrackedIncome; confirmed: boolean };
+type Carry = {
+  income: number;
+  set: number;
+  window: ObservedTurn[];
+  est: TrackedIncome;
+  confirmed: boolean;
+  /** #418: the window read `read`, held to {@link RISE_CAP} × the carry `before` it. */
+  rise?: { read: number; before: number };
+};
 
 /**
  * #123 review: a turn read in full — no ambiguous army was read as a move out of the fog (the
@@ -1032,6 +1068,11 @@ const confirmedBy = (window: readonly ObservedTurn[], income: number) =>
  * staying pinned). The trade-off: a hidden income beyond twice the visible one, learnt only from
  * bound-cut readings (section 7's +20 read 10, 20, …), is dropped the first time it deploys into
  * the fog and shows less in full — unless a turn read in full had already confirmed it.
+ *
+ * #418: while I lead it ({@link ObservedTurn.leadIncome} above the carry before the turn, or that
+ * turn's visible income when larger — not above the reading, which an over-read would pass), a window
+ * figure above the carry that no turn read in full confirmed rises at most to {@link RISE_CAP} × that
+ * figure, rounded up; on a turn read in full that observed less than the carry it does not rise at all.
  */
 function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
   let carry = null as Carry | null;
@@ -1056,7 +1097,14 @@ function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
     else {
       const disproved = !prev.confirmed && x.fogArmies === 0 && x.observed < prev.income;
       const kept: number = Math.min(x.cap, prev.income - x.brokenValue);
-      carry = disproved || est.income >= kept ? fresh : { ...prev, income: kept };
+      if (!(disproved || est.income >= kept)) carry = { ...prev, income: kept };
+      else {
+        const before = Math.max(prev.income, x.visibleIncome);
+        const limit = disproved ? prev.income : Math.ceil(before * RISE_CAP - 1e-9);
+        // #418 review: the lead is judged against the carry before the rise (or its visible income), never
+        // against the reading being judged: an over-read above my income must not switch its own cap off.
+        carry = (x.leadIncome ?? 0) > before && !fresh.confirmed && fresh.income > limit ? { ...fresh, income: limit, set: limit, rise: { read: fresh.income, before } } : fresh;
+      }
     }
     if (pattern && pattern.income > carry.income) carry = pattern;
   }
@@ -1464,10 +1512,23 @@ export function trackOpponents(
       const high = Math.max(raw, o.high + measured - (orders ? o.emptiedHigh : 0));
       const seenObserved = Math.min(raw, e.observedCap!);
       const broken = visiblyBroken(g, before, after, playerId);
+      // #418: did I lead it on the board read?
+      const myLand = new Set<number>();
+      let myArmies = 0;
+      let itsArmies = 0;
+      for (const t of after.territories) {
+        if (!g.territoryById.has(t.territoryId) || t.owner.kind !== 'player') continue;
+        if (t.owner.playerId === me) {
+          myLand.add(t.territoryId);
+          myArmies += t.armies ?? 0;
+        } else if (t.owner.playerId === playerId) itsArmies += t.armies ?? 0;
+      }
+      const leadIncome = myArmies >= LEAD_ARMIES * itsArmies ? boardIncome(g, myLand, rules).total : null;
       observed.push({
         from,
         to,
         coverage: frontierCoverage(g, after, before, playerId),
+        ...(leadIncome !== null ? { leadIncome } : {}),
         observed: seenObserved,
         raw,
         ...(context.expected !== undefined ? { expected: context.expected } : {}),
@@ -1534,10 +1595,19 @@ export function trackOpponents(
     // it aged out.
     const carry = carryIncome(observed);
     const carried = carry !== null && lastWindow !== null && carry.income > lastWindow.income ? carry : null;
+    // #418: an unconfirmed rise held below what the last window reads keeps the held figure.
+    const held = !carried && carry?.rise && lastWindow !== null && carry.income < lastWindow.income ? carry : null;
     const estimate = carried
       ? { ...carried.est, income: carried.income, method: 'carried' as IncomeMethod }
-      : lastWindow;
-    const incomeWindow = carried ? carried.window : recent;
+      : held
+        ? {
+            ...held.est,
+            income: Math.max(visibleIncome, held.income),
+            method: (visibleIncome >= held.income ? 'visible' : 'rise-capped') as IncomeMethod,
+          }
+        : lastWindow;
+    const incomeRise = held && estimate!.method === 'rise-capped' ? held.rise! : null;
+    const incomeWindow = carried ? carried.window : held ? held.window : recent;
     const income = estimate?.income ?? null;
     // #250: an income set by one turn far above the turns before it, with the evidence for it. Its
     // starting armies, when known (under full distribution, an even share: an upper bound).
@@ -1611,8 +1681,13 @@ export function trackOpponents(
         incomeTurns: incomeWindow.map((x) => x.from),
         observedRange: estimate!.observedRange,
         incomeLowered: carried ? carried.set - carried.income : 0,
+        incomeRise,
       });
-      if (carried)
+      if (incomeRise)
+        notes.push(
+          `Income ~${income} (${basis}): a rise is held to ${RISE_CAP}× a turn until a turn read in full (no army read as a move out of the fog) confirms it, since armies walking in beside the fog are read up to twice the income carried (#418). Each observed deploy is a lower bound under fog.`,
+        );
+      else if (carried)
         notes.push(
           `Income ~${income} (${basis}): an income does not decay — it is kept until a bonus it visibly held is visibly broken (less its value) or it could no longer earn it; its last ${recent.length} observed turns alone give ~${lastWindow!.income}. Each observed deploy is a lower bound under fog.`,
         );
@@ -1865,6 +1940,7 @@ export function trackOpponents(
       observedRange: estimate?.observedRange ?? null,
       incomeMethod: estimate?.method ?? null,
       incomeLowered: carried ? carried.set - carried.income : 0,
+      ...(incomeRise ? { incomeRise } : {}),
       unexplained,
       inferred,
       visible,

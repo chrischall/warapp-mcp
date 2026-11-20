@@ -6,6 +6,7 @@ import type { IncomePoint, IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
 import { commerceRules } from '../../commerce.js';
 import type { MyOrders, ObservedTurn, OpponentTrack } from '../opponents.js';
+import { LEAD_ARMIES } from '../opponents.js';
 import type { GameSettings } from '../../normalize.js';
 import { bonusTerritories } from '../bonuses.js';
 import {
@@ -454,6 +455,12 @@ export interface PlanInput {
    * who left them. `planTurn` sets it when it plans them as neutrals; a caller need not.
    */
   vacated?: ReadonlyMap<number, number>;
+  /**
+   * #417: for each territory fogged on `board`, the player who held it on the newest earlier board that
+   * showed it (`foggedLastSeen` in plan/vacated.ts, over my board history). A static seat's fogged land is planned
+   * as vacated from it however long it has been fogged. Absent: `previousBoard` alone is read.
+   */
+  foggedLastSeen?: ReadonlyMap<number, number>;
   /**
    * #226: my orders on the turn `previousBoard` was played (what warapp_submit_turn sent and cached):
    * a failed attack of mine counts its kills back into the defender's observed deploy
@@ -2324,6 +2331,15 @@ export function enemyDeployEstimates(
     g.map.territories.every((t) => ownerShown(seenNow.get(t.id)) !== undefined);
   const minimum = Math.max(0, Math.floor(settings.baseIncome ?? DEFAULT_BASE_INCOME));
   const per = settings.bonusArmyPer ?? 0;
+  // #418: my income on the board (cards aside) and my armies in view, against which a rising track is weighed.
+  const myLand = new Set<number>();
+  let myArmies = 0;
+  for (const [t, p] of owner)
+    if (p === me) {
+      myLand.add(t);
+      myArmies += armies.get(t) ?? 0;
+    }
+  const myBoardIncome = boardIncome(g, myLand, { base: minimum, per }).total;
   return players.map((playerId) => {
     // Its visible territories are a lower bound on what it holds, so on its
     // per-territory income too.
@@ -2487,13 +2503,27 @@ export function enemyDeployEstimates(
     // #368 (owner decision of 2026-11-19: on a hidden opponent, choose the middle until we learn
     // otherwise): thin evidence — its tracked figure read from under LOW_COVERAGE of its frontier —
     // sizes it for the midpoint between the lower bound (what is in view or tracked, raised to the
-    // trend's next step when its tracked figure rose two turns running) and the upper bound (the fog
+    // trend's next step when its tracked figure rose two turns running, #418: unless I lead it on armies
+    // in view and on income — above its tracked figure, or with LEAD_ARMIES × its armies above what it
+    // earned before the newest rise) and the upper bound (the fog
     // prior whole, else the most it could earn), moved toward what the evidence gives as the coverage
     // nears LOW_COVERAGE. A rising track read from more of its frontier only raises the estimate to that
     // lower bound. Never the maximum.
     let thinEvidence: EnemyDeployEstimate['thinEvidence'] = null;
     if (source !== 'exact' && usable && tracked !== null) {
-      const rising = risingTracked(usable.turns);
+      // #418: no trend step on an opponent I lead on income (its tracked figure) and on armies in view.
+      // #418 review: with LEAD_ARMIES × its armies in view, the income lead is judged against what it
+      // earned before the newest rise (or its visible income) instead: an over-read tracked figure must
+      // not switch off the gate meant to stop it. (On that judgement alone, with a bare army lead, the
+      // calibration lost 3 of 4 changed samples further below truth.)
+      let theirArmies = 0;
+      for (const t of theirs) theirArmies += armies.get(t) ?? 0;
+      const risen = risingTracked(usable.turns);
+      const leadIt =
+        risen !== null &&
+        myArmies > theirArmies &&
+        (myBoardIncome > Math.max(visible, tracked) || (myArmies >= LEAD_ARMIES * theirArmies && myBoardIncome > Math.max(visible, risen[1]!)));
+      const rising = leadIt ? null : risen;
       const thinCoverage = coverage !== null && coverage.share < LOW_COVERAGE;
       if (thinCoverage || rising) {
         const trend = rising ? Math.min(couldEarn, rising[2]! + Math.ceil((rising[2]! - rising[0]!) / 2 - 1e-9)) : null;
