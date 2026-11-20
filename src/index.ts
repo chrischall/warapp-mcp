@@ -13,11 +13,20 @@
 // user's signed-in war.app tab by the fetchproxy bridge (src/transport-bridge.ts).
 // One bridge per process, started at boot; start() only loads the identity —
 // the port binds on the first request.
+//
+// `warapp-mcp export-state --out <file>` (src/state-cli.ts) writes this install's history for
+// warapp_import_state instead of serving; it is dispatched before the env file is read, so it never
+// loads a credential.
 import { loadDotenvSafely, runMcp } from '@chrischall/mcp-utils';
 import { envFilePath } from './config.js';
+import { runExportCli } from './state-cli.js';
 import { registerAllTools } from './tools/index.js';
 import { createWarappBridge } from './transport-bridge.js';
 import { VERSION } from './version.js';
+
+if (process.argv[2] === 'export-state') {
+  process.exit(await runExportCli(process.argv.slice(3)));
+}
 
 await loadDotenvSafely({ path: envFilePath() });
 
