@@ -134,6 +134,13 @@ describe('decision replay (#412 task 4)', () => {
     expect(replayAggregate([replayDecisions(log, replay)]).expectations).toMatchObject({ scored: 1, incomeHeld: 0 });
   });
 
+  it('counts held captures only on scored turns (next income read)', async () => {
+    const r = replayDecisions(await logTurns([1]), replay);
+    const t = r.turns[0]!;
+    const unscored = { ...t, score: { ...t.score!, incomeHeld: null, capturesHeld: true, replayedCaptures: { backed: [], failed: [], untested: [] } } };
+    expect(replayAggregate([{ ...r, turns: [unscored] }]).expectations).toEqual({ scored: 0, incomeHeld: 0, capturesHeld: 0 });
+  });
+
   it('a turn without its replay input or board is listed, never planned', async () => {
     const log = await logTurns([1, 2]);
     const { input: _drop, ...rest } = log.turns['2']!;

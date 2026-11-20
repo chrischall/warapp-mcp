@@ -251,9 +251,11 @@ export function replayAggregate(games: readonly GameReplay[]): ReplayAggregate {
     for (const t of g.turns) {
       out.turns++;
       if (t.score) {
-        if (t.score.incomeHeld !== null) out.expectations.scored++;
-        if (t.score.incomeHeld) out.expectations.incomeHeld++;
-        if (t.score.capturesHeld) out.expectations.capturesHeld++;
+        if (t.score.incomeHeld !== null) {
+          out.expectations.scored++;
+          if (t.score.incomeHeld) out.expectations.incomeHeld++;
+          if (t.score.capturesHeld) out.expectations.capturesHeld++;
+        }
         if (t.status === 'compared') {
           out.replayedCaptures.backed += t.score.replayedCaptures.backed.length;
           out.replayedCaptures.failed += t.score.replayedCaptures.failed.length;

@@ -11,6 +11,7 @@
 //
 // By default it prints aggregates only (no game id, player id or name); `--json` adds per-turn detail.
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -55,8 +56,11 @@ function parseArgs(argv) {
   }
   if (out.game !== undefined && !Number.isSafeInteger(out.game)) throw new Error('--game takes a game id');
   if (out.enemyDeploy !== undefined && !Number.isFinite(out.enemyDeploy)) throw new Error('--enemy-deploy takes a number');
+  if (out.goal !== undefined && !GOALS.includes(out.goal)) throw new Error(`--goal takes one of ${GOALS.join(', ')}`);
   return out;
 }
+
+const GOALS = ['balanced', 'expand', 'complete-bonus', 'defend', 'siege'];
 
 async function scenarioOf(args) {
   const s = args.scenarioFile ? JSON.parse(await readFile(args.scenarioFile, 'utf8')) : {};
@@ -74,10 +78,12 @@ export async function replayAll(dir, args = {}) {
   const games = [];
   let fixtures = 0;
   let unread = 0;
+  let missing = 0;
   for (const gameId of ids) {
     const log = await readDecisionLog(dir, gameId);
     if (!log) {
-      unread++;
+      if (existsSync(join(dir, 'decisions', `${gameId}.json`))) unread++;
+      else missing++;
       continue;
     }
     const src = (await loadReplay(dir, gameId)) ?? { map: undefined, settings: undefined };
@@ -94,6 +100,7 @@ export async function replayAll(dir, args = {}) {
   return {
     scenario: scenario ?? null,
     unread,
+    missing,
     aggregate: r.replayAggregate(games.map((g) => g.replay)),
     accuracy: r.accuracyReport(games),
     ...(args.fixtures ? { fixtures } : {}),
@@ -123,7 +130,7 @@ function print(r, args) {
   const a = r.aggregate;
   const out = [
     `Scenario: ${r.scenario ? JSON.stringify(r.scenario) : 'none (the invariant: every compared turn should be identical)'}`,
-    `Games: ${a.games}${r.unread ? ` (${r.unread} log(s) unreadable)` : ''}; decided turns: ${a.turns}; replayed: ${a.compared}; identical: ${a.identical} (${a.identicalShare ?? '-'})`,
+    `Games: ${a.games}${r.unread ? ` (${r.unread} log(s) unreadable)` : ''}${r.missing ? ` (${r.missing} with no log)` : ''}; decided turns: ${a.turns}; replayed: ${a.compared}; identical: ${a.identical} (${a.identicalShare ?? '-'})`,
     `Goal changed on ${a.goalChanged} turn(s); skipped: ${JSON.stringify(a.skipped)}`,
     'By logged goal (compared / different):',
     ...Object.entries(a.byGoal).map(([g, b]) => `  ${g.padEnd(15)} ${b.compared} / ${b.different}`),
