@@ -266,7 +266,8 @@ advanced).
 | (attacks/transfers) | 1 | 50 |
 | Order Delay | 11 | **50** — placed in phase 12 (with Order Priority) it was refused with error 10 |
 | Blockade | 18 | 60 — verified live 2026-11-16 (card by name, target territory by id): the territory turned neutral at the end of the turn at its armies × the game's multiplier |
-| Spy, Reconnaissance, Surveillance | 6, 16, 17 | 15 — bundle, **UNVERIFIED live** |
+| Spy, Surveillance | 6, 17 | 15 — bundle, **UNVERIFIED live** |
+| Reconnaissance | 16 | 15 — bundle; a turn with the play committed live 2026-11-20 with no error and was then withdrawn, so the reveal itself is not yet seen (#443) |
 | Airlift | 12 | 43 — bundle, verified live 2026-11-16 (card by name, `from`, `to`, `armies`): the source lost the armies, the target gained them, the card left the hand |
 | Gift | 13 | 47 — bundle, **UNVERIFIED live** |
 | Diplomacy | 14 | 75 — bundle, verified live 2026-11-18 (card by name, `players`): played through `warapp_submit_turn`, it was in force on the later boards (the planner's cards in effect read it) until the turn expected |
@@ -316,7 +317,7 @@ phase method gives the phase. Golden tests pin the bytes. An Airlift (card by na
 had lost the armies, the target had gained them, and the card had left the hand. A Diplomacy (card by name,
 `players`) was committed live 2026-11-18 and was in force on the later boards — the planner's cards in effect
 read it — until the turn expected (#369). A Sanctions was committed once (2026-11-18) but its effect is not
-yet checked, so it stays unverified. No commit carrying any other card in this table (Spy, Reconnaissance,
+yet checked, so it stays unverified. A Reconnaissance was accepted live 2026-11-20 (committed with no error, then withdrawn; #443). No commit carrying any other card in this table (Spy,
 Surveillance, Gift, Bomb, Emergency Blockade) has been sent: those, and Sanctions, stay UNVERIFIED live.
 
 | Card (class) | Tag | Fields after the tag, in write order | Phase |

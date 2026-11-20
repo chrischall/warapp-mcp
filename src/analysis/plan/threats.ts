@@ -218,6 +218,8 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
   // anywhere, so what an estimate holds beyond every bonus it could hold counts as free; without it, a
   // border faces only the free income and the pools there.
   const perTerritory = (s.bonusArmyPer ?? 0) > 0;
+  /** #433: the free income's floor is the game's own base income (0 and 3 exist), not the 5 of the default. */
+  const gameBase = Math.max(0, Math.floor(s.baseIncome ?? MIN_ENEMY_DEPLOY));
   if (s.localDeployments && !custom) {
     const foes = [...new Set([...state.values()].flatMap((t) => (t.owner.kind === 'player' && foe(t.owner.playerId) ? [t.owner.playerId] : [])))].sort(byNum);
     for (const [p, pools] of couldHoldBonusPools(g, foes, (t) => {
@@ -226,7 +228,7 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
     })) {
       enemyPools.set(p, pools);
       const e = estimates.get(p);
-      const free = freeIncome(e?.base ?? 0, MIN_ENEMY_DEPLOY, e?.card?.armies ?? 0);
+      const free = freeIncome(e?.base ?? 0, gameBase, e?.card?.armies ?? 0);
       const pooled = pools.reduce((n, q) => n + q.value, 0);
       const figure = deployOf(p);
       if (perTerritory && figure - pooled > free)
@@ -246,7 +248,7 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
     const pools = enemyPools.get(player);
     if (!pools) return figure;
     const e = estimates.get(player);
-    return enemyDeployReaching(figure, freeIncome(e?.base ?? 0, MIN_ENEMY_DEPLOY, e?.card?.armies ?? 0), pools, on, perTerritory);
+    return enemyDeployReaching(figure, freeIncome(e?.base ?? 0, gameBase, e?.card?.armies ?? 0), pools, on, perTerritory);
   };
   /**
    * #120: what the owner of enemy territory `t` may add there before my attack lands — its deploy

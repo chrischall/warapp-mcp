@@ -300,7 +300,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     ...(ctx.turn !== undefined ? { turn: ctx.turn } : {}),
     ...(ctx.picking !== undefined ? { picking: ctx.picking } : {}),
     ...(ctx.endRules ? { endRules: ctx.endRules } : {}),
-    income: earnedIncome,
+    // #427: my Reinforcement card is a one-off deploy like an opponent's, so the standing reads income without it.
+    income: earnedIncome - Math.max(0, Math.floor(input.cardArmies ?? 0)),
     // #164 x #167: an opponent's Reinforcement card is a one-off deploy, not income: the standing
     // and the FFA ranking read each estimate less its card. PLAN-TEAMS C3: teammates' estimates go
     // too, for the team standing (the profile keeps them off the opponents' side).

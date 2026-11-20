@@ -727,7 +727,7 @@ describe('card plays verified live (#296)', () => {
     // #369: Diplomacy played live 2026-11-18 and read in force on later boards.
     expect(row('Diplomacy')).toMatch(/verified live 2026-11-18/);
     expect(row('Diplomacy')).not.toMatch(/UNVERIFIED/);
-    for (const card of ['Spy, Reconnaissance, Surveillance', 'Gift', 'Sanctions']) {
+    for (const card of ['Spy, Surveillance', 'Gift', 'Sanctions']) {
       expect(row(card), card).toMatch(/UNVERIFIED live/);
     }
     const layout = protocol.slice(protocol.indexOf('PlayCard*'), protocol.indexOf('Discard         byte 09'));
