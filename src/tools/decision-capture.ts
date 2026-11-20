@@ -483,6 +483,7 @@ const PICK_WARNING_CODES: ReadonlyArray<readonly [RegExp, string]> = [
   [/^Only \d+ pickable territor/, 'short-pickable'],
   [/^The fallback group scores more than the primary/, 'fallback-outscores'],
   [/^Territory limit missing/, 'assumed-territory-limit'],
+  [/^Full distribution \(DistributionMode 0/, 'full-distribution'],
   [/^Could not tell which seat is yours/, 'team-seat-unknown'],
 ];
 

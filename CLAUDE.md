@@ -223,6 +223,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **The pick advisor `warapp_plan_picks` is read-only** and refuses outside `DistributingTerritories` or when the
   live board has nothing pickable. Its scorer (`src/analysis/picks.ts`) is pure and deterministic like the turn
   planner; neutral sizes come from the live board when shown (wastelands at their real size), else the settings.
+  The territories per player (`pickTerritoryLimit`, #428): TerritoryLimit when set; under full distribution
+  (DistributionMode 0, no limit) the client's no-cap share floor(pickable ÷ players), every territory being dealt; else
+  the default 3 (each assumption a warning).
   Its opening simulation keeps armies where they stand (an attack is funded by its bordering source plus that
   turn's deploys, never by pooling another pick's armies — that made it promise first-turn bonuses `plan_turn`
   could not deliver, #47; at 0% luck, straight rounding and No-Split off, a neutral one order cannot pay for
