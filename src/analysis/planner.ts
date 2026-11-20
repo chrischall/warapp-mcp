@@ -1686,6 +1686,7 @@ import { teamFocusLine, teamReport } from './plan/team.js';
 import { applyBorderCaps, armiesFreed, partnerFronts, reportBreakLosses, reportTruce, trucePass, warnTruceNeutrals } from './plan/relations.js';
 
 export * from './plan/shared.js';
+export * from './plan/observe.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
 export { TRUCE_RELAX_VALUE } from './plan/relations.js';
 export { SPREAD_INCOME_SLACK, SPREAD_LAST_TURN, SPREAD_TERRITORIES } from './plan/targets.js';
