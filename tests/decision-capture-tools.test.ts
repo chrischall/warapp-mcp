@@ -6,7 +6,8 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
-import { boardAt as rebuiltBoard, decisionLogPath, readDecisionLog } from '../src/decision-log.js';
+import { boardAt as rebuiltBoard, decisionLogPath, ordersDiffer, readDecisionLog } from '../src/decision-log.js';
+import { sentOrdersOf } from '../src/tools/turn.js';
 import { liveHarness, lobbyFixture, payload, type Harness } from './helpers.js';
 import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
 
@@ -101,15 +102,30 @@ describe('decision log capture (#412 task 2)', () => {
     expect(e.decision?.enemyDeploy).not.toBe(30);
   });
 
-  it('planning the turn again replaces its entry', async () => {
-    h = await liveHarness({ feed: [game('2')], pages: ME_PAGE, warapp: server() });
-    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
-    await submit({ game_id: GAME, player: 'Ann', orders: p.orders });
-    expect((await log())!.turns['3']!.sent).toBeDefined();
+  it('planning the turn again before submitting replaces its entry', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: server() });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', avoid_territories: [157] });
+    expect(JSON.stringify((await log())!.turns['3']!.input)).toMatch(/avoid/i);
     await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
     const e = (await log())!.turns['3']!;
     expect(e.kind).toBe('planned');
-    expect(e.sent).toBeUndefined();
+    expect(JSON.stringify(e.input)).not.toMatch(/avoid/i);
+  });
+
+  it('planning the turn again after its orders are sent keeps what was sent and the override (no-gaps rule)', async () => {
+    h = await liveHarness({ feed: [game('2')], pages: ME_PAGE, warapp: server() });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    await submit({ game_id: GAME, player: 'Ann', orders: [{ kind: 'deploy', territory: 161, armies: 5 }], override_reason: 'Stack 161.' });
+    const before = (await log())!.turns['3']!;
+    expect(before.sent).toBeDefined();
+    expect(before.override).toEqual({ by: 'agent', reason: 'Stack 161.' });
+    // Re-planned while waiting for the others (the seat committed).
+    await h.harness.close();
+    const committed = game('2');
+    committed.players = (committed.players as Array<Record<string, unknown>>).map((p) => (p.id === ANN.feed ? { ...p, hasCommittedOrders: true } : p));
+    h = await liveHarness({ dataDir: h.dataDir, feed: [committed], warapp: server() });
+    await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
+    expect((await log())!.turns['3']!).toEqual(before);
   });
 
   it('warapp_submit_turn logs the plan\'s orders as sent with no override', async () => {
@@ -155,6 +171,28 @@ describe('decision log capture (#412 task 2)', () => {
     expect(e.override).toEqual({ by: 'hand', reason: 'Entered by hand.' });
   });
 
+  it('sentOrdersOf flags a move that takes the commander along, so a dropped or added commander is an override', () => {
+    const commander = { id: '0123456789abcdef0123456789abcdef', owner: ANN.inGame };
+    const sent = sentOrdersOf([
+      { kind: 'deploy', territoryId: 161, armies: 5 },
+      { kind: 'move', from: 159, to: 161, armies: 0, commander },
+      { kind: 'move', from: 161, to: 158, armies: 8 },
+    ]);
+    expect(sent.moves).toEqual([
+      { from: 159, to: 161, armies: 0, commander: true },
+      { from: 161, to: 158, armies: 8 },
+    ]);
+    const planned = (withCommander: boolean) => ({
+      deploys: [{ territoryId: 161, armies: 5 }],
+      moves: [
+        { from: 159, to: 161, armies: 0, kind: 'transfer' as const, reason: 'walk', ...(withCommander ? { commander: true as const } : {}) },
+        { from: 161, to: 158, armies: 8, kind: 'attack' as const, reason: 'take' },
+      ],
+    });
+    expect(ordersDiffer(planned(true), sent)).toBe(false);
+    expect(ordersDiffer(planned(false), sent)).toBe(true);
+  });
+
   it('rejects an override_reason over 500 characters', async () => {
     h = await liveHarness({ feed: [game('2')], pages: ME_PAGE, warapp: server() });
     const r = await h.call('warapp_submit_turn', { game_id: GAME, player: 'Ann', orders: [{ kind: 'deploy', territory: 161, armies: 5 }], override_reason: 'x'.repeat(501) });
@@ -184,6 +222,23 @@ describe('decision log capture (#412 task 2)', () => {
     await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' });
     await h.call('warapp_track_opponents', { game_id: GAME, player: 'Ann' });
     expect((await log())!.turns['3']!.kind).toBe('planned');
+  });
+
+  // Every tool that writes the board cache logs the board too (#412 review): one row per call site, so
+  // a capture lost in a refactor fails here.
+  it.each([
+    ['warapp_track_opponents', { game_id: GAME, player: 'Ann' }],
+    ['warapp_locate_opponents', { game_id: GAME, player: 'Ann' }],
+    ['warapp_get_relations', { game_id: GAME, player: 'Ann' }],
+    ['warapp_profile_opponents', { game_id: GAME, player: 'Ann' }],
+  ] as const)('%s logs an observation of the turn seen', async (tool, args) => {
+    h = await liveHarness({ feed: [game('2')], warapp: server() });
+    const r = await h.call(tool, args);
+    expect(r.isError).toBeFalsy();
+    const l = (await log())!;
+    expect(l.turns['3']).toMatchObject({ kind: 'observed', source: 'live' });
+    expect(rebuiltBoard(l, 3)?.territories.find((t) => t.territoryId === 158)?.armies).toBe(7);
+    expect(fileText()).not.toMatch(/\b(Ann|Bob)\b/);
   });
 
   it('logs the earlier turns boardHistory fills from GameFeed history as observations', async () => {

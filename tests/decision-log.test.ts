@@ -212,16 +212,16 @@ describe('decision log store (#412 task 1)', () => {
     expect('teammateOrders' in back.board).toBe(false);
   });
 
-  it('planning a turn again replaces its entry and later boards still rebuild', async () => {
+  it('planning a turn again (before its orders are sent) replaces its entry and later boards still rebuild', async () => {
     await record(1);
     await record(2);
     await record(3);
-    await recordSent(dir, GAME, ME, 2, { deploys: [{ territoryId: 1, armies: 5 }], moves: [] });
+    await recordOutcome(dir, GAME, ME, 2, { income: 6, gained: [], lost: [], capturesMade: [], capturesMissed: [], bonusesHeld: [], eliminated: false });
     const replanned: BoardState = { ...boardOn(2), territories: [...boardOn(2).territories.slice(0, 4), t(5, FOE, 9, 'Visible')] };
     await recordDecision(dir, GAME, ME, { turn: 2, board: replanned, input: input(2, { board: replanned }), plan: plan(2, { goal: 'defend' }) });
     const log = (await readDecisionLog(dir, GAME))!;
     expect(log.turns['2']!.decision?.goal).toBe('defend');
-    expect(log.turns['2']!.sent).toBeUndefined();
+    expect(log.turns['2']!.next).toBeUndefined();
     expect(boardAt(log, 2)).toEqual(replanned);
     expect(boardAt(log, 1)).toEqual(boardOn(1));
     expect(boardAt(log, 3)).toEqual(boardOn(3));
@@ -573,6 +573,24 @@ describe('capture helpers (#412 task 2)', () => {
     expect(ordersDiffer(d, { ...same, deploys: [{ territoryId: 1, armies: 5 }] })).toBe(true);
     expect(ordersDiffer(d, { ...same, moves: [...same.moves].reverse() })).toBe(true);
     expect(ordersDiffer(d, { ...same, moves: [same.moves[0]!, { ...same.moves[1]!, exact: false }] })).toBe(true);
+    // The commander flag counts: a planned commander move sent without it, or the reverse, differs.
+    expect(ordersDiffer(d, { ...same, moves: [same.moves[0]!, { ...same.moves[1]!, commander: true }] })).toBe(true);
+    const walk = plan(1, { deploys: d.deploys, moves: [d.moves[0]!, { ...d.moves[1]!, commander: true }] });
+    expect(ordersDiffer(walk, same)).toBe(true);
+    expect(ordersDiffer(walk, { ...same, moves: [same.moves[0]!, { ...same.moves[1]!, commander: true }] })).toBe(false);
+  });
+
+  it('planning a turn whose orders are already sent keeps the entry: its decision, sent orders and override (no-gaps rule)', async () => {
+    await record(1, { plan: { goal: 'balanced' } });
+    const other = { deploys: [{ territoryId: 2, armies: 5 }], moves: [] };
+    await recordSubmission(dir, GAME, ME, 1, { sent: other, orders: other, reason: 'Keep 2 safe.' });
+    const before = (await readDecisionLog(dir, GAME))!.turns['1']!;
+    expect(await record(1, { plan: { goal: 'defend' } })).toBe(false);
+    const e = (await readDecisionLog(dir, GAME))!.turns['1']!;
+    expect(e).toEqual(before);
+    expect(e.sent).toEqual(other);
+    expect(e.override).toEqual({ by: 'agent', reason: 'Keep 2 safe.' });
+    expect(e.decision?.goal).toBe('balanced');
   });
 
   it('records a submission: sent alone when it matches the decision, an override (by the agent unless said) when it differs', async () => {

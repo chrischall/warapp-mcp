@@ -489,8 +489,10 @@ export async function updateDecisionLog(
 }
 
 /**
- * Log the turn planned (replacing any entry for that turn: its sent orders and outcome go with it).
- * Name-free: every name in `rec.players` is scrubbed. `true` when written. Never throws.
+ * Log the turn planned, replacing any entry for that turn — unless its orders were already sent: then
+ * the entry stays as it is (decision, sent orders, override, board), since a plan made after the
+ * orders went out did not choose them, and nothing re-sends them (no-gaps rule). Name-free: every name
+ * in `rec.players` is scrubbed. `true` when written (`false` for a turn already sent). Never throws.
  */
 export async function recordDecision(
   dir: string,
@@ -521,6 +523,7 @@ export async function recordDecision(
       gameId,
       playerId,
       (log) => {
+        if (log.turns[String(rec.turn)]?.sent) return undefined;
         const boards = decodeBoards(log);
         boards.set(rec.turn, board);
         const turns = { ...log.turns, [String(rec.turn)]: entry };
@@ -715,16 +718,20 @@ export function decisionOutcome(a: {
   };
 }
 
-/** Orders as sent, for {@link ordersDiffer}: a move with `exact: false` (a percentage or a mode) is never the planner's. */
+/**
+ * Orders as sent, for {@link ordersDiffer}: a move with `exact: false` (a percentage or a mode) is never
+ * the planner's; `commander` when it takes my commander along.
+ */
 export interface SentOrders {
   deploys: readonly { territoryId: number; armies: number }[];
-  moves: readonly { from: number; to: number; armies: number; exact?: boolean }[];
+  moves: readonly { from: number; to: number; armies: number; exact?: boolean; commander?: boolean }[];
 }
 
 /**
  * Whether the orders sent differ from a decision's: the deploys compared per territory (merged, in any
- * order), the moves one by one in the order sent; a percentage or mode move always differs. Card plays
- * are not compared (the planner plays none).
+ * order), the moves one by one in the order sent, the commander flag included (a planned commander move
+ * sent without it, or the reverse, differs); a percentage or mode move always differs. Card plays are
+ * not compared (the planner plays none).
  */
 export function ordersDiffer(decision: Pick<LoggedDecision, 'deploys' | 'moves'>, sent: SentOrders): boolean {
   const sum = (ds: readonly { territoryId: number; armies: number }[]) => {
@@ -736,7 +743,7 @@ export function ordersDiffer(decision: Pick<LoggedDecision, 'deploys' | 'moves'>
   if (decision.moves.length !== sent.moves.length) return true;
   return sent.moves.some((m, i) => {
     const d = decision.moves[i]!;
-    return m.exact === false || m.from !== d.from || m.to !== d.to || m.armies !== d.armies;
+    return m.exact === false || m.from !== d.from || m.to !== d.to || m.armies !== d.armies || !!m.commander !== !!d.commander;
   });
 }
 

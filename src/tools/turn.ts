@@ -1449,6 +1449,7 @@ export function sentOrdersOf(orders: readonly TurnOrder[]): SentOrders {
               to: o.to,
               armies: o.armies,
               ...(o.byPercent || (o.mode !== undefined && o.mode !== AttackTransferMode.AttackTransfer) ? { exact: false } : {}),
+              ...(o.commander ? { commander: true } : {}),
             },
           ]
         : [],
@@ -3240,7 +3241,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       .optional()
       .describe(
         'Why these orders differ from warapp_plan_turn\'s for this turn, when they do (at most 500 characters): kept as given, ' +
-          'names scrubbed, in this server\'s decision log beside the plan, for later review. Changes nothing sent.',
+          'names scrubbed, in this server\'s decision log beside the plan, for later review — only when the orders differ ' +
+          'from the logged plan (orders that match it drop the reason and `override_by`). Changes nothing sent.',
       ),
     override_by: z
       .enum(['hand', 'agent'])
