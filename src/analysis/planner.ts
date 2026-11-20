@@ -18,6 +18,7 @@
 //   5. the leftover deploy, 3b's short borders (#121) ........... plan/leftover.ts
 //   5b. a neutral the leftover pays for (#218) ................. plan/after-leftover.ts
 //   6. transfers, #125 staging ................................. plan/transfers.ts
+//   #277: a held bonus funded from a second sure sizing ......... plan/second-sizing.ts
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
 //   1w. my commander walks, its transit hold (#274) ............. plan/commander.ts
 //   7r. reports, the offence report, 1i (#109), the final plan .. plan/report.ts
@@ -1563,6 +1564,7 @@ import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
+import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
 import { neverStandStill } from './plan/stand-still.js';
@@ -2954,6 +2956,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       `Drop the attack on ${label(t)}: it could send only ${sent} by the end of the turn, short of the ${rep.cost} that take it ${rep.sure ? `even if player ${rep.player} deploys its ~${rep.extra} there first` : `against the ~${rep.extra} player ${rep.player} put there on those turns`}, and my attacks on it failed before, its owner reinforcing it (#240); its armies stay where they are.`,
     );
   }
+
+  // ---- #277: a held bonus funded before a second attack sized for the same deploy (plan/second-sizing.ts) ----
+  fundFromSecondSizing(pc, ps, book, threats, hd, caps);
 
   // #120: an attack on a player's territory still sized below its owner's deploy says what it
   // faces if that deploy lands there first.
