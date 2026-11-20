@@ -197,10 +197,11 @@ describe('finishing off a weak opponent (#45)', () => {
     expect(p.conceded).toEqual([3, 4]);
     expect(p.deploys).toEqual([{ territoryId: 2, armies: 8 }]);
     // #71: T9 (a dead end behind T2) adds no border, T7 opens one onto T8 (+0.25 in its
-    // score), so at equal capture cost T9 goes first.
+    // score), so at equal capture cost T9 goes first. #288: T2 has nothing left to attack once both
+    // fall, so the leftover 3 goes with the attack on T7, whose step onward (T8) it funds.
     expect(attacks(p)).toEqual([
       expect.objectContaining({ from: 2, to: 9, armies: 3 }),
-      expect.objectContaining({ from: 2, to: 7, armies: 3 }),
+      expect.objectContaining({ from: 2, to: 7, armies: 6 }),
     ]);
     expect(p.expected.captures).toEqual([7, 9]);
     expect(() => validate(p, ENDGAME, 8)).not.toThrow();

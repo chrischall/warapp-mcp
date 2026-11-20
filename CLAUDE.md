@@ -1503,6 +1503,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     bonuses), and counts toward the step; with no enemy territory in view the leftover stays on the
     territory central to what I hold (fewest hops through my land to my farthest border) rather than
     ride an expansion stack more than `CENTRE_SLACK` hops farther out whose attacks land without it.
+    #288 (`joinsOf`, `plan/leftover.ts`): an expansion stack facing no threat and holding no commander of mine
+    that has nothing left to attack once this turn's captures land (every neighbour mine or captured) sends the
+    leftover with its attacks on neutrals whose targets have a step onward (equal shares, most steps onward
+    first; not under No-Split or into a combined capture), so the armies that land fund the next step without a
+    deploy ("… and send it with the attack on … (#288)"). Golden: 466 of 6,253 plans changed (462 in their
+    orders), no capture lost, next income and concessions unchanged, the frontier's hold cost lower on 96 and
+    never higher. Not yet: crediting the larger landing against another capture (the turns it saves).
     #268: otherwise the rest, once every short border has its margin, is spread over the open borders
     facing that border's opponent alone (no other opponent's stack beside them, no attack leaving
     them; one protecting nothing only when the first protects nothing too), an army at a time to the

@@ -153,7 +153,8 @@ describe('#218 (comment) with no front to go to, the leftover stays central', ()
       }),
     );
     expect(why(p)).not.toMatch(/no front to go to/);
-    expect(why(p)).toMatch(/Deploy the leftover \d+ to T4 \(#4\): the stack working on the top expansion/);
+    // #288: T4 has nothing left to attack once T8 falls, so the leftover rides the expansion on with it.
+    expect(why(p)).toMatch(/Deploy the leftover \d+ to T4 \(#4\) and send it with the attack on T8 \(#8\) \(3 → \d+\) \(#288\)/);
   });
 });
 

@@ -7,7 +7,8 @@
 // stack, the short borders' comfortable margins (#218: the rest on the step's source when it
 // defends as well; #268: else spread over the borders facing one opponent for equal headroom
 // over its deploy), the step it saves toward, the expansion stack (#218: with no front in view,
-// the territory central to what I hold instead when the stack lies far from it), the most fogged
+// the territory central to what I hold instead when the stack lies far from it; #288: with the
+// attacks out of it when it has nothing left to attack once they land), the most fogged
 // border or the biggest stack — split against a Bomb when it concentrates for
 // nothing — and under Local Deployment each pool's rest inside its bonus. planPass runs it where
 // it ran before: after rule 1c's second reconsideration and the strike stack's choice, before the
@@ -671,6 +672,27 @@ export function leftoverDeploy(
     let central = false;
     /** #226 review: the leftover defends `where` or saves there: the #226 margin leaves it. */
     let defends = false;
+    /** #288: the attacks out of the expansion stack the leftover goes with (it has nothing else left to attack). */
+    let joins: PlannedMove[] | undefined;
+    /** Territories beside `t` that are neither mine nor captured this turn: what is left to attack from it. */
+    const leftToAttack = (t: number) => neighborsOf(g, t).filter((n) => !mineSet.has(n) && !captured.has(n));
+    /**
+     * #288: a source facing no threat whose every neighbour is mine or captured this turn has nothing
+     * left to attack once the captures land, so a leftover there idles: it goes with its attacks whose
+     * targets still have a step onward (most steps onward first, then id). Never under No-Split (an
+     * order already carries the whole stack), nor with a combined capture or a softener.
+     */
+    const joinsOf = (src: number): PlannedMove[] | undefined => {
+      if (noSplit || borders.has(src) || pc.myCommanders.has(src) || leftToAttack(src).length) return undefined;
+      const onward = (t: number) => leftToAttack(t).filter((n) => n !== src).length;
+      const out = moves
+        .filter(
+          (m) =>
+            m.kind === 'attack' && m.from === src && captured.has(m.to) && !ps.combined.has(m.to) && state.get(m.to)?.owner.kind === 'neutral' && onward(m.to) > 0,
+        )
+        .sort((a, b) => onward(b.to) - onward(a.to) || a.to - b.to);
+      return out.length ? out : undefined;
+    };
     if (stack) {
       lock = true;
       concentrating = true;
@@ -756,6 +778,7 @@ export function leftoverDeploy(
         why = 'the stack working on the top expansion';
         lock = true;
         concentrating = true;
+        joins = joinsOf(expansion);
       }
     } else if (fogged !== undefined) {
       where = fogged;
@@ -799,7 +822,25 @@ export function leftoverDeploy(
         n = roomAt(where);
       }
     }
-    if (n > 0 && !spreadRest) {
+    if (n > 0 && !spreadRest && joins) {
+      // #288: an equal share for each attack, the remainder to the first; the source keeps what it had.
+      deploy(where, n);
+      const parts: string[] = [];
+      joins.forEach((m, i) => {
+        const add = Math.floor(n / joins!.length) + (i < n % joins!.length ? 1 : 0);
+        if (add <= 0) return;
+        const before = m.armies;
+        m.armies += add;
+        m.winChance = pc.chanceOf(m.armies, pc.defenceAt(m.to));
+        avail.set(where, avail.get(where)! - add);
+        if (ps.survivorsAt.has(m.to)) ps.survivorsAt.set(m.to, ps.survivorsAt.get(m.to)! + add);
+        parts.push(`the attack on ${label(m.to)} (${before} → ${m.armies})`);
+      });
+      rationale.push(
+        `Deploy the leftover ${n} to ${label(where)} and send it with ${parts.join(' and ')} (#288): once this turn's captures land ${label(where)} has nothing left to attack, so a leftover there would idle, while the armies that land fund the next step from there without a deploy.`,
+      );
+      locked.add(where);
+    } else if (n > 0 && !spreadRest) {
       rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
       deploy(where, n);
       // Keep a strike or expansion stack there: the transfer step must not walk it back as "idle

@@ -1739,10 +1739,11 @@ describe('planTurn — multi-source attacks (R4)', () => {
   });
 
   it('is not used when one source suffices', () => {
-    // T1's 24 movable + 1 deploy take 15 alone.
+    // T1's 24 movable + 1 deploy take 15 alone. #288: T1 has nothing left to attack once T3 falls,
+    // so the leftover 4 goes with the attack.
     const s = board([mine(1, 25), mine(2, 15), neutral(3, 15)]);
     const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD });
-    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 25 })]);
+    expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 29 })]);
     expect(p.multiSourceCaptures).toEqual([]);
   });
 

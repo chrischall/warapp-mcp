@@ -324,8 +324,13 @@ describe('R3 and the frontier count only the income the plan keeps (#128)', () =
     expect(plan.warnings.join('\n')).toMatch(/completing B102 \(#102\) leaves T6 \(#6\) indefensible \(player 20 can take it for 3; next income 8\): not completed/);
   });
   it('the frontier warning names the income it counts on beside the expected next income', () => {
-    const b2 = board([mine(1, 2), mine(2, 1), player(3, 60, 20), mine(5, 10), neutral(6, 2), player(7, 14, 20)]);
-    const p = planTurn({ graph: g, board: b2, me: ME, income: 10, settings: STD, options: { goal: 'expand', enemyDeploy: 5 } });
+    // #288: T5 also borders T8, a neutral of 30 no plan takes, so it still has something to attack and
+    // the leftover stays on it rather than going with the capture of T6.
+    const g8 = buildGraph(
+      makeMap([1, 2, 3, 5, 6, 7, 8], [[1, 2], [1, 3], [2, 5], [5, 6], [6, 7], [3, 7], [5, 8]], [[101, 5, [1, 2]], [102, 3, [5, 6]]]),
+    );
+    const b2 = board([mine(1, 2), mine(2, 1), player(3, 60, 20), mine(5, 10), neutral(6, 2), player(7, 14, 20), neutral(8, 30)]);
+    const p = planTurn({ graph: g8, board: b2, me: ME, income: 10, settings: STD, options: { goal: 'expand', enemyDeploy: 5 } });
     expect(p.expected.nextIncome).toBe(13);
     expect(p.frontier.income).toBe(8);
     expect(p.warnings.join('\n')).toMatch(
