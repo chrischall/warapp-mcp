@@ -20,6 +20,7 @@ import {
 import { teammatesOf } from '../teams.js';
 import { boardCachePath, readBoardHistory, readCachedOrders, readCachedPlayer } from '../trend.js';
 import { graphOf } from './common.js';
+import { foldExclusion } from './game-kind.js';
 import { mapOf } from './map.js';
 import { keptTeams } from './team-source.js';
 
@@ -90,6 +91,16 @@ export async function recordProfile(
 }
 
 
+/**
+ * {@link foldFinishedGame} for a read that shows a game finished with no fold report (warapp_wait_for_turn's
+ * read, a game-ended notification): nothing for a lottery or no-show game (#437, {@link foldExclusion}).
+ * The files folded, as `foldFinishedGame` counts them.
+ */
+export async function foldKeptProfile(dataDir: string, game: Game, env: EnvSource): Promise<number> {
+  if (game.state !== 'Finished' || (await foldExclusion(dataDir, game))) return 0;
+  return foldFinishedGame(dataDir, game, env);
+}
+
 /** What a finished game's fold did (#264), as warapp_get_game and warapp_profile_opponents report it. */
 export type FinishedFold =
   | { status: 'off' }
@@ -119,7 +130,10 @@ export const FOLD_FAILED =
 /** The note when there is no data directory (`no-data-dir`): nothing is kept, so nothing is counted. */
 export const NO_DATA_DIR = 'Nothing is kept without a data directory, so no game is counted.';
 
-const GAP_NOTES: Partial<Record<BackfillGap, string>> = { failed: FOLD_FAILED, 'no-data-dir': NO_DATA_DIR };
+/** #437: the note on a lottery or no-show game (`excluded`). */
+export const EXCLUDED_FOLD_NOTE = 'A lottery or no-show game teaches nothing of its players: it is counted apart, never folded.';
+
+const GAP_NOTES: Partial<Record<BackfillGap, string>> = { failed: FOLD_FAILED, 'no-data-dir': NO_DATA_DIR, excluded: EXCLUDED_FOLD_NOTE };
 
 /** The opponents and turns the per-game file of `game` holds as `me` saw it. */
 async function foldedOpponents(dataDir: string, env: EnvSource, game: Game, me: number): Promise<{ id: number; turns: number }[]> {
@@ -139,7 +153,9 @@ async function foldedOpponents(dataDir: string, env: EnvSource, game: Game, me: 
  * `already-folded`). The backfilled file takes the board cache's age, so it is deleted when the board
  * cache would be (no id-bearing file outlives it). Nothing with profiling off. A fold that fails
  * (`failed`: an unreadable store, an error) and a missing data directory (`no-data-dir`) carry their
- * own notes; every other gap says counts start with games played on this build. Never throws.
+ * own notes, as does a lottery or no-show game (`excluded`, #437: {@link foldExclusion}, checked before
+ * any fold, so such a game is never folded whichever tool reads it first); every other gap says counts
+ * start with games played on this build. Never throws.
  */
 export async function foldFinished(dataDir: string | undefined, env: EnvSource, game: Game): Promise<FinishedFold> {
   if (!profileEnabled(env)) return { status: 'off' };
@@ -147,6 +163,8 @@ export async function foldFinished(dataDir: string | undefined, env: EnvSource, 
   if (!dataDir) return nothing('no-data-dir');
   try {
     if (game.state !== 'Finished') return nothing('not-finished');
+    // #437: a lottery or no-show game is counted apart by every fold, whichever tool reads it first.
+    if (await foldExclusion(dataDir, game)) return nothing('excluded');
     const me = await readCachedPlayer(dataDir, game.id);
     // A per-game file kept while it was played (any account of mine): the live fold.
     const live = await foldFinishedGame(dataDir, game, env);

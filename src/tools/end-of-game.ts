@@ -20,9 +20,8 @@
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { BoardState } from '../board.js';
 import { decisionTruth } from '../analysis/decision-truth.js';
-import { captureFinished, excludedKind, gameKinds, leftTurnOf, outcomeOf, type FinishedCapture, type GameKind } from '../analysis/finished-game.js';
-import { compactDecisionLog, decisionLogMode, finishDecisionLogs, readDecisionLog, recordTruth, type DecisionLog } from '../decision-log.js';
-import { LOTTERY_MAX_TERRITORIES } from '../open-games.js';
+import { captureFinished, excludedKind, outcomeOf, type FinishedCapture, type GameKind } from '../analysis/finished-game.js';
+import { compactDecisionLog, decisionLogMode, finishDecisionLogs, recordTruth } from '../decision-log.js';
 import { teammatesOf } from '../teams.js';
 import {
   aggregateCalibration,
@@ -64,7 +63,8 @@ import { historyBoards, historyReport, readBoardHistory, readCachedOrders, readC
 import { graphOf } from './common.js';
 import { settingsKey } from './decision-capture.js';
 import { mapOf } from './map.js';
-import { cardsInPlay, foldFinished, observeSettings, profiledOpponents, type FinishedFold } from './profile-hook.js';
+import { keptFacts, kindsOf } from './game-kind.js';
+import { cardsInPlay, EXCLUDED_FOLD_NOTE, foldFinished, observeSettings, profiledOpponents, type FinishedFold } from './profile-hook.js';
 import { keptTeams } from './team-source.js';
 import { plannerSettings } from './turn.js';
 
@@ -289,9 +289,6 @@ export async function endOfGame(
   }
 }
 
-/** #437: the fold's note on a lottery or no-show game. */
-export const EXCLUDED_FOLD_NOTE = 'A lottery or no-show game teaches nothing of its players: it is counted apart, never folded.';
-
 /** What a captured history hands to {@link processHistory}. */
 interface CapturedHistory {
   capture: FinishedCapture;
@@ -300,50 +297,6 @@ interface CapturedHistory {
   graph: MapGraph | undefined;
   /** #437: the game's kinds. */
   kinds: GameKind[];
-}
-
-/** What this server kept of a game as me, for its kind and the turn my seat left (#437). */
-interface KeptFacts {
-  log: DecisionLog | undefined;
-  hasBoards: boolean;
-  orders: ReadonlyMap<number, MyOrders>;
-  /** The turn being played when the log saw my seat leave (my surrender, or my seat booted or surrendered). */
-  leftTurn: number | undefined;
-}
-
-const LEAVING: ReadonlySet<string> = new Set(['surrender-accepted', 'booted', 'my-surrender']);
-
-async function keptFacts(dataDir: string, gameId: number, me: number): Promise<KeptFacts> {
-  const hasBoards = (await readCachedPlayer(dataDir, gameId).catch(() => undefined)) === me;
-  const orders = hasBoards ? await readCachedOrders(dataDir, gameId, me).catch(() => new Map<number, MyOrders>()) : new Map<number, MyOrders>();
-  const log = await readDecisionLog(dataDir, gameId, me).catch(() => undefined);
-  const left = (log?.events ?? [])
-    .filter((e) => LEAVING.has(e.kind) && (e.player === me || (e.kind === 'my-surrender' && e.player === undefined)))
-    .map((e) => e.turn)
-    .filter((t) => Number.isInteger(t));
-  return { log, hasBoards, orders, leftTurn: left.length ? Math.min(...left) : undefined };
-}
-
-/** The game's kinds (#437) from what was read and what this server kept. */
-function kindsOf(game: Game | undefined, me: number, capture: FinishedCapture | undefined, facts: KeptFacts): GameKind[] {
-  const committed = new Set(facts.orders.keys());
-  for (const [k, e] of Object.entries(facts.log?.turns ?? {})) if (e.sent) committed.add(Number(k));
-  const s = game?.settings;
-  const result = capture?.outcome.result ?? (game ? outcomeOf(game.players, me) : 'unknown');
-  const outTurn = capture?.outcome.outTurn ?? null;
-  return gameKinds({
-    result,
-    team: game ? profileFormatOf(game.players) === 'team' : false,
-    territories: game?.map?.territories.length,
-    joinLottery: facts.log?.join?.lottery,
-    lotteryShape: s?.minimumArmyBonus === 0 && (s.overriddenBonuses?.size ?? 0) > 0,
-    lotteryMaxTerritories: LOTTERY_MAX_TERRITORIES,
-    hasLog: facts.log !== undefined,
-    hasBoards: facts.hasBoards,
-    committedTurns: committed.size,
-    leftTurn: capture?.outcome.leftTurn ?? leftTurnOf(result, outTurn, facts.leftTurn),
-    numberOfTurns: game?.numberOfTurns ?? null,
-  });
 }
 
 /** The record of one pass: the capture when the history read, else what the reads that came say. */

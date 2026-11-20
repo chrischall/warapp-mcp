@@ -1284,14 +1284,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `excluded`; a game counted before has its share taken back), folds no history profile, and the sweep's live fold
   reports `profileFold: { status: 'nothing', reason: 'excluded' }`. Both stores keep `excluded: { lottery, noShow, keys }`
   (keys with their kind, at most `MAX_EXCLUDED_KEYS`, so a game is counted apart once; a game later counted as a game
-  leaves it); `lessonsSummary`, `mapRecordSummary` and the views show `excluded` with `EXCLUDED_NOTE`. The other
-  `foldFinished` triggers (warapp_get_game, warapp_profile_opponents) still fold such a game's live profile file.
+  leaves it); `lessonsSummary`, `mapRecordSummary` and the views show `excluded` with `EXCLUDED_NOTE`. Every other
+  profile fold skips such a game too, whichever tool reads it first (`foldExclusion` in `src/tools/game-kind.ts`, shared
+  with the pass's `kindsOf`: the kinds of the game's finished record when there is one, else read now from the game and
+  what this server kept as the cached account — its map's size, the log's `join.lottery`, the orders and seat events;
+  with no cached account only the map size or the lottery settings shape): `foldFinished` (warapp_get_game,
+  warapp_profile_opponents) answers `{ status: 'nothing', reason: 'excluded' }`, and the file-only folds
+  (warapp_wait_for_turn's read, a game-ended notification) go through `foldKeptProfile`, which folds nothing for it.
   `outcome.leftTurn` (`leftTurnOf`): for a surrender or a boot the turn being played when the decision log's events saw
   my seat leave (`my-surrender`, my seat's `surrender-accepted` / `booted`; the earliest), else the history's out turn;
   for an elimination the out turn. It is the lessons' `howLost.turn` for a surrender or boot, and `failedAttacks` drops
   my orders of that turn and later (they never ran). `PlayerTurn.armies` leaves out a territory whose count did not read
   on a board that hides nothing (where a commander stands in a finished history) and counts it in `armiesUnread`;
-  only a fogged territory makes it `null`. Map entries keep `kinds` and `settings: { key (`settingsKey`), localDeployments?,
+  only a fogged territory makes it `null`. The decision log's truth carries the same `armiesUnread` beside `armies`
+  (`mine` and each opponent), so a figure that leaves a territory out reads as a lower bound, never a definite count.
+  **Not yet done:** counting the commander's standing itself — GameFeed's raw value for a territory with a commander
+  has not been captured, so its armies are unread rather than parsed. Map entries keep `kinds` and `settings: { key (`settingsKey`), localDeployments?,
   commanders? }`; `mapRecordSummary` / `mapRecordStarts` take a `MapMatch` (`mapMatchOf`: the current game's format,
   Local Deployment and Commanders — an entry that kept no flag matches on it, counted in `settingsUnknown`), and
   warapp_plan_picks' `mapRecord` and warapp_plan_turn's `pace` read only the matching games, with `matched: { by,

@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import { activeGameIds } from '../my-games.js';
 import type { Game } from '../normalize.js';
-import { foldFinishedGame } from '../profile-store.js';
+import { foldKeptProfile } from './profile-hook.js';
 import { endOfGame } from './end-of-game.js';
 import type { PushListener } from '../push/listener.js';
 import { currentTurn, gameIdArg, readAnnotations, respond, untrustedDescription } from './common.js';
@@ -403,7 +403,7 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           });
         }
         // The first read that shows a game of mine finished folds its opponent profile (B2; best effort, no request).
-        if (game.state === 'Finished' && ctx.dataDir) await foldFinishedGame(ctx.dataDir, game, env);
+        if (game.state === 'Finished' && ctx.dataDir) await foldKeptProfile(ctx.dataDir, game, env);
         // #312: its end-of-game pass, once (one history read; best effort, never throws).
         if (game.state === 'Finished') await endOfGame({ client: ctx.client, dataDir: ctx.dataDir, env }, id, token, game);
         // #317: a surrender waiting on my acceptance (only while the game is in play and my seat plays).
