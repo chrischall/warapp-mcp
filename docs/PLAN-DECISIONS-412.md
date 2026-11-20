@@ -82,6 +82,22 @@ caps/pruning order, `off` mode writes nothing.
   by ≥ 20%; every other turn keeps only a summary (`goal`, `expected.nextIncome`, `next`, outlook state) and
   drops `board`/`input`/`rationale`. Re-base the delta encoding so kept boards stay rebuildable. Status →
   `compacted`. Idempotent.
+- **End-of-game truth beside the estimates (owner request 2026-11-19).** When the end-of-game pass captures
+  a finished game's history (src/tools/end-of-game.ts, `captured` status), BEFORE compacting, write into the
+  decision log a `truth` block per logged turn T, from the history board for that turn (the same board
+  index the #318 calibration uses: estimate on turn T vs the opponent's income on history board T − 1 — reuse
+  that alignment, don't invent another): for each opponent its true income (`boardIncome`), armies,
+  territories, full bonuses, and its true start-of-turn armies on every territory my logged board showed
+  fogged or owner-only. Beside it an `accuracy` block comparing what the turn's entry logged with the truth:
+  per opponent estimate ÷ true income (and the estimate's source/coverage/thin flags as logged), my outlook
+  state vs the state the true figures give (`gameOutlook` on true incomes/armies), and how many fogged
+  territories hid an enemy stack ≥ my income. Also a per-game `accuracySummary` (mean/geo-mean
+  estimate÷truth, share under 0.5 / over 1.5, outlook right/wrong counts, by coverage band as #318 does).
+  The truth and accuracy blocks are KEPT by compaction for every turn (they are small numbers), and the
+  summary survives pruning-to-summary. Ids/numbers only, never names. If the history has fewer boards than
+  logged turns (the head/tail cut in finished-store), fill what it has and record `truthMissing` turns.
+  Tests: a synthetic finished game whose history differs from the logged estimates produces the right
+  ratios, outlook verdicts and summary; re-running the pass is idempotent.
 - `pruneDecisionLogs` runs after writes (like `pruneBoardCaches`), at most once per process interval.
 - Add `decisions` to `STORES` + `RULES` in src/state-bundle.ts (per game: `/^(\d{1,12})\.json$/`, kept for
   finished games too — `allGames: true`) so export/import carries it; update the state-bundle tests.
@@ -103,6 +119,10 @@ caps/pruning order, `off` mode writes nothing.
   `--export-fixtures <dir>` which writes each interesting turn (see Task 3's rule) as a standalone JSON
   fixture (rebuilt full board + input + logged decision + next), name-free. Prints aggregates only by
   default (no ids/names), per-turn detail with `--json`.
+- The script also reports estimate accuracy from Task 3's `truth`/`accuracy` blocks: per game and overall,
+  estimate ÷ truth by coverage band and by estimate source, outlook right/wrong — and, under a scenario that
+  changes estimation (e.g. a planner/estimate option), how the new estimates would have scored against the
+  same truth (`--accuracy` prints just this section).
 - Document how to run it in docs/PLAN-PROFILES.md's calibration section or a short README dev note.
 
 ## Task 5 — docs and wrap-up
