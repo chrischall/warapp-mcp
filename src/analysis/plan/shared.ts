@@ -32,7 +32,7 @@ import { armyCapIncome, boardIncome, DEFAULT_BASE_INCOME, incomeRules, territory
 import type { GameProfile, ProfilePlayer } from '../profile.js';
 import { byNum } from './util.js';
 import type { TeamView } from './team.js';
-import type { SiegeReport } from './siege.js';
+import type { SiegeMemory, SiegeReport } from './siege.js';
 
 /** A bonus is uneconomic when its remaining capture cost exceeds this many turns of its value… */
 export const PAYBACK_TURNS = 10;
@@ -473,6 +473,8 @@ export interface PlanInput {
    * place of the single-turn observed figure.
    */
   tracks?: readonly OpponentTrack[];
+  /** #382: the siege's memory kept for this game (src/siege-store.ts), read under `goal: 'siege'` with `turn`. */
+  siegeMemory?: SiegeMemory;
   settings?: PlannerSettings;
   options?: PlanOptions;
   /** The game around the board, for the profile (rule 0p). */
