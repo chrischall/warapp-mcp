@@ -246,7 +246,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
         'pass); the preview shows which, plus a screen from the lobby\'s GameFeed settings (does the cheapest ' +
         'neutral cost at most one turn of base income; Light Fog) and `policy`: whether the lobby keeps the ' +
         'joining policy (no Commerce, mods or custom scenarios; that cheap neutral; at most four seats; a boot time ' +
-        'of at least 12 hours; no lottery — `lottery`, read from the data as warapp_list_open_games does) — advisory, the join is not refused for it. You become a player and are expected ' +
+        'of at least 12 hours; no lottery — `lottery`, read from the data as warapp_list_open_games does) (also no Local Deployment, Commanders, No-Split, army cap, Multi-Attack or non-default kill rates) — a lobby that breaks it is refused unless `override_policy: true` (#423). You become a player and are expected ' +
         'to take turns — leaving later means declining or being booted.' +
         `${noBrowserNote(ctx.hosted)} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
@@ -269,6 +269,14 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
               'the seats on the chosen one). Implies allow_team. Refused outside a team game, with random teams, and for a ' +
               'team that is full or not in the game.',
           ),
+        override_policy: z
+          .boolean()
+          .optional()
+          .describe(
+            "Join a game that breaks the owner's joining policy (#423: Commerce, mods, custom scenarios, costly neutrals, " +
+              'more than four seats, a short boot time, lotteries, Local Deployment, Commanders, No-Split, an army cap, ' +
+              'Multi-Attack, non-default kill rates). Default false: such a join is refused, naming each break.',
+          ),
         accept_entry_fee: z
           .boolean()
           .optional()
@@ -285,7 +293,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
               'standard colour no player in the game has.',
           ),
       }),
-      async plan({ game_id, allow_team, team: askedTeam, accept_entry_fee, color: requested }) {
+      async plan({ game_id, allow_team, team: askedTeam, accept_entry_fee, override_policy, color: requested }) {
         const gameId = parseGameId(game_id);
         // One fresh read gives the account the gate binds and its in-game id (sliced from the
         // token TEXT, #130), so the already-joined check is for that same account. A join always
@@ -303,6 +311,14 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
         // #217: the lobby's screen, then whether it is a lottery (its map read only for that settings shape).
         const screened = await lobbyScreen(ctx, gameId);
         const [game] = (await markLotteries(ctx, [listed])) as [OpenGame];
+        // #423: the joining policy is a refusal, not advice: a break needs an explicit override.
+        const policy = joiningPolicy(game, screened.screen);
+        if (policy.passes === false && override_policy !== true) {
+          refuse(
+            `Game ${gameId} breaks the joining policy, so it was not joined: ${policy.breaks.map(untrustedText).join('; ')}.`,
+            'Pass override_policy: true to join it anyway, or pick another game from warapp_list_open_games.',
+          );
+        }
         return {
           gate: {
             action: 'warapp.join_game',
@@ -331,8 +347,9 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
               // #132: worth joining only when the cheapest neutral costs at most a turn of base income.
               screen: screened.screen,
               ...(screened.note ? { screenNote: screened.note } : {}),
-              // #134: the owner's joining policy — advisory, the join is not refused for it.
-              policy: joiningPolicy(game, screened.screen),
+              // #134/#423: the owner's joining policy; a break was refused above unless `override_policy` was given.
+              policy,
+              ...(policy.passes === false ? { policyOverridden: true } : {}),
               color: { index: color, source },
               // C4: in a team game, the team joined and who already sits on it.
               ...(game.teamGame ? { team: teamView(game, lobby, team) } : {}),
