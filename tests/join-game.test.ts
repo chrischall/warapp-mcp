@@ -136,12 +136,22 @@ describe('warapp_join_game', () => {
     };
     h = await harness({ warapp: s.warapp, feed: [costly] });
     const p = payload<{ preview: { game: { plannerGaps: string[] }; screen: Record<string, unknown> } }>(
-      await h.call('warapp_join_game', { game_id: 3001 }),
+      await h.call('warapp_join_game', { game_id: 3001, override_policy: true }),
     );
     expect(p.preview.screen).toMatchObject({ cheapestNeutral: 10, armiesToTake: 16, baseIncome: 5, passes: false });
     expect(p.preview.game.plannerGaps.join(' ')).toMatch(/Costly neutrals.*3\.2 turns/);
     expect(p.preview.game.plannerGaps.join(' ')).toMatch(/Light Fog/);
     expect(s.sent).toEqual([]);
+  });
+
+  it('refuses a lobby that breaks the joining policy, naming the break, unless override_policy is given (#423)', async () => {
+    h = await harness({ games: [TEAMS_2V2] });
+    const refused = await h.call('warapp_join_game', { game_id: 3007, allow_team: true });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toMatch(/breaks the joining policy/);
+    expect(textOf(refused)).toMatch(/override_policy/);
+    const ok = payload<{ preview: { policyOverridden?: boolean } }>(await h.call('warapp_join_game', { game_id: 3007, allow_team: true, override_policy: true }));
+    expect(ok.preview.policyOverridden).toBe(true);
   });
 
   it('a cheap-neutral lobby passes the screen', async () => {
@@ -161,7 +171,7 @@ describe('warapp_join_game', () => {
     const big: SyntheticGame = { ...OPEN.plain!, id: 3007, openSeats: [-1, -1, -1, -1, -1], bootTimeMs: 6 * 3_600_000 };
     h = await harness({ warapp: joinServer().warapp, feed: [costly], games: [big] });
     const p = payload<{ confirmToken: string; preview: { policy: { passes: boolean; breaks: string[] } } }>(
-      await h.call('warapp_join_game', { game_id: 3007 }),
+      await h.call('warapp_join_game', { game_id: 3007, override_policy: true }),
     );
     expect(p.preview.policy.passes).toBe(false);
     expect(p.preview.policy.breaks.join(' ')).toMatch(/6 seats/);
@@ -189,7 +199,7 @@ describe('warapp_join_game', () => {
     const lottery: SyntheticGame = { ...OPEN.plain!, id: 3008, mapId: 778, settings: { minArmies: 0, overriddenBonuses: true } };
     h = await harness({ warapp: joinServer().warapp, feed: [tiny], games: [lottery] });
     const p = payload<{ preview: { game: Record<string, unknown>; policy: { passes: boolean; breaks: string[] } } }>(
-      await h.call('warapp_join_game', { game_id: 3008 }),
+      await h.call('warapp_join_game', { game_id: 3008, override_policy: true }),
     );
     expect(p.preview.game).toMatchObject({ lottery: true, lotteryBasis: '2-territory map, base income 0, overridden bonuses' });
     expect(p.preview.policy.passes).toBe(false);
@@ -321,7 +331,7 @@ describe('warapp_join_game', () => {
     const s = joinServer();
     const game = { ...OPEN.plain!, players: [{ ...HOST, color: 0 }, { ...HOST, id: 222222, color: 5 }, { ...HOST, id: 333333, color: 6 }] };
     h = await harness({ warapp: s.warapp, games: [game], feed: [feedGame(3001, true)] });
-    await confirmed('warapp_join_game', { game_id: 3001 });
+    await confirmed('warapp_join_game', { game_id: 3001, override_policy: true });
     expect(s.sent[0]).toMatchObject({ colour: 1 });
     await h.harness.close();
 
@@ -331,7 +341,7 @@ describe('warapp_join_game', () => {
       warapp: s2.warapp,
       feed: [feedGame(3001, true)],
     });
-    const preview = payload(await h.call('warapp_join_game', { game_id: 3001 }));
+    const preview = payload(await h.call('warapp_join_game', { game_id: 3001, override_policy: true }));
     expect(JSON.stringify(preview)).toContain('"color":{"index":1,"source":"free"}');
     // The lobby screen reads only GameFeed's settings: no map download (#148).
     expect(h.calls.length).toBeGreaterThan(0);
@@ -405,7 +415,7 @@ describe('warapp_join_game', () => {
   it('team: joins the team asked for and the preview lists that team\'s seats by id, human or AI', async () => {
     const s = joinServer();
     h = await harness({ warapp: s.warapp, feed: [feedGame(3007, true)], games: [TEAMS_2V2] });
-    const preview = payload<{ preview: { team: unknown }; willSend: unknown }>(await h.call('warapp_join_game', { game_id: 3007, team: 1 }));
+    const preview = payload<{ preview: { team: unknown }; willSend: unknown }>(await h.call('warapp_join_game', { game_id: 3007, team: 1, override_policy: true }));
     expect(preview.preview.team).toEqual({
       id: 1,
       offered: [0, 1],
@@ -414,14 +424,14 @@ describe('warapp_join_game', () => {
       note: expect.stringMatching(/UNVERIFIED/),
     });
     expect(JSON.stringify(preview)).not.toContain('Bot');
-    const p = payload(await confirmed('warapp_join_game', { game_id: 3007, team: 1 }));
+    const p = payload(await confirmed('warapp_join_game', { game_id: 3007, team: 1, override_policy: true }));
     expect(p.status).toBe('joined');
     expect(s.sent[0]).toMatchObject({ gameId: 3007, team: 1 });
   });
 
   it('without team, a team game\'s preview names the first open seat\'s team and its seats', async () => {
     h = await harness({ games: [TEAMS_2V2] });
-    const preview = payload<{ preview: { team: unknown } }>(await h.call('warapp_join_game', { game_id: 3007, allow_team: true }));
+    const preview = payload<{ preview: { team: unknown } }>(await h.call('warapp_join_game', { game_id: 3007, allow_team: true, override_policy: true }));
     expect(preview.preview.team).toMatchObject({ id: 0, offered: [0, 1], seats: [{ inGameId: HOST.id, kind: 'human' }], openSeats: 1 });
   });
 

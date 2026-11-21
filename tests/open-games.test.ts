@@ -691,11 +691,11 @@ describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
     expect(policyChecks(plain(), cheap)).toEqual({
       passes: true,
       broke: [],
-      passed: ['commerce', 'mods', 'custom-scenario', 'neutral-cost', 'seats', 'boot-time', 'lottery'],
+      passed: ['commerce', 'mods', 'custom-scenario', 'neutral-cost', 'seats', 'boot-time', 'lottery', 'local-deployment', 'commanders', 'no-split', 'army-cap', 'multi-attack', 'kill-rates'],
       unchecked: [],
     });
     const r = policyChecks(plain({ rules: ['Mods'], seats: 6, lottery: null }));
-    expect(r).toEqual({ passes: false, broke: ['mods', 'seats', 'lottery'], passed: ['commerce', 'custom-scenario', 'boot-time'], unchecked: ['neutral-cost'] });
+    expect(r).toEqual({ passes: false, broke: ['mods', 'seats', 'lottery'], passed: ['commerce', 'custom-scenario', 'boot-time', 'local-deployment', 'commanders', 'no-split', 'army-cap', 'multi-attack', 'kill-rates'], unchecked: ['neutral-cost'] });
     expect(policyChecks(plain()).passes).toBeNull();
   });
 
