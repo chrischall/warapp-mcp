@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.8.0](https://github.com/chrischall/warapp-mcp/compare/v0.7.0...v0.8.0) (2026-11-21)
+
+
+### Features
+
+* **join:** the joining policy is a refusal, with the handicap rules added ([#423](https://github.com/chrischall/warapp-mcp/issues/423)) ([#471](https://github.com/chrischall/warapp-mcp/issues/471)) ([c1760d0](https://github.com/chrischall/warapp-mcp/commit/c1760d0e1216a8a8d4a66f350e9fa9b0c7498524))
+* **outlook:** advise a coalition against the leader before the surrender line ([#445](https://github.com/chrischall/warapp-mcp/issues/445)) ([#473](https://github.com/chrischall/warapp-mcp/issues/473)) ([8101535](https://github.com/chrischall/warapp-mcp/commit/8101535ff52521439d7a83171f132f595be0f3b4))
+
+
+### Refactor
+
+* one gameBaseIncome accessor; GOLDEN_DUMP for reviewing golden updates ([#433](https://github.com/chrischall/warapp-mcp/issues/433)) ([#466](https://github.com/chrischall/warapp-mcp/issues/466)) ([33d57e9](https://github.com/chrischall/warapp-mcp/commit/33d57e9121a6921de6522cfdfcc80e1bde47c83f))
+* split the deploy-estimate and income helpers out of plan/shared.ts ([#469](https://github.com/chrischall/warapp-mcp/issues/469)) ([d1ce252](https://github.com/chrischall/warapp-mcp/commit/d1ce252ecd54b1ae14481faa000c3589b653269f))
+* split the opponent-observation block out of plan/shared.ts ([#467](https://github.com/chrischall/warapp-mcp/issues/467)) ([971ab6c](https://github.com/chrischall/warapp-mcp/commit/971ab6cb88095f5acb71f3cb69570238c14c7d98))
+* split withdrawals out of plan/holds.ts and the strike stack out of plan/strike.ts ([#470](https://github.com/chrischall/warapp-mcp/issues/470)) ([12a2f0d](https://github.com/chrischall/warapp-mcp/commit/12a2f0d4c491e32db77bb426790de8f67a745551))
+
+
+### Documentation
+
+* Reconnaissance is accepted live ([#463](https://github.com/chrischall/warapp-mcp/issues/463)) ([#464](https://github.com/chrischall/warapp-mcp/issues/464)) ([336be79](https://github.com/chrischall/warapp-mcp/commit/336be792b3bef260ba54b84c7c996d167f03add6))
+
 ## [0.7.0](https://github.com/chrischall/warapp-mcp/compare/v0.6.0...v0.7.0) (2026-11-20)
 
 
