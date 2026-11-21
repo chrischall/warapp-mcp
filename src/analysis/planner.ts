@@ -1687,6 +1687,7 @@ import { applyBorderCaps, armiesFreed, partnerFronts, reportBreakLosses, reportT
 
 export * from './plan/shared.js';
 export * from './plan/observe.js';
+export * from './plan/deploy-estimates.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
 export { TRUCE_RELAX_VALUE } from './plan/relations.js';
 export { SPREAD_INCOME_SLACK, SPREAD_LAST_TURN, SPREAD_TERRITORIES } from './plan/targets.js';
