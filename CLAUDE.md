@@ -651,6 +651,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   failure is `unknown`, never retried. 17, 4 and 7 are read back from game state (the client swallows
   them); 191 (your own open game) and 88 are refusals. After a leave GameFeed refuses the game ("This API
   can only be used for games you are in…"), which confirms it.
+- **The joining policy is a refusal (#423, 2026-11-21).** `warapp_join_game` refuses a lobby whose `joiningPolicy` breaks (`policyBreaks` in `src/open-games.ts`: Commerce, mods, custom scenarios, costly neutrals, over four seats, a boot under 12 hours, lotteries, and the handicap rules Local Deployment, Commanders, No-Split, an army cap, Multi-Attack, non-default kill rates) unless `override_policy: true`, which the preview records as `policyOverridden`. Still open from #423: tournaments, a template already running, negative-bonus maps (none is readable from the open-games record), my record on the map in the preview, and the one-per-template / attended-games limits.
 - **A lottery is read from the data, never the name** (#217, `lotteryOf` in `src/open-games.ts`): a
   map of at most `LOTTERY_MAX_TERRITORIES` (4) territories is one; base income 0 with overridden
   bonuses and the map size unread is a likely one (`lottery: null`, a policy break

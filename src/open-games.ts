@@ -575,7 +575,7 @@ const POLICY_MAX_SEATS = 4;
 /** …and a boot time of at least 12 hours (owner, 2026-11-14: a 12-hour boot is fine; near-real-time means a boot in minutes). */
 const POLICY_MIN_BOOT_MINUTES = 12 * 60;
 
-/** Whether a lobby keeps the joining policy. Advisory: nothing is refused for it. */
+/** Whether a lobby keeps the joining policy (#423: `warapp_join_game` refuses a break unless `override_policy` is given). */
 interface JoinPolicy {
   /** true: keeps it; false: breaks it; null: nothing broke, but part of it could not be checked. */
   passes: boolean | null;
@@ -601,7 +601,21 @@ export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null): JoinP
 }
 
 /** The joining policy's checks, by code, in policy order (#437: the decision log's join context). */
-export const POLICY_CHECKS = ['commerce', 'mods', 'custom-scenario', 'neutral-cost', 'seats', 'boot-time', 'lottery'] as const;
+export const POLICY_CHECKS = [
+  'commerce',
+  'mods',
+  'custom-scenario',
+  'neutral-cost',
+  'seats',
+  'boot-time',
+  'lottery',
+  'local-deployment',
+  'commanders',
+  'no-split',
+  'army-cap',
+  'multi-attack',
+  'kill-rates',
+] as const;
 export type PolicyCheck = (typeof POLICY_CHECKS)[number];
 
 /** Each rule `game` breaks, its code and the policy's words, in policy order. Pure. */
@@ -619,6 +633,13 @@ function policyBreaks(game: OpenGame, screen?: JoinScreen | null): { code: Polic
           : `Costly neutrals — the cheapest takes ${screen.armiesToTake} armies, ${screen.turnsOfBaseIncome ?? '∞'} turns of base income; the policy is at most one turn`,
     });
   }
+  // #423: handicap rules (12 of 26 games played under them): each one is a break, so a join needs an explicit override.
+  if (game.rules.includes('Local deployments')) breaks.push({ code: 'local-deployment', text: 'Local Deployment — the policy joins no Local Deployment games' });
+  if (game.rules.includes('Commanders')) breaks.push({ code: 'commanders', text: 'Commanders — the policy joins no Commanders games' });
+  if (game.rules.includes('No-split mode')) breaks.push({ code: 'no-split', text: 'No-Split — the policy joins no No-Split games' });
+  if (game.rules.some((r) => r.startsWith('Army cap'))) breaks.push({ code: 'army-cap', text: 'An army cap — the policy joins no capped games' });
+  if (game.rules.includes('Multi-attack')) breaks.push({ code: 'multi-attack', text: 'Multi-Attack — the policy joins no Multi-Attack games' });
+  if (game.rules.some((r) => r.startsWith('Kill rates'))) breaks.push({ code: 'kill-rates', text: 'Kill rates other than 60/70 — the policy joins only the default rates' });
   const seats = game.maxPlayers ?? game.seats;
   if (seats > POLICY_MAX_SEATS) breaks.push({ code: 'seats', text: `${seats} seats — the policy is 1v1 or at most four players` });
   if (game.bootTimeMinutes !== undefined && game.bootTimeMinutes < POLICY_MIN_BOOT_MINUTES) {
