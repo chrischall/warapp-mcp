@@ -140,6 +140,8 @@ import {
 } from '../trend.js';
 import { writeGameRecord } from '../replay.js';
 import { gameOutlook } from '../analysis/outlook.js';
+import { coalitionAdvice } from '../analysis/coalition.js';
+import { holdsSeat } from '../player-states.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import { cardArmyCeiling, cardClock } from '../strategy/card-clock.js';
 import { hasCostlyBonus, noteContext, notesFor } from '../strategy/notes.js';
@@ -2919,6 +2921,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         warnings.push(`siege_target is ignored: it applies only with goal "siege" (this plan's goal is ${goal ?? 'chosen by the game profile'}).`);
       // #317: a surrender waiting on my acceptance is the first thing said, before the commander's line.
       // #436: the surrender line, advice only (the server never acts on it): said up front once crossed.
+      // #445: in a free-for-all of three or more, a coalition against the leader comes before the surrender advice.
+      const ranking = plan.profile.ranking;
+      const coalition =
+        outlook.surrenderLine?.crossed && plan.profile.format === 'ffa' && ranking && ranking.leader !== me.id
+          ? (() => {
+              const leaderLand = new Set<number>();
+              for (const t of board.territories) if (t.owner.kind === 'player' && t.owner.playerId === ranking.leader) leaderLand.add(t.territoryId);
+              const beside = new Set<number>();
+              for (const t of board.territories)
+                if (t.owner.kind === 'player' && t.owner.playerId !== ranking.leader && neighborsOf(graph, t.territoryId).some((n) => leaderLand.has(n))) beside.add(t.owner.playerId);
+              const out = new Set(game.players.filter((p) => !holdsSeat(p.state)).map((p) => Number(p.id)));
+              return coalitionAdvice({ rows: ranking.players, me: me.id, leader: ranking.leader, bordersLeader: beside, excluded: out });
+            })()
+          : null;
+      if (coalition?.viable) warnings.unshift(coalition.advice);
       if (outlook.surrenderLine?.crossed) warnings.unshift(outlook.surrenderLine.advice);
       const owedLine = surrenderOwedLine(surrenders);
       if (owedLine) warnings.unshift(owedLine);
@@ -2993,6 +3010,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(plan.jabs ? { jabs: plan.jabs } : {}),
         // #298: the contested bonuses pushed all-in or dropped after repeated failed attempts; absent with none.
         ...(plan.bonusPush ? { bonusPush: plan.bonusPush } : {}),
+        ...(coalition ? { coalition } : {}),
         // #276: the guard case first, on or off, with what it means for interior defence.
         profile:
           rung === 'full'
