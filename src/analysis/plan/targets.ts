@@ -860,9 +860,14 @@ export function closestBonus(
     const r = prev.ratio(p);
     return Number.isFinite(r) && p.net > 0 ? (r * incomeOf(p)) / p.net : r;
   };
+  /** #416: its missing members in the fog, however each is costed. */
+  const foggedOf = (p: BonusPlan) => p.fogged + (p.fogNeutral?.count ?? 0);
   /**
    * Bonus plans closest to completion first (focus first; ties: the income per army of every bonus
-   * the capture completes, #438, then advanced last turn, then the score order).
+   * the capture completes, #438, then #416's fewer armies to finish and fewer fogged members — the
+   * figure least likely to be wrong —, then advanced last turn, then the score order). #416 asked for
+   * its keys first; ahead of #438 they ranked a cheap +3 over completing a bonus that lifts a −8
+   * penalty (negative-bonuses (c): next income 20 → lower), so they only split what #438 leaves even.
    */
   const byCloseness = committing
     ? [...plans].sort(
@@ -870,6 +875,8 @@ export function closestBonus(
           Number(b.focus) - Number(a.focus) ||
           turnsOf(a) - turnsOf(b) ||
           perArmy(b) - perArmy(a) ||
+          a.cost - b.cost ||
+          foggedOf(a) - foggedOf(b) ||
           Number(advancedLast.has(b.bonusId)) - Number(advancedLast.has(a.bonusId)) ||
           scoreRank.get(a.bonusId)! - scoreRank.get(b.bonusId)!,
       )

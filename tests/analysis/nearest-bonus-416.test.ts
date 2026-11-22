@@ -72,3 +72,18 @@ describe('armies standing beside a bonus count toward its turns to finish (#416)
     expect(why(p)).toMatch(/closest to completion first — Beta \(#402\) 9 armies to finish, 2 turns at income 6, Alpha \(#401\) 9, 2 turns — /);
   });
 });
+
+describe('ties at the same turns and income per army go to the surer figure (#416)', () => {
+  //   Alpha (+3): 1 11 12 — 11 a 2-neutral beside 1, 12 behind it in the fog (counted at 3, the costliest in view).
+  //   Beta  (+3): 2 21 22 — 21 a 2-neutral beside 2, 22 a 2-neutral behind it. Both 6 to finish, two layers
+  //   deep, the same income per army; the score order (lower id) ranked Alpha first though its figure is a guess.
+  const IDS = [1, 2, 11, 12, 21, 22];
+  const EDGES: [number, number][] = [[1, 2], [1, 11], [11, 12], [2, 21], [21, 22]];
+  const g = buildGraph(makeMap(IDS, EDGES, [[401, 'Alpha', 3, [1, 11, 12]], [402, 'Beta', 3, [2, 21, 22]]]));
+  const b = board([mine(1, 1), mine(2, 1), neutral(11, 2), { territoryId: 12, owner: { kind: 'unknown' }, armies: null }, neutral(21, 2), neutral(22, 2)]);
+
+  it('ranks the bonus with fewer fogged members first', () => {
+    const p = planTurn({ graph: g, board: b, me: ME, income: 6, settings: STD, game: { players: [{ id: ME }, { id: P2 }], turn: 2 } });
+    expect(why(p)).toMatch(/closest to completion first — Beta \(#402\) 6 armies to finish, 2 turns \(2 layers deep\) at income 6, Alpha \(#401\) 6 \(1 fogged member counted at 3 each\), 2 turns/);
+  });
+});

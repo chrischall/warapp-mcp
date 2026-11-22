@@ -1667,7 +1667,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     orders, captures +21/−2, next income lower on 1; with sightings from each input's previous board, 51 plans, 34 orders,
     captures +1. #416 (draft, owner approval pending): turns to finish count the armies already standing beside a
     bonus — each territory of mine next to a missing member, once, beyond the guard and what holds it (`keepFor`) —
-    before the income (the rationale's "(N standing beside it)"). Golden: 603 of 6253 plans, 19 in their orders. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
+    before the income (the rationale's "(N standing beside it)"). Golden: 603 of 6253 plans, 19 in their orders. Ties
+    at the same turns and income per army (#438) then go to fewer armies to finish, then fewer fogged members, before
+    "advanced last turn" (ahead of #438 they broke negative-bonuses (c): a cheap +3 over lifting a −8). Golden: 1 plan. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
     are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or
