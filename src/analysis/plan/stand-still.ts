@@ -13,6 +13,7 @@ import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
+import { isDoomedOut } from './doomed-out.js';
 
 
 /** #125: the step rule 4e ranked first and could not afford this turn (its size, nothing else). */
@@ -151,7 +152,8 @@ export function standStillKit(
     const rLine = r >= 0 ? rationale.splice(r, 1)[0] : undefined;
     const w = warnings.findIndex((l) => l.startsWith(`The withdrawal from ${label(x)} only executes`));
     const wLine = w >= 0 ? warnings.splice(w, 1)[0] : undefined;
-    if (!moves.some((o) => o.kind === 'transfer' && o.reason === WITHDRAWS)) ps.cardAdvice = null;
+    // #431's orders out of a doomed stack keep the advice too.
+    if (!moves.some((o) => (o.kind === 'transfer' && o.reason === WITHDRAWS) || isDoomedOut(o))) ps.cardAdvice = null;
     return () => {
       moves.splice(i, 0, m);
       avail.set(x, had.avail);

@@ -1676,6 +1676,7 @@ import { stageTwoMove, twoMoveStages } from './plan/two-move.js';
 import { addEmptyEnemyTargets, dropEmptyEnemyTargets, foggedLastSeen, plainOrderCosts, raceLine, raceTargets, tryEmptyEnemy, withoutTransit } from './plan/vacated.js';
 import { spendUnderCap } from './plan/cap-spend.js';
 import { attackOutOfConceded } from './plan/conceded-out.js';
+import { doomedConcededOut } from './plan/doomed-out.js';
 import { captureInsteadOfHold } from './plan/capture-instead.js';
 import { transfers } from './plan/transfers.js';
 import { scheduleOrders, strikeOrderPriority } from './plan/move-order.js';
@@ -2848,6 +2849,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
     // before rule 1c re-values the borders, so one whose bonus this completes is kept).
     attackOutOfConceded(pc, ps, book, hd, tgt, caps);
+    // #431: a doomed conceded stack with nowhere to withdraw to attacks out or merges instead of standing.
+    doomedConcededOut(pc, ps, book, hd, tgt, caps, threats);
     reconsider();
     withdraw();
   } else {
@@ -2873,6 +2876,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // #272: a conceded border attacks out for a free step into a bonus before it withdraws (and
     // before rule 1c re-values the borders, so one whose bonus this completes is kept).
     if (acting) attackOutOfConceded(pc, ps, book, hd, tgt, caps);
+    // #431: as under `balanced`.
+    if (acting) doomedConcededOut(pc, ps, book, hd, tgt, caps, threats);
     reconsider();
     if (acting) withdraw();
   }
