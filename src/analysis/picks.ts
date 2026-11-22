@@ -139,6 +139,14 @@
 //  5c. Commanders (#129): the first pick awarded carries the commander, so the primary's
 //     safest pick (fewest other pickables within COMPACT_DISTANCE hops, then fewest
 //     neighbours outside the primary, then score) is listed first; the award reorder keeps it.
+//  5d. Fragile 1v1 primaries (#429). In a two-player game with an answering fallback, when the
+//     fallback outscores the primary or the worst award outcome is under FRAGILE_WORST × the
+//     primary's own score, each primary pick 2…n is scored in the outcomes that grant it with a
+//     pick above it lost (as an answering fallback pick is), against every pick off the primary
+//     that keeps it as compact; the best that scores more there replaces it (the old pick drops to
+//     its slot) only when the list, its fallback built again, raises both its worst and its mean
+//     award outcome and the primary keeps at least PRIMARY_FLOOR of its original joint score (the
+//     owner's floor, 2026-11-22). A warning names each replacement and the figures.
 //  6. Reasons. reasons[0] is the bonus the pick anchors (worth most to it alone) and its
 //     completion turn and the income it adds, or how much of it is held by the horizon;
 //     then the other bonuses it completes or advances. Each such line gives the bonus's entry
@@ -222,6 +230,10 @@ export const CENTRALITY_SAMPLES = 48;
 export const SCALE_HOP_DEPTH = 8;
 /** The primary's order is searched for the best worst outcome only up to this size (#129). */
 const MAX_REORDER = 5;
+/** #429: a two-player list whose worst award outcome is under this share of the primary's own score is fragile. */
+export const FRAGILE_WORST = 0.6;
+/** #429 (owner decision 2026-11-22): a replacement never leaves the primary's joint score under this share of the original's. */
+export const PRIMARY_FLOOR = 0.8;
 /** Neutral size used to compare attack hardness against the standard kill rates. */
 const HARDNESS_PROBE = 10;
 /** Territories a reason names before it says "and n more". */
@@ -1853,6 +1865,85 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       reordered,
     };
   }
+
+  // #429: a primary pick below the first is granted, more often than not, with a pick above it gone to the
+  // opponent — and the greedy group search chose it for the joint opening, so it may only pay beside that pick
+  // (live: picks that only worked beside the top one, which went to the opponent). In a two-player game with an
+  // answering fallback, when the list looks fragile (the fallback outscores the primary, or the worst award
+  // outcome is under FRAGILE_WORST of the primary's own score), each primary pick 2…n is scored in the outcomes
+  // that grant it with a pick above it lost, as an answering fallback pick is (my opening less OPPONENT_WEIGHT ×
+  // the opponent's from the picks lost). A pick off the primary that scores more there and keeps the primary as
+  // compact as it was takes its place (the pick it replaces drops to its slot), and the swap stands only when the
+  // list, its fallback built again, has a better worst outcome than the award order's (after any reorder) and a
+  // better mean outcome, and the primary keeps PRIMARY_FLOOR of its original joint score.
+  let nominal = 0;
+  const replaced: { position: number; was: number; now: number; wasValue: number; nowValue: number; outcomes: number; worst: [number, number]; mean: [number, number] }[] = [];
+  if (answerSets && award && outcomeSets?.length && !expired()) {
+    const n = primary.length;
+    const listNow = () => [...primary, ...listed.tiers.flat()];
+    let worstNow = award.worst.score;
+    const meanOf = (list: number[]) => round2(outcomeSets.reduce((sum, set) => sum + outcomeScore(list, set.map((i) => list[i]!)), 0) / outcomeSets.length);
+    let meanNow = meanOf(listNow());
+    nominal = round2(simScore(primary, []));
+    const fallbackScore = round2(simScore(listed.tiers[0] ?? [], primary));
+    if (fallbackScore > nominal || worstNow < FRAGILE_WORST * nominal) {
+      const compactLink = Math.max(COMPACT_DISTANCE, spreadOf(primary).link);
+      for (let k = 1; k < n; k++) {
+        // The outcomes (of a list of 2n) that grant position k with a position above it lost.
+        const sets = answerSets.filter((o) => o.includes(k) && o.filter((i) => i < k).length < k);
+        if (!sets.length) continue;
+        const base = listNow().slice(0, 2 * n);
+        /** Mean over those outcomes of my opening less OPPONENT_WEIGHT × the opponent's, `list` laid on the positions. */
+        const netOf = (list: readonly number[]) => {
+          let sum = 0;
+          for (const o of sets) {
+            const granted = o.map((i) => list[i]!);
+            const last = o[o.length - 1]!;
+            const lost = list.slice(0, last).filter((_, i) => !o.includes(i));
+            sum += simScore(granted, lost) - OPPONENT_WEIGHT * simScore(lost, granted);
+          }
+          return round2(sum / sets.length);
+        };
+        /** The list with `x` at position k; the pick there drops to x's slot when x was listed. */
+        const swapped = (x: number) => base.map((t, i) => (i === k ? x : t === x ? base[k]! : t));
+        const incumbent = netOf(base);
+        let best: { t: number; value: number } | null = null;
+        for (const x of cands) {
+          if (primary.includes(x)) continue;
+          const next = primary.map((t, i) => (i === k ? x : t));
+          if (spreadOf(next).link > compactLink) continue;
+          const value = netOf(swapped(x));
+          if (value > incumbent && (!best || value > best.value || (value === best.value && x < best.t))) best = { t: x, value };
+        }
+        if (!best) continue;
+        const nextPrimary = primary.map((t, i) => (i === k ? best!.t : t));
+        // The owner's floor (2026-11-22): the intact start may cost at most a fifth of the original primary's joint
+        // score — the mean below counts every award outcome once, most of them losses, and alone it accepted a
+        // swap that halved the start (a 42-territory map: 3.75 to 1.80).
+        if (simScore(nextPrimary, []) < PRIMARY_FLOOR * nominal) continue;
+        const nextListed = buildFallback(nextPrimary, cands.filter((t) => !nextPrimary.includes(t)));
+        const nextWorst = worstOf([...nextPrimary, ...nextListed.tiers.flat()], outcomeSets);
+        const w = nextWorst.score;
+        // Not at any price: the list's mean outcome (every set the award can grant, each once) must rise too, or
+        // a pick that is only good alone would trade the intact start away for a slightly better worst case.
+        const meanNext = meanOf([...nextPrimary, ...nextListed.tiers.flat()]);
+        if (w <= worstNow || meanNext <= meanNow) continue;
+        replaced.push({ position: k + 1, was: primary[k]!, now: best.t, wasValue: incumbent, nowValue: best.value, outcomes: sets.length, worst: [worstNow, w], mean: [meanNow, meanNext] });
+        primary.splice(k, 1, best.t);
+        rest = cands.filter((t) => !primary.includes(t));
+        listed = nextListed;
+        worstNow = w;
+        meanNow = meanNext;
+        award.worst = { ...nextWorst, opponentStarts: impliedOpponentStarts(listNow(), nextWorst.territoryIds) };
+      }
+    }
+  }
+  for (const r of replaced)
+    warnings.push(
+      `Primary pick ${r.position} is ${terrName(r.now)}, not ${terrName(r.was)}: in the ${r.outcomes} award outcomes that grant it with a pick above it ` +
+        `lost to the opponent, ${terrName(r.was)} nets ${r.wasValue} and ${terrName(r.now)} ${r.nowValue}, and the list's worst outcome rises from ` +
+        `${r.worst[0]} to ${r.worst[1]}, its mean outcome from ${r.mean[0]} to ${r.mean[1]} (#429). The primary's joint score is ${round2(simScore(primary, []))}, against ${nominal} before; weigh it before submitting.`,
+    );
   const { tiers } = listed;
   const fallback = tiers.flat();
   const firstTier = tiers[0] ?? [];

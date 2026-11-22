@@ -290,10 +290,11 @@ describe('warapp_plan_picks', () => {
   });
 
   it('lists the captures of a group’s opening that take two orders, by name (#166)', async () => {
-    // 5 armies a pick and 6 income: the primary takes a 3-army neutral with 1 army and then 3.
+    // 5 armies a pick and 6 income: the primary takes a 3-army neutral with 1 army and then 3. Three players: in a
+    // 1v1 the #429 rule replaces the pick whose opening holds the capture with one that pays when a pick above is lost.
     const g = game('DistributingTerritories', { InitialPlayerArmiesPerTerritory: '5', MinimumArmyBonus: '6' });
     h = await liveHarness({
-      feed: [{ ...g, players: (g.players as unknown[]).slice(0, 2) }],
+      feed: [{ ...g, players: (g.players as unknown[]).slice(0, 3) }],
       warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }),
     });
     const p = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
@@ -313,7 +314,7 @@ describe('warapp_plan_picks', () => {
     await h.harness.close();
     const noSplit = game('DistributingTerritories', { InitialPlayerArmiesPerTerritory: '5', MinimumArmyBonus: '6', NoSplit: true });
     h = await liveHarness({
-      feed: [{ ...noSplit, players: (noSplit.players as unknown[]).slice(0, 2) }],
+      feed: [{ ...noSplit, players: (noSplit.players as unknown[]).slice(0, 3) }],
       warapp: routes({ [Method.GetLatestGameInfo]: board(PICK_BOARD) }),
     });
     const q = payload<PlanPicksPayload>(await h.call('warapp_plan_picks', { game_id: GAME }));
