@@ -2009,6 +2009,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       deficit − income) and warns only when its own captures open a gate the income cannot hold. Measured on the
       golden corpus against main: every non-1v1 plan byte-identical; of 4,926 1v1 plans orders changed on 12 (12
       captures stopped, next income never lower), the warning on 280.
+      **Short gates shorten the horizon (#432, `plan/horizon.ts`; DRAFT, awaiting owner approval).** Adapting, in a
+      1v1, when the gates are already short at the start of the turn (each border facing the opponent's `nextTurnAt`
+      hold less the armies and units on it, summed, above my income), every payback test counts
+      `SHORT_GATES_PAYBACK_TURNS` (5) turns instead of 10 — #201's path, never lengthening a decided game's — with a
+      "Gate budget short (#432)" line; `applyShortGates` sets `pc.paybackTurns` and `pc.shortGates` right after the
+      threats phase (so read `paybackTurns` from the context when called). While it reads short, a bonus with a
+      wasteland among its missing members in view (a neutral at `settings.wastelands.size` or more, when that is above
+      `neutralArmies`) is skipped unless focused ("… finishing it means taking the wasteland …"). Golden: 62 of 6253
+      plan hashes; of the 4,653 plans the dump covers, 37 changed, 22 by the new line only, 1 in its orders.
   - **Game rules** (`docs/PLAN-PLANNER-4.md`, `tests/analysis/lessons-game-rules.test.ts`; the
     full-rung `settings` echo shows each):
     - **Kill rates (#28).** Every combat computation uses the game's offensive/defensive kill
