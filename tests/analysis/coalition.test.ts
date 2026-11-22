@@ -20,6 +20,17 @@ describe('coalitionAdvice (#445)', () => {
     expect(r.draft).not.toMatch(/~|income|armies/);
   });
 
+  it('asks only the best partner, or every one within 10% of its income (owner, 2026-11-22)', () => {
+    const one = coalitionAdvice({ rows, me: 1, leader: 2, bordersLeader: new Set([4]) })!;
+    expect(one.outreach).toEqual([4]);
+    const close = coalitionAdvice({
+      rows: [{ playerId: 1, armies: 40, income: 12 }, { playerId: 2, armies: 90, income: 30 }, { playerId: 3, armies: 70, income: 10 }, { playerId: 4, armies: 60, income: 9.5 }, { playerId: 5, armies: 20, income: 4 }],
+      me: 1, leader: 2, bordersLeader: new Set(),
+    })!;
+    expect(close.outreach).toEqual([3, 4]);
+    expect(close.advice).toMatch(/players 3, 4 are about equally strong/);
+  });
+
   it('says the surrender advice stands when the trailing players cannot catch the leader', () => {
     const r = coalitionAdvice({ rows: [{ playerId: 1, armies: 10, income: 4 }, { playerId: 2, armies: 90, income: 30 }, { playerId: 3, armies: 20, income: 5 }], me: 1, leader: 2, bordersLeader: new Set() })!;
     expect(r.viable).toBe(false);

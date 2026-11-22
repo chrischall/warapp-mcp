@@ -31,7 +31,7 @@ import type { EnemyDeployEstimate, PlanInput, TurnPlan } from '../analysis/plan/
 import type { BoardState } from '../board.js';
 import type { OutlookLog } from '../outlook-log.js';
 import type { JoinScreen, OpenGame, PolicyCheck } from '../open-games.js';
-import { policyChecks } from '../open-games.js';
+import { policyChecks, type JoinAccount } from '../open-games.js';
 import { nameFreeSettings } from '../replay.js';
 import {
   type CheckPlanSummary,
@@ -423,9 +423,9 @@ export function settingsKey(game: Pick<Game, 'settings' | 'players' | 'name'>): 
  * seats, pace and boot time; GameFeed's Local Deployment, Commanders, kill rates, luck, fog and cards when it
  * read the lobby) and the joining policy's checks by code. Name-free. Pure but for the clock.
  */
-export function joinContextLog(listed: OpenGame, feed: Pick<Game, 'settings' | 'players' | 'name'> | undefined, screen: JoinScreen | null | undefined, now: number = Date.now()): JoinContext {
+export function joinContextLog(listed: OpenGame, feed: Pick<Game, 'settings' | 'players' | 'name'> | undefined, screen: JoinScreen | null | undefined, now: number = Date.now(), account?: JoinAccount): JoinContext {
   const s = feed?.settings;
-  const policy = policyChecks(listed, screen);
+  const policy = policyChecks(listed, screen, account);
   const seats = listed.maxPlayers ?? listed.seats;
   return {
     at: new Date(now).toISOString(),

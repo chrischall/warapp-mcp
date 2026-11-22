@@ -592,12 +592,28 @@ interface JoinPolicy {
  * boot time — war.app's "never" — keeps it); no lotteries (#217: `game.lottery`; a likely one whose
  * map size went unread breaks it too). Lobbies are not counted against the game cap. Pure.
  */
-export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null): JoinPolicy {
-  const breaks = policyBreaks(game, screen).map((b) => b.text);
+export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null, account?: JoinAccount): JoinPolicy {
+  const breaks = policyBreaks(game, screen, account).map((b) => b.text);
   if (breaks.length) return { passes: false, breaks };
   const unchecked: string[] = [];
   if (!screen) unchecked.push("the cheapest neutral's cost");
+  if (account && account.attendedGames === undefined) unchecked.push('how many games I am playing');
+  if (account && account.negativeBonus === undefined) unchecked.push("whether the map has a negative bonus");
   return unchecked.length ? { passes: null, breaks, unchecked } : { passes: true, breaks };
+}
+
+/**
+ * The owner's cap on games played at once (2026-11-22: 15): a game being played or picked, my seat playing; lobbies
+ * are not counted. Joining at the cap breaks the policy.
+ */
+export const ATTENDED_GAMES_LIMIT = 15;
+
+/** What the policy needs from the account and the lobby's map, beyond the open-games record (#423; absent: not checked). */
+export interface JoinAccount {
+  /** Games I am playing now (`attendedGames`, src/my-games.ts); undefined: the list could not be read. */
+  attendedGames?: number | undefined;
+  /** The lobby's map has a bonus worth less than 0 (after the game's overrides); undefined: the map could not be read. */
+  negativeBonus?: boolean | undefined;
 }
 
 /** The joining policy's checks, by code, in policy order (#437: the decision log's join context). */
@@ -615,11 +631,13 @@ export const POLICY_CHECKS = [
   'army-cap',
   'multi-attack',
   'kill-rates',
+  'attended-games',
+  'negative-bonus',
 ] as const;
 export type PolicyCheck = (typeof POLICY_CHECKS)[number];
 
 /** Each rule `game` breaks, its code and the policy's words, in policy order. Pure. */
-function policyBreaks(game: OpenGame, screen?: JoinScreen | null): { code: PolicyCheck; text: string }[] {
+function policyBreaks(game: OpenGame, screen?: JoinScreen | null, account?: JoinAccount): { code: PolicyCheck; text: string }[] {
   const breaks: { code: PolicyCheck; text: string }[] = [];
   if (game.rules.some((r) => r.startsWith('Commerce'))) breaks.push({ code: 'commerce', text: 'Commerce — the policy joins no Commerce games' });
   if (game.rules.includes('Mods')) breaks.push({ code: 'mods', text: 'Mods — the policy joins no mod games' });
@@ -649,6 +667,10 @@ function policyBreaks(game: OpenGame, screen?: JoinScreen | null): { code: Polic
   // A likely lottery (the lottery shape, map size unread) breaks the policy too: a caller filtering on
   // breaks must not let one through (#217 live check).
   if (game.lottery === null) breaks.push({ code: 'lottery', text: `Likely a lottery (${game.lotteryBasis ?? 'map size not read'}) — the policy joins no lotteries` });
+  if (account?.attendedGames !== undefined && account.attendedGames >= ATTENDED_GAMES_LIMIT) {
+    breaks.push({ code: 'attended-games', text: `${account.attendedGames} games already being played — the policy is at most ${ATTENDED_GAMES_LIMIT} at once` });
+  }
+  if (account?.negativeBonus === true) breaks.push({ code: 'negative-bonus', text: 'The map has a negative bonus — the policy joins no negative-bonus maps' });
   return breaks;
 }
 
@@ -656,10 +678,14 @@ function policyBreaks(game: OpenGame, screen?: JoinScreen | null): { code: Polic
  * {@link joiningPolicy} by code (#437): the checks broken, passed and not checked (the neutral cost without
  * the lobby's screen), and the verdict. Pure.
  */
-export function policyChecks(game: OpenGame, screen?: JoinScreen | null): { passes: boolean | null; broke: PolicyCheck[]; passed: PolicyCheck[]; unchecked: PolicyCheck[] } {
-  const broke = [...new Set(policyBreaks(game, screen).map((b) => b.code))];
+export function policyChecks(game: OpenGame, screen?: JoinScreen | null, account?: JoinAccount): { passes: boolean | null; broke: PolicyCheck[]; passed: PolicyCheck[]; unchecked: PolicyCheck[] } {
+  const broke = [...new Set(policyBreaks(game, screen, account).map((b) => b.code))];
   const unchecked: PolicyCheck[] = screen ? [] : ['neutral-cost'];
-  const passed = POLICY_CHECKS.filter((c) => !broke.includes(c) && !unchecked.includes(c));
+  // The two account checks run only when the caller gave an account (the list tool has none: not evaluated, not unchecked).
+  if (account && account.attendedGames === undefined) unchecked.push('attended-games');
+  if (account && account.negativeBonus === undefined) unchecked.push('negative-bonus');
+  const notEvaluated: PolicyCheck[] = account ? [] : ['attended-games', 'negative-bonus'];
+  const passed = POLICY_CHECKS.filter((c) => !broke.includes(c) && !unchecked.includes(c) && !notEvaluated.includes(c));
   return { passes: broke.length ? false : unchecked.length ? null : true, broke, passed, unchecked };
 }
 

@@ -222,6 +222,9 @@ export function activeGameIds(games: readonly RawMyGame[], myInGameId: number): 
     .map((g) => g.id);
 }
 
+/** Games I am playing now: being played or picked with my seat playing (the policy's cap counts these, #423). */
+export const attendedGames = (games: readonly RawMyGame[], myInGameId: number): number => activeGameIds(games, myInGameId).length;
+
 /**
  * Games whose chat is live (#256): lobbies, games being picked and games being played — every
  * game in the list but a finished one, whatever my seat's state — plus a finished game whose chat
