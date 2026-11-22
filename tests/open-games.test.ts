@@ -290,6 +290,12 @@ describe('parseOpenGamesPage', () => {
     expect(straight.plannerGaps).toEqual([]);
   });
 
+  it('#423: reads a tournament game\'s tournament id (GameInfoTournament); a game without the record has none', () => {
+    const out = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, id: 2040, tournament: 66805 }, GAMES[0]!])), bundle);
+    expect(byId(out.games, 2040).tournamentId).toBe(66805);
+    expect(byId(out.games, 2001)).not.toHaveProperty('tournamentId');
+  });
+
   it('reports no rules it cannot read: a game without a settings record has none', () => {
     const g = parseOpenGamesPage(page(payloadHex([{ ...GAMES[0]!, settings: null }])), bundle).games[0]!;
     expect(g.rules).toEqual([]);
@@ -503,6 +509,15 @@ describe('warapp_list_open_games', () => {
     expect(breaks(2005)?.join(' ')).toMatch(/6 seats/);
   });
 
+  it('#423: marks a tournament game with a policy warning, not a break', async () => {
+    h = await liveHarness({ pages: { [OPEN_GAMES_URL]: page(payloadHex([{ ...GAMES[0]!, id: 2041, tournament: 66801 }])) } });
+    const p = payload(await h.call('warapp_list_open_games'));
+    const g = byId(p.games as OpenGame[], 2041) as OpenGame & { policyBreaks?: string[]; policyWarnings?: string[] };
+    expect(g.tournamentId).toBe(66801);
+    expect(g.policyBreaks).toBeUndefined();
+    expect(g.policyWarnings?.join(' ')).toMatch(/tournament 66801/);
+  });
+
   it('marks the lobbies the signed-in account has already joined', async () => {
     const me = { id: 123456, name: 'Me', state: P_PLAYING, committed: false };
     const games: SyntheticGame[] = [
@@ -709,6 +724,18 @@ describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
     const r = policyChecks(plain({ rules: ['Mods'], seats: 6, lottery: null }));
     expect(r).toEqual({ passes: false, broke: ['mods', 'seats', 'lottery'], passed: ['commerce', 'custom-scenario', 'boot-time', 'local-deployment', 'commanders', 'no-split', 'army-cap', 'multi-attack', 'kill-rates'], unchecked: ['neutral-cost'] });
     expect(policyChecks(plain()).passes).toBeNull();
+  });
+
+  it('#423: a tournament game warns and never refuses (owner, 2026-11-22); no tournament, no warning', () => {
+    const r = joiningPolicy(plain({ tournamentId: 66805 }), cheap, { attendedGames: 0, negativeBonus: false });
+    expect(r.passes).toBe(true);
+    expect(r.breaks).toEqual([]);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings![0]).toMatch(/tournament 66805/);
+    // A break elsewhere still refuses, and the warning rides along.
+    expect(joiningPolicy(plain({ tournamentId: 66805, seats: 6 }), cheap)).toMatchObject({ passes: false, warnings: [expect.stringMatching(/tournament/)] });
+    expect(joiningPolicy(plain(), cheap)).not.toHaveProperty('warnings');
+    expect(policyChecks(plain({ tournamentId: 66805 }), cheap).broke).toEqual([]);
   });
 
   it('a 1v1 with a day\'s boot and cheap neutrals passes', () => {
