@@ -178,8 +178,10 @@ describe('warapp_team_brief', () => {
     expect(p.deploys!.length).toBeGreaterThan(0);
     // The ask: keep the joint attack on Knife Hills (either order takes it under the cycle).
     expect(p.asks).toContainEqual({ kind: 'joint-capture', target: T(135), teammates: [bob], mustGoFirst: 'either' });
-    // The offer: Bolton Moors falls once Bob's attack leaves; my idle 20 on Hornwood would hold it.
-    expect(p.offers).toEqual([{ territory: T(158), teammate: bob, threat: 34, from: cy, need: 20, mine: [{ territory: T(159), armies: 20 }] }]);
+    // The offer: Bolton Moors falls once Bob's attack leaves; my idle 17 on Hornwood would hold it.
+    // #427: the threat is 29, not 34: at the expected rate (1 + 5 random pieces × 1/5 = 2 a turn) Cy's first
+    // Reinforcement card (5 pieces) is playable on turn 4, so none is counted yet (the fastest: turn 2).
+    expect(p.offers).toEqual([{ territory: T(158), teammate: bob, threat: 29, from: cy, need: 17, mine: [{ territory: T(159), armies: 17 }] }]);
     // Bob has entered my Reinforcement card: it is left to him.
     expect(p.cards).toEqual({ play: [], discard: [], leftToTeammates: [{ id: RF, type: 'Reinforcement', armies: 5, teammate: bob, kind: 'play' }] });
     expect(p.conflicts?.read).toEqual([bob]);
