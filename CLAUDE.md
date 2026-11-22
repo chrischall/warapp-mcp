@@ -288,6 +288,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   The budget is checked inside each greedy group step (every 64 candidates), between hop limits and across the fallback seeds,
   and `spreadOf`'s minimax spanning tree is Prim with each pick's nearest tree member kept (n², not n³): a full distribution
   (live game 45660414: 25 players × 122 picks, 3,050 listed) took 272 s and now stops at the budget (~21 s at 20 s, `partial`).
+  Owner 2026-11-22: under a full distribution (DistributionMode 0, no territory limit — `pickTerritoryLimit` returns
+  `fullDeal`) every territory is dealt, so `PlanPicksInput.fullDeal` skips the compact group search: each group and the
+  fallback are the best picks by score (a warning says so). The live case plans in ~5 s, whole, not `partial`.
   `planTurn` and `stressPlan` on the same map take under 1 s (pure; the live read was not measured).
 - **The award of picks is read once, from my own list (#166).** The list war.app read back
   (`warapp_submit_picks`, or `warapp_get_my_picks` during distribution for the signed-in account) is kept at
