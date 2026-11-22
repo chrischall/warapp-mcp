@@ -3033,7 +3033,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   /** Territories locked before the leftover deploy: holds, kept and standing borders, withdrawals. */
   const holdLocked = new Set(locked);
   /** A territory the plan has not given up (or gave up but whose garrison may still hold it). */
-  const open = (id: number) => !conceded.has(id) || mayHold.has(id);
+  // #431: a border a doomed stack left gets no leftover, whatever else it is.
+  const open = (id: number) => (!conceded.has(id) || mayHold.has(id)) && !ps.doomedOut.has(id);
   /** Armies that stay on a border after its deploys, outgoing moves and incoming withdrawals. */
   const stays = (id: number) => avail.get(id)! + guardAt(id) + (incoming.get(id) ?? 0);
   // ---- #265: a combined capture leaves armies on a weak member of a bonus it completes (plan/captures.ts) ----

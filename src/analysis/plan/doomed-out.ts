@@ -117,6 +117,7 @@ export function doomedConcededOut(
     const head = `${label(x)} is doomed (#431): conceded, nowhere to withdraw to, and its ${d.stack} need ${d.take} to take against the expected ~${d.expected} attack.`;
     avail.set(x, avail.get(x)! - n);
     locked.add(x);
+    ps.doomedOut.add(x);
     // Like a withdrawal (rule 1b) or rule 4e's attack out, the order only runs while the border is mine.
     warnings.push(
       `The ${best.kind === 'merge' ? 'merge' : 'attack'} out of ${label(x)} only executes if ${label(x)} is still mine when the order runs; play Order Priority so it goes first.`,

@@ -116,3 +116,78 @@ describe('#431: a doomed conceded stack merges into a neighbouring one that then
     expect(p.rationale.join('\n')).toMatch(/is doomed \(#431\).*Merge its 39 into T\d \(#\d\), which then holds/);
   });
 });
+
+// #431, owner decision of 2026-11-22: once a doomed stack merges or attacks out, no deploy goes onto the
+// border it left. The shape of a suite plan (u2331): my only two territories, 3 and 6, side by side, both
+// conceded (they protect nothing), each falling alone to player 20's stack beside them plus its deploy.
+// 3 merges into 6; every territory I hold is conceded, so the leftover went to "my biggest stack" — the
+// lower id on a tie, the border just emptied — where it stood with the guard and fell.
+const twin = makeMap([3, 6, 8, 9], [[3, 6], [3, 8], [6, 8], [8, 9]], []);
+const gt = buildGraph(twin);
+const twinPlan = (settings: PlannerSettings = OFF, extra: TerritoryState[] = []) =>
+  planTurn({
+    graph: gt,
+    board: board([at(3, 9, ME), at(6, 9, ME), at(8, 7, BIG), at(9, 3, BIG), ...extra]),
+    me: ME,
+    income: 5,
+    settings,
+    game: { players: [{ id: ME }, { id: BIG }], turn: 12 },
+    options: { goal: 'balanced', enemyDeploy: 13 },
+  });
+
+describe('#431: no deploy onto the border a doomed stack left', () => {
+  it('the leftover goes to the stack it merged into, not the emptied border', () => {
+    const p = twinPlan();
+    const merge = p.moves.find((m) => m.kind === 'transfer' && m.reason.includes('#431'));
+    expect(merge).toBeDefined();
+    const left = merge!.from;
+    expect(p.deploys.filter((d) => d.territoryId === left)).toEqual([]);
+    expect(p.deploys.reduce((n, d) => n + d.armies, 0)).toBe(5);
+    expect(p.deploys.every((d) => d.territoryId === merge!.to)).toBe(true);
+  });
+});
+
+// Under Local Deployment a bonus pool lands only inside its bonus, on its most threatened member: a
+// border before an interior one. B900 (+1) is T1 (interior) and T3, a pocket border player 20's 46-stack
+// takes whatever the income does, so the bonus is conceded and T3 merges into my conceded T6 (30), which
+// then holds. That border is lost for sure once its stack has left, so the pool goes to T1, not T3. The
+// free leftover goes to T2, my biggest open stack outside the bonus, so the pool is placed on its own.
+const ld = makeMap([1, 2, 3, 6, 8, 9], [[1, 2], [3, 6], [3, 8], [6, 8], [8, 9]], [[900, 1, [1, 3]]]);
+const gl = buildGraph(ld);
+
+describe('#431 under Local Deployment: the pool of a bonus whose border a doomed stack left', () => {
+  it('deploys inside the bonus on another member, not on the emptied border', () => {
+    const p = planTurn({
+      graph: gl,
+      board: board([at(1, 5, ME), at(2, 20, ME), at(3, 8, ME), at(6, 30, ME), at(8, 46, BIG), at(9, 3, BIG)]),
+      me: ME,
+      income: 6,
+      settings: { ...OFF, localDeployments: true },
+      game: { players: [{ id: ME }, { id: BIG }], turn: 12 },
+      options: { goal: 'balanced', enemyDeploy: 13 },
+    });
+    expect(p.moves).toContainEqual(expect.objectContaining({ from: 3, to: 6, kind: 'transfer', armies: 7 }));
+    expect(p.deploys.filter((d) => d.territoryId === 3)).toEqual([]);
+    expect(p.rationale.join('\n')).toMatch(/Deploy bonus B900 \(#900\)'s 1 to T1 \(#1\): Local Deployment keeps them inside the bonus/);
+  });
+});
+
+describe('#431: when the doomed stack held my only territory', () => {
+  it('the leftover deployed there leaves with its move out instead of staying behind', () => {
+    // Only 3 is mine: every deploy must land there, and deploys run before moves, so they go with the
+    // attack into 4 rather than stand on a border that falls.
+    const p = planTurn({
+      graph: g,
+      board: board([at(3, 40, ME), at(4, 4, 'neutral'), at(1, 5, 'neutral'), at(2, 5, 'neutral'), at(5, 2, 'neutral'), at(8, 120, BIG), at(9, 5, BIG)]),
+      me: ME,
+      income: 5,
+      settings: OFF,
+      game: GAME,
+      options: { goal: 'balanced' },
+    });
+    expect(p.deploys).toEqual([{ territoryId: 3, armies: 5 }]);
+    expect(p.moves.filter((m) => m.from === 3)).toEqual([expect.objectContaining({ to: 4, kind: 'attack', armies: 44 })]);
+    expect(p.warnings.join('\n')).toMatch(/the leftover 5 goes to T3 \(#3\) and leaves with its move out \(#431\)/);
+    expect(p.rationale.join('\n')).toMatch(/The 5 deployed on T3 \(#3\) leave with its move out to T4 \(#4\) \(#431\): 44 go\./);
+  });
+});

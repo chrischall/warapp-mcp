@@ -1571,12 +1571,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     this turn — and is my first order, because a withdrawal only executes while the border is
     still mine. Before it withdraws (#272), a conceded border attacks out with its own armies into a
     neighbour holding at most 2 whose capture completes or advances a bonus (R3 waived; a completed
-    bonus keeps the border; under No-Split a completion only). #431 (draft, owner approval pending): a conceded border with
+    bonus keeps the border; under No-Split a completion only). #431 (owner decision 2026-11-22): a conceded border with
     nowhere to withdraw to (a neighbour rule 1c keeps counts as somewhere) whose stack the expected attack takes is doomed, and
     `doomedConcededOut` (`plan/doomed-out.ts`, after #272, before rule 1c) weighs standing against the exchange model's
     options — a capture its whole movable stack makes against the owner's estimated deploy, or a merge into a neighbouring
     pocket stack of mine that then holds — by my armies left plus enemy armies killed, and takes the best when it beats
-    standing; the order goes first, like a withdrawal. Golden: 43 of 6253 plans changed. Order Priority moves only that first order ahead of the opponent's first, so the
+    standing; the order goes first, like a withdrawal. The border it left (`ps.doomedOut`) gets no deploy after: not the
+    leftover (not `open`; the every-territory-conceded fallback picks another territory, and when that border is my only one
+    the leftover deployed there leaves with its move out), and a Local Deployment pool goes to any other member of its bonus
+    first. Non-capturing attacks and a check that the landing territory holds are left out (owner). Golden: 43 of 6253 plans changed. Order Priority moves only that first order ahead of the opponent's first, so the
     plan sets `cardAdvice: 'order-priority'` only when I hold one (`holdsOrderPriority`), I am
     not known to move first (`movesFirst`), and the order it protects carries at least
     `ORDER_PRIORITY_MIN_ARMIES` (#127; waived by `orderPriorityForced`, when the hand is over the
