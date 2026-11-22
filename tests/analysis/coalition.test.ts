@@ -34,6 +34,17 @@ describe('coalitionAdvice (#445)', () => {
     expect(close.advice).toMatch(/players 3, 4 are about equally strong/);
   });
 
+  it('never asks a player that broke a truce (owner, 2026-11-22), and says who was left out', () => {
+    const r = coalitionAdvice({ rows, me: 1, leader: 2, bordersLeader: new Set([4]), breakers: new Set([4]) })!;
+    expect(r.partners.map((p) => p.playerId)).toEqual([3]);
+    expect(r.outreach).toEqual([3]);
+    expect(r.leftOut).toEqual([{ playerId: 4, reason: 'broke-a-truce' }]);
+    expect(r.trailingIncome).toBe(12 + 9);
+    const none = coalitionAdvice({ rows, me: 1, leader: 2, bordersLeader: new Set(), breakers: new Set([3, 4]) })!;
+    expect(none.viable).toBe(false);
+    expect(none.advice).toMatch(/no one left to ask/);
+  });
+
   it('says the surrender advice stands when the trailing players cannot catch the leader', () => {
     const r = coalitionAdvice({ rows: [{ playerId: 1, armies: 10, income: 4 }, { playerId: 2, armies: 90, income: 30 }, { playerId: 3, armies: 20, income: 5 }], me: 1, leader: 2, bordersLeader: new Set() })!;
     expect(r.viable).toBe(false);
