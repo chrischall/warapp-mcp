@@ -6,6 +6,8 @@ import { bonusTerritories } from '../bonuses.js';
 import { armiesToTake, straightKills } from '../combat.js';
 import { neighborsOf } from '../graph.js';
 import { poolShortfall } from '../local-deploy.js';
+import { noLossNeutral } from './after-leftover.js';
+import { visibleState } from './observe.js';
 import { captureCost, type BonusPlan, type TwoStepPass } from './shared.js';
 import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
@@ -1164,6 +1166,17 @@ export function bonusPasses(
     return o?.kind === 'player' ? ` facing player ${o.playerId}` : '';
   };
   /**
+   * #426: whether only the fog faces `t` once taken: no neighbour not mine is a player's territory shown with
+   * its armies (a stack in view). A player's territory whose armies the fog hides, or one not shown at all,
+   * is the fog.
+   */
+  const fogOnlyFaces = (t: number): boolean =>
+    neighborsOf(g, t).every((n) => {
+      if (mineSet.has(n)) return true;
+      const st = state.get(n);
+      return !(st?.owner.kind === 'player' && pc.foe(st.owner.playerId) && visibleState(st));
+    });
+  /**
    * Rule 4d's frontier budget, judged with `t` just captured: under a guarded goal, a capture
    * that adds a border facing an enemy without completing a bonus (and not focused) is stopped
    * when holding the frontier next turn would then need more than the next income, and more than
@@ -1198,6 +1211,19 @@ export function bonusPasses(
     const e = emptyEnemies.get(t);
     if (e?.sameFront) {
       denied.set(t, emptyEnemyLine(pc, t, e));
+      return null;
+    }
+    // #426: a no-loss neutral whose new border faces only the fog (no player's territory beside it shown with
+    // its armies): its hold cost prices a stack nobody has seen, and the capture risks only the armies that
+    // land. Not in a 1v1, where #297's gate budget prices the one opponent's floating deploy wherever it is.
+    // The owner's cap (2026-11-22): only while the hold the capture adds is at most the next income (1×);
+    // over it, rule 4d decides as before (a golden synthetic board let one through at 85 against an income of 9).
+    const adds = f.holdCost - frontierOf(without, stays).holdCost;
+    if (!gate && adds <= next && noLossNeutral(pc, tgt, t) && fogOnlyFaces(t)) {
+      denied.set(
+        t,
+        `Take ${label(t)} though holding the frontier next turn would then need ${f.holdCost} (the next income is ${next}): its defenders kill none of the attackers, only the fog faces its new border and the ${adds} it adds are within that income, so all it risks is the armies that land there (#426).`,
+      );
       return null;
     }
     // Only the 1v1 gate budget stops it (rule 4d's start-of-turn escape would have let it through): its own line.

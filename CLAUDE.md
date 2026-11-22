@@ -931,6 +931,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   territory beside vacated land still untaken and cheap (`breachOf`: fogged, or costing at most `VACATED_MAX_COST`;
   a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
   orders (a move's reason only); captures, next income and concessions unchanged.
+- **No-loss neutral captures (#426, owner decisions of 2026-11-22).** A neutral in view whose
+  defenders kill none of my attackers (`noLossNeutral`, `plan/after-leftover.ts`: 0 armies at the usual 70%; never a
+  negative bonus's member) costs only the armies that land on it — the owner's definition of a free capture. (1) Pass 3
+  (and rule 5b) take one even as a member of a bonus too costly to finish (`plainEligible`; the reason says "a no-loss
+  capture … (#426)"), so it is planned before the leftover's comfort margins. (2) Rule 4d's `outgrows` lets one through,
+  outside a 1v1, when only the fog faces its new border (no foe territory beside it shown with its armies;
+  `fogOnlyFaces`) and the hold it adds next turn is at most 1× the next income (the owner's cap; over it 4d decides as
+  before), with a "Take … (#426)" line. (3) A warning (`warnIdleBesideFree`, `plan/free-capture.ts`, report only) names
+  a stack of mine, not my commander's, idle last turn and again this plan beside such a neutral its own movable armies
+  take. Not done (owner): "the leftover rides the widest capture". Follow-up: rule 6 has no step when the only enemy
+  front lies past a conceded border and the last neutral is taken (golden s246: its interior transfers vanish).
+  Golden: 16 of 6253 plans changed — 6 in their orders, 2 in a move's reason only, 8 by the warning only.
 - **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #427 is open). **#433's gate budget (2026-11-22, DRAFT for owner approval):** under Local Deployment the 1v1 gate budget (#297) is pool-aware — a gate's shortfall is paid only by the free income and the pools of the bonuses it is in (`poolShortfall` in `src/analysis/local-deploy.ts`, over `chargeDeploys`; next turn's pools from `keptHeld`, the territories `keptIncome` counts), in `gateStop` (`plan/captures.ts`; rule 4d's `outgrows` lets it stop a capture even when the frontier's hold cost is under the whole next income) and in the reported `gates` (`short`, plus `deployable`: the income that can land on the gates; LD only). Without Local Deployment nothing changes. Golden: 506 of 6253 plans re-hashed (467 only `gates.deployable` added, 37 a gate-budget warning too, 2 in their orders: one capture each stopped, next income and concessions unchanged). Still open from #433: `reviveConceded` counting idle neighbours when a withdrawal is planned (an owner decision: cancelling a withdrawal once the deploys are sized).
 - **#427 (draft, owner approval pending).** (1) Bug: the tracker reads every deploy as income, so an opponent's
   Reinforcement play it saw set its tracked figure (max observed, then carried) while the clock added the next card

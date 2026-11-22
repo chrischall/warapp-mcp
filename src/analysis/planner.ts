@@ -1083,6 +1083,10 @@
 //     rule 4e's contact fallback, where 4d is only a cost (#114), runs it too. The plan reports `gates` (each gate's
 //     need and armies, conceded ones marked, the summed need, what stands on them, the per-gate deficit, the next
 //     income and the shortfall) and warns when its own captures open a gate the income cannot hold.
+//     #426 (draft): a no-loss neutral (its defenders kill none of my attackers, `noLossNeutral`) is taken
+//     by pass 3 even in an uneconomic bonus, and rule 4d lets one through when only the fog faces its new
+//     border and the hold it adds is at most 1× the next income (`outgrows`, not in a 1v1); a stack idle two
+//     turns beside one is warned of (plan/free-capture.ts).
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
 //     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative
@@ -1675,7 +1679,8 @@ import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { contestedBonuses } from './plan/stockpile.js';
-import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
+import { warnIdleBesideFree } from './plan/free-capture.js';
+import { afterLeftoverCaptures, onlyNoLoss, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
@@ -2933,8 +2938,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         }
       }
       // #281 × #282: a denial is never sourced from the territory my commander walks from (its transit hold).
-      if (tgt.denials.has(t.id)) withoutTransit(pc, tgt, t.id, () => tryExpand(t.id, 'expands territory'));
-      else tryExpand(t.id, 'expands territory');
+      // #426: a no-loss capture in a bonus too costly to finish says why it is taken all the same.
+      const reason = onlyNoLoss(pc, tgt, t.id)
+        ? `expands territory: a no-loss capture (its defenders kill none of the attackers; what lands stays mine), so the cost of finishing its bonus does not stop it (#426)`
+        : 'expands territory';
+      if (tgt.denials.has(t.id)) withoutTransit(pc, tgt, t.id, () => tryExpand(t.id, reason));
+      else tryExpand(t.id, reason);
     }
     dropEmptyEnemyTargets(ps, tgt, empties);
   }
@@ -3414,6 +3423,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- expected, frontier, two-step holds, gambled and shared borders (plan/report.ts) ----
   const expected = reportExpected(pc, ps, book, threats, hd, tgt, caps);
+  // #426: a stack idle two turns beside a no-loss neutral (plan/free-capture.ts), report only.
+  warnIdleBesideFree(pc, ps, tgt, input.previousBoard);
   // ---- offence report (#72), the warnings after the deploys, "Not attacking" (#167) (plan/report.ts) ----
   const { sentAt } = reportOffence(pc, ps, book, threats, hd, tgt, holdLocked, leadSpareFor);
   // ---- 7. schedule the moves (#127), the exits (#179), Order Priority (plan/move-order.ts) ----
