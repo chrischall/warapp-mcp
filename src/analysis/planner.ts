@@ -1667,7 +1667,7 @@ import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { contestedBonuses } from './plan/stockpile.js';
-import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
+import { afterLeftoverCaptures, onlyNoLoss, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
@@ -2922,8 +2922,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         }
       }
       // #281 × #282: a denial is never sourced from the territory my commander walks from (its transit hold).
-      if (tgt.denials.has(t.id)) withoutTransit(pc, tgt, t.id, () => tryExpand(t.id, 'expands territory'));
-      else tryExpand(t.id, 'expands territory');
+      // #426: a no-loss capture in a bonus too costly to finish says why it is taken all the same.
+      const reason = onlyNoLoss(pc, tgt, t.id)
+        ? `expands territory: a no-loss capture (its defenders kill none of the attackers; what lands stays mine), so the cost of finishing its bonus does not stop it (#426)`
+        : 'expands territory';
+      if (tgt.denials.has(t.id)) withoutTransit(pc, tgt, t.id, () => tryExpand(t.id, reason));
+      else tryExpand(t.id, reason);
     }
     dropEmptyEnemyTargets(ps, tgt, empties);
   }
