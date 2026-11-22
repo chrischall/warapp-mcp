@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import { chooseJoinColor, readAccountColors, STANDARD_COLORS, type JoinColor } from '../join-color.js';
 import type { ClassReader } from '../live.js';
-import { feedScreen, joiningPolicy, parseOpenGamesPage, type JoinScreen, type OpenGame, type OpenLobby } from '../open-games.js';
+import { feedScreen, joiningPolicy, type JoinAccount, parseOpenGamesPage, type JoinScreen, type OpenGame, type OpenLobby } from '../open-games.js';
 import {
   GAME_COLOR_COUNT,
   Method,
@@ -26,6 +26,10 @@ import type { Game } from '../normalize.js';
 import { mintMeta } from './hints.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
+import { attendedGames } from '../my-games.js';
+import { mapRecordSummary } from '../lessons-store.js';
+import { mapRecordFor } from './past-games.js';
+import { mapOf } from './map.js';
 import { markLotteries, openGamesPage } from './open-games.js';
 import { holdsSeat, playerStateName } from '../player-states.js';
 import { NO_TEAM } from '../teams.js';
@@ -194,13 +198,20 @@ function joinColor(
  * The lobby's screen from its GameFeed settings (#132): the open-games record carries no neutral
  * sizes or fog, GameFeed does. Best effort — a failed read leaves the preview without a screen.
  */
-async function lobbyScreen(ctx: LiveContext, gameId: number): Promise<{ screen: JoinScreen | null; gaps: string[]; note?: string; game?: Game }> {
+async function lobbyScreen(ctx: LiveContext, gameId: number): Promise<{ screen: JoinScreen | null; gaps: string[]; note?: string; game?: Game; negativeBonus?: boolean }> {
   try {
-    const game = await ctx.client.getGame(gameId, { settings: true, map: false });
+    // #423: the map too, for the negative-bonus check (the join reads one lobby; the map store keeps it).
+    const game = await ctx.client.getGame(gameId, { settings: true, map: true });
     const { screen, gaps } = feedScreen(game.settings ?? { cards: [], raw: {} });
+    let negativeBonus: boolean | undefined;
+    try {
+      negativeBonus = mapOf(game).bonuses.some((b) => b.value < 0);
+    } catch {
+      negativeBonus = undefined;
+    }
     return screen
-      ? { screen, gaps, game }
-      : { screen: null, gaps, game, note: "GameFeed's settings name no neutral size, so the neutral-cost screen was skipped." };
+      ? { screen, gaps, game, ...(negativeBonus !== undefined ? { negativeBonus } : {}) }
+      : { screen: null, gaps, game, ...(negativeBonus !== undefined ? { negativeBonus } : {}), note: "GameFeed's settings name no neutral size, so the neutral-cost screen was skipped." };
   } catch (e) {
     return {
       screen: null,
@@ -312,7 +323,15 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
         const screened = await lobbyScreen(ctx, gameId);
         const [game] = (await markLotteries(ctx, [listed])) as [OpenGame];
         // #423: the joining policy is a refusal, not advice: a break needs an explicit override.
-        const policy = joiningPolicy(game, screened.screen);
+        let attended: number | undefined;
+        try {
+          attended = attendedGames((await fetchMyGames(ctx)).games, myId);
+        } catch {
+          attended = undefined;
+        }
+        const account: JoinAccount = { attendedGames: attended, negativeBonus: screened.negativeBonus };
+        const policy = joiningPolicy(game, screened.screen, account);
+        const record = await mapRecordFor(ctx.dataDir, undefined, game.mapId);
         if (policy.passes === false && override_policy !== true) {
           refuse(
             `Game ${gameId} breaks the joining policy, so it was not joined: ${policy.breaks.map(untrustedText).join('; ')}.`,
@@ -349,6 +368,9 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
               ...(screened.note ? { screenNote: screened.note } : {}),
               // #134/#423: the owner's joining policy; a break was refused above unless `override_policy` was given.
               policy,
+              ...(attended !== undefined ? { attendedGames: attended } : {}),
+              // #423: my finished games on this map, reported only (the join never reads it).
+              ...(record && record !== 'unreadable' ? { mapRecord: (({ games, outcomes }) => ({ games, outcomes }))(mapRecordSummary(record)) } : {}),
               ...(policy.passes === false ? { policyOverridden: true } : {}),
               color: { index: color, source },
               // C4: in a team game, the team joined and who already sits on it.
@@ -365,7 +387,7 @@ export function registerJoinGameTool(server: McpServer, ctx: LiveContext): void 
             team,
             color,
             account: String(token),
-            join: joinContextLog(game, screened.game, screened.screen),
+            join: joinContextLog(game, screened.game, screened.screen, undefined, account),
           } satisfies JoinState,
         };
       },

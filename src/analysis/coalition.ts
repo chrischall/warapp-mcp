@@ -6,6 +6,9 @@
 /** Turns the coalition attempt gets before the surrender advice returns (#445's suggestion; the owner may change it). */
 export const COALITION_GRACE_TURNS = 2;
 
+/** Owner decision of 2026-11-22: ask the best partner, and others only when "very close in strength": income at least this share of the best's. */
+export const OUTREACH_CLOSE_RATIO = 0.9;
+
 export interface CoalitionRow {
   playerId: number;
   armies: number;
@@ -30,6 +33,8 @@ export interface CoalitionAdvice {
   /** Candidates, those bordering the leader first, then by income (largest), then id. */
   partners: CoalitionPartner[];
   graceTurns: number;
+  /** Who to ask: the best partner, plus every other candidate whose income is within `OUTREACH_CLOSE_RATIO` of its. */
+  outreach: number[];
   /** One line for the owner. */
   advice: string;
   /** An honest first message to the best partner: the shared threat in words, no figure, no promise beyond what is said. */
@@ -61,8 +66,11 @@ export function coalitionAdvice(input: {
   const trailingIncome = mine.income + partners.reduce((n, p) => n + p.income, 0);
   const viable = partners.length > 0 && trailingIncome >= lead.income;
   const best = partners.find((p) => p.bordersLeader) ?? partners[0];
+  const outreach = best
+    ? [best.playerId, ...partners.filter((p) => p !== best && p.income >= OUTREACH_CLOSE_RATIO * best.income).map((p) => p.playerId)]
+    : [];
   const advice = viable
-    ? `Try a coalition first: the trailing players together earn ~${trailingIncome} against player ${leader}'s ~${lead.income}${best ? `; player ${best.playerId} is the best partner${best.bordersLeader ? ' (it borders the leader)' : ''}` : ''}. Give it ${COALITION_GRACE_TURNS} turns; if nobody agrees, or the leader's lead keeps growing, the surrender advice stands (advice only; the server sends nothing).`
+    ? `Try a coalition first: the trailing players together earn ~${trailingIncome} against player ${leader}'s ~${lead.income}${best ? `; ${outreach.length > 1 ? `players ${outreach.join(', ')} are about equally strong, ask them together` : `player ${best.playerId} is the best partner${best.bordersLeader ? ' (it borders the leader)' : ''}`}` : ''}. Give it ${COALITION_GRACE_TURNS} turns; if nobody agrees, or the leader's lead keeps growing, the surrender advice stands (advice only; the server sends nothing).`
     : `No coalition looks viable: the trailing players together earn ~${trailingIncome} against player ${leader}'s ~${lead.income}${partners.length ? '' : ' and there is no one left to ask'}, so the surrender advice stands.`;
   return {
     viable,
@@ -71,10 +79,11 @@ export function coalitionAdvice(input: {
     trailingIncome,
     partners,
     graceTurns: COALITION_GRACE_TURNS,
+    outreach,
     advice,
     ...(viable && best
       ? {
-          draft: `Player ${leader} is ahead of both of us and I would rather it not take either of us next. Would you be willing to hold off attacking each other and to press ${best.bordersLeader ? 'it on the border we share' : 'it where you can'}? I will tell you before I change that.`,
+          draft: `Player ${leader} is ahead of both of us and I would rather it not take either of us next. Would you be willing to hold off attacking each other and to press ${outreach.length === 1 && best.bordersLeader ? 'it on the border we share' : 'it where you can'}? I will tell you before I change that.`,
         }
       : {}),
   };

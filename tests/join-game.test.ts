@@ -48,8 +48,18 @@ function openGamesPage(games: readonly SyntheticGame[] = Object.values(OPEN), ac
 }
 
 /** A GameFeed lobby for `id`; `withMe` seats the signed-in account. */
-function feedGame(id: number, withMe: boolean): Record<string, unknown> {
+/** The fixture's real map has a -4 bonus; most tests are about something else, so it is made plain unless asked for (#423). */
+function plainLobby(negativeBonus = false): Record<string, unknown> {
   const f = lobbyFixture();
+  if (!negativeBonus) {
+    const map = f.map as { bonuses: Array<{ value: string }> };
+    for (const b of map.bonuses) if (Number(b.value) < 0) b.value = '1';
+  }
+  return f;
+}
+
+function feedGame(id: number, withMe: boolean, negativeBonus = false): Record<string, unknown> {
+  const f = plainLobby(negativeBonus);
   const players = f.players as Array<Record<string, string>>;
   return {
     ...f,
@@ -88,6 +98,8 @@ function joinServer(reply: Partial<ReplyFrame> = { body: (w) => w.bool(true).boo
       sent.push({ gameId, colour, team: r.int32(), slot: r.bool(), modHook: r.bool(), left: r.remaining });
       return reply;
     },
+    // #423: the policy counts the games I am playing; an empty list by default.
+    [Method.GetMyGames]: () => ({ body: (w) => writeMyGamesReturn(w, []) }),
     ...extra,
   });
   return { sent, warapp };
@@ -103,7 +115,7 @@ async function harness(
 ) {
   return liveHarness({
     pages: { [OPEN_GAMES_URL]: openGamesPage(opts.games, opts.account ?? { preferred: 5, secondary: 6 }), ...SIGNED_IN },
-    ...(opts.feed ? { feed: opts.feed } : {}),
+    feed: opts.feed ?? [plainLobby()],
     ...(opts.warapp ? { warapp: opts.warapp } : {}),
   });
 }
@@ -266,6 +278,27 @@ describe('warapp_join_game', () => {
     expect(JSON.stringify(log)).not.toMatch(/Plain FFA|\bHost\b|\bMe\b/);
   });
 
+  it('#423: refuses at 15 games being played, and a negative-bonus map, unless overridden', async () => {
+    const playing = (id: number): SyntheticGame => ({ ...OPEN.plain!, id, state: 3, players: [HOST, { id: ME.inGame, name: 'Me', state: 2, committed: false }] }) as SyntheticGame;
+    const fifteen = Array.from({ length: 15 }, (_, i) => playing(9000 + i));
+    const s = joinServer(undefined, { [Method.GetMyGames]: () => ({ body: (w) => writeMyGamesReturn(w, fifteen) }) });
+    h = await harness({ warapp: s.warapp, feed: [feedGame(3001, false)] });
+    const refused = await h.call('warapp_join_game', { game_id: 3001 });
+    expect(JSON.stringify(refused)).toContain('15 games already being played');
+    const ok = payload(await confirmed('warapp_join_game', { game_id: 3001, override_policy: true }));
+    expect(ok.status).not.toBe('refused');
+
+    const s2 = joinServer();
+    h = await harness({ warapp: s2.warapp, feed: [feedGame(3001, false, true)] });
+    expect(JSON.stringify(await h.call('warapp_join_game', { game_id: 3001 }))).toContain('negative bonus');
+
+    const fourteen = fifteen.slice(0, 14);
+    const s3 = joinServer(undefined, { [Method.GetMyGames]: () => ({ body: (w) => writeMyGamesReturn(w, fourteen) }) });
+    h = await harness({ warapp: s3.warapp, feed: [feedGame(3001, false)] });
+    const preview = payload(await h.call('warapp_join_game', { game_id: 3001 }));
+    expect(JSON.stringify(preview)).not.toContain('breaks the joining policy');
+  });
+
   it('#437: an unconfirmed join keeps no join context', async () => {
     const s = joinServer(undefined, { [Method.GetMyGames]: () => ({ body: (w) => w.bool(false) }) });
     h = await harness({ warapp: s.warapp, feed: [feedGame(3001, false)] });
@@ -343,9 +376,8 @@ describe('warapp_join_game', () => {
     });
     const preview = payload(await h.call('warapp_join_game', { game_id: 3001, override_policy: true }));
     expect(JSON.stringify(preview)).toContain('"color":{"index":1,"source":"free"}');
-    // The lobby screen reads only GameFeed's settings: no map download (#148).
+    // #423: the lobby screen reads the map too (the negative-bonus check); the earlier #148 rule was settings only.
     expect(h.calls.length).toBeGreaterThan(0);
-    for (const c of h.calls) expect(c.url).toContain('GetMap=false');
   });
 
   it('joins with the colour asked for, and refuses one a lobby player has', async () => {

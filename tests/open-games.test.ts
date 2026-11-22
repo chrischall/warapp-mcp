@@ -687,6 +687,18 @@ describe('joiningPolicy: the owner\'s joining policy, advisory (#134)', () => {
   });
   const cheap = { cheapestNeutral: 2, armiesToTake: 3, baseIncome: 5, turnsOfBaseIncome: 0.6, passes: true };
 
+  it('#423: at 15 games being played, or on a negative-bonus map, the policy breaks; unread is unchecked, not passed', () => {
+    expect(joiningPolicy(plain(), cheap, { attendedGames: 14, negativeBonus: false })).toEqual({ passes: true, breaks: [] });
+    expect(joiningPolicy(plain(), cheap, { attendedGames: 15, negativeBonus: false }).breaks).toEqual(['15 games already being played — the policy is at most 15 at once']);
+    expect(joiningPolicy(plain(), cheap, { attendedGames: 0, negativeBonus: true }).breaks).toEqual(['The map has a negative bonus — the policy joins no negative-bonus maps']);
+    expect(joiningPolicy(plain(), cheap, {})).toMatchObject({ passes: null, unchecked: ['how many games I am playing', 'whether the map has a negative bonus'] });
+    const r = policyChecks(plain(), cheap, { attendedGames: 15 });
+    expect(r.broke).toEqual(['attended-games']);
+    expect(r.unchecked).toEqual(['negative-bonus']);
+    // Without an account the two are neither broken nor passed (the list tool has none).
+    expect(policyChecks(plain(), cheap).passed).not.toContain('attended-games');
+  });
+
   it('#437: policyChecks gives the same verdict by code: broken, passed and unchecked', () => {
     expect(policyChecks(plain(), cheap)).toEqual({
       passes: true,
