@@ -7,6 +7,7 @@
 // plan has made so far. A phase moved out of planner.ts takes `(ctx, state)` explicitly instead of
 // closing over planPass's locals; planPass still names each field as the local it was.
 
+import type { ShortGates } from './horizon.js';
 import type { Siege } from './siege.js';
 import type { IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
@@ -110,6 +111,14 @@ export interface OpponentsCtx {
   decidedGame: { state: 'winning' | 'losing'; turns: number; loser: number; rate: number; estimated?: true } | undefined;
   /** The turns every payback test counts (#201). */
   paybackTurns: number;
+  /**
+   * #432: the turns a capture's payback test counts (pass 3, a bonus's economy, staging, a two-move stage, a push's
+   * cap, the stand-still completion): {@link paybackTurns}, or fewer while a 1v1's gates are short — set right after
+   * the threats phase, so read it from the context when called. Holds keep `paybackTurns`.
+   */
+  capturePaybackTurns: number;
+  /** #432: the start-of-turn gate budget of a 1v1 is short (set right after the threats phase, with `paybackTurns`). */
+  shortGates?: ShortGates;
 }
 
 /** The territories as the board shows them, and what they are worth (cards aside). */
@@ -255,6 +264,18 @@ export interface PlanState {
   incoming: Map<number, number>;
   /** Armies that occupy each capture this turn (its finishing attack's survivors). */
   survivorsAt: Map<number, number>;
+  /**
+   * #422: members of a bonus completed under R3's payback exemption that may fall next turn, with the
+   * rationale line that says so: what stands there is what the completion can lose, so the leftover never
+   * rides an attack onto one (#288). Read through {@link paybackLive}.
+   */
+  paybackFalls: Map<number, string>;
+  /**
+   * #422: bonuses completed under R3's payback exemption, with their rationale line: expected to fall next
+   * turn, so rule 1c keeps no conceded border for them and neither #122's garrison nor #265's weak-member
+   * call funds their members. Read through {@link paybackLive}.
+   */
+  paybackBonuses: Map<number, string>;
   /** Every capture planned, in the order it was made (a rolled-back one may repeat; filter by `captured`). */
   captureOrder: number[];
   /** How to take back each capture's attacks (rule 4c's guard), by target. */
@@ -343,6 +364,8 @@ export function newPlanState(): PlanState {
     moves: [],
     incoming: new Map(),
     survivorsAt: new Map(),
+    paybackFalls: new Map(),
+    paybackBonuses: new Map(),
     captureOrder: [],
     captureUndo: new Map(),
     staged: new Map(),
@@ -357,4 +380,14 @@ export function newPlanState(): PlanState {
     soloHeld: new Map(),
     capRefused: new Map(),
   };
+}
+
+/**
+ * #422: whether `id` is in a payback map (`ps.paybackBonuses` or `ps.paybackFalls`) for a completion this
+ * plan still makes. Every rollback of a capture rewinds the rationale with it (whichever path undoes it), so
+ * the completion stands exactly while the line that states it does.
+ */
+export function paybackLive(ps: Pick<PlanState, 'rationale'>, m: ReadonlyMap<number, string>, id: number): boolean {
+  const line = m.get(id);
+  return line !== undefined && ps.rationale.includes(line);
 }

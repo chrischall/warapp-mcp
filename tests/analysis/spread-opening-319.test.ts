@@ -55,7 +55,8 @@ describe('spread captures in the opening (#319)', () => {
     expect(w).toBeDefined();
     expect(w).toMatch(/^10 territories, no bonus: the captures are spread \(income 5, base 5\)\. /);
     // B0, B1 and B2 each miss one member at 3 armies: one turn; the first of them in rule 4f's order.
-    expect(w).toMatch(/Nearest bonus to complete: B\d \(#50\d\), 3 armies to finish, 1 turn at income 5 \(rule 4f\)\./);
+    // #416: the held member beside it stands on 2 (1 movable over the guard, 2 when beside two of mine).
+    expect(w).toMatch(/Nearest bonus to complete: B\d \(#50\d\), 3 armies to finish \(\d standing beside it\), 1 turn at income 5 \(rule 4f\)\./);
   });
 
   it('changes no order', () => {

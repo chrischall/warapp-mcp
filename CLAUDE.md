@@ -292,6 +292,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   The budget is checked inside each greedy group step (every 64 candidates), between hop limits and across the fallback seeds,
   and `spreadOf`'s minimax spanning tree is Prim with each pick's nearest tree member kept (n², not n³): a full distribution
   (live game 45660414: 25 players × 122 picks, 3,050 listed) took 272 s and now stops at the budget (~21 s at 20 s, `partial`).
+  Owner 2026-11-22: under a full distribution (DistributionMode 0, no territory limit — `pickTerritoryLimit` returns
+  `fullDeal`) every territory is dealt, so `PlanPicksInput.fullDeal` skips the compact group search: each group and the
+  fallback are the best picks by score (a warning says so). The live case plans in ~5 s, whole, not `partial`.
   `planTurn` and `stressPlan` on the same map take under 1 s (pure; the live read was not measured).
 - **The award of picks is read once, from my own list (#166).** The list war.app read back
   (`warapp_submit_picks`, or `warapp_get_my_picks` during distribution for the signed-in account) is kept at
@@ -932,7 +935,28 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   territory beside vacated land still untaken and cheap (`breachOf`: fogged, or costing at most `VACATED_MAX_COST`;
   a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
   orders (a move's reason only); captures, next income and concessions unchanged.
-- **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #433 and #427 is open).
+- **No-loss neutral captures (#426, owner decisions of 2026-11-22).** A neutral in view whose
+  defenders kill none of my attackers (`noLossNeutral`, `plan/after-leftover.ts`: 0 armies at the usual 70%; never a
+  negative bonus's member) costs only the armies that land on it — the owner's definition of a free capture. (1) Pass 3
+  (and rule 5b) take one even as a member of a bonus too costly to finish (`plainEligible`; the reason says "a no-loss
+  capture … (#426)"), so it is planned before the leftover's comfort margins. (2) Rule 4d's `outgrows` lets one through,
+  outside a 1v1, when only the fog faces its new border (no foe territory beside it shown with its armies;
+  `fogOnlyFaces`) and the hold it adds next turn is at most 1× the next income (the owner's cap; over it 4d decides as
+  before), with a "Take … (#426)" line. (3) A warning (`warnIdleBesideFree`, `plan/free-capture.ts`, report only) names
+  a stack of mine, not my commander's, idle last turn and again this plan beside such a neutral its own movable armies
+  take. Not done (owner): "the leftover rides the widest capture". Follow-up: rule 6 has no step when the only enemy
+  front lies past a conceded border and the last neutral is taken (golden s246: its interior transfers vanish).
+  Golden: 16 of 6253 plans changed — 6 in their orders, 2 in a move's reason only, 8 by the warning only.
+- **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #427 is open). **#433's gate budget (2026-11-22, DRAFT for owner approval):** under Local Deployment the 1v1 gate budget (#297) is pool-aware — a gate's shortfall is paid only by the free income and the pools of the bonuses it is in (`poolShortfall` in `src/analysis/local-deploy.ts`, over `chargeDeploys`; next turn's pools from `keptHeld`, the territories `keptIncome` counts), in `gateStop` (`plan/captures.ts`; rule 4d's `outgrows` lets it stop a capture even when the frontier's hold cost is under the whole next income) and in the reported `gates` (`short`, plus `deployable`: the income that can land on the gates; LD only). Without Local Deployment nothing changes. Golden: 506 of 6253 plans re-hashed (467 only `gates.deployable` added, 37 a gate-budget warning too, 2 in their orders: one capture each stopped, next income and concessions unchanged). Still open from #433: `reviveConceded` counting idle neighbours when a withdrawal is planned (an owner decision: cancelling a withdrawal once the deploys are sized).
+- **#427 (draft, owner approval pending).** (1) Bug: the tracker reads every deploy as income, so an opponent's
+  Reinforcement play it saw set its tracked figure (max observed, then carried) while the clock added the next card
+  on top: one card counted twice, every turn. `enemyDeployEstimates` now reads the figure again with each counted
+  play's card armies out when only card plays set it (`EnemyDeployEstimate.cardInTrack`, a "… counts the
+  Reinforcement card it played on turn N: M without it (#427)" warning; `hiddenPool` uses the same figure). Golden: 0
+  of 4653 plans changed. (2) Rule: `opponentReinforcement` runs the opponents' clock at the expected weighted rate
+  (minimum plus the weighted share of the random pieces), not the fastest; identical wherever no piece is drawn at
+  random. Not done: reading opponents' plays when card plays are not fogged (the history's order shape is unverified
+  live).
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
@@ -1535,8 +1559,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   capture with the exact combat model (`armiesToTake`, `captureCost`). Its rules, learnt from
   a lost game (`tests/analysis/lessons.test.ts` replays each lesson in miniature):
   - **Triage by protected value.** A threatened border's protected value is my complete
-    bonuses containing it, plus bonuses I'd lose all access to, plus its share (value × members
-    held ÷ size) of a bonus I am building — every missing member a visible neutral, finishing it
+    bonuses containing it, plus its share (value × members
+    held ÷ size) of a bonus I am building (#425: a bonus it is my only way into gets that share too —
+    it used to get the whole value — and nothing when an enemy holds or roams a member; owner decision of 2026-11-22:
+    a member the fog hides keeps the share, and only the members in view are priced on the economy tests) — every missing member a visible neutral, finishing it
     economic (#122), or (#298) an enemy stack beside it that arrived since the previous board (took a member from me, or grew there) roams inside it, its other missing members visible neutrals or foe territories, on the same economy tests — plus per-territory income, plus (#235) the income of what its loss cuts off
     from the rest of my holdings (every part but the largest when it is a cut vertex; named in the rationale
     only with income or at least `PAYBACK_TURNS` armies), plus (#291, guard on or off) `OPENS_WEIGHT` (0.5) of the held
@@ -1677,7 +1703,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (plan/vacated.ts) over my board history gives each fogged territory's newest sighting (owner, and armies when
     shown — never from a GameFeed history board, unverified in play: those give the owner only); `foggedLastSeen` is its owners, `lastSeen` its counts. Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input 1017 of 6253 plans, 722
     orders, captures +21/−2, next income lower on 1; with sightings from each input's previous board, 51 plans, 34 orders,
-    captures +1. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
+    captures +1. #416 (draft, owner approval pending): turns to finish count the armies already standing beside a
+    bonus — each territory of mine next to a missing member, once, beyond the guard and what holds it (`keepFor`) —
+    before the income (the rationale's "(N standing beside it)"). Golden: 603 of 6253 plans, 19 in their orders. Ties
+    at the same turns and income per army (#438) then go to fewer armies to finish, then fewer fogged members, before
+    "advanced last turn" (ahead of #438 they broke negative-bonuses (c): a cheap +3 over lifting a −8). Golden: 1 plan. A
+    bonus held in full ends the commitment (and #319's warning) only when worth `HOLDS_BONUS_MIN_VALUE` (2) or more: a
+    +1 is "no bonus worth more than +1". Golden: 79 plans, 6 in their orders (captures unchanged). #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
     are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or
@@ -1974,7 +2006,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       it leaves: when holding the members a visible enemy could take next turn needs more than
       the next income, `balanced`/`defend` refuse it ("… indefensible …: not completed") and
       keep the armies for defence; `expand`/`complete-bonus` complete it with a warning. A
-      completion's score is discounted by that defence cost (`DEFENSE_DISCOUNT`).
+      completion's score is discounted by that defence cost (`DEFENSE_DISCOUNT`). **#422 (draft, owner
+      approval pending): the payback exemption.** A completion whose losses — attackers its captures into
+      the bonus lose this turn plus the armies left on the members that would fall — are at most the bonus's
+      value is made anyway ("Complete bonus … (#422)"): it pays that value next turn even if it then falls.
+      Such a bonus (`ps.paybackBonuses`, read through `paybackLive`: live while its line stands) keeps no
+      conceded border, gets no #122 garrison or #265 call, and #288's leftover never rides onto a member it
+      may lose. Golden: 16 of 6253 plans changed, all gaining that completion.
     - **Combined attacks (#17).** A target no single source can afford may be taken by two or
       more of my start-of-turn stacks in a fixed order (the first attacks only wear it down),
       with exact arithmetic — only at 0% luck under straight rounding (else skipped with a
@@ -2010,9 +2048,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       gains "In this 1v1 that is another gate …"), and the contact fallback runs it where 4d is only a cost. The plan
       reports `gates` (1v1 only; each gate's `needs` and `armies`, `conceded` marked — a conceded gate is still a way
       in — `need`, `onGates`, `deficit` = the per-gate shortfalls summed, `income` = the frontier's, `short` =
-      deficit − income) and warns only when its own captures open a gate the income cannot hold. Measured on the
+      deficit − income; under Local Deployment pool-aware, #433, with `deployable`) and warns only when its own captures open a gate the income cannot hold. Measured on the
       golden corpus against main: every non-1v1 plan byte-identical; of 4,926 1v1 plans orders changed on 12 (12
       captures stopped, next income never lower), the warning on 280.
+      **Short gates shorten the capture horizon (#432, `plan/horizon.ts`; owner decision 2026-11-22).** Adapting, in a
+      1v1, when the gates are already short at the start of the turn (each border facing the opponent's `nextTurnAt`
+      hold less the armies and units on it, summed, above my income), every capture's payback test counts
+      `SHORT_GATES_PAYBACK_TURNS` (5) turns instead of 10 (`pc.capturePaybackTurns`: a bonus's economy, pass 3's
+      `plainEconomy`, staging, a two-move stage, a stockpile push's cap, the stand-still completion; never lengthening a
+      decided game's), with a "Gate budget short (#432)" line; holds keep `pc.paybackTurns`, so hold sizing does not
+      shift. `applyShortGates` sets it and `pc.shortGates` right after the threats phase (read it from the context when
+      called). While it reads short, a bonus with a wasteland among its missing members in view (a neutral at
+      `settings.wastelands.size` or more, when that is above `neutralArmies`) is skipped unless focused or completable
+      this turn ("… finishing it means taking the wasteland …"). Golden: 62 of 6253 plan hashes; of the 4,653 plans the
+      dump covers, 37 changed, 31 by the new line only, none in its orders.
   - **Game rules** (`docs/PLAN-PLANNER-4.md`, `tests/analysis/lessons-game-rules.test.ts`; the
     full-rung `settings` echo shows each):
     - **Kill rates (#28).** Every combat computation uses the game's offensive/defensive kill

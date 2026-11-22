@@ -243,6 +243,8 @@ describe('warapp_plan_picks', () => {
     expect(p.warnings).toContain(
       'Full distribution (DistributionMode 0, no territory limit): every territory is dealt, so each of the 3 players gets about 2 of the 6 pickable; the list only says which you would rather hold.',
     );
+    // #476 follow-up (owner, 2026-11-22): with every territory dealt no compact group is searched.
+    expect(p.warnings.join(' ')).toMatch(/Every territory is dealt: each group is the best picks by score/);
   });
 
   it('#428: a limited start (DistributionMode -1) with no TerritoryLimit still assumes the default 3', async () => {

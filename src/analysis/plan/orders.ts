@@ -168,6 +168,28 @@ export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardSta
     return cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
   };
   /**
+   * #425 (owner decision of 2026-11-22): the bonus `ts` a lone foothold is my only way into still earns
+   * its share unless an enemy holds a missing member (which an enemy stack roaming inside it, #298, does
+   * too). Unlike {@link building} a member the fog hides keeps the share: it is passed over, not refused,
+   * and only the members in view are priced on #122's economy tests. A member a teammate holds is no
+   * bonus of mine to build, as in `building`.
+   */
+  const footholdBuilding = (ts: readonly number[], value: number): boolean => {
+    let cost = 0;
+    let worst = 0;
+    for (const x of ts) {
+      if (ps.holdings.has(x)) continue;
+      const st = state.get(x);
+      const o = st?.owner;
+      if (o?.kind === 'player') return false;
+      if (st === undefined || o?.kind !== 'neutral' || st.armies === null) continue;
+      const c = econCostAt(x);
+      cost += c;
+      worst = Math.max(worst, c);
+    }
+    return cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
+  };
+  /**
    * #298: a foe's stack arrived on `x` since `previousBoard`: it took `x` from me, or its armies there
    * grew, both read only where that board showed `x` (owner and armies). No previous board: none.
    */
@@ -337,10 +359,19 @@ export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardSta
         continue;
       }
       // An incomplete bonus I am working on (T is in it): lost access if T is my only way in.
+      // #425: the only way in carries the share #122 gives a member of a bonus being built (value ×
+      // members held ÷ size: T alone here), and nothing when an enemy holds or roams a member
+      // (`footholdBuilding`; a fogged member keeps the share, owner decision of 2026-11-22). It used to
+      // carry the whole bonus whatever stood on the rest, so a lone foothold in a bonus an enemy holds
+      // part of drew a full bonus's hold (on the finished games' truth boards 276 of 285 such borders
+      // were in a bonus an enemy held part of; 7 of the 285 bonuses were ever completed).
       const access = (has: (x: number) => boolean) =>
         ts.some((x) => has(x) || neighborsOf(g, x).some(has));
       if (!access(mineWithout)) {
-        v += b.value;
+        if (footholdBuilding(ts, b.value)) {
+          const held = ts.filter((x) => ps.holdings.has(x) || x === t).length;
+          v += Math.round(((b.value * held) / ts.length) * 10) / 10;
+        }
         continue;
       }
       // #122: a member of a bonus I am building carries its share of the bonus — value × the

@@ -145,6 +145,27 @@ export function chargeDeploys(pools: DeployPools, deploys: ReadonlyMap<number, n
 }
 
 /**
+ * #433: what `needs` (armies by territory, e.g. the gates' shortfalls next turn) lack under Local Deployment, for a
+ * player holding `held` with `income`: a bonus's pool deploys only on its own territories, so each need is paid
+ * from the pools of the bonuses it is in ({@link chargeDeploys}, as well as they can be split) and the rest from the
+ * free income. `deployable` is the part of the income that can land on any of them: the free armies plus every pool
+ * holding a need. Without a held bonus it is the plain shortfall, Σ needs − income (at least 0).
+ */
+export function poolShortfall(
+  g: MapGraph,
+  held: ReadonlySet<number>,
+  income: number,
+  needs: ReadonlyMap<number, number>,
+): { short: number; deployable: number } {
+  const pools = deployPools(g, held, income);
+  const wanted = new Map([...needs].filter(([, n]) => n > 0));
+  const { anywhereUsed } = chargeDeploys(pools, wanted);
+  const deployable =
+    pools.anywhere + pools.bonuses.reduce((n, p) => n + (p.territoryIds.some((t) => wanted.has(t)) ? p.value : 0), 0);
+  return { short: Math.max(0, anywhereUsed - pools.anywhere), deployable };
+}
+
+/**
  * What an opponent may deploy anywhere under Local Deployment (#293): its free income — its base
  * income (never below `floor`) plus the Reinforcement card armies its estimate counts. Bonus armies
  * land only in their own bonus.

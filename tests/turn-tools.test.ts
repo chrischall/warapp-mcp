@@ -2196,23 +2196,27 @@ describe('cards in the turn tools', () => {
     const bob = { id: Number(BOB.feed), name: expect.stringContaining('Bob') };
     const cy = { id: Number(CY.feed), name: expect.stringContaining('Cy') };
     const T = (id: number) => ({ id, name: mapName(id) });
-    // C3.5: Bolton Moors keeps 1 once Bob's attack leaves; my idle 20 on Hornwood would hold it.
+    // C3.5: Bolton Moors keeps 1 once Bob's attack leaves; my idle 17 on Hornwood would hold it.
+    // #427: threat 29, not 34: at the expected rate (2 Reinforcement pieces a turn, not the fastest 6) Cy's
+    // first card is playable on turn 4, so none is counted yet.
     expect(p.team?.support).toEqual({
-      borders: [{ territory: T(158), teammate: bob, armies: 1, threat: 34, player: cy, need: 20, from: [{ territory: T(159), armies: 20 }] }],
+      borders: [{ territory: T(158), teammate: bob, armies: 1, threat: 29, player: cy, need: 17, from: [{ territory: T(159), armies: 17 }] }],
       note: expect.stringMatching(/V7.*never in `orders`/),
     });
     // C3.6: neither takes Knife Hills alone; together either order does (a cyclic order: 'either').
+    // #427: with no card counted for Cy yet (its deploy 5 smaller) my idle 32 (not 29) join, and the joint
+    // capture holds even if Cy reinforces Knife Hills.
     expect(p.team?.jointCaptures).toEqual({
       targets: [
         {
           target: T(135),
           owner: cy,
           teammate: [{ player: bob, from: T(158), armies: 19 }],
-          mine: [{ from: T(159), armies: 29 }],
+          mine: [{ from: T(159), armies: 32 }],
           inPlan: false,
           cases: [
-            { first: 'me', captured: true, by: bob, capturedIfReinforced: false },
-            { first: bob, captured: true, by: 'me', capturedIfReinforced: false },
+            { first: 'me', captured: true, by: bob, capturedIfReinforced: true },
+            { first: bob, captured: true, by: 'me', capturedIfReinforced: true },
           ],
           mustGoFirst: 'either',
           exact: true,
