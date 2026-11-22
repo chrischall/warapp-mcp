@@ -240,7 +240,7 @@ export function captureTargets(
     if (!b) continue;
     // #421: a stockpile's push spends armies already on the board: capped at the payback horizon × its value.
     const pile = input.stockpileAllIn?.has(bonusId) === true;
-    const cap = pile ? Math.max(0, pc.paybackTurns * b.value) : Math.max(0, Math.min(ALL_IN_VALUE_TURNS * b.value, pc.income));
+    const cap = pile ? Math.max(0, pc.capturePaybackTurns * b.value) : Math.max(0, Math.min(ALL_IN_VALUE_TURNS * b.value, pc.income));
     const sized: { t: number; player?: number; defenders: number; extra: number; cost: number }[] = [];
     let why: string | undefined;
     for (const t of bonusTerritories(g, bonusId).filter((x) => !mineSet.has(x))) {
@@ -260,7 +260,7 @@ export function captureTargets(
     const cost = sized.reduce((n, x) => n + x.cost, 0);
     if (!why && cost > cap)
       why = pile
-        ? `the push needs ${cost} armies, over the cap of ${cap} (${pc.paybackTurns} × its +${b.value}, #421)`
+        ? `the push needs ${cost} armies, over the cap of ${cap} (${pc.capturePaybackTurns} × its +${b.value}, #421)`
         : `the push needs ${cost} armies, over the cap of ${cap} (${ALL_IN_VALUE_TURNS} × its +${b.value}, at most my income ${pc.income})`;
     allInTries.set(bonusId, { feasible: !why, cost, cap, ...(why ? { detail: why } : {}) });
     if (why) continue;
@@ -495,7 +495,7 @@ export function bonusScoring(
   prev: ReturnType<typeof breakTargets> & ReturnType<typeof captureTargets> & ReturnType<typeof frontierCosts>,
 ) {
   const {
-    g, s, opts, guarded, focus, paybackTurns, territories: state, label, mineSet, armiesOf, defenceAt, completedOver,
+    g, s, opts, guarded, focus, capturePaybackTurns: paybackTurns, territories: state, label, mineSet, armiesOf, defenceAt, completedOver,
     territoryShare, rates, costOf, costAt, econCostAt,
   } = pc;
   const { rationale } = ps;
@@ -719,8 +719,9 @@ export function bonusScoring(
     loss += fogged * fogLoss + foggedNeutral * neutralEachLoss;
     const fogNeutral: FogNeutral | undefined = foggedNeutral ? { count: foggedNeutral, each: neutralEach, size: neutralSize! } : undefined;
     if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach, ...(fogNeutral ? { fogNeutral } : {}) });
-    // #432: while the gate budget is short, no bonus is built through a wasteland: its armies go to the gates.
-    const wasteStop = !isFocus && pc.shortGates !== undefined && wastelands.length > 0;
+    // #432: while the gate budget is short, no bonus is built through a wasteland: its armies go to the gates —
+    // unless this turn's captures can complete it (owner decision 2026-11-22: a completing wasteland is taken).
+    const wasteStop = !isFocus && pc.shortGates !== undefined && wastelands.length > 0 && !remaining.every(bonusTarget);
     const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net && !wasteStop);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;

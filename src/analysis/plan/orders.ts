@@ -33,7 +33,7 @@ export type DeployBook = ReturnType<typeof deployBook>;
 export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardState) {
   const {
     g, territories: state, s, mine, mineSet, myCommanders, foe, guard, noSplit, armiesOf, incomeGain, label, income,
-    reserve, econCostAt, baseIncome, unitsAt, deployOf, untrustedAt,
+    reserve, econCostAt, paybackTurns, baseIncome, unitsAt, deployOf, untrustedAt,
   } = ctx;
   const { warnings, rationale, deployed, avail, coverKeep, captured, moves } = ps;
   // ---- mutable plan state ----
@@ -165,8 +165,7 @@ export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardSta
       cost += c;
       worst = Math.max(worst, c);
     }
-    // #432: read when called, after a short gate budget may have shortened the horizon.
-    return cost <= ctx.paybackTurns * value && worst <= WASTELAND_FACTOR * value;
+    return cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
   };
   /**
    * #298: a foe's stack arrived on `x` since `previousBoard`: it took `x` from me, or its armies there
@@ -205,7 +204,7 @@ export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardSta
       cost += c;
       worst = Math.max(worst, c);
     }
-    return reach && cost <= ctx.paybackTurns * value && worst <= WASTELAND_FACTOR * value;
+    return reach && cost <= paybackTurns * value && worst <= WASTELAND_FACTOR * value;
   };
   /**
    * #235: what losing my `t` cuts off from the rest of my holdings (`ps.holdings` without `t`): when

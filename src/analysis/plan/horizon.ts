@@ -26,7 +26,7 @@ export interface ShortGates {
  * `undefined` otherwise.
  */
 export function shortGatesHorizon(pc: PlanCtx, threats: Pick<Threats, 'nextTurnAt' | 'holdArmies'>): ShortGates | undefined {
-  if (!pc.auto || pc.profile.format !== '1v1' || pc.paybackTurns <= SHORT_GATES_PAYBACK_TURNS) return undefined;
+  if (!pc.auto || pc.profile.format !== '1v1' || pc.capturePaybackTurns <= SHORT_GATES_PAYBACK_TURNS) return undefined;
   const ours = (n: number) => pc.mineSet.has(n);
   let deficit = 0;
   let player: number | undefined;
@@ -42,18 +42,18 @@ export function shortGatesHorizon(pc: PlanCtx, threats: Pick<Threats, 'nextTurnA
 
 /** The rationale line for {@link shortGatesHorizon}'s reading. */
 export function shortGatesLine(pc: PlanCtx, s: ShortGates): string {
-  return `Gate budget short (#432): in this 1v1 the gates facing player ${s.player} need ${s.deficit} more than stands on them against its one floating deploy, more than my income of ${pc.income}, so every payback test counts ${s.turns} turns instead of ${pc.paybackTurns} (the #201 horizon).`;
+  return `Gate budget short (#432): in this 1v1 the gates facing player ${s.player} need ${s.deficit} more than stands on them against its one floating deploy, more than my income of ${pc.income}, so every capture's payback test counts ${s.turns} turns instead of ${pc.capturePaybackTurns} (holds keep ${pc.paybackTurns}).`;
 }
 
 /**
  * Apply {@link shortGatesHorizon} to the plan: its rationale line, and the shorter horizon every later phase reads
- * from `pc.paybackTurns`. Run right after the threats phase (nothing before it applies a payback test).
+ * from `pc.capturePaybackTurns` (holds keep `pc.paybackTurns`). Run right after the threats phase (nothing before it applies a payback test).
  */
 export function applyShortGates(pc: PlanCtx, ps: Pick<PlanState, 'rationale'>, threats: Pick<Threats, 'nextTurnAt' | 'holdArmies'>): ShortGates | undefined {
   const sg = shortGatesHorizon(pc, threats);
   if (!sg) return undefined;
   ps.rationale.push(shortGatesLine(pc, sg));
-  pc.paybackTurns = sg.turns;
+  pc.capturePaybackTurns = sg.turns;
   pc.shortGates = sg;
   return sg;
 }

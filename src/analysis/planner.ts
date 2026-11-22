@@ -2005,7 +2005,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   noteEstimates(pc, ps);
   const {
     g, board, s, opts, income, foe, profile, auto, goal, balanced,
-    reserve, enemyDeploy, deployOf, incomeOfPlayer,
+    reserve, enemyDeploy, deployOf, incomeOfPlayer, paybackTurns,
   } = pc;
   const {
     territories: state, label, bonusName, mine, mineSet, incomeGain, nextIncomeWith, armiesOf, unitsAt, defenceAt,
@@ -2045,10 +2045,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- 1t. threat trend, 1. defence (plan/threats.ts) ----
   const threats = threatsPhase(pc, ps, input, book.valueOf);
-  // #432: a 1v1 whose gates are short at the start counts #201's shorter payback horizon from here on (every phase
-  // after this reads `pc.paybackTurns`; nothing before it applies a payback test).
+  // #432: a 1v1 whose gates are short at the start judges its captures on a shorter payback horizon from here on
+  // (every capture test after this reads `pc.capturePaybackTurns`; holds keep `paybackTurns`).
   applyShortGates(pc, ps, threats);
-  const { paybackTurns } = pc;
   const { growthOf, reinforcementAt, borders, facing, borderAt } = threats;
 
   // ---- 1. holds, #172, 1h, 1b, 1c, #122 garrisons (plan/holds.ts) ----
@@ -2920,7 +2919,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           if (reach >= t.cost)
             rationale.push(
               worth > 0
-                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${paybackTurns} turns of it pay back.`
+                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${pc.capturePaybackTurns} turns of it pay back.`
                 : `Do not expand into ${label(t.id)}: it adds no income and loses ~${lost} armies (more than ${PLAIN_EXPANSION_LOSS}), in no bonus worth completing.`,
             );
           continue;

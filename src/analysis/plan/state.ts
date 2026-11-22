@@ -109,8 +109,14 @@ export interface OpponentsCtx {
   untrustedAt: (player: number, t: number) => number;
   /** #201: the game is decided, with the turns it has left. */
   decidedGame: { state: 'winning' | 'losing'; turns: number; loser: number; rate: number; estimated?: true } | undefined;
-  /** The turns every payback test counts (#201); #432 shortens it right after the threats phase, so read it from the context when called. */
+  /** The turns every payback test counts (#201). */
   paybackTurns: number;
+  /**
+   * #432: the turns a capture's payback test counts (pass 3, a bonus's economy, staging, a two-move stage, a push's
+   * cap, the stand-still completion): {@link paybackTurns}, or fewer while a 1v1's gates are short — set right after
+   * the threats phase, so read it from the context when called. Holds keep `paybackTurns`.
+   */
+  capturePaybackTurns: number;
   /** #432: the start-of-turn gate budget of a 1v1 is short (set right after the threats phase, with `paybackTurns`). */
   shortGates?: ShortGates;
 }
