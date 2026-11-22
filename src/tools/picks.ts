@@ -24,6 +24,36 @@ import { resolveTeams } from './team-source.js';
 import { capturePicksAdvice, picksAdviceLog } from './decision-capture.js';
 
 const VIEWS = ['compact', 'full'] as const;
+/** #(large maps) The time budget of one plan, milliseconds; `WARAPP_PICKS_BUDGET_MS` sets it (0 or less: none). */
+export const DEFAULT_PICKS_BUDGET_MS = 20_000;
+/** The compact view's caps, so its size does not grow with the map: lists beyond them become counts. `submitPicks` is never cut. */
+export const COMPACT_REASONS = 8;
+export const COMPACT_DETAILED_PICKS = 30;
+export const COMPACT_THREATS = 6;
+export const COMPACT_BONUSES = 15;
+export const COMPACT_UNCOVERED = 15;
+export const COMPACT_LINES = 15;
+/** The compact view is capped only for a very large map or a list longer than this. */
+export const COMPACT_LONG_LIST = 100;
+const capped = <T>(xs: readonly T[], n: number, full: boolean): { items: T[]; omitted: number } => ({
+  items: full ? [...xs] : xs.slice(0, n),
+  omitted: full ? 0 : Math.max(0, xs.length - n),
+});
+
+/** `{ [key]: lines }` capped in the compact view, with `<key>Omitted` counting what was cut. */
+function cappedLines(key: 'warnings' | 'rationale', lines: readonly string[], full: boolean): Record<string, unknown> {
+  const l = capped(lines, COMPACT_LINES, full);
+  return { [key]: l.items, ...(l.omitted ? { [`${key}Omitted`]: l.omitted } : {}) };
+}
+
+/** The plan's time budget in milliseconds from the environment (undefined: no budget). */
+export function picksBudgetMs(env: EnvSource | undefined): number | undefined {
+  const raw = (env ?? process.env).WARAPP_PICKS_BUDGET_MS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_PICKS_BUDGET_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_PICKS_BUDGET_MS;
+  return n > 0 ? Math.floor(n) : undefined;
+}
 /** The only GameFeed state in which territories are picked. */
 export const PICK_PHASE_STATE = 'DistributingTerritories';
 /** TerritoryLimit assumed when the settings do not say (war.app's usual default; shared with the outlook). */
@@ -141,6 +171,9 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           'way into every region matter more than the fastest start — the user chooses per game. ' +
           'Its `submitPicks` is exactly what warapp_submit_picks ' +
           'takes — review it with the user first. Refuses outside the picking stage or when nothing is pickable. ' +
+          'On a very large map (over 400 pickable territories) only the territories of the best bonuses are ranked (`candidates` says how many); ' +
+          'the plan has a time budget (20 s; `WARAPP_PICKS_BUDGET_MS` sets it, 0 for none) and, when it runs out, answers `partial: true` with a valid list; ' +
+          'the compact view caps its reasons, threats, coverage and warning lists (counts say what was cut; `submitPicks` is never cut). ' +
           'In a team game only the players off your team are threats, `team` names your teammates, and the list is judged by both award ' +
           "orders that fit (`award.orders`; a team game's is unverified). When a teammate's pick list can be read (unverified), each " +
           "teammate carries `picks`, and `team.coordination` reports the overlap with your list, the bonuses their top picks into " +
@@ -210,7 +243,10 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           mateLists.push(await readTeammatePicks(ctx, game.id, mate, entries?.find((e) => e.playerId === mate.id)));
       }
       const lists = mateLists.map((l) => l?.territories ?? []);
-      const plan = planPicks({
+      const budgetMs = picksBudgetMs(deps.env);
+      let plan: ReturnType<typeof planPicks>;
+      try {
+        plan = planPicks({
         graph: graphOf(map),
         pickable,
         settings,
@@ -220,34 +256,53 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
         neutralArmies,
         spread: spread === true,
         ...(team ? { team: { teammates: team.length, ...(lists.some((l) => l.length) ? { lists } : {}) } } : {}),
+        ...(budgetMs !== undefined ? { budgetMs } : {}),
       });
+      } catch (e) {
+        // A failure inside the advisor is a tool error with a reason, never a silent host failure.
+        throw new McpToolError(`The pick advisor failed on game ${game.id} (${map.territories.length} territories, ${players} players): ${e instanceof Error ? e.message : String(e)}`, {
+          hint: 'Nothing was submitted. Try again, or set WARAPP_PICKS_BUDGET_MS lower; report this if it repeats.',
+        });
+      }
       const name = namer(map);
       const bonusName = bonusNamer(map);
       const coord = plan.team;
-      const groupView = (g: PickGroup) => ({
+      const groupView = (g: PickGroup, full: boolean) => {
+        const bs = capped(g.bonuses, COMPACT_BONUSES, full);
+        return {
         territories: g.territoryIds.map(name),
         score: g.score,
         maxHops: g.maxHops,
-        bonuses: g.bonuses.map((b) => ({
-          id: b.bonusId,
-          name: b.name,
-          value: b.value,
-          turn: b.turn,
-          threats: b.threats.map(name),
-        })),
+        bonuses: bs.items.map((b) => {
+          const th = capped(b.threats, COMPACT_THREATS, full);
+          return {
+            id: b.bonusId,
+            name: b.name,
+            value: b.value,
+            turn: b.turn,
+            threats: th.items.map(name),
+            ...(th.omitted ? { threatsOmitted: th.omitted } : {}),
+          };
+        }),
+        ...(bs.omitted ? { bonusesOmitted: bs.omitted } : {}),
         twoOrderCaptures: g.twoOrderCaptures.map((c) => ({
           turn: c.turn,
           territory: name(c.territoryId),
           orders: c.orders.map((o) => ({ from: name(o.from), armies: o.armies })),
         })),
-      });
+        };
+      };
 
-      const coverageView = (c: CoverageReport) => ({
-        share: c.share,
-        covered: c.covered,
-        reasonable: c.reasonable,
-        uncovered: c.uncovered.map((b) => ({ id: b.bonusId, name: b.name })),
-      });
+      const coverageView = (c: CoverageReport, full: boolean) => {
+        const u = capped(c.uncovered, COMPACT_UNCOVERED, full);
+        return {
+          share: c.share,
+          covered: c.covered,
+          reasonable: c.reasonable,
+          uncovered: u.items.map((b) => ({ id: b.bonusId, name: b.name })),
+          ...(u.omitted ? { uncoveredOmitted: u.omitted } : {}),
+        };
+      };
       const alt = plan.alternative;
       // #312 E3: what my finished games on this map say (reported only: the ranking above never reads it).
       const record = await mapRecordFor(ctx.dataDir, deps.env, game.settings?.mapId);
@@ -265,6 +320,9 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
         }),
       );
 
+      // The caps apply to the compact view of a game big enough to need them (a very large map, or a very long list);
+      // a small game's compact view is the whole answer, as before.
+      const lean = (rung: string) => rung !== 'full' && (plan.candidates !== undefined || plan.picks.length > COMPACT_LONG_LIST);
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, state: game.state },
         players,
@@ -317,16 +375,21 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
               },
             }
           : {}),
-        picks: plan.picks.map((p, i) => ({
-          priority: i + 1,
-          territory: name(p.territoryId),
-          group: p.group,
-          score: p.score,
-          reasons: p.reasons,
-        })),
+        picks: plan.picks.map((p, i) => {
+          // The compact view keeps the first picks' reasons (capped) and counts the rest, so it stays small on any map.
+          const r = capped(p.reasons, i < COMPACT_DETAILED_PICKS ? COMPACT_REASONS : 0, !lean(rung));
+          return {
+            priority: i + 1,
+            territory: name(p.territoryId),
+            group: p.group,
+            score: p.score,
+            reasons: r.items,
+            ...(r.omitted ? { reasonsOmitted: r.omitted } : {}),
+          };
+        }),
         groups: {
-          primary: { ...groupView(plan.groups.primary), coverage: coverageView(plan.coverage) },
-          fallback: groupView(plan.groups.fallback),
+          primary: { ...groupView(plan.groups.primary, !lean(rung)), coverage: coverageView(plan.coverage, !lean(rung)) },
+          fallback: groupView(plan.groups.fallback, !lean(rung)),
         },
         award: plan.award
           ? {
@@ -349,14 +412,16 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           ...(plan.side.contested ? { contested: plan.side.contested } : {}),
           ...(plan.side.note ? { note: plan.side.note } : {}),
         },
-        warnings: [...warnings, ...plan.warnings],
-        rationale: plan.rationale,
+        ...(plan.partial ? { partial: true } : {}),
+        ...(plan.candidates ? { candidates: plan.candidates } : {}),
+        ...cappedLines('warnings', [...warnings, ...plan.warnings], !lean(rung)),
+        ...cappedLines('rationale', plan.rationale, !lean(rung)),
         submitPicks: { game_id: game.id, territories: plan.picks.map((p) => p.territoryId) },
         ...(alt
           ? {
               alternative: {
-                ...groupView(alt.group),
-                coverage: coverageView(alt.coverage),
+                ...groupView(alt.group, !lean(rung)),
+                coverage: coverageView(alt.coverage, !lean(rung)),
                 fallback: alt.fallback.map(name),
                 submitPicks: { game_id: game.id, territories: alt.submitPicks },
               },

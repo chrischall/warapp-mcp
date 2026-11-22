@@ -194,6 +194,20 @@ export const DEFAULT_NEUTRALS_IN_DISTRIBUTION = 4;
 export const DEFAULT_NON_DISTRIBUTION_ARMIES = 2;
 /** Seeds (best score first) each group search grows from; every one when the pool is no larger (#129). */
 const MAX_SEEDS = 12;
+/**
+ * Scaling on very large maps (the 3,066-territory / 173-bonus live case that could not be served): above
+ * `LARGE_PICKABLE` pickable territories the advisor ranks only the territories of the best `CANDIDATE_BONUSES`
+ * bonuses (value per member), at most `CANDIDATE_TERRITORIES` of them, for its groups, fallback, award and
+ * alternative; every pickable territory still counts as a place an opponent may start (the threat model), and
+ * the contestedness is read from `CENTRALITY_SAMPLES` evenly spaced sources instead of every pair. Hop distances
+ * are then searched to `SCALE_HOP_DEPTH` steps only (farther reads as unconnected). At or below the limit
+ * nothing changes: smaller maps plan exactly as before.
+ */
+export const LARGE_PICKABLE = 400;
+export const CANDIDATE_BONUSES = 50;
+export const CANDIDATE_TERRITORIES = 400;
+export const CENTRALITY_SAMPLES = 48;
+export const SCALE_HOP_DEPTH = 8;
 /** The primary's order is searched for the best worst outcome only up to this size (#129). */
 const MAX_REORDER = 5;
 /** Neutral size used to compare attack hardness against the standard kill rates. */
@@ -247,6 +261,13 @@ export interface PlanPicksInput {
    * None, or only empty ones: planned exactly as without them.
    */
   team?: { teammates: number; lists?: ReadonlyArray<readonly number[]> };
+  /**
+   * A time budget in milliseconds (absent: none). When it runs out the plan finishes the cheap way — the best
+   * picks found so far, the rest by score — and says so (`partial: true` and a warning) instead of running on.
+   */
+  budgetMs?: number;
+  /** The clock the budget reads (tests give a fake one); default `Date.now`. */
+  clock?: () => number;
 }
 
 type PickGroupName = 'primary' | 'fallback';
@@ -387,9 +408,29 @@ export interface PickPlan {
   alternative?: AlternativePicks;
   warnings: string[];
   rationale: string[];
+  /** The time budget ran out (`PlanPicksInput.budgetMs`): the list is valid but cheaper than a full search would give. */
+  partial?: boolean;
+  /** Very large map: only these territories were ranked (`LARGE_PICKABLE`); absent on a map that was planned whole. */
+  candidates?: { ranked: number; pickable: number; bonuses: number };
 }
 
 const byNum = (a: number, b: number) => a - b;
+/** Hop distances from `from` to every territory within `depth` steps (breadth first; the rest are absent). */
+function boundedDistances(g: MapGraph, from: number, depth: number): Map<number, number> {
+  const dist = new Map<number, number>([[from, 0]]);
+  let frontier = [from];
+  for (let d = 1; d <= depth && frontier.length; d++) {
+    const next: number[] = [];
+    for (const t of frontier)
+      for (const n of neighborsOf(g, t))
+        if (!dist.has(n)) {
+          dist.set(n, d);
+          next.push(n);
+        }
+    frontier = next;
+  }
+  return dist;
+}
 const NO_TAKEN: ReadonlySet<number> = new Set();
 const round2 = (x: number) => Math.round(x * 100) / 100;
 /** `a` sorts before `b`, compared element by element. */
@@ -966,6 +1007,10 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
   const s = input.settings ?? {};
   const warnings: string[] = [];
   const rationale: string[] = [];
+  const clock = input.clock ?? Date.now;
+  const startedAt = clock();
+  const expired = () => input.budgetMs !== undefined && clock() - startedAt > input.budgetMs;
+  let partial = false;
 
   // Pickable territories: known, unique, sorted.
   const unknown: number[] = [];
@@ -1120,17 +1165,37 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
   // Contestedness from centrality among the pickables.
   const contestWeight = Math.min(CONTEST_MAX, Math.max(0, (players - 2) * CONTEST_PER_PLAYER));
   const meanDist = new Map<number, number>();
-  for (const t of pickable) {
-    const d = bfsDistances(g, [t]);
-    let sum = 0;
-    let count = 0;
-    for (const o of pickable) {
-      if (o === t || !d.has(o)) continue;
-      sum += d.get(o)!;
-      count++;
+  const large = pickable.length > LARGE_PICKABLE;
+  if (large) {
+    // Mean distance to every other pickable, read from evenly spaced sources (distances are symmetric).
+    const step = Math.max(1, Math.floor(pickable.length / CENTRALITY_SAMPLES));
+    const sources = pickable.filter((_, i) => i % step === 0).slice(0, CENTRALITY_SAMPLES);
+    const sums = new Map<number, { sum: number; count: number }>();
+    for (const q of sources) {
+      for (const [t, d] of bfsDistances(g, [q])) {
+        if (t === q) continue;
+        const e = sums.get(t) ?? { sum: 0, count: 0 };
+        e.sum += d;
+        e.count++;
+        sums.set(t, e);
+      }
     }
-    if (count) meanDist.set(t, sum / count);
-  }
+    for (const t of pickable) {
+      const e = sums.get(t);
+      if (e?.count) meanDist.set(t, e.sum / e.count);
+    }
+  } else
+    for (const t of pickable) {
+      const d = bfsDistances(g, [t]);
+      let sum = 0;
+      let count = 0;
+      for (const o of pickable) {
+        if (o === t || !d.has(o)) continue;
+        sum += d.get(o)!;
+        count++;
+      }
+      if (count) meanDist.set(t, sum / count);
+    }
   const means = [...meanDist.values()];
   const lo = Math.min(...means);
   const hi = Math.max(...means);
@@ -1275,11 +1340,35 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     taken,
     of: new Map(pool.map((t) => [t, assess(t, taken)])),
   });
-  const firstView = viewOf(pickable, NO_TAKEN);
+  // Very large map: rank only the territories of the best bonuses (value per member); the rest still count as starts.
+  let cands = pickable;
+  let candidateReport: PickPlan['candidates'];
+  if (large) {
+    const ranked = [...bonuses.values()]
+      .filter((b) => b.value > 0 && b.members.length)
+      .map((b) => ({ b, per: b.value / b.members.length }))
+      .sort((a, c) => c.per - a.per || a.b.id - c.b.id);
+    const pickSetNow = new Set(pickable);
+    const best = new Map<number, number>();
+    let used = 0;
+    for (const { b, per } of ranked) {
+      if (used >= CANDIDATE_BONUSES && best.size >= Math.max(CANDIDATE_TERRITORIES / 2, maxPicks * 4)) break;
+      used++;
+      for (const m of b.members) if (pickSetNow.has(m)) best.set(m, Math.max(best.get(m) ?? 0, per));
+      if (used >= CANDIDATE_BONUSES && best.size >= maxPicks * 4) break;
+    }
+    cands = [...best].sort((a, c) => c[1] - a[1] || a[0] - c[0]).slice(0, Math.max(CANDIDATE_TERRITORIES, maxPicks * 4)).map(([t]) => t).sort(byNum);
+    candidateReport = { ranked: cands.length, pickable: pickable.length, bonuses: used };
+    warnings.push(
+      `A very large map (${pickable.length} pickable territories): the ${cands.length} territories of its ${used} best bonuses by value per territory are ranked; ` +
+        'the others still count as places an opponent may start, but are not offered.',
+    );
+  }
+  const firstView = viewOf(cands, NO_TAKEN);
   // Hop distances on the map graph (the one warapp_plan_route uses), cached per territory.
   const bfsCache = new Map<number, Map<number, number>>();
   const hops = (a: number, b: number) => {
-    if (!bfsCache.has(a)) bfsCache.set(a, bfsDistances(g, [a]));
+    if (!bfsCache.has(a)) bfsCache.set(a, large ? boundedDistances(g, a, SCALE_HOP_DEPTH) : bfsDistances(g, [a]));
     return bfsCache.get(a)!.get(b) ?? Infinity;
   };
 
@@ -1296,6 +1385,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     let current = simulate(ctx, group, view.taken).score;
     const distTo = (c: number) => Math.min(...group.map((x) => hops(x, c)));
     while (group.length < size) {
+      if (expired()) return null;
       const anchored = new Set(group.map((t) => view.of.get(t)!.anchor));
       const eligible = [...left].sort(byNum).filter((c) => {
         const d = distTo(c);
@@ -1370,6 +1460,11 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     const byScore = (a: number, b: number) => score(b) - score(a) || a - b;
     const groupScore = (ids: number[]) => simulate(ctx, ids, view.taken).score;
     const seeds = [...pool].sort(byScore);
+    // Out of time: the best picks by score, no search for a compact group.
+    if (expired()) {
+      partial = true;
+      return seeds.slice(0, size).sort(byScore);
+    }
     if (size === 1) {
       if (!away.length) return [seeds[0]!];
       // In a 1v1, the farthest from the primary among the equally scored best.
@@ -1426,13 +1521,13 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     }
   };
 
-  const primarySize = Math.min(limit, maxPicks, pickable.length);
+  const primarySize = Math.min(limit, maxPicks, cands.length);
   if (pickable.length < limit)
     warnings.push(
       `Only ${pickable.length} pickable territor${pickable.length === 1 ? 'y' : 'ies'} for a limit of ${limit}: the list has no full fallback.`,
     );
-  const primary = buildGroup(firstView, pickable, primarySize, 'primary');
-  let rest = pickable.filter((t) => !primary.includes(t));
+  const primary = buildGroup(firstView, cands, primarySize, 'primary');
+  let rest = cands.filter((t) => !primary.includes(t));
   // Commanders (#129): the first pick awarded carries the commander, so the primary's safest
   // pick goes first — the fewest other pickable territories (where other players may start)
   // within COMPACT_DISTANCE hops, then the fewest neighbours outside the primary, then score.
@@ -1545,6 +1640,15 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       add(answerTier(order, out.firstView, others), out.firstView);
     }
     while (done < fallbackSize && pool.length) {
+      if (expired()) {
+        // Out of time: the rest of the list is the best remaining picks by their first score.
+        partial = true;
+        if (!out.tiers.length) out.firstView = firstView;
+        const score = (t: number) => firstView.of.get(t)?.score ?? 0;
+        const tier = [...pool].sort((a, b) => score(b) - score(a) || a - b).slice(0, fallbackSize - done);
+        if (tier.length) add(tier, firstView);
+        break;
+      }
       const view = viewOf(pool, new Set([...order, ...out.tiers.flat()]));
       if (!out.tiers.length) out.firstView = view;
       // In a 1v1 (unless spreading) a first tier built as a group is counter-pick insurance: in another area.
@@ -1635,7 +1739,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     if (!spread && tier.length > 1 && tier.length === primary.length && spreadOf(tier).link <= COMPACT_DISTANCE && now > was) {
       const byFirst = (a: number, b: number) => firstView.of.get(b)!.score - firstView.of.get(a)!.score || a - b;
       primary.splice(0, primary.length, ...[...tier].sort(byFirst));
-      rest = pickable.filter((t) => !primary.includes(t));
+      rest = cands.filter((t) => !primary.includes(t));
       if (relaxedTo.delete('primary')) {
         for (let i = warnings.length - 1; i >= 0; i--) if (warnings[i]!.startsWith('No compact primary group')) warnings.splice(i, 1);
       }
@@ -1877,13 +1981,13 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
   let alternative: AlternativePicks | undefined;
   if (players === 2 && !spread && primary.length >= 2) {
     const score = (t: number) => firstView.of.get(t)!.score;
-    const seeds = [...pickable].sort((a, b) => score(b) - score(a) || a - b);
-    const pair = bestGroup(firstView, pickable, 2, seeds, COMPACT_DISTANCE);
+    const seeds = [...cands].sort((a, b) => score(b) - score(a) || a - b);
+    const pair = bestGroup(firstView, cands, 2, seeds, COMPACT_DISTANCE);
     if (pair) {
       const alt = [...pair].sort((a, b) => score(b) - score(a) || a - b);
       while (alt.length < primary.length) {
         let best: { t: number; covered: number } | null = null;
-        for (const c of pickable) {
+        for (const c of cands) {
           if (alt.includes(c)) continue;
           const covered = coverageOf([...alt, c]).covered;
           if (!best || covered > best.covered || (covered === best.covered && score(c) > score(best.t))) best = { t: c, covered };
@@ -1899,7 +2003,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       const altCoverage = coverageOf(alt);
       const same = alt.length === primary.length && alt.every((t) => primary.includes(t));
       if (!same && altCoverage.covered > primaryCoverage.covered) {
-        const altFallback = buildFallback(alt, pickable.filter((t) => !alt.includes(t))).tiers.flat();
+        const altFallback = buildFallback(alt, cands.filter((t) => !alt.includes(t))).tiers.flat();
         alternative = {
           group: groupOf(alt, NO_TAKEN),
           coverage: altCoverage,
@@ -1916,6 +2020,10 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       }
     }
   }
+  if (partial)
+    warnings.push(
+      `The ${input.budgetMs} ms time budget ran out: the list is valid, but its later groups are the best remaining picks by score, not a searched compact group.`,
+    );
   const plain: Ctx = { ...ctx, friendly: NO_TAKEN };
   return {
     plan: {
@@ -1928,6 +2036,8 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       ...(alternative ? { alternative } : {}),
       warnings,
       rationale,
+      ...(partial ? { partial: true } : {}),
+      ...(candidateReport ? { candidates: candidateReport } : {}),
     },
     completes: (start, taken) => new Set(simulate(plain, start, new Set(taken)).completions.keys()),
     bonuses,
