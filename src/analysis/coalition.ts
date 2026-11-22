@@ -35,6 +35,8 @@ export interface CoalitionAdvice {
   graceTurns: number;
   /** Who to ask: the best partner, plus every other candidate whose income is within `OUTREACH_CLOSE_RATIO` of its. */
   outreach: number[];
+  /** Players left out because they broke a truce (the record), with the reason. */
+  leftOut: { playerId: number; reason: 'broke-a-truce' }[];
   /** One line for the owner. */
   advice: string;
   /** An honest first message to the best partner: the shared threat in words, no figure, no promise beyond what is said. */
@@ -53,6 +55,8 @@ export function coalitionAdvice(input: {
   leader: number;
   bordersLeader: ReadonlySet<number>;
   excluded?: ReadonlySet<number>;
+  /** Players with a truce broken against me on record (owner decision 2026-11-22: a truce breaker is never asked). */
+  breakers?: ReadonlySet<number>;
 }): CoalitionAdvice | null {
   const { rows, me, leader } = input;
   if (rows.length < 3 || leader === me) return null;
@@ -60,12 +64,15 @@ export function coalitionAdvice(input: {
   const mine = rows.find((r) => r.playerId === me);
   if (!lead || !mine) return null;
   const partners: CoalitionPartner[] = rows
-    .filter((r) => r.playerId !== me && r.playerId !== leader && !input.excluded?.has(r.playerId))
+    .filter((r) => r.playerId !== me && r.playerId !== leader && !input.excluded?.has(r.playerId) && !input.breakers?.has(r.playerId))
     .map((r) => ({ playerId: r.playerId, income: r.income, armies: r.armies, bordersLeader: input.bordersLeader.has(r.playerId) }))
     .sort((a, b) => Number(b.bordersLeader) - Number(a.bordersLeader) || b.income - a.income || a.playerId - b.playerId);
   const trailingIncome = mine.income + partners.reduce((n, p) => n + p.income, 0);
   const viable = partners.length > 0 && trailingIncome >= lead.income;
   const best = partners.find((p) => p.bordersLeader) ?? partners[0];
+  const leftOut = rows
+    .filter((r) => r.playerId !== me && r.playerId !== leader && input.breakers?.has(r.playerId) && !input.excluded?.has(r.playerId))
+    .map((r) => ({ playerId: r.playerId, reason: 'broke-a-truce' as const }));
   const outreach = best
     ? [best.playerId, ...partners.filter((p) => p !== best && p.income >= OUTREACH_CLOSE_RATIO * best.income).map((p) => p.playerId)]
     : [];
@@ -80,6 +87,7 @@ export function coalitionAdvice(input: {
     partners,
     graceTurns: COALITION_GRACE_TURNS,
     outreach,
+    leftOut,
     advice,
     ...(viable && best
       ? {

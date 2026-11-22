@@ -155,6 +155,7 @@ import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
 import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
 import { recordBrokenByMe } from './relations.js';
+import { readPlayerRecord } from '../player-record-store.js';
 import { withTeammateOrders } from '../team-orders.js';
 import {
   claimedCardUses,
@@ -2923,6 +2924,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #436: the surrender line, advice only (the server never acts on it): said up front once crossed.
       // #445: in a free-for-all of three or more, a coalition against the leader comes before the surrender advice.
       const ranking = plan.profile.ranking;
+      // #445 (owner, 2026-11-22): a player that broke a truce is never a partner; the cross-game record says who.
+      const breakers = new Set<number>();
+      if (outlook.surrenderLine?.crossed && plan.profile.format === 'ffa' && ranking && ctx.dataDir)
+        for (const r of ranking.players) {
+          if (r.playerId === me.id || r.playerId === ranking.leader) continue;
+          const rec = await readPlayerRecord(ctx.dataDir, r.playerId, opts.env);
+          if (rec && rec !== 'off' && rec !== 'unreadable' && rec.tallies.brokenByThem > 0) breakers.add(r.playerId);
+        }
       const coalition =
         outlook.surrenderLine?.crossed && plan.profile.format === 'ffa' && ranking && ranking.leader !== me.id
           ? (() => {
@@ -2932,7 +2941,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               for (const t of board.territories)
                 if (t.owner.kind === 'player' && t.owner.playerId !== ranking.leader && neighborsOf(graph, t.territoryId).some((n) => leaderLand.has(n))) beside.add(t.owner.playerId);
               const out = new Set(game.players.filter((p) => !holdsSeat(p.state)).map((p) => Number(p.id)));
-              return coalitionAdvice({ rows: ranking.players, me: me.id, leader: ranking.leader, bordersLeader: beside, excluded: out });
+              return coalitionAdvice({ rows: ranking.players, me: me.id, leader: ranking.leader, bordersLeader: beside, excluded: out, breakers });
             })()
           : null;
       if (coalition?.viable) warnings.unshift(coalition.advice);
