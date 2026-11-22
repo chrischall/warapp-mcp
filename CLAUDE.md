@@ -931,7 +931,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   territory beside vacated land still untaken and cheap (`breachOf`: fogged, or costing at most `VACATED_MAX_COST`;
   a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
   orders (a move's reason only); captures, next income and concessions unchanged.
-- **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #433 and #427 is open).
+- **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #427 is open). **#433's gate budget (2026-11-22, DRAFT for owner approval):** under Local Deployment the 1v1 gate budget (#297) is pool-aware — a gate's shortfall is paid only by the free income and the pools of the bonuses it is in (`poolShortfall` in `src/analysis/local-deploy.ts`, over `chargeDeploys`; next turn's pools from `keptHeld`, the territories `keptIncome` counts), in `gateStop` (`plan/captures.ts`; rule 4d's `outgrows` lets it stop a capture even when the frontier's hold cost is under the whole next income) and in the reported `gates` (`short`, plus `deployable`: the income that can land on the gates; LD only). Without Local Deployment nothing changes. Golden: 506 of 6253 plans re-hashed (467 only `gates.deployable` added, 37 a gate-budget warning too, 2 in their orders: one capture each stopped, next income and concessions unchanged). Still open from #433: `reviveConceded` counting idle neighbours when a withdrawal is planned (an owner decision: cancelling a withdrawal once the deploys are sized).
 - **#427 (draft, owner approval pending).** (1) Bug: the tracker reads every deploy as income, so an opponent's
   Reinforcement play it saw set its tracked figure (max observed, then carried) while the clock added the next card
   on top: one card counted twice, every turn. `enemyDeployEstimates` now reads the figure again with each counted
@@ -2018,7 +2018,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       gains "In this 1v1 that is another gate …"), and the contact fallback runs it where 4d is only a cost. The plan
       reports `gates` (1v1 only; each gate's `needs` and `armies`, `conceded` marked — a conceded gate is still a way
       in — `need`, `onGates`, `deficit` = the per-gate shortfalls summed, `income` = the frontier's, `short` =
-      deficit − income) and warns only when its own captures open a gate the income cannot hold. Measured on the
+      deficit − income; under Local Deployment pool-aware, #433, with `deployable`) and warns only when its own captures open a gate the income cannot hold. Measured on the
       golden corpus against main: every non-1v1 plan byte-identical; of 4,926 1v1 plans orders changed on 12 (12
       captures stopped, next income never lower), the warning on 280.
   - **Game rules** (`docs/PLAN-PLANNER-4.md`, `tests/analysis/lessons-game-rules.test.ts`; the

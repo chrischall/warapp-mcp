@@ -947,8 +947,13 @@ export interface GateBudget {
   deficit: number;
   /** The next income that can add to them ({@link FrontierBudget}'s figure). */
   income: number;
-  /** deficit − income, at least 0. */
+  /**
+   * deficit − income, at least 0. #433: under Local Deployment what the gates lack once each is paid from the pools
+   * of the bonuses it is in and the free income (a bonus's armies deploy only on its own territories).
+   */
   short: number;
+  /** #433, Local Deployment only: the part of `income` that can be deployed on the gates (free + their bonuses' pools). */
+  deployable?: number;
 }
 
 export interface FrontierBudget {
