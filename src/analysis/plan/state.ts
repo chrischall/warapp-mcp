@@ -108,7 +108,7 @@ export interface OpponentsCtx {
   untrustedAt: (player: number, t: number) => number;
   /** #201: the game is decided, with the turns it has left. */
   decidedGame: { state: 'winning' | 'losing'; turns: number; loser: number; rate: number; estimated?: true } | undefined;
-  /** The turns every payback test counts (#201). */
+  /** The turns every payback test counts (#201); #432 shortens it right after the threats phase, so read it from the context when called. */
   paybackTurns: number;
 }
 
