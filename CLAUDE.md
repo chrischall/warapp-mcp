@@ -823,7 +823,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `redeploy` — an idle stack, only my land beside it and unused by the plan, two or more steps from the target, or one
   cut off from my main holdings, with more than `REDEPLOY_MIN_ARMIES` (3) to spare, to the strike stack, else the
   thinnest border), a
-  Gift of the members that complete a teammate's nearer bonus (#435, proposed: judged before the idle transfers — a transfer
+  Gift of the members that complete a teammate's nearer bonus (#435: judged before the idle transfers — a transfer
   out of or into a gifted member no longer hides it but is listed in `gift.drop`, since the Gift, phase 47, lands before the
   moves; an attack from it still does; once Gift leaves `UNVERIFIED_CARD_PLAYS` the gift is `inOrders` and plan_turn's
   `orders` carry it with `drop` taken out, `giftInOrders`), and (#434, `blockadeOffer` in `card-threats.ts`) a
@@ -1659,7 +1659,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     line in the reads. Inform only (P1): the planner does not size refills on it.
   - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
     teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
-    warning); its other members are plain expansion. #435 (proposed, owner approval pending): one I alone hold the
+    warning); its other members are plain expansion. #435 (owner decision 2026-11-22): only with the Gift card in play
+    (`PlanGameContext.cardsInPlay`, from the settings' card rules; absent or no Gift: skipped as before), one I alone hold the
     most members of (`nearer`; a tie is nobody's) is mine to work — its other members are scored and advanced,
     the teammate's are theirs to hand over (a Gift), never captured or costed, and it is never `completable`
     while they stand (no income claimed); one that is then uneconomic stays skipped as before, its members

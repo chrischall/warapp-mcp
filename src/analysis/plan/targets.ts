@@ -549,6 +549,8 @@ export function bonusScoring(
   const neutralSize = s.neutralArmies !== undefined && s.neutralArmies >= 0 ? s.neutralArmies : undefined;
   const neutralCost = neutralSize !== undefined ? (costOf(neutralSize) ?? Infinity) : Infinity;
   const neutralLoss = neutralSize !== undefined && Number.isFinite(neutralCost) ? Math.min(neutralCost - 1, straightKills(neutralSize, rates.defensiveKillRate)) + 1 : Infinity;
+  // #435: whether the Gift card is in play (the shared-bonus handover needs it).
+  const giftInPlay = pc.game.cardsInPlay?.includes('Gift') === true;
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     const isFocus = focus.has(b.id);
     const ts = bonusTerritories(g, b.id);
@@ -577,7 +579,9 @@ export function bonusScoring(
     // it) works it: when that is me, alone, its other members are scored as mine to take, and the
     // teammate's members are theirs to hand over (a Gift) — never captured, never costed, and never
     // a completion this turn (`completable` false while they stand), so no income is claimed for it.
-    const handover = mates.length ? (nearerMe(pc, ts) ? mates : undefined) : [];
+    // Owner decision 2026-11-22: only with the Gift card in play — the handover needs one; without it
+    // (or the cards unread) a shared bonus is skipped as before.
+    const handover = mates.length ? (giftInPlay && nearerMe(pc, ts) ? mates : undefined) : [];
     if (handover === undefined) {
       if (remaining.some(bonusTarget) || isFocus)
         rationale.push(

@@ -397,6 +397,11 @@ export interface PlanGameContext {
   /** Any card is in play. */
   cards?: boolean;
   /**
+   * #435: the cards in play by name (the settings' card rules, e.g. `Gift`); absent when unread. A shared
+   * bonus I am nearer to is mine to work only with `Gift` here (owner decision 2026-11-22).
+   */
+  cardsInPlay?: readonly string[];
+  /**
    * Every player started with the same territories and armies (#235: any distribution but a custom
    * scenario, a map's scenario distribution included): in a 1v1 (#119), or a free-for-all with no teams and every seated player still in
    * (#226), it turns the fog prior on ({@link EnemyIncomePrior}).

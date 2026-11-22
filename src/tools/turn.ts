@@ -1963,6 +1963,8 @@ export async function livePlanSetup(
     // PLAN-TEAMS C3.6: a joint capture under a cyclic order says whose attack must run first.
     ...(isTeamGame(game.players) && game.settings?.moveOrder !== undefined ? { moveOrder: game.settings.moveOrder } : {}),
     cards: rules.inPlay.length > 0,
+    // #435: the shared-bonus handover needs a Gift card in play.
+    cardsInPlay: [...rules.inPlay],
     // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
     symmetricStart: symmetricStart(game.settings),
     // #235: why not, when it was not (the plan says so in a free-for-all).
