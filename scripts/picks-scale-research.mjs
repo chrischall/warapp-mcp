@@ -58,7 +58,11 @@ function makeMap(n, seed, shuffleIds) {
     const members = [s0];
     owner[s0] = id;
     for (let k = 0; k < members.length && members.length < target; k++)
-      for (const nb of adj[members[k]]) if (owner[nb] < 0 && members.length < target) (owner[nb] = id), members.push(nb);
+      for (const nb of adj[members[k]])
+        if (owner[nb] < 0 && members.length < target) {
+          owner[nb] = id;
+          members.push(nb);
+        }
     bonuses.push(members);
   }
   // Ids: sequential in grid order, or shuffled (the sampled centrality reads ids, so order matters).
