@@ -13,7 +13,7 @@
 // an event; and an event the fog leaves ambiguous (my covered territory lost to an owner I cannot
 // see, or hit while another player or the fog also borders it) is `massing`, never `broken`.
 import type { BoardState, TerritoryState } from '../board.js';
-import { carriesTeam } from '../teams.js';
+import { carriesTeam, teammatesOf } from '../teams.js';
 import { bonusTerritories } from './bonuses.js';
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import type { MyOrders, TurnBoard } from './opponents.js';
@@ -664,8 +664,8 @@ const WATCH_KINDS = ['broken', 'cap-exceeded', 'massing', 'outgrowing'] as const
  * Diplomacy cards the decoder is sure of (PLAN-TEAMS D3), never from the ledger's own field: an
  * agreement active or in notice with that player is marked enforced until the card is gone, and a
  * player with none gets a relation of its own (`card: 'Diplomacy'`, every territory of each side
- * covered). Also the tacit truces with every neighbour no open agreement names: reported, never
- * planned on.
+ * covered). Also the tacit truces with every neighbour no open agreement names and off my team
+ * (#435): reported, never planned on.
  */
 /** One agreement an order list would break (`truceBreaksIn`). */
 export interface TruceBreak {
@@ -773,7 +773,13 @@ export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanR
       card: 'Diplomacy',
     });
   }
-  const open = new Set(input.agreements.filter((a) => !TERMINAL_STATUSES.has(a.status)).map((a) => a.with));
+  // #435: a teammate's quiet border is no tacit truce (#246): left out like a partner with an open
+  // agreement, as warapp_get_relations already did — plan_turn, check_plan and advise_diplomacy listed them.
+  const self = players.find((p) => p.id === me);
+  const open = new Set([
+    ...input.agreements.filter((a) => !TERMINAL_STATUSES.has(a.status)).map((a) => a.with),
+    ...(self ? teammatesOf(players, self).map((p) => p.id) : []),
+  ]);
   return { relations, tacit: tacitTruces({ graph, boards: input.boards, me, exclude: open }) };
 }
 
