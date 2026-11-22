@@ -280,6 +280,11 @@ export interface PlanPicksInput {
   budgetMs?: number;
   /** The clock the budget reads (tests give a fake one); default `Date.now`. */
   clock?: () => number;
+  /**
+   * Every territory is dealt (full distribution, no territory limit; owner 2026-11-22, #476 follow-up): the picks only
+   * say which territories I would rather hold, so no compact group is searched — each group is the best picks by score.
+   */
+  fullDeal?: boolean;
   /** Research hook (#476): plan as a very large map above this many pickables instead of {@link LARGE_PICKABLE}. */
   largeAbove?: number;
   /** Research hook (#476): the large-map knobs (default: the constants above); Infinity switches an approximation off. */
@@ -1026,6 +1031,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
   const friendly: ReadonlySet<number> = friendlyIds.length ? new Set(friendlyIds) : NO_TAKEN;
   const s = input.settings ?? {};
   const warnings: string[] = [];
+  if (input.fullDeal) warnings.push('Every territory is dealt: each group is the best picks by score; no compact group was searched (it would not change what you are dealt).');
   const rationale: string[] = [];
   const clock = input.clock ?? Date.now;
   const startedAt = clock();
@@ -1490,6 +1496,8 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     const byScore = (a: number, b: number) => score(b) - score(a) || a - b;
     const groupScore = (ids: number[]) => simulate(ctx, ids, view.taken).score;
     const seeds = [...pool].sort(byScore);
+    // Every territory is dealt: a compact group answers nothing the game asks, so the best picks by score.
+    if (input.fullDeal) return seeds.slice(0, size).sort(byScore);
     // Out of time: the best picks by score, no search for a compact group.
     if (expired()) {
       partial = true;
@@ -1675,9 +1683,9 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       add(answerTier(order, out.firstView, others), out.firstView);
     }
     while (done < fallbackSize && pool.length) {
-      if (expired()) {
-        // Out of time: the rest of the list is the best remaining picks by their first score.
-        partial = true;
+      // Out of time, or every territory is dealt: the rest of the list is the best remaining picks by their first score.
+      if (input.fullDeal || expired()) {
+        if (!input.fullDeal) partial = true;
         if (!out.tiers.length) out.firstView = firstView;
         const score = (t: number) => firstView.of.get(t)?.score ?? 0;
         const tier = [...pool].sort((a, b) => score(b) - score(a) || a - b).slice(0, fallbackSize - done);
