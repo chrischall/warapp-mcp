@@ -5,6 +5,7 @@
 import { bonusTerritories } from '../bonuses.js';
 import { armiesToTake, straightKills } from '../combat.js';
 import { neighborsOf } from '../graph.js';
+import { poolShortfall } from '../local-deploy.js';
 import { captureCost, type BonusPlan, type TwoStepPass } from './shared.js';
 import type { DeployBook } from './orders.js';
 import type { Holds } from './holds.js';
@@ -73,7 +74,7 @@ export function capturesPhase(
 export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threats: Threats, hd: Holds) {
   const {
     g, s, foe, goal, guarded, reserve, deployOf, territories: state, label, bonusName, mine, mineSet, armiesOf,
-    unitsAt, defenceAt, bonusTs, completedBy, guard, toTake, noSplit, myCommanders,
+    unitsAt, defenceAt, bonusTs, completedBy, guard, toTake, noSplit, myCommanders, rates,
   } = pc;
   const { warnings, rationale, deployed, avail, captured, survivorsAt, incoming } = ps;
   const { guardAt, valueOf } = book;
@@ -96,8 +97,9 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
    * The total need is checked, not each member alone: holding the bonus needs every
    * exposed member held. The leftover is as of this check; a later capture this turn
    * may still spend it (defence funds held borders first, so this is rarely material).
+   * `lost`: the attackers the capture of `t` loses (#422), for the payback exemption below.
    */
-  const defensible = (t: number, survivors: number): boolean => {
+  const defensible = (t: number, survivors: number, lost?: number): boolean => {
     const after = new Set([...mine, ...captured]);
     const completes = g.map.bonuses
       .filter((b) => {
@@ -137,6 +139,8 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
       .flatMap(exposedOf))
       earlier.set(e.id, Math.max(earlier.get(e.id) ?? 0, e.added));
     let ok = true;
+    /** #422: the completions let through on payback, kept only when the capture is (no other bonus refuses it). */
+    const payback: { line: string; bonusId: number; falls: number[] }[] = [];
     for (const b of completes) {
       const exposed = exposedOf(b.id);
       const total = exposed.reduce((sum, e) => sum + e.added, 0);
@@ -146,11 +150,29 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
       // A completion that adds no exposure (total 0) is never refused: refusing it saves nothing,
       // whatever the earlier completions need (it only adds income).
       if (total === 0 || total + before <= nextIncome + Math.min(spare, held)) {
+        // #422: judged holdable now (a later try, with more income), so no longer a payback completion.
+        ps.paybackBonuses.delete(b.id);
         if (anyway.length && guarded)
           rationale.push(
             `Complete bonus ${bonusName(b.id)} though ${anyway.map((e) => label(e.id)).join(', ')} may fall next turn: ${anyway.length === 1 ? 'it is' : 'they are'} exposed whether or not it is completed, so refusing would save nothing.`,
           );
         continue;
+      }
+      // #422: the payback exemption. A bonus held at the end of this turn pays its value in next turn's
+      // income even if it falls straight after, so a completion whose losses — the attackers its captures
+      // lose this turn plus the armies left on the members that would fall — are at most that value
+      // repays itself in one turn: refusing it only gives the income up.
+      if (guarded) {
+        const falls = exposed.filter((e) => e.added > 0);
+        const left = falls.reduce((n, e) => n + stays(e.id), 0);
+        const killed = bonusTerritories(g, b.id)
+          .filter((m) => captured.has(m) && !mineSet.has(m))
+          .reduce((n, m) => n + (m === t && lost !== undefined ? lost : straightKills(defenceAt(m), rates.defensiveKillRate)), 0);
+        if (killed + left <= b.value) {
+          const line = `Complete bonus ${bonusName(b.id)} though its frontier cannot be held next turn (it needs ${total} more armies${before ? `, on top of the ${before} this turn's other completions need` : ''}, next income ${nextIncome}): it can lose at most ${killed + left} armies (${killed} killed taking it, ${left} left on ${falls.map((e) => label(e.id)).join(', ')}), no more than the +${b.value} it pays next turn (#422).`;
+          payback.push({ line, bonusId: b.id, falls: falls.map((e) => e.id) });
+          continue;
+        }
       }
       const worst = [...exposed].sort((a, b) => b.added - a.added || b.need - a.need || a.id - b.id)[0]!;
       const head = `completing ${bonusName(b.id)} leaves ${label(worst.id)} indefensible (player ${worst.player} can take it for ${worst.take}; next income ${nextIncome})`;
@@ -167,6 +189,12 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
         if (!warnings.includes(w)) warnings.push(w);
       }
     }
+    if (ok)
+      for (const x of payback) {
+        if (!rationale.includes(x.line)) rationale.push(x.line);
+        for (const f of x.falls) ps.paybackFalls.set(f, x.line);
+        ps.paybackBonuses.set(x.bonusId, x.line);
+      }
     return ok;
   };
 
@@ -543,7 +571,7 @@ export function captureHelper(
     captured.add(t);
     const survivors = sent - straightKills(defendersSeen(t), rates.defensiveKillRate);
     // A commander strike is never refused by R3: killing the commander eliminates a player.
-    if (!strikes.has(t) && !r3Exempt.has(t) && !defensible(t, survivors)) {
+    if (!strikes.has(t) && !r3Exempt.has(t) && !defensible(t, survivors, sent - survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
       avail.set(src, avail.get(src)! + sent - need);
       const left = (deployed.get(src) ?? 0) - need;
@@ -697,7 +725,9 @@ export function captureHelper(
     }
     avail.set(plan.finisher, avail.get(plan.finisher)! - plan.armies);
     captured.add(t);
-    if (!defensible(t, plan.survivors)) {
+    // #422: what the combined capture loses — every softener's dead and the finisher's.
+    const lost = plan.softeners.reduce((n, x) => n + x.armies - x.survivors, 0) + plan.armies - plan.survivors;
+    if (!defensible(t, plan.survivors, lost)) {
       for (const [k, v] of before.avail) avail.set(k, v);
       incoming.clear();
       for (const [k, v] of before.incoming) incoming.set(k, v);
@@ -926,9 +956,9 @@ export function bonusPasses(
     warnings, rationale, deployed, avail, captured, combined, moves, survivorsAt, captureOrder, staged, incoming,
   } = ps;
   const { heldNow, gainWith } = book;
-  const { heldBorders, keptIncome, stayAt } = hd;
+  const { heldBorders, keptIncome, keptHeld, stayAt } = hd;
   const {
-    targets, leadSteps, leadTry, leadNote, bonusTarget, frontierDelta, targetScoreCost, frontierOf, startHold,
+    targets, leadSteps, leadTry, leadNote, bonusTarget, frontierDelta, targetScoreCost, frontierOf, frontierNeeds, startHold,
     toFinish, byCloseness, committing, denials, emptyEnemies,
   } = tgt;
   const { worstCase, tryCapture, siblings, fundedOnConceded, bareOn } = prev;
@@ -964,6 +994,7 @@ export function bonusPasses(
       for (const t of snap.combined) combined.add(t);
       survivorsAt.clear();
       for (const [k, v] of snap.survivorsAt) survivorsAt.set(k, v);
+
       staged.clear();
       for (const [k, v] of snap.staged) staged.set(k, v);
       // A lead step's sure sizing (#203) goes with its undone capture.
@@ -1088,7 +1119,7 @@ export function bonusPasses(
    * Captures rule 4d's budget stopped, with the frontier they would have left (for the warning;
    * dropped, with their rationale lines, if a later pass takes them after all).
    */
-  const stopped: { t: number; holdCost: number; income: number }[] = [];
+  const stopped: { t: number; holdCost: number; income: number; deployable?: number }[] = [];
   /**
    * #281: vacated territories (and, the owner's extension, empty enemy territories on the same front)
    * rule 4d let through though they add a border facing an enemy, with the rationale line the report
@@ -1113,9 +1144,17 @@ export function bonusPasses(
     if (frontierDelta(without, [t], stays).enemy <= 0) return null;
     const f = frontierOf(held, stays);
     const next = keptIncome(held);
-    if (f.holdCost <= next || f.holdCost <= frontierOf(without, stays).holdCost) return null;
-    if (!stopped.some((x) => x.t === t)) stopped.push({ t, holdCost: f.holdCost, income: next });
-    return `${stoppedLine(t)} and in this 1v1 it opens another gate${gateFoe(t)}: the gates would then need ${f.holdCost} next turn against its one floating deploy, more than the next income of ${next} (#297).`;
+    // #433: under Local Deployment a bonus's armies deploy only on its own territories, so the gates get only the
+    // free income and the pools of the bonuses they are in: the whole income read "not short" when that was short.
+    const pooled = s.localDeployments ? poolShortfall(g, keptHeld(held), next, frontierNeeds(held, stays)) : null;
+    const short = pooled ? pooled.short : Math.max(0, f.holdCost - next);
+    if (short <= 0 || f.holdCost <= frontierOf(without, stays).holdCost) return null;
+    const byPools = pooled !== null && f.holdCost <= next;
+    if (!stopped.some((x) => x.t === t))
+      stopped.push({ t, holdCost: f.holdCost, income: next, ...(byPools ? { deployable: pooled.deployable } : {}) });
+    return byPools
+      ? `${stoppedLine(t)} and in this 1v1 it opens another gate${gateFoe(t)}: the gates would then need ${f.holdCost} next turn against its one floating deploy; under Local Deployment only ${pooled.deployable} of the next income of ${next} can be deployed on them (the free income and the pools of the bonuses they are in): ${short} short (#297, #433).`
+      : `${stoppedLine(t)} and in this 1v1 it opens another gate${gateFoe(t)}: the gates would then need ${f.holdCost} next turn against its one floating deploy, more than the next income of ${next} (#297).`;
   };
   /** #297: " facing player P" for the opponent beside `t` (in a 1v1, the one opponent), else nothing. */
   const gateFoe = (t: number): string => {
@@ -1140,10 +1179,11 @@ export function bonusPasses(
     const f = frontierOf(held, stays);
     const next = keptIncome(held);
     const start = startHold();
-    if (f.holdCost <= next) return null;
     // #297: in a 1v1 the start-of-turn hold is no excuse — a capture that opens another gate the next income
     // cannot hold is stopped even when this turn's other orders bring the total back under where it started.
+    // #433: nor, under Local Deployment, is a next income the gates' pools and free income cannot carry there.
     const gate = pc.profile.format === '1v1' ? gateStop(t) : null;
+    if (f.holdCost <= next && !gate) return null;
     if (f.holdCost <= start && !gate) return null;
     // #281: land a static seat left, which a live stack beside it takes free next turn: the border
     // comes either way, so the hold cost alone never refuses it (the capture still spends only what
@@ -1161,7 +1201,7 @@ export function bonusPasses(
       return null;
     }
     // Only the 1v1 gate budget stops it (rule 4d's start-of-turn escape would have let it through): its own line.
-    if (gate && f.holdCost <= start) return gate;
+    if (gate && (f.holdCost <= start || f.holdCost <= next)) return gate;
     const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.${
       gate ? ` In this 1v1 that is another gate${gateFoe(t)} (#297).` : ''
     }`;

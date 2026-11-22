@@ -1018,7 +1018,13 @@
 //     bonuses this turn's earlier captures completed share the same next income (their added
 //     needs count too). Then: under `balanced`/`defend` the capture is
 //     refused (warning "… indefensible …: not completed"); under `expand` and
-//     `complete-bonus` it is made with a warning. Under `balanced`/`defend` a bonus's
+//     `complete-bonus` it is made with a warning. #422, the payback exemption: a completion whose
+//     losses — the attackers its captures into the bonus lose this turn plus the armies left on the
+//     members that would fall — are at most the bonus's value is made anyway (a "Complete bonus …
+//     (#422)" line): held at the end of this turn, the bonus pays that value next turn even if it
+//     falls after. Such a bonus keeps no conceded border (rule 1c), gets no #122 garrison or #265
+//     weak-member call, and the leftover never rides an attack onto a member it may lose (#288).
+//     Under `balanced`/`defend` a bonus's
 //     score is value / (capture cost + DEFENSE_DISCOUNT × that defence cost).
 //  4d. Frontier cost (#71). Every capture pays for the frontier it adds, in armies: for each
 //     territory it touches (the capture and its held neighbours), its border cost after minus
