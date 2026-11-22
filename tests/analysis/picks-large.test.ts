@@ -2,6 +2,7 @@
 // quickly, offer a valid list, and leave smaller maps exactly as they were. Every id here is made up.
 import { describe, expect, it } from 'vitest';
 import { CANDIDATE_TERRITORIES, LARGE_PICKABLE, planPicks, type PickSettings } from '../../src/analysis/picks.js';
+import { buildGraph } from '../../src/analysis/graph.js';
 import { bigUs, largeMap } from './support/large-map.js';
 
 const SETTINGS: PickSettings = {
@@ -87,5 +88,38 @@ describe('planPicks on smaller maps is unchanged', () => {
       expect(JSON.stringify(b)).toBe(JSON.stringify(a));
       expect(b.partial).toBeUndefined();
     }
+  }, 60_000);
+});
+
+describe('the budget is always reported', () => {
+  it('whenever it changes the list, whatever phase it runs out in (#474 review)', () => {
+    const { graph, pickable } = largeMap(14, 14, 4, 3);
+    // No fallback: the list is the primary alone, so the budget can only run out inside its search.
+    const base = { graph, pickable, settings: SETTINGS, players: 2, territoryLimit: 3, maxPicks: 3 };
+    const full = planPicks(base).picks.map((x) => x.territoryId);
+    let changed = 0;
+    for (let k = 0; k < 600; k += 5) {
+      let calls = 0;
+      const p = planPicks({ ...base, budgetMs: 1, clock: () => (calls++ >= k ? 10 : 0) });
+      if (p.picks.map((x) => x.territoryId).join() !== full.join()) {
+        changed++;
+        expect(p.partial, `clock flips after ${k} reads`).toBe(true);
+        expect(p.warnings.join('\n')).toMatch(/time budget ran out/);
+      }
+    }
+    expect(changed).toBeGreaterThan(0);
+  }, 120_000);
+});
+
+describe('a very large map whose best bonuses hold too few territories', () => {
+  it('still lists as many picks as asked', () => {
+    // 600 territories in a line, but only three small bonuses: far fewer bonus territories than the 30 picks.
+    const territories = Array.from({ length: 600 }, (_, i) => ({ id: i + 1, name: `T${i + 1}`, connectedTo: i + 2 <= 600 ? [i + 2] : [] }));
+    const bonuses = [0, 1, 2].map((b) => ({ id: b + 1, name: `B${b + 1}`, value: 5, territoryIds: [b * 4 + 1, b * 4 + 2, b * 4 + 3, b * 4 + 4], bonusIds: [] }));
+    const graph = buildGraph({ id: 9, name: 'Sparse', territories, bonuses, distributionModes: [] });
+    const pickable = territories.map((t) => t.id);
+    const p = planPicks({ graph, pickable, settings: SETTINGS, players: 10, territoryLimit: 3, maxPicks: 30 });
+    expect(p.candidates).toBeDefined();
+    validList(p, pickable, 30);
   }, 60_000);
 });

@@ -1358,6 +1358,11 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       if (used >= CANDIDATE_BONUSES && best.size >= maxPicks * 4) break;
     }
     cands = [...best].sort((a, c) => c[1] - a[1] || a[0] - c[0]).slice(0, Math.max(CANDIDATE_TERRITORIES, maxPicks * 4)).map(([t]) => t).sort(byNum);
+    // Never fewer than the list needs: pad with the remaining pickables (by id) when the best bonuses hold too few.
+    if (cands.length < Math.min(maxPicks, pickable.length)) {
+      const have = new Set(cands);
+      cands = [...cands, ...pickable.filter((t) => !have.has(t)).slice(0, Math.min(maxPicks, pickable.length) - cands.length)].sort(byNum);
+    }
     candidateReport = { ranked: cands.length, pickable: pickable.length, bonuses: used };
     warnings.push(
       `A very large map (${pickable.length} pickable territories): the ${cands.length} territories of its ${used} best bonuses by value per territory are ranked; ` +
@@ -1385,7 +1390,10 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     let current = simulate(ctx, group, view.taken).score;
     const distTo = (c: number) => Math.min(...group.map((x) => hops(x, c)));
     while (group.length < size) {
-      if (expired()) return null;
+      if (expired()) {
+        partial = true;
+        return null;
+      }
       const anchored = new Set(group.map((t) => view.of.get(t)!.anchor));
       const eligible = [...left].sort(byNum).filter((c) => {
         const d = distTo(c);
