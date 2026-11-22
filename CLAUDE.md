@@ -265,7 +265,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   holder; no threat; a known teammate start); my list is shortened to my starts + the opponents' only when disjoint from every
   teammate list and each is as long as the client allows (a short one can run out, and war.app then grants from mine); `plan.team` reports `overlap`, `sharedBonuses` and `mirrored` (my primary and each top laid on the hands a
   reversing award gives, `splits` naming what a repeating order would split; its `submitPicks`, the shared top then my
-  fallback, is capped at `maxPicks`). No list read, or only empty ones: byte-identical.
+  fallback, is capped at `maxPicks`). No list read, or only empty ones: byte-identical. #435: a teammate's list that cannot be read (`null`, unknown — not an empty one) gets a plan_picks warning to hold the submit, and `warapp_submit_picks` refuses in a team game while any playing teammate's list is unread (read the same way) unless `without_teammate_list: true`, which the preview then warns about.
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes; in a two-player game without `spread` it also offers a
   coverage-first `alternative` (a pair, then the picks that most raise `coverage` — the reasonable bonuses reached within 2 moves
   past no wasteland; `coverageModel`) with its own `submitPicks`, only when it covers more, the primary unchanged (#166). `docs/STRATEGY.md` states the community
