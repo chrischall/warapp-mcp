@@ -101,6 +101,8 @@ const VARIANTS = {
   'no-hop-bound': { hopDepth: Infinity },
 };
 const VARIANT_NAMES = arg('variants', 'shipped').split(',');
+// `pool:N` ranks the territories of the best N bonuses (no territory cap): the pruning curve.
+for (const v of VARIANT_NAMES) if (v.startsWith('pool:')) VARIANTS[v] = { candidateBonuses: Number(v.slice(5)), candidateTerritories: Infinity };
 const EXACT = new Map();
 const rows = [];
 for (const variant of VARIANT_NAMES)
