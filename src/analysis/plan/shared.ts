@@ -1209,6 +1209,12 @@ export interface EnemyDeployEstimate {
   /** #164: the latest turn a deployment above its income was seen (a Reinforcement card played); else `null`. */
   cardPlayed: number | null;
   /**
+   * #427: the tracked figure a card play had set (`was`), read again with the card's armies out
+   * (`income`, the figure `tracked` and the estimate use): the turns that set it (`turns`), each a play
+   * counted as a card. `null` when no play set it, or without a clock.
+   */
+  cardInTrack?: { was: number; income: number; armies: number; turns: number[] } | null;
+  /**
    * G2 (PLAN-TEAMS D3): the Sanctions in effect on it that the decoder is sure of. `applied`: the
    * estimate's income (`before`, card left out) was cut by them to `estimate` less its card — only
    * when the figure comes from the board (`visible`, `exact`); an observed, tracked or prior figure
