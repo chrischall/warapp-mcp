@@ -213,6 +213,24 @@ describe('commit to the closest bonus while none is held (#101)', () => {
     expect(valid(p, b, 7)).toEqual([]);
   });
 
+  it('(d) #416: a bonus worth only +1 held does not end the commitment', () => {
+    // As (d), on a map where Alpha is worth +1: one point of income is no bonus to build on.
+    const g1 = buildGraph(makeMap(IDS, EDGES, BONUSES.map(([id, name, value, ts]) => [id, name, id === ALPHA ? 1 : value, ts])));
+    const b = board([
+      mine(1, 8),
+      mine(11, 1),
+      mine(12, 1),
+      mine(2, 8),
+      neutral(21, 2),
+      player(22, 1, P2),
+      ...neutrals([31, 32, 33, 34, 35, 36, 41, 42, 43, 44, 45, 46]),
+      player(90, 3, P2),
+    ]);
+    const p = planTurn({ graph: g1, board: b, me: ME, income: 7, settings: STD, game: DUEL });
+    expect(p.profile.phase).toBe('contact');
+    expect(why(p)).toMatch(/No bonus worth more than \+1 held: expansion goes to the bonus closest to completion first — Beta \(#302\)/);
+  });
+
   it('(e) in an FFA in contact, it keeps committing while neutrals remain in reach (#132)', () => {
     // As (d), but a free-for-all whose two other players face both my borders (contact), with
     // neutrals still beside me (21, 41, 32): the closest bonus keeps priority.

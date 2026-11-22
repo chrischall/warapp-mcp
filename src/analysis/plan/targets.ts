@@ -772,6 +772,9 @@ export const SPREAD_LAST_TURN = 6;
 /** #319: "near base": an income at most this much above the base income. */
 export const SPREAD_INCOME_SLACK = 3;
 
+/** #416: the least value a bonus held in full needs to end rule 4f's commitment and #319's warning. */
+export const HOLDS_BONUS_MIN_VALUE = 2;
+
 /** #101: commit to the bonus closest to completion; a break's retake check; #319's spread warning. */
 export function closestBonus(
   pc: PlanCtx,
@@ -791,10 +794,18 @@ export function closestBonus(
   // army of every bonus their capture completes (#438: a pair bonus on top of a single-territory one
   // counts), then a bonus advanced last turn (a member captured since `previousBoard`) first, then the
   // score order (value per army, rule 4). Focused bonuses come first.
-  const holdsBonus = g.map.bonuses.some((b) => {
-    const ts = bonusTs.get(b.id)!;
-    return b.value > 0 && ts.length > 0 && ts.every((t) => mineSet.has(t));
-  });
+  // #416: a bonus held counts only from HOLDS_BONUS_MIN_VALUE up: one point of income is no base to build
+  // on, and holding a +1 silenced #319 in a live game while the captures stayed spread.
+  const heldValues = g.map.bonuses
+    .filter((b) => {
+      const ts = bonusTs.get(b.id)!;
+      return b.value > 0 && ts.length > 0 && ts.every((t) => mineSet.has(t));
+    })
+    .map((b) => b.value);
+  const holdsBonus = heldValues.some((v) => v >= HOLDS_BONUS_MIN_VALUE);
+  /** #416: a bonus is held, but none worth HOLDS_BONUS_MIN_VALUE: the lines say so instead of "no bonus". */
+  const holdsSmallOnly = !holdsBonus && heldValues.length > 0;
+  const noBonusText = holdsSmallOnly ? `no bonus worth more than +${HOLDS_BONUS_MIN_VALUE - 1}` : 'no bonus';
   // #132: in an FFA, contact with one front still leaves neutrals to expand into: keep committing
   // while any neutral borders a territory of mine.
   const neutralsInReach =
@@ -896,7 +907,7 @@ export function closestBonus(
       ? `${profile.phase[0]!.toUpperCase()}${profile.phase.slice(1)} phase${
           profile.phase === 'opening' || profile.phase === 'expansion' ? '' : ', neutrals in reach'
         }`
-      : 'No bonus held';
+      : `${noBonusText[0]!.toUpperCase()}${noBonusText.slice(1)} held`;
     rationale.push(
       `${why}: expansion goes to the bonus closest to completion first — ${byCloseness
         .map(
@@ -946,7 +957,7 @@ export function closestBonus(
   ) {
     const nearest = committing ? byCloseness.find((p) => !p.focus) ?? byCloseness[0] : undefined;
     ps.warnings.push(
-      `${mine.length} territories, no bonus: the captures are spread (income ${income}, base ${base}). ` +
+      `${mine.length} territories, ${noBonusText}: the captures are spread (income ${income}, base ${base}). ` +
         (nearest
           ? `Nearest bonus to complete: ${bonusName(nearest.bonusId)}, ${nearest.cost} armies to finish${fogNote(nearest)}${standingNote(nearest)}, ` +
             `${turnsText(nearest)}${income > 0 ? ` at income ${income}` : ''} (rule 4f).`

@@ -87,3 +87,37 @@ describe('ties at the same turns and income per army go to the surer figure (#41
     expect(why(p)).toMatch(/closest to completion first — Beta \(#402\) 6 armies to finish, 2 turns \(2 layers deep\) at income 6, Alpha \(#401\) 6 \(1 fogged member counted at 3 each\), 2 turns/);
   });
 });
+
+describe('a 1-point bonus does not switch off #319 or rule 4f (#416)', () => {
+  // #319's map (spread-opening-319.test.ts): six 3-territory bonuses in a row, the first member of each and a
+  // second of the first three held, plus 20 beside 1 — here a bonus of its own worth +1 (Tiny), held in full.
+  const IDS = [...Array.from({ length: 18 }, (_, i) => i + 1), 20, 99];
+  const EDGES: [number, number][] = [];
+  for (let b = 0; b < 6; b++) {
+    const a = 3 * b + 1;
+    EDGES.push([a, a + 1], [a + 1, a + 2]);
+    if (b < 5) EDGES.push([a + 2, a + 3]);
+  }
+  EDGES.push([1, 20], [18, 99]);
+  const mapWith = (tiny: number) =>
+    buildGraph(
+      makeMap(IDS, EDGES, [
+        ...Array.from({ length: 6 }, (_, b): [number, string, number, number[]] => [500 + b, `B${b}`, 3, [3 * b + 1, 3 * b + 2, 3 * b + 3]]),
+        [600, 'Tiny', tiny, [20]],
+      ]),
+    );
+  const held = new Set([1, 2, 4, 5, 7, 8, 10, 13, 16, 20]);
+  const b = board(IDS.map((id) => (id === 99 ? player(99, 5, P2) : held.has(id) ? mine(id, 2) : neutral(id, 2))));
+  const plan = (tiny: number) =>
+    planTurn({ graph: mapWith(tiny), board: b, me: ME, income: 6, settings: { ...STD, baseIncome: 5 }, game: { players: [{ id: ME }, { id: P2 }], turn: 4 } });
+  const spread = (p: TurnPlan) => p.warnings.find((w) => w.includes('#319'));
+
+  it('still warns that the captures are spread when the only bonus held is worth +1', () => {
+    const w = spread(plan(1));
+    expect(w).toMatch(/^10 territories, no bonus worth more than \+1: the captures are spread \(income 6, base 5\)\. Nearest bonus to complete: B\d \(#50\d\)/);
+  });
+
+  it('a +2 bonus held still silences it', () => {
+    expect(spread(plan(2))).toBeUndefined();
+  });
+});
