@@ -240,7 +240,7 @@ export function captureTargets(
     if (!b) continue;
     // #421: a stockpile's push spends armies already on the board: capped at the payback horizon × its value.
     const pile = input.stockpileAllIn?.has(bonusId) === true;
-    const cap = pile ? Math.max(0, pc.paybackTurns * b.value) : Math.max(0, Math.min(ALL_IN_VALUE_TURNS * b.value, pc.income));
+    const cap = pile ? Math.max(0, pc.capturePaybackTurns * b.value) : Math.max(0, Math.min(ALL_IN_VALUE_TURNS * b.value, pc.income));
     const sized: { t: number; player?: number; defenders: number; extra: number; cost: number }[] = [];
     let why: string | undefined;
     for (const t of bonusTerritories(g, bonusId).filter((x) => !mineSet.has(x))) {
@@ -260,7 +260,7 @@ export function captureTargets(
     const cost = sized.reduce((n, x) => n + x.cost, 0);
     if (!why && cost > cap)
       why = pile
-        ? `the push needs ${cost} armies, over the cap of ${cap} (${pc.paybackTurns} × its +${b.value}, #421)`
+        ? `the push needs ${cost} armies, over the cap of ${cap} (${pc.capturePaybackTurns} × its +${b.value}, #421)`
         : `the push needs ${cost} armies, over the cap of ${cap} (${ALL_IN_VALUE_TURNS} × its +${b.value}, at most my income ${pc.income})`;
     allInTries.set(bonusId, { feasible: !why, cost, cap, ...(why ? { detail: why } : {}) });
     if (why) continue;
@@ -482,9 +482,21 @@ export function frontierCosts(
     }
     return { borders, enemyBorders, holdCost };
   };
+  /**
+   * #433: each border's share of {@link frontierOf}'s hold cost (the same borders: a conceded one only while its
+   * garrison stands), for the Local Deployment pools that can pay it.
+   */
+  const frontierNeeds = (held: ReadonlySet<number>, haveOf: (x: number) => number): Map<number, number> => {
+    const needs = new Map<number, number>();
+    for (const x of [...held].sort(byNum)) {
+      const b = borderOf(x, held, haveOf(x));
+      if ((!conceded.has(x) || stood.has(x)) && b.need > 0) needs.set(x, b.need);
+    }
+    return needs;
+  };
   /** The frontier's hold cost at the start of the turn (my armies then; today's concessions left out). */
   const startHold = () => frontierOf(mineSet, armiesOf).holdCost;
-  return { survivorsOf, borderOf, borderCost, frontierDelta, edgeCost, scoreCost, targetScoreCost, landScoreCost, offence, offenceSkip, skipOffence, badTrades, frontierOf, startHold };
+  return { survivorsOf, borderOf, borderCost, frontierDelta, edgeCost, scoreCost, targetScoreCost, landScoreCost, offence, offenceSkip, skipOffence, badTrades, frontierOf, frontierNeeds, startHold };
 }
 
 /** Bonus scoring (rule 4, R3, #70, #101, #125, #167): the bonuses worth working toward, best first. */
@@ -495,7 +507,7 @@ export function bonusScoring(
   prev: ReturnType<typeof breakTargets> & ReturnType<typeof captureTargets> & ReturnType<typeof frontierCosts>,
 ) {
   const {
-    g, s, opts, guarded, focus, paybackTurns, territories: state, label, mineSet, armiesOf, defenceAt, completedOver,
+    g, s, opts, guarded, focus, capturePaybackTurns: paybackTurns, territories: state, label, mineSet, armiesOf, defenceAt, completedOver,
     territoryShare, rates, costOf, costAt, econCostAt,
   } = pc;
   const { rationale } = ps;
@@ -522,6 +534,17 @@ export function bonusScoring(
     s.wastelands && s.wastelands.count > 0 && s.wastelands.size > 0 && g.territoryById.size > 0
       ? Math.min(1, s.wastelands.count / g.territoryById.size)
       : 0;
+  /**
+   * #432: a visible neutral at the game's wasteland size or more, when the game has wastelands larger than its
+   * ordinary neutrals (`neutralArmies`, when the settings give it).
+   */
+  const isWasteland = (st: { owner: { kind: string }; armies: number | null }): boolean =>
+    s.wastelands !== undefined &&
+    s.wastelands.count > 0 &&
+    s.wastelands.size > (s.neutralArmies ?? 0) &&
+    st.owner.kind === 'neutral' &&
+    st.armies !== null &&
+    st.armies >= s.wastelands.size;
   const wasteCost = wasteShare > 0 ? (costOf(s.wastelands!.size) ?? Infinity) : 0;
   const wasteLoss = wasteShare > 0 ? Math.min(wasteCost - 1, straightKills(s.wastelands!.size, rates.defensiveKillRate)) + 1 : 0;
   /** Every positive bonus worth completing (net > 0) still missing members: its armies to finish (rule 4e). */
@@ -611,6 +634,8 @@ export function bonusScoring(
     // #125: the economy test charges the armies lost, not the armies sent.
     let loss = 0;
     let worstLoss = 0;
+    /** #432: its missing members in view that are wastelands. */
+    const wastelands: number[] = [];
     const known = (t: number, armies: number) => {
       const c = costAt(t, armies) ?? Infinity;
       cost += c;
@@ -657,6 +682,7 @@ export function bonusScoring(
       const c = costAt(t) ?? Infinity;
       cost += c;
       worst = Math.max(worst, c);
+      if (isWasteland(st)) wastelands.push(t);
       const l = econCostAt(t);
       loss += l;
       worstLoss = Math.max(worstLoss, l);
@@ -705,9 +731,18 @@ export function bonusScoring(
     loss += fogged * fogLoss + foggedNeutral * neutralEachLoss;
     const fogNeutral: FogNeutral | undefined = foggedNeutral ? { count: foggedNeutral, each: neutralEach, size: neutralSize! } : undefined;
     if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach, ...(fogNeutral ? { fogNeutral } : {}) });
-    const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net);
+    // #432: while the gate budget is short, no bonus is built through a wasteland: its armies go to the gates —
+    // unless this turn's captures can complete it (owner decision 2026-11-22: a completing wasteland is taken).
+    const wasteStop = !isFocus && pc.shortGates !== undefined && wastelands.length > 0 && !remaining.every(bonusTarget);
+    const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net && !wasteStop);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
+    if (!economic && wasteStop && loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net) {
+      rationale.push(
+        `Skip bonus ${b.name} (#${b.id}): finishing it means taking the wasteland${wastelands.length === 1 ? '' : 's'} ${wastelands.map(label).join(', ')} (${s.wastelands!.size} armies or more) while the gates facing player ${pc.shortGates!.player} are ${pc.shortGates!.deficit} short (#432).`,
+      );
+      continue;
+    }
     if (!economic) {
       rationale.push(
         `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${toFinish(cost, { fogged, fogEach, fogNeutral })}, losing ~${loss}; ${worstLoss} lost on its costliest territory).`,

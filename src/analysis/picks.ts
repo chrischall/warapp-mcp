@@ -196,16 +196,28 @@ export const DEFAULT_NON_DISTRIBUTION_ARMIES = 2;
 const MAX_SEEDS = 12;
 /**
  * Scaling on very large maps (the 3,066-territory / 173-bonus live case that could not be served): above
- * `LARGE_PICKABLE` pickable territories the advisor ranks only the territories of the best `CANDIDATE_BONUSES`
- * bonuses (value per member), at most `CANDIDATE_TERRITORIES` of them, for its groups, fallback, award and
- * alternative; every pickable territory still counts as a place an opponent may start (the threat model), and
- * the contestedness is read from `CENTRALITY_SAMPLES` evenly spaced sources instead of every pair. Hop distances
- * are then searched to `SCALE_HOP_DEPTH` steps only (farther reads as unconnected). At or below the limit
- * nothing changes: smaller maps plan exactly as before.
+ * `LARGE_PICKABLE` pickable territories every pickable is scored alone (its own opening, the first view's
+ * measure) and only the best of them form the candidate pool for the groups, fallback, award and alternative
+ * (#476: ranking by bonus value per member missed the best start on most real maps). The pool is `LARGE_POOL`
+ * territories at the default budget and grows or shrinks with `budgetMs` in proportion (never below
+ * `LARGE_POOL_MIN`), so a larger budget buys a wider search; one input plans the same on any machine. Every pickable territory
+ * still counts as a place an opponent may start (the threat model), and the contestedness is read from
+ * `CENTRALITY_SAMPLES` evenly spaced sources instead of every pair. Hop distances are then searched to
+ * `SCALE_HOP_DEPTH` steps only (farther reads as unconnected). At or below the limit nothing changes: smaller
+ * maps plan exactly as before.
  */
 export const LARGE_PICKABLE = 400;
-export const CANDIDATE_BONUSES = 50;
-export const CANDIDATE_TERRITORIES = 400;
+/** Candidate pool of a very large map at the default budget (`LARGE_POOL_BUDGET_MS`). */
+export const LARGE_POOL = 400;
+export const LARGE_POOL_MIN = 150;
+/** The budget `LARGE_POOL` is sized for (`DEFAULT_PICKS_BUDGET_MS` in the tool). */
+export const LARGE_POOL_BUDGET_MS = 20_000;
+
+/** The candidate pool of a very large map for a time budget (`LARGE_POOL` per `LARGE_POOL_BUDGET_MS`). */
+export function largePool(budgetMs: number | undefined): number {
+  if (budgetMs === undefined || !Number.isFinite(budgetMs)) return LARGE_POOL;
+  return Math.max(LARGE_POOL_MIN, Math.round((LARGE_POOL * budgetMs) / LARGE_POOL_BUDGET_MS));
+}
 export const CENTRALITY_SAMPLES = 48;
 export const SCALE_HOP_DEPTH = 8;
 /** The primary's order is searched for the best worst outcome only up to this size (#129). */
@@ -268,10 +280,15 @@ export interface PlanPicksInput {
   budgetMs?: number;
   /** The clock the budget reads (tests give a fake one); default `Date.now`. */
   clock?: () => number;
+  /**
+   * Every territory is dealt (full distribution, no territory limit; owner 2026-11-22, #476 follow-up): the picks only
+   * say which territories I would rather hold, so no compact group is searched — each group is the best picks by score.
+   */
+  fullDeal?: boolean;
   /** Research hook (#476): plan as a very large map above this many pickables instead of {@link LARGE_PICKABLE}. */
   largeAbove?: number;
   /** Research hook (#476): the large-map knobs (default: the constants above); Infinity switches an approximation off. */
-  scale?: { candidateBonuses?: number; candidateTerritories?: number; centralitySamples?: number; hopDepth?: number };
+  scale?: { candidateTerritories?: number; centralitySamples?: number; hopDepth?: number };
   /** Research hook (#476): also score this group on the full model (`PickPlan.evaluated`), whatever mode planned. */
   evaluate?: readonly number[];
 }
@@ -1014,6 +1031,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
   const friendly: ReadonlySet<number> = friendlyIds.length ? new Set(friendlyIds) : NO_TAKEN;
   const s = input.settings ?? {};
   const warnings: string[] = [];
+  if (input.fullDeal) warnings.push('Every territory is dealt: each group is the best picks by score; no compact group was searched (it would not change what you are dealt).');
   const rationale: string[] = [];
   const clock = input.clock ?? Date.now;
   const startedAt = clock();
@@ -1349,34 +1367,26 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     taken,
     of: new Map(pool.map((t) => [t, assess(t, taken)])),
   });
-  // Very large map: rank only the territories of the best bonuses (value per member); the rest still count as starts.
+  // Very large map (#476): rank every pickable by its own opening (the first view's measure) and keep the best as the
+  // pool; the rest still count as places an opponent may start.
   let cands = pickable;
   let candidateReport: PickPlan['candidates'];
   if (large) {
-    const ranked = [...bonuses.values()]
-      .filter((b) => b.value > 0 && b.members.length)
-      .map((b) => ({ b, per: b.value / b.members.length }))
-      .sort((a, c) => c.per - a.per || a.b.id - c.b.id);
-    const pickSetNow = new Set(pickable);
-    const best = new Map<number, number>();
-    let used = 0;
-    for (const { b, per } of ranked) {
-      if (used >= (input.scale?.candidateBonuses ?? CANDIDATE_BONUSES) && best.size >= Math.max((input.scale?.candidateTerritories ?? CANDIDATE_TERRITORIES) / 2, maxPicks * 4)) break;
-      used++;
-      for (const m of b.members) if (pickSetNow.has(m)) best.set(m, Math.max(best.get(m) ?? 0, per));
-      if (used >= (input.scale?.candidateBonuses ?? CANDIDATE_BONUSES) && best.size >= maxPicks * 4) break;
-    }
-    cands = [...best].sort((a, c) => c[1] - a[1] || a[0] - c[0]).slice(0, Math.max(input.scale?.candidateTerritories ?? CANDIDATE_TERRITORIES, maxPicks * 4)).map(([t]) => t).sort(byNum);
-    // Never fewer than the list needs: pad with the remaining pickables (by id) when the best bonuses hold too few.
-    if (cands.length < Math.min(maxPicks, pickable.length)) {
-      const have = new Set(cands);
-      cands = [...cands, ...pickable.filter((t) => !have.has(t)).slice(0, Math.min(maxPicks, pickable.length) - cands.length)].sort(byNum);
-    }
-    candidateReport = { ranked: cands.length, pickable: pickable.length, bonuses: used };
-    warnings.push(
-      `A very large map (${pickable.length} pickable territories): the ${cands.length} territories of its ${used} best bonuses by value per territory are ranked; ` +
-        'the others still count as places an opponent may start, but are not offered.',
-    );
+    const order = pickable
+      .map((t) => [t, assess(t, NO_TAKEN).score] as const)
+      .sort((a, c) => c[1] - a[1] || a[0] - c[0])
+      .map(([t]) => t);
+    const size = Math.min(order.length, Math.max(input.scale?.candidateTerritories ?? largePool(input.budgetMs), maxPicks * 4));
+    cands = order.slice(0, size).sort(byNum);
+    const inPool = new Set(cands);
+    const touched = new Set<number>();
+    for (const t of inPool) for (const id of bonusesOf.get(t) ?? []) touched.add(id);
+    candidateReport = { ranked: cands.length, pickable: pickable.length, bonuses: touched.size };
+    if (cands.length < pickable.length)
+      warnings.push(
+        `A very large map (${pickable.length} pickable territories): the ${cands.length} territories that score best alone are ranked; ` +
+          'the others still count as places an opponent may start, but are not offered.',
+      );
   }
   const firstView = viewOf(cands, NO_TAKEN);
   // Hop distances on the map graph (the one warapp_plan_route uses), cached per territory.
@@ -1412,7 +1422,12 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       });
       if (!eligible.length) return null;
       let best: { t: number; gain: number; total: number } | null = null;
-      for (const c of eligible) {
+      for (const [i, c] of eligible.entries()) {
+        // One step can be thousands of openings (a 122-pick group over a 3,066-territory pool): watch the budget inside it too.
+        if (i % 64 === 63 && expired()) {
+          partial = true;
+          return null;
+        }
         const total = simulate(ctx, [...group, c], view.taken).score;
         const gain = round2((total - current) * contestFactor(c));
         if (
@@ -1459,6 +1474,10 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     // before the caller relaxes the limit (as the single-seed search did; #143).
     if (!best)
       for (const seed of seeds.slice(MAX_SEEDS)) {
+        if (expired()) {
+          partial = true;
+          break;
+        }
         const group = tryGroup(view, pool, size, seed, hop);
         if (group) return group;
       }
@@ -1477,6 +1496,8 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     const byScore = (a: number, b: number) => score(b) - score(a) || a - b;
     const groupScore = (ids: number[]) => simulate(ctx, ids, view.taken).score;
     const seeds = [...pool].sort(byScore);
+    // Every territory is dealt: a compact group answers nothing the game asks, so the best picks by score.
+    if (input.fullDeal) return seeds.slice(0, size).sort(byScore);
     // Out of time: the best picks by score, no search for a compact group.
     if (expired()) {
       partial = true;
@@ -1493,6 +1514,11 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     let widest = 0;
     for (const a of pool) for (const b of pool) if (a < b && hops(a, b) < Infinity) widest = Math.max(widest, hops(a, b));
     for (let hop = COMPACT_DISTANCE; ; hop++) {
+      // Out of time between hop limits: the best picks by score, as at the start.
+      if (expired()) {
+        partial = true;
+        return seeds.slice(0, size).sort(byScore);
+      }
       // Past every connected distance (and never at the compact limit itself): the
       // last try allows any distance, so it is a recorded relaxation, not "compact".
       const last = hop > Math.max(widest, COMPACT_DISTANCE);
@@ -1657,9 +1683,9 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       add(answerTier(order, out.firstView, others), out.firstView);
     }
     while (done < fallbackSize && pool.length) {
-      if (expired()) {
-        // Out of time: the rest of the list is the best remaining picks by their first score.
-        partial = true;
+      // Out of time, or every territory is dealt: the rest of the list is the best remaining picks by their first score.
+      if (input.fullDeal || expired()) {
+        if (!input.fullDeal) partial = true;
         if (!out.tiers.length) out.firstView = firstView;
         const score = (t: number) => firstView.of.get(t)?.score ?? 0;
         const tier = [...pool].sort((a, b) => score(b) - score(a) || a - b).slice(0, fallbackSize - done);
@@ -1697,25 +1723,26 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
           pair = [a, b];
         }
       }
-    // The longest step needed to link every pick into one cluster (minimax spanning tree).
+    // The longest step needed to link every pick into one cluster (minimax spanning tree; Prim with each pick's
+    // nearest tree member kept, so n² hops, not n³ — the 3,000-pick list of a full distribution took minutes).
     let link = 0;
     if (ids.length > 1) {
-      const inTree = new Set([ids[0]!]);
-      while (inTree.size < ids.length) {
-        let step = Infinity;
+      const near = new Map<number, number>();
+      for (const a of ids.slice(1)) near.set(a, hops(a, ids[0]!));
+      while (near.size) {
         let next = -1;
-        for (const a of ids) {
-          if (inTree.has(a)) continue;
-          for (const b of inTree) {
-            const d = hops(a, b);
-            if (next < 0 || d < step) {
-              step = d;
-              next = a;
-            }
+        let step = Infinity;
+        for (const [a, d] of near)
+          if (next < 0 || d < step) {
+            step = d;
+            next = a;
           }
-        }
-        inTree.add(next);
+        near.delete(next);
         link = Math.max(link, step);
+        for (const [a, d] of near) {
+          const viaNext = hops(a, next);
+          if (viaNext < d) near.set(a, viaNext);
+        }
       }
     }
     return { far, pair, link };

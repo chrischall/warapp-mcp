@@ -54,7 +54,15 @@ const GI = {
   players: 16,
   realTime: 19,
   settings: 21,
+  tournament: 25,
 } as const;
+/**
+ * GameInfoTournament (#423): the coin structure, a number, and the tournament's id (verified live 2026-11-22: the id of
+ * both of my tournament games was in war.app's `/API/GameIDFeed?TournamentID=` list; 54 other games held no record).
+ */
+const GAME_INFO_TOURNAMENT = 'warlight.shared.GameInfoTournament';
+const GAME_INFO_TOURNAMENT_FIELDS = 3;
+const GT = { tournamentId: 2 } as const;
 /** GameInfoPlayer: the colour (an optional GameColor), the in-game id, the state (GamePlayerState) and the team. */
 // `ai` is the client's IsAI (GameInfoPlayer is built from GamePlayer's get_IsAI in that place; read from the bundle).
 const GP = { color: 0, ai: 4, id: 6, state: 7, team: 8 } as const;
@@ -148,6 +156,8 @@ export interface OpenGame {
   rules: string[];
   /** Rules the turn planner does not model yet (only for flags read from the record). */
   plannerGaps: string[];
+  /** A tournament game (#423): the tournament's id, from the record's GameInfoTournament; absent when it has none. */
+  tournamentId?: number;
 }
 
 /** What a join needs from a lobby but the list does not show. */
@@ -400,11 +410,22 @@ function readOpenGame(record: unknown): { game: OpenGame; lobby: OpenLobby } | u
   if (random !== undefined) game.randomTeamsOf = random;
   if (teamGame) game.openSeatTeams = openSeatTeams;
   if (settings?.cards) game.cards = settings.cards;
+  const tournamentId = tournamentOf(f[GI.tournament]);
+  if (tournamentId !== undefined) game.tournamentId = tournamentId;
   const colorsTaken = [...new Set(all.map((p) => p.color).filter((c): c is number => c !== null))];
   return {
     game: orderKeys(game),
     lobby: { seatedPlayerIds: seated.map((p) => p.id), colorsTaken, seated: seated.map((p) => ({ id: p.id, team: p.team, ai: p.ai })) },
   };
+}
+
+/** The tournament id a GameInfoTournament carries (#423); undefined for none or a shape this server does not know. */
+function tournamentOf(v: unknown): number | undefined {
+  if (!isObj(v) || v.$type !== GAME_INFO_TOURNAMENT) return undefined;
+  const f = fields(v);
+  if (f.length !== GAME_INFO_TOURNAMENT_FIELDS) return undefined;
+  const id = f[GT.tournamentId];
+  return isInt(id) && id > 0 ? id : undefined;
 }
 
 /** `games` with `joined: true` on each lobby where the in-game id `me` holds a seat. */
@@ -419,7 +440,7 @@ export function withLottery(game: OpenGame, verdict: { lottery: true | null; lot
 
 const KEY_ORDER: Array<keyof OpenGame> = [
   'id', 'name', 'url', 'pace', 'bootTime', 'bootTimeMinutes', 'players', 'openSeats', 'seats', 'maxPlayers',
-  'teamGame', 'joined', 'lottery', 'lotteryBasis', 'randomTeamsOf', 'openSeatTeams', 'mapId', 'entryFeeCoins', 'prizeCoins', 'cards', 'rules', 'plannerGaps',
+  'teamGame', 'joined', 'tournamentId', 'lottery', 'lotteryBasis', 'randomTeamsOf', 'openSeatTeams', 'mapId', 'entryFeeCoins', 'prizeCoins', 'cards', 'rules', 'plannerGaps',
 ];
 function orderKeys(g: OpenGame): OpenGame {
   const out: Record<string, unknown> = {};
@@ -583,6 +604,8 @@ interface JoinPolicy {
   breaks: string[];
   /** What could not be checked (the neutral cost needs the lobby's GameFeed settings). */
   unchecked?: string[];
+  /** What the policy warns about but never refuses (#423, owner 2026-11-22: a tournament game). */
+  warnings?: string[];
 }
 
 /**
@@ -594,12 +617,29 @@ interface JoinPolicy {
  */
 export function joiningPolicy(game: OpenGame, screen?: JoinScreen | null, account?: JoinAccount): JoinPolicy {
   const breaks = policyBreaks(game, screen, account).map((b) => b.text);
-  if (breaks.length) return { passes: false, breaks };
+  const warnings = policyWarnings(game);
+  const warned = warnings.length ? { warnings } : {};
+  if (breaks.length) return { passes: false, breaks, ...warned };
   const unchecked: string[] = [];
   if (!screen) unchecked.push("the cheapest neutral's cost");
   if (account && account.attendedGames === undefined) unchecked.push('how many games I am playing');
   if (account && account.negativeBonus === undefined) unchecked.push("whether the map has a negative bonus");
-  return unchecked.length ? { passes: null, breaks, unchecked } : { passes: true, breaks };
+  return unchecked.length ? { passes: null, breaks, unchecked, ...warned } : { passes: true, breaks, ...warned };
+}
+
+/**
+ * What the joining policy warns about but never refuses (#423; owner 2026-11-22: a tournament game warns, it never
+ * refuses; a game from a template already running is allowed with no preference, so it is not here). Pure.
+ */
+export function policyWarnings(game: OpenGame): string[] {
+  const out: string[] = [];
+  if (game.tournamentId !== undefined) {
+    out.push(
+      `A tournament game (tournament ${game.tournamentId}): it counts in the tournament, a surrender or boot is a loss there, ` +
+        'and a vote to end is not allowed — join only meaning to play it out',
+    );
+  }
+  return out;
 }
 
 /**

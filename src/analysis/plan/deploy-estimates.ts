@@ -34,6 +34,22 @@ export function openingArmies(
 }
 
 /**
+ * #164: the deployments read as card plays that count as cards — each on or after the turn the clock
+ * says one is due and before `turn` — and the turn the next card is due: a card's capturing turns after
+ * the last one counted (pieces carry over while a card is held), never before the turn after the play.
+ */
+function cardsCounted(played: readonly number[], r: ReinforcementClock, turn: number): { counted: number[]; due: number } {
+  let due = r.firstTurn;
+  const counted: number[] = [];
+  for (const t of [...new Set(played)].sort(byNum)) {
+    if (t < due || t >= turn) continue;
+    counted.push(t);
+    due = r.turnsPerCard === null ? Infinity : Math.max(t + 1, r.firstTurn + counted.length * Math.max(1, r.turnsPerCard));
+  }
+  return { counted, due };
+}
+
+/**
  * #368: an opponent's tracked figure as of each of its last three consecutive observed turns — the most
  * it was seen to earn (`earned`) over that turn and the two before it, the tracker's max-observed window —
  * when it rose on both steps; else `null` (fewer than three consecutive turns, or a step not a rise).
@@ -178,7 +194,34 @@ export function enemyDeployEstimates(
     // A track over enough turns replaces the single-turn observed figure (S3).
     const track = tracks?.find((t) => t.playerId === playerId);
     const usable = track && track.income !== null && track.turns.length >= TRACKED_MIN_TURNS ? track : undefined;
-    const tracked = usable ? usable.income : null;
+    // #164: with every owner shown, its income is base + held bonuses exactly; a deploy above it was
+    // a card (or armies the board misread), never income.
+    const exact = ownersAll && !opening ? Math.max(0, base + bonusIncome) : null;
+    // #164: a Reinforcement card play is seen as a deploy (its low reading) above the income that turn:
+    // exactly, when every owner shows; under fog only a jump of the card's armies over its visible income
+    // counts (a smaller excess may be a bonus the fog hides — and the tracked income then carries the jump).
+    const above = (low: number, income: number) => (exact !== null ? low > income : low >= income + when.reinforcement!.armies);
+    let tracked = usable ? usable.income : null;
+    // #427: the tracker reads every deploy as income, so a card play it saw set its figure (the most it was
+    // seen to deploy) and was then carried, while the clock adds the next card on top: one card counted
+    // twice, every turn. When the turns that set the figure are all plays counted as cards, it is read
+    // again with each play's card armies out (never below its visible income, never above the figure).
+    let cardInTrack: EnemyDeployEstimate['cardInTrack'] = null;
+    if (usable && tracked !== null && when.reinforcement && when.reinforcement.armies > 0 && when.turn !== null && when.turn !== undefined) {
+      const r = when.reinforcement;
+      const plays = new Set(cardsCounted(usable.turns.filter((x) => above(x.low, x.visibleIncome)).map((x) => x.from), r, when.turn).counted);
+      const top = usable.turns.filter((x) => x.observed >= tracked!);
+      if (top.length && top.every((x) => plays.has(x.from))) {
+        const without = Math.max(
+          usable.visibleIncome,
+          ...usable.turns.map((x) => (plays.has(x.from) ? Math.min(x.cap, Math.max(0, x.raw - r.armies)) : x.observed)),
+        );
+        if (without < tracked) {
+          cardInTrack = { was: tracked, income: without, armies: r.armies, turns: top.map((x) => x.from).sort(byNum) };
+          tracked = without;
+        }
+      }
+    }
     // #235 review: does the track end on this board? Its newest observed turn then ends at the turn
     // being planned (the newest board's turn, when that is not given: tracks end on `board`).
     const newestTurn = when.turn ?? usable?.lastTurn ?? null;
@@ -257,9 +300,6 @@ export function enemyDeployEstimates(
       }
     }
     const priorUsed = priorBlend ? priorBlend.figure : priorFigure;
-    // #164: with every owner shown, its income is base + held bonuses exactly; a deploy above it was
-    // a card (or armies the board misread), never income.
-    const exact = ownersAll && !opening ? Math.max(0, base + bonusIncome) : null;
     const source: EnemyDeployEstimate['source'] =
       exact !== null ? 'exact' : priorUsed !== null && priorUsed > seen ? 'prior' : seenSource;
     // #294: what its tracked figure was read from (#368: while that is little, thin evidence below).
@@ -341,14 +381,9 @@ export function enemyDeployEstimates(
         : 'tracked'
       : source;
     // #164: a Reinforcement card, from the turn the clock says one can be in hand, until a deployment
-    // above its income is seen; the next card is due a card's capturing turns after the last one
-    // (pieces carry over while a card is held), never before the turn after the play.
-    // A play is seen as a deploy (its low reading) above the income that turn: exactly, when every
-    // owner shows; under fog only a jump of the card's armies over its visible income counts (a
-    // smaller excess may be a bonus the fog hides — and the tracked income then carries the jump).
+    // above its income is seen (`above`); the next card is due as {@link cardsCounted} says.
     const played: number[] = [];
     if (when.reinforcement) {
-      const above = (low: number, income: number) => (exact !== null ? low > income : low >= income + when.reinforcement!.armies);
       for (const x of track?.turns ?? []) if (above(x.low, x.visibleIncome)) played.push(x.from);
       // Last turn's deploy was paid by last turn's income: what it held on the previous board (a
       // bonus it lost since paid for it), never below this board's figure.
@@ -364,14 +399,8 @@ export function enemyDeployEstimates(
     let cardPlayed: number | null = null;
     if (when.reinforcement && when.turn !== null && when.turn !== undefined) {
       const r = when.reinforcement;
-      let due = r.firstTurn;
-      let cards = 0;
-      for (const t of [...new Set(played)].sort(byNum)) {
-        if (t < due || t >= when.turn) continue;
-        cards++;
-        cardPlayed = t;
-        due = r.turnsPerCard === null ? Infinity : Math.max(t + 1, r.firstTurn + cards * Math.max(1, r.turnsPerCard));
-      }
+      const { counted, due } = cardsCounted(played, r, when.turn);
+      cardPlayed = counted.at(-1) ?? null;
       if (when.turn >= due && r.armies > 0) card = { armies: r.armies, due };
     }
     const estimate = income + (card?.armies ?? 0);
@@ -402,6 +431,7 @@ export function enemyDeployEstimates(
       exact,
       card,
       cardPlayed,
+      ...(cardInTrack ? { cardInTrack } : {}),
       ...(priorFull !== null && priorFigure! < priorFull ? { stated: { full: priorFull, scaled: priorFigure!, lower: seen, midpoint: statedMid } } : {}),
     };
   });

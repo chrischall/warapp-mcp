@@ -1018,7 +1018,13 @@
 //     bonuses this turn's earlier captures completed share the same next income (their added
 //     needs count too). Then: under `balanced`/`defend` the capture is
 //     refused (warning "… indefensible …: not completed"); under `expand` and
-//     `complete-bonus` it is made with a warning. Under `balanced`/`defend` a bonus's
+//     `complete-bonus` it is made with a warning. #422, the payback exemption: a completion whose
+//     losses — the attackers its captures into the bonus lose this turn plus the armies left on the
+//     members that would fall — are at most the bonus's value is made anyway (a "Complete bonus …
+//     (#422)" line): held at the end of this turn, the bonus pays that value next turn even if it
+//     falls after. Such a bonus keeps no conceded border (rule 1c), gets no #122 garrison or #265
+//     weak-member call, and the leftover never rides an attack onto a member it may lose (#288).
+//     Under `balanced`/`defend` a bonus's
 //     score is value / (capture cost + DEFENSE_DISCOUNT × that defence cost).
 //  4d. Frontier cost (#71). Every capture pays for the frontier it adds, in armies: for each
 //     territory it touches (the capture and its held neighbours), its border cost after minus
@@ -1662,6 +1668,7 @@ import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js
 import { deployBook } from './plan/orders.js';
 import { holdsPhase, priorOnlyHold, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
+import { applyShortGates } from './plan/horizon.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
@@ -2044,6 +2051,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- 1t. threat trend, 1. defence (plan/threats.ts) ----
   const threats = threatsPhase(pc, ps, input, book.valueOf);
+  // #432: a 1v1 whose gates are short at the start judges its captures on a shorter payback horizon from here on
+  // (every capture test after this reads `pc.capturePaybackTurns`; holds keep `paybackTurns`).
+  applyShortGates(pc, ps, threats);
   const { growthOf, reinforcementAt, borders, facing, borderAt } = threats;
 
   // ---- 1. holds, #172, 1h, 1b, 1c, #122 garrisons (plan/holds.ts) ----
@@ -2915,7 +2925,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           if (reach >= t.cost)
             rationale.push(
               worth > 0
-                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${paybackTurns} turns of it pay back.`
+                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${pc.capturePaybackTurns} turns of it pay back.`
                 : `Do not expand into ${label(t.id)}: it adds no income and loses ~${lost} armies (more than ${PLAIN_EXPANSION_LOSS}), in no bonus worth completing.`,
             );
           continue;

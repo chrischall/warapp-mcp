@@ -98,12 +98,13 @@ describe('a prior above free income and the local pool never lands on one border
 });
 
 describe('a next-turn judgement counts its visible stacks one step behind the front (#293)', () => {
-  // 1 2 mine; the bonus 102 (3 4) I can complete by taking 4 (neutral 1) from 3 (mine). Its stack 5 (2)
-  // sits next to 4; one step behind, its 6 (25) can walk up this turn and attack next turn.
+  // 1 2 mine; the bonus 102 (3 4) I can complete by taking 4 (neutral 4) from 3 (mine). Its stack 5 (2)
+  // sits next to 4; one step behind, its 6 (25) can walk up this turn and attack next turn. (#422: at 4
+  // the capture loses 3 and leaves 4, more than +4, so R3's payback exemption does not apply.)
   const g = buildGraph(
     makeMap([1, 2, 3, 4, 5, 6, 7], [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7]], [[102, 4, [3, 4]], [103, 1, [6, 7]]]),
   );
-  const b = board([mine(1, 1), mine(2, 1), mine(3, 12), neutral(4, 1), foe(5, 2), foe(6, 25), foe(7, 1)]);
+  const b = board([mine(1, 1), mine(2, 1), mine(3, 12), neutral(4, 4), foe(5, 2), foe(6, 25), foe(7, 1)]);
   const plan = (settings: PlannerSettings) =>
     planTurn({ graph: g, board: b, me: ME, income: 5, settings, options: { goal: 'balanced', enemyDeploy: undefined } });
 

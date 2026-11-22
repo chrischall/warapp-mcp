@@ -31,7 +31,7 @@ export interface TwoMoveStage {
  * whose bonus was dropped. Kept only when the two captures repay their armies within the payback turns.
  */
 export function twoMoveStages(pc: PlanCtx, tgt: Pick<Targets, 'targets' | 'fromMine' | 'bonusDropped'>): TwoMoveStage[] {
-  const { g, territories: state, mineSet, costAt, completedOver, paybackTurns, opts } = pc;
+  const { g, territories: state, mineSet, costAt, completedOver, capturePaybackTurns: paybackTurns, opts } = pc;
   const out: TwoMoveStage[] = [];
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     if (b.value < TWO_MOVE_MIN_VALUE || tgt.bonusDropped.has(b.id)) continue;

@@ -18,7 +18,7 @@ import {
 } from './shared.js';
 import type { DeployBook } from './orders.js';
 import { capRoom, } from './relations.js';
-import type { PlanCtx, PlanState } from './state.js';
+import { paybackLive, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
 import type { floorTier, heldBonusUnits, holdBasics, holdOrConcede, twoStepHolds, HoldBook, Threatened, Unit } from './holds.js';
@@ -266,7 +266,10 @@ export function reconsiderAndGarrison(
       const completes = g.map.bonuses
         .filter((b) => {
           const ts = bonusTerritories(g, b.id);
-          return b.value > 0 && ts.includes(t) && ts.every((x) => ps.holdings.has(x)) && !ts.every((x) => mineSet.has(x));
+          // #422: a payback completion is expected to fall next turn: it keeps no conceded border.
+          return (
+            b.value > 0 && !paybackLive(ps, ps.paybackBonuses, b.id) && ts.includes(t) && ts.every((x) => ps.holdings.has(x)) && !ts.every((x) => mineSet.has(x))
+          );
         })
         .sort((a, b) => a.id - b.id);
       if (!completes.length) continue;
@@ -307,7 +310,8 @@ export function reconsiderAndGarrison(
     if (!guarded || !captured.size) return;
     const after = new Set([...mine, ...captured]);
     for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
-      if (b.value <= 0 || garrisonJudged.has(b.id)) continue;
+      // #422: a payback completion is expected to fall next turn: no garrison is thrown after it.
+      if (b.value <= 0 || garrisonJudged.has(b.id) || paybackLive(ps, ps.paybackBonuses, b.id)) continue;
       const ts = bonusTerritories(g, b.id);
       if (!ts.length || !ts.every((x) => after.has(x)) || ts.every((x) => mineSet.has(x))) continue;
       garrisonJudged.add(b.id);
