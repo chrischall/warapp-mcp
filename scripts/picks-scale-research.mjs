@@ -2,6 +2,12 @@
 // from the exact planner? It forces large mode (`largeAbove: 0`) on synthetic maps the exact planner still finishes,
 // and scores the large primary on the exact model (`evaluate`). Prints aggregates only; every id is made up.
 // Run: npm run build && node scripts/picks-scale-research.mjs [--sizes 150,300,600] [--seeds 3]
+// Real maps: --maps <id,id,...> loads stored maps from the data directory (MCP_DATA_DIR or ~/.config/warapp-mcp,
+// `maps/<id>.json`) instead of synthetic ones. Each map is planned with every territory pickable and once per
+// distribution mode that holds enough territories; the output names a map only by its territory count.
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { buildGraph } from '../dist/analysis/graph.js';
 import { planPicks } from '../dist/analysis/picks.js';
 
@@ -88,6 +94,23 @@ function makeMap(n, seed, shuffleIds) {
   return { graph: buildGraph(map), pickable: territories.map((t) => t.id), neutral, count };
 }
 
+const DATA_DIR = process.env.MCP_DATA_DIR ?? join(homedir(), '.config', 'warapp-mcp');
+const MAPS = arg('maps', '')
+  .split(',')
+  .filter(Boolean)
+  .map(Number);
+
+/** A stored real map: every pickable set worth planning (all territories, then each large-enough distribution mode). */
+function realMap(id) {
+  const map = JSON.parse(readFileSync(join(DATA_DIR, 'maps', `${id}.json`), 'utf8')).map;
+  const graph = buildGraph(map);
+  const all = map.territories.map((t) => t.id);
+  const sets = [{ label: 'all', pickable: all }];
+  for (const [i, d] of (map.distributionModes ?? []).entries())
+    if (Array.isArray(d.territories) && d.territories.length >= 40) sets.push({ label: `mode${i + 1}`, pickable: d.territories });
+  return { graph, sets, count: all.length };
+}
+
 const SETTINGS = { offensiveKillRate: 60, defensiveKillRate: 70, initialPlayerArmiesPerTerritory: 8, minimumArmyBonus: 5, initialNonDistributionArmies: 2, initialNeutralsInDistribution: 1, oneArmyStandsGuard: true };
 const jaccard = (a, b) => {
   const A = new Set(a);
@@ -100,52 +123,73 @@ const f = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : '-');
 // Variants: the shipped large path, and each approximation switched off in turn (what is left is what costs).
 const VARIANTS = {
   shipped: {},
-  'no-pruning': { candidateBonuses: Infinity, candidateTerritories: Infinity },
+  'no-pruning': { candidateTerritories: Infinity },
   'no-sampling': { centralitySamples: Infinity },
   'no-hop-bound': { hopDepth: Infinity },
 };
 const VARIANT_NAMES = arg('variants', 'shipped').split(',');
-// `pool:N` ranks the territories of the best N bonuses (no territory cap): the pruning curve.
-for (const v of VARIANT_NAMES) if (v.startsWith('pool:')) VARIANTS[v] = { candidateBonuses: Number(v.slice(5)), candidateTerritories: Infinity };
+// `pool:N` keeps the N territories that score best alone (the pool-size curve).
+for (const v of VARIANT_NAMES) if (v.startsWith('pool:')) VARIANTS[v] = { candidateTerritories: Number(v.slice(5)) };
 const EXACT = new Map();
 const rows = [];
-for (const variant of VARIANT_NAMES)
-for (const n of SIZES)
-  for (const players of PLAYERS)
+/** Every case to plan: synthetic sizes × seeds × id order, or real maps × pickable sets. */
+function* cases() {
+  if (MAPS.length) {
+    for (const id of MAPS) {
+      const m = realMap(id);
+      for (const set of m.sets) yield { key: `${id}|${set.label}`, graph: m.graph, pickable: set.pickable, neutral: new Map(), n: m.count, shuffle: false, setLabel: set.label };
+    }
+    return;
+  }
+  for (const n of SIZES)
     for (const shuffle of [false, true])
       for (let seed = 1; seed <= SEEDS; seed++) {
         const m = makeMap(n, seed * 7919 + n, shuffle);
-        const base = { graph: m.graph, pickable: m.pickable, settings: SETTINGS, players, territoryLimit: 3, maxPicks: players * 3, neutralArmies: m.neutral };
-        const t0 = Date.now();
-        const memoKey = `${n}|${players}|${shuffle}|${seed}`;
-        if (!EXACT.has(memoKey)) EXACT.set(memoKey, { plan: planPicks({ ...base, largeAbove: Infinity }), ms: Date.now() - t0 });
-        const { plan: exact, ms: exactMs } = EXACT.get(memoKey);
-        const t1 = Date.now();
-        const large = planPicks({ ...base, largeAbove: 0, scale: VARIANTS[variant] });
-        const t2 = Date.now();
-        const reeval = planPicks({ ...base, largeAbove: Infinity, evaluate: large.groups.primary.territoryIds });
-        const E = exact.groups.primary.score;
-        const L = reeval.evaluated;
-        rows.push({
-          variant,
-          n: m.count,
-          players,
-          shuffle,
-          exactMs,
-          largeMs: t2 - t1,
-          primaryJaccard: jaccard(exact.groups.primary.territoryIds, large.groups.primary.territoryIds),
-          scoreRatio: E > 0 ? L / E : NaN,
-          listJaccard: jaccard(exact.picks.map((p) => p.territoryId), large.picks.map((p) => p.territoryId)),
-          ranked: large.candidates?.ranked ?? 0,
-        });
+        yield { key: `${n}|${shuffle}|${seed}`, graph: m.graph, pickable: m.pickable, neutral: m.neutral, n: m.count, shuffle, setLabel: shuffle ? 'shuffled' : 'ordered' };
       }
+}
+const CASES = [...cases()];
+for (const variant of VARIANT_NAMES)
+  for (const c of CASES)
+    for (const players of PLAYERS) {
+      if (c.pickable.length < players * 3 * 2) continue;
+      const base = { graph: c.graph, pickable: c.pickable, settings: SETTINGS, players, territoryLimit: 3, maxPicks: players * 3, neutralArmies: c.neutral };
+      const memoKey = `${c.key}|${players}`;
+      const t0 = Date.now();
+      if (!EXACT.has(memoKey)) EXACT.set(memoKey, { plan: planPicks({ ...base, largeAbove: Infinity }), ms: Date.now() - t0 });
+      const { plan: exact, ms: exactMs } = EXACT.get(memoKey);
+      const t1 = Date.now();
+      const large = planPicks({ ...base, largeAbove: 0, scale: VARIANTS[variant] });
+      const t2 = Date.now();
+      const reeval = planPicks({ ...base, largeAbove: Infinity, evaluate: large.groups.primary.territoryIds });
+      const E = exact.groups.primary.score;
+      const L = reeval.evaluated;
+      rows.push({
+        variant,
+        n: c.n,
+        pickable: c.pickable.length,
+        players,
+        shuffle: c.shuffle,
+        setLabel: c.setLabel,
+        exactMs,
+        largeMs: t2 - t1,
+        primaryJaccard: jaccard(exact.groups.primary.territoryIds, large.groups.primary.territoryIds),
+        scoreRatio: E > 0 ? L / E : Number.NaN,
+        listJaccard: jaccard(
+          exact.picks.map((p) => p.territoryId),
+          large.picks.map((p) => p.territoryId),
+        ),
+        ranked: large.candidates?.ranked ?? 0,
+      });
+      if (process.env.VERBOSE) console.error(`${variant} ${c.n}/${c.pickable.length} p${players}: ratio ${f(E > 0 ? L / E : Number.NaN)} exact ${exactMs} ms large ${t2 - t1} ms`);
+    }
 
-console.log('variant       territories players ids      runs  exact ms  large ms  primary-jaccard  score(large)/score(exact)  list-jaccard  ranked');
-const keys = [...new Set(rows.map((r) => `${r.variant}|${r.n}|${r.players}|${r.shuffle}`))];
+console.log('variant       territories pickable players set      runs  exact ms  large ms  primary-jaccard  score(large)/score(exact)  list-jaccard  ranked');
+const keys = [...new Set(rows.map((r) => `${r.variant}|${r.n}|${r.pickable}|${r.players}|${r.setLabel}`))];
 for (const k of keys) {
-  const g = rows.filter((r) => `${r.variant}|${r.n}|${r.players}|${r.shuffle}` === k);
+  const g = rows.filter((r) => `${r.variant}|${r.n}|${r.pickable}|${r.players}|${r.setLabel}` === k);
   console.log(
-    `${g[0].variant.padEnd(12)} ${String(g[0].n).padStart(11)} ${String(g[0].players).padStart(7)} ${(g[0].shuffle ? 'shuffled' : 'ordered ').padEnd(8)} ${String(g.length).padStart(4)} ${f(mean(g.map((r) => r.exactMs)), 0).padStart(9)} ${f(mean(g.map((r) => r.largeMs)), 0).padStart(9)} ${f(mean(g.map((r) => r.primaryJaccard))).padStart(16)} ${f(mean(g.map((r) => r.scoreRatio))).padStart(26)} ${f(mean(g.map((r) => r.listJaccard))).padStart(13)} ${f(mean(g.map((r) => r.ranked)), 0).padStart(7)}`,
+    `${g[0].variant.padEnd(12)} ${String(g[0].n).padStart(11)} ${String(g[0].pickable).padStart(8)} ${String(g[0].players).padStart(7)} ${g[0].setLabel.padEnd(8)} ${String(g.length).padStart(4)} ${f(mean(g.map((r) => r.exactMs)), 0).padStart(9)} ${f(mean(g.map((r) => r.largeMs)), 0).padStart(9)} ${f(mean(g.map((r) => r.primaryJaccard))).padStart(16)} ${f(mean(g.map((r) => r.scoreRatio))).padStart(26)} ${f(mean(g.map((r) => r.listJaccard))).padStart(13)} ${f(mean(g.map((r) => r.ranked)), 0).padStart(7)}`,
   );
 }
 for (const v of VARIANT_NAMES) {

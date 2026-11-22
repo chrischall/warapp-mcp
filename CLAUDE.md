@@ -272,14 +272,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   heuristics in our own words with source links (cite, never copy) and marks which are encoded.
 - **The pick advisor on a very large map (2026-11-22).** `warapp_plan_picks` on a 3,066-territory, 25-player manual-pick game
   took ~22 s and ~530 MB (an all-pairs distance cache, an all-pickable assessment per fallback tier) and the host answered
-  "could not be served". Above `LARGE_PICKABLE` (400) pickable territories `planCore` ranks only the territories of the best
-  `CANDIDATE_BONUSES` (50) bonuses by value per member (`candidates` in the plan says how many; every pickable still counts as a
-  start in the threat model), reads contestedness from `CENTRALITY_SAMPLES` (48) sources and searches hops to `SCALE_HOP_DEPTH`
+  "could not be served". Above `LARGE_PICKABLE` (400) pickable territories `planCore` scores every pickable alone (its own
+  opening, the first view's measure) and ranks only the best `largePool(budgetMs)` of them: `LARGE_POOL` (400) at the default
+  20 s budget, in proportion to the budget otherwise, never under `LARGE_POOL_MIN` (150) nor `maxPicks × 4` (`candidates` in the
+  plan says how many; every pickable still counts as a start in the threat model). #476 (2026-11-22): the earlier ranking — the
+  territories of the best 50 bonuses by value per member — missed the best start on most real maps (a hub outside every bonus,
+  overlapping bonuses, 463 negative bonuses on one map): 0.83 of the exact score on 12 stored real maps, worst negative, against
+  1.00 (worst 0.99) now; measurements in docs/PLAN-PICKS-SCALE.md. The pool is sized by the budget, not grown against the clock,
+  so one input plans the same on any machine. It reads contestedness from `CENTRALITY_SAMPLES` (48) sources and searches hops to `SCALE_HOP_DEPTH`
   (8); at or below the limit nothing changes. `PlanPicksInput.budgetMs` (the tool passes `WARAPP_PICKS_BUDGET_MS`, default
   20 s, 0 or less none; `clock` is injectable) makes an expired search finish by score (`partial: true`, a warning, a valid
   list); an exception inside the advisor is a `McpToolError` naming the game, map size and players. The compact view caps reasons
   (`COMPACT_REASONS`, first `COMPACT_DETAILED_PICKS` picks only), threats, bonuses, coverage and warning/rationale lines, counting
   what it cut (`…Omitted`); `submitPicks` is never cut. 3,102 territories / 25 players: 22.5 s → 1.8 s, 529 → 37 MB heap.
+  The budget is checked inside each greedy group step (every 64 candidates), between hop limits and across the fallback seeds,
+  and `spreadOf`'s minimax spanning tree is Prim with each pick's nearest tree member kept (n², not n³): a full distribution
+  (live game 45660414: 25 players × 122 picks, 3,050 listed) took 272 s and now stops at the budget (~21 s at 20 s, `partial`).
   `planTurn` and `stressPlan` on the same map take under 1 s (pure; the live read was not measured).
 - **The award of picks is read once, from my own list (#166).** The list war.app read back
   (`warapp_submit_picks`, or `warapp_get_my_picks` during distribution for the signed-in account) is kept at

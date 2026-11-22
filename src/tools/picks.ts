@@ -171,7 +171,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           'way into every region matter more than the fastest start — the user chooses per game. ' +
           'Its `submitPicks` is exactly what warapp_submit_picks ' +
           'takes — review it with the user first. Refuses outside the picking stage or when nothing is pickable. ' +
-          'On a very large map (over 400 pickable territories) only the territories of the best bonuses are ranked (`candidates` says how many); ' +
+          'On a very large map (over 400 pickable territories) only the territories that score best alone are ranked, 400 at the default budget and more with a larger one (`candidates` says how many); ' +
           'the plan has a time budget (20 s; `WARAPP_PICKS_BUDGET_MS` sets it, 0 for none) and, when it runs out, answers `partial: true` with a valid list; ' +
           'the compact view caps its reasons, threats, coverage and warning lists (counts say what was cut; `submitPicks` is never cut). ' +
           'In a team game only the players off your team are threats, `team` names your teammates, and the list is judged by both award ' +
