@@ -522,6 +522,17 @@ export function bonusScoring(
     s.wastelands && s.wastelands.count > 0 && s.wastelands.size > 0 && g.territoryById.size > 0
       ? Math.min(1, s.wastelands.count / g.territoryById.size)
       : 0;
+  /**
+   * #432: a visible neutral at the game's wasteland size or more, when the game has wastelands larger than its
+   * ordinary neutrals (`neutralArmies`, when the settings give it).
+   */
+  const isWasteland = (st: { owner: { kind: string }; armies: number | null }): boolean =>
+    s.wastelands !== undefined &&
+    s.wastelands.count > 0 &&
+    s.wastelands.size > (s.neutralArmies ?? 0) &&
+    st.owner.kind === 'neutral' &&
+    st.armies !== null &&
+    st.armies >= s.wastelands.size;
   const wasteCost = wasteShare > 0 ? (costOf(s.wastelands!.size) ?? Infinity) : 0;
   const wasteLoss = wasteShare > 0 ? Math.min(wasteCost - 1, straightKills(s.wastelands!.size, rates.defensiveKillRate)) + 1 : 0;
   /** Every positive bonus worth completing (net > 0) still missing members: its armies to finish (rule 4e). */
@@ -611,6 +622,8 @@ export function bonusScoring(
     // #125: the economy test charges the armies lost, not the armies sent.
     let loss = 0;
     let worstLoss = 0;
+    /** #432: its missing members in view that are wastelands. */
+    const wastelands: number[] = [];
     const known = (t: number, armies: number) => {
       const c = costAt(t, armies) ?? Infinity;
       cost += c;
@@ -657,6 +670,7 @@ export function bonusScoring(
       const c = costAt(t) ?? Infinity;
       cost += c;
       worst = Math.max(worst, c);
+      if (isWasteland(st)) wastelands.push(t);
       const l = econCostAt(t);
       loss += l;
       worstLoss = Math.max(worstLoss, l);
@@ -705,9 +719,17 @@ export function bonusScoring(
     loss += fogged * fogLoss + foggedNeutral * neutralEachLoss;
     const fogNeutral: FogNeutral | undefined = foggedNeutral ? { count: foggedNeutral, each: neutralEach, size: neutralSize! } : undefined;
     if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach, ...(fogNeutral ? { fogNeutral } : {}) });
-    const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net);
+    // #432: while the gate budget is short, no bonus is built through a wasteland: its armies go to the gates.
+    const wasteStop = !isFocus && pc.shortGates !== undefined && wastelands.length > 0;
+    const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net && !wasteStop);
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
+    if (!economic && wasteStop && loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net) {
+      rationale.push(
+        `Skip bonus ${b.name} (#${b.id}): finishing it means taking the wasteland${wastelands.length === 1 ? '' : 's'} ${wastelands.map(label).join(', ')} (${s.wastelands!.size} armies or more) while the gates facing player ${pc.shortGates!.player} are ${pc.shortGates!.deficit} short (#432).`,
+      );
+      continue;
+    }
     if (!economic) {
       rationale.push(
         `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${toFinish(cost, { fogged, fogEach, fogNeutral })}, losing ~${loss}; ${worstLoss} lost on its costliest territory).`,

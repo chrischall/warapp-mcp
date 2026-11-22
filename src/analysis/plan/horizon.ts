@@ -54,5 +54,6 @@ export function applyShortGates(pc: PlanCtx, ps: Pick<PlanState, 'rationale'>, t
   if (!sg) return undefined;
   ps.rationale.push(shortGatesLine(pc, sg));
   pc.paybackTurns = sg.turns;
+  pc.shortGates = sg;
   return sg;
 }

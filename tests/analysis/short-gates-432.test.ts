@@ -78,3 +78,54 @@ describe('#432: a 1v1 whose gates are short at the start counts a shorter paybac
   });
 });
 
+describe('#432: no wastelands while the gates are short', () => {
+  // My 30 on T1 beside T2, a neutral 10 that is the +3 bonus B802 alone: taking it loses ~8, repaid within 5 turns,
+  // so the shorter horizon alone still buys it. The game's wastelands start at 10, its ordinary neutrals at 2.
+  const g = buildGraph(
+    makeMap(
+      [1, 2, 3, 4, 5],
+      [
+        [1, 2],
+        [1, 3],
+        [3, 4],
+        [4, 5],
+      ],
+      [[802, 3, [2]]],
+    ),
+  );
+  const run = (gate: number, theirs: number, wastelands = true) =>
+    planTurn({
+      graph: g,
+      board: board([mine(1, 30), neutral(2, 10), mine(3, gate), enemy(4, theirs), enemy(5, 3)]),
+      me: ME,
+      income: 10,
+      settings: {
+        offensiveKillRate: 60,
+        defensiveKillRate: 70,
+        oneArmyStandsGuard: true,
+        neutralArmies: 2,
+        ...(wastelands ? { wastelands: { count: 3, size: 10 } } : {}),
+      },
+      game: { players: [{ id: ME }, { id: 20 }], turn: 8 },
+      options: { adapt: true, enemyDeploy: 5 },
+    });
+  const wasteLine = /Skip bonus B802 \(#802\): finishing it means taking the wasteland T2 \(#2\) \(10 armies or more\) while the gates facing player 20 are \d+ short \(#432\)\./;
+
+  it('gates short: the bonus through a wasteland is skipped, and T2 is not taken', () => {
+    const p = run(5, 40);
+    expect(p.rationale.join('\n')).toMatch(wasteLine);
+    expect(p.expected.captures).not.toContain(2);
+  });
+
+  it('gates that hold: the wasteland bonus is still built', () => {
+    const p = run(30, 3);
+    expect(p.rationale.join('\n')).not.toMatch(/#432/);
+    expect(p.rationale.some((l) => /Skip bonus B802/.test(l))).toBe(false);
+  });
+
+  it('a game without wastelands: a big neutral is judged on the payback test alone', () => {
+    const p = run(5, 40, false);
+    expect(p.rationale.join('\n')).not.toMatch(wasteLine);
+    expect(p.rationale.some((l) => /Skip bonus B802/.test(l))).toBe(false);
+  });
+});
