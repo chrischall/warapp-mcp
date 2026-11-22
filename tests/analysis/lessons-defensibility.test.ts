@@ -136,22 +136,24 @@ describe('lessons from the free-for-all and the two 1v1s', () => {
     expect(p.rationale.join('\n')).toMatch(/Garrison T1 \(#1\) for bonus Vale \(#301\) \(\+5\), completed this turn: deploy \d+/);
   });
 
-  it('3. a big bonus is not completed when its new member falls next turn: the income garrisons instead', () => {
+  it('3. a big bonus whose new member falls next turn is completed only when one turn of it repays the loss (#422)', () => {
     // T10 (30): threat 29 + 5 = 34; T8's 2 survivors would need 21 more to hold — far over the next
-    // income of 5 + 7 = 12. Completing Ridge would be worth one turn of +7 at most.
+    // income of 5 + 7 = 12. Completing Ridge is worth one turn of +7 at most — and #422: that one turn
+    // repays what it can lose (1 killed taking T8, 2 left there), so it is completed, not refused.
     const p = plan(ridgeBoard(30), 5);
-    expect(attacks(p)).toEqual([]);
-    expect(p.expected.bonusesCompleted).toEqual([]);
-    expect(p.warnings.join('\n')).toMatch(
-      /completing Ridge \(#302\) leaves T8 \(#8\) indefensible \(player 30 can take it for \d+; next income 12\): not completed/,
+    expect(attacks(p)).toEqual([expect.objectContaining({ to: 8 })]);
+    expect(p.expected.bonusesCompleted).toEqual([302]);
+    expect(p.warnings.join('\n')).not.toMatch(/indefensible/);
+    expect(p.rationale.join('\n')).toMatch(
+      /Complete bonus Ridge \(#302\) though its frontier cannot be held next turn \(it needs 19 more armies, next income 12\): it can lose at most 3 armies \(1 killed taking it, 2 left on T8 \(#8\)\), no more than the \+7 it pays next turn \(#422\)\./,
     );
-    expect(p.rationale.join('\n')).toMatch(/Do not complete bonus Ridge \(#302\)/);
     expect(deploySum(p)).toBe(5);
 
-    // Control: against a small stack the frontier holds, so Ridge is completed.
+    // Control: against a small stack the frontier holds, so Ridge is completed with no exemption.
     const q = plan(ridgeBoard(3), 5);
     expect(q.expected.bonusesCompleted).toEqual([302]);
     expect(q.warnings.join('\n')).not.toMatch(/indefensible/);
+    expect(q.rationale.join('\n')).not.toMatch(/#422/);
   });
 
   it('4. a neutral no single stack can reach is taken by two attacks in a fixed order (0% luck)', () => {

@@ -947,8 +947,13 @@ export interface GateBudget {
   deficit: number;
   /** The next income that can add to them ({@link FrontierBudget}'s figure). */
   income: number;
-  /** deficit − income, at least 0. */
+  /**
+   * deficit − income, at least 0. #433: under Local Deployment what the gates lack once each is paid from the pools
+   * of the bonuses it is in and the free income (a bonus's armies deploy only on its own territories).
+   */
   short: number;
+  /** #433, Local Deployment only: the part of `income` that can be deployed on the gates (free + their bonuses' pools). */
+  deployable?: number;
 }
 
 export interface FrontierBudget {
@@ -1208,6 +1213,12 @@ export interface EnemyDeployEstimate {
   card: { armies: number; due: number } | null;
   /** #164: the latest turn a deployment above its income was seen (a Reinforcement card played); else `null`. */
   cardPlayed: number | null;
+  /**
+   * #427: the tracked figure a card play had set (`was`), read again with the card's armies out
+   * (`income`, the figure `tracked` and the estimate use): the turns that set it (`turns`), each a play
+   * counted as a card. `null` when no play set it, or without a clock.
+   */
+  cardInTrack?: { was: number; income: number; armies: number; turns: number[] } | null;
   /**
    * G2 (PLAN-TEAMS D3): the Sanctions in effect on it that the decoder is sure of. `applied`: the
    * estimate's income (`before`, card left out) was cut by them to `estimate` less its card — only

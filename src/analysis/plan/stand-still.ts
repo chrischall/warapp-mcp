@@ -638,7 +638,7 @@ export function neverStandStill(
       // does not is ranked like any other capture.
       const repays = (p: Pick) => {
         const id = completedBy(p);
-        return id !== undefined && costOfPick(p.st.t) <= pc.paybackTurns * g.bonusById.get(id)!.value;
+        return id !== undefined && costOfPick(p.st.t) <= pc.capturePaybackTurns * g.bonusById.get(id)!.value;
       };
       const teamFocused = (p: Pick): p is Extract<Pick, { kind: 'enemy' }> => p.kind === 'enemy' && pc.teamFocus.has(p.st.player);
       const keyOf = (p: Pick) => [
@@ -903,7 +903,7 @@ export function neverStandStill(
         // #240: a completion that repays its cost goes first among the affordable candidates.
         if (repays(taken) && !repays(p))
           return [
-            `${label(t)} ${after}: taking ${label(taken.st.t)} completes bonus ${bonusName(completedBy(taken)!)} this turn, which repays its cost of ${costOfPick(taken.st.t)} within ${pc.paybackTurns} turns`,
+            `${label(t)} ${after}: taking ${label(taken.st.t)} completes bonus ${bonusName(completedBy(taken)!)} this turn, which repays its cost of ${costOfPick(taken.st.t)} within ${pc.capturePaybackTurns} turns`,
           ];
         // PLAN-TEAMS C3.4: equal but for the team focus.
         if (teamFocused(taken) && !teamFocused(p) && keyOf(p).slice(0, FOCUS_KEY).every((k, i) => k === keyOf(taken)[i]))

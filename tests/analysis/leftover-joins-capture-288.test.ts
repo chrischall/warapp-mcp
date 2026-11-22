@@ -125,14 +125,15 @@ describe('#288 (second half): the extra goes with a capture only as far as its n
   });
 
   it('offers the rest to another capture this turn, which rule 5b takes', () => {
-    // A synthetic corpus board (#133): the expansion stack's attack out of T2009 needs nothing more
-    // for its next step, and T2020, which stayed to hold its border, takes the 5-neutral T2021 with
-    // the rest (#402 sent all of it with the attack out of T2009).
-    const p = planTurn(syntheticInput(21484));
-    expect(why(p)).toMatch(/Deploy 18 of the leftover to T2020 \(#2020\) for another capture this turn \(#288\)/);
-    expect(attacks(p).some((m) => m.from === 2020 && m.to === 2021)).toBe(true);
-    expect(p.expected.captures).toContain(2021);
-    expect(why(p)).not.toMatch(/Deploy the leftover \d+ to T2009/);
+    // A synthetic corpus board (#133): the expansion stack's attack out of T105 takes only the 2 its next
+    // step needs, and T112, beside no enemy, takes the 5-neutral T115 with the rest of the leftover.
+    // #425: board 21484, pinned here before, lost its example: its offer went to T2020, the only way into
+    // a bonus player 40 holds part of, which since #425 protects +0 and is conceded.
+    const p = planTurn(syntheticInput(23539));
+    expect(why(p)).toMatch(/Deploy 14 of the leftover to T112 \(#112\) for another capture this turn \(#288\)/);
+    expect(attacks(p).some((m) => m.from === 112 && m.to === 115)).toBe(true);
+    expect(p.expected.captures).toContain(115);
+    expect(p.deploys.find((d) => d.territoryId === 105)?.armies).toBe(2);
   });
 
   it('sends the rest with the attacks after all when rule 5b takes nothing where it was offered', () => {

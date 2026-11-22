@@ -83,6 +83,29 @@ describe('planPicks on a very large map', () => {
   }, 120_000);
 });
 
+describe('a full distribution (every territory dealt, #476 follow-up)', () => {
+  it('ranks by score alone: no compact group search, never partial, and a valid list well inside the budget', () => {
+    const { graph, pickable } = bigUs();
+    const base = { graph, pickable, settings: SETTINGS, players: 25, territoryLimit: 122, maxPicks: 3050, budgetMs: 20_000 };
+    const t0 = Date.now();
+    const p = planPicks({ ...base, fullDeal: true });
+    expect(Date.now() - t0).toBeLessThan(20_000);
+    expect(p.partial).toBeUndefined();
+    expect(p.warnings.join('\n')).toMatch(/Every territory is dealt/);
+    validList(p, pickable, 3050);
+    // The primary is the 122 best picks by their own score, in score order.
+    const scores = p.picks.filter((x) => x.group === 'primary').map((x) => x.score);
+    expect(scores).toHaveLength(122);
+    expect([...scores].sort((a, b) => b - a)).toEqual(scores);
+  }, 120_000);
+
+  it('changes nothing when not set', () => {
+    const { graph, pickable } = largeMap(14, 14, 4, 3);
+    const base = { graph, pickable, settings: SETTINGS, players: 2, territoryLimit: 3, maxPicks: 6 };
+    expect(JSON.stringify(planPicks({ ...base, fullDeal: false }))).toBe(JSON.stringify(planPicks(base)));
+  }, 60_000);
+});
+
 describe('the pool size for a budget', () => {
   it('is LARGE_POOL at the default 20 s, in proportion otherwise, never below LARGE_POOL_MIN', () => {
     expect(largePool(undefined)).toBe(LARGE_POOL);

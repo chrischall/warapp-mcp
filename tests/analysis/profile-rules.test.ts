@@ -68,7 +68,8 @@ describe('rule 0p: the profile on the plan', () => {
 
 // Rule 0p.1. T1 (1 army) borders T4, a 2-army neutral of B801 (+5, with T5 out of reach):
 // advancing it scores 5 / 6. T2 (2 armies) is my only way into B802 (+2; T9 out of reach) and
-// faces the enemy's T8 (2): a threat of 1 + 5, so it needs 3 to hold — worth (2 + 0.2) / 3.
+// faces the enemy's T8 (2): a threat of 1 + 5, so it needs 3 to hold — worth (1 + 0.2) / 3 (#425: the
+// only way in carries its building share, 2 × 1 ÷ 2).
 // Income 5 (even with the enemy's ~5) pays for one of them.
 describe('rule 0p.1: a 1v1 in contact', () => {
   const g = buildGraph(
@@ -109,7 +110,7 @@ describe('rule 0p.1: a 1v1 in contact', () => {
     // #420: the hold cap off (3 of 5 is past half): this tests rule 0p.1's rank, not the cap.
     const p = planTurn(input({ adapt: true, holdCap: false }));
     expect(p.profile).toMatchObject({ format: '1v1', phase: 'contact', standing: 'even' });
-    expect(why(p)).toMatch(/Deploy 3 to T2 \(#2\) so it holds \(protects \+2\)/);
+    expect(why(p)).toMatch(/Deploy 3 to T2 \(#2\) so it holds \(protects \+1\)/);
     expect(p.conceded).toEqual([]);
     // The 2 left cannot fund the advance (3): it waits. They build the strike stack on T2 (7), which
     // spends it (#102): T8 (2) falls to 3, and the 4 that stay hold against the ~5 deploy alone.

@@ -26,7 +26,7 @@ export function plainEconomy(pc: PlanCtx, tgt: Targets, id: number, gain: number
   if (pc.inFocus(id) || tgt.economicMember.has(id)) return null;
   const lost = straightKills(pc.defenceAt(id), pc.rates.defensiveKillRate);
   const worth = pc.plainWorth(id, gain);
-  return (worth > 0 ? lost > pc.paybackTurns * worth : lost > PLAIN_EXPANSION_LOSS) ? { lost, worth } : null;
+  return (worth > 0 ? lost > pc.capturePaybackTurns * worth : lost > PLAIN_EXPANSION_LOSS) ? { lost, worth } : null;
 }
 
 /**

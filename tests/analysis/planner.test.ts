@@ -691,6 +691,7 @@ describe('planTurn — value-aware defence', () => {
 
   it('counts a bonus I would lose access to, and per-territory income', () => {
     // T1 is my only foothold in the +3 bonus {1, 4} (T4 neutral); T8 is a 6-army enemy.
+    // #425: the only way in carries its building share, 3 × 1 ÷ 2, not the whole +3.
     const g = buildGraph(
       makeMap(
         [1, 4, 8],
@@ -705,7 +706,7 @@ describe('planTurn — value-aware defence', () => {
     const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
     expect(p.conceded).toEqual([]);
     expect(p.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
-    expect(p.rationale.join('\n')).toMatch(/Deploy 5 to T1 \(#1\).*protects \+3/);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 5 to T1 \(#1\).*protects \+1\.5\)/);
 
     // With one army per territory held (and no base income it would fall back to),
     // losing T1 also costs that army of income.
@@ -1493,21 +1494,23 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
   });
 
   for (const goal of ['balanced', 'defend'] as const)
-    it(`(${goal}) does not complete a bonus whose new member falls next turn; it garrisons instead`, () => {
+    it(`(${goal}) completes a cheap bonus whose new member falls next turn: it pays for itself in one turn (#422)`, () => {
       // T9 (16): threat 15 movable + 5 deploy = 20. Taking T3 leaves 2 armies there,
       // which need 13 to hold (13 armies need 21 > 20): 11 more than it has, above
       // the next income of 5 + 5 = 10 (and a fresh capture cannot be deployed to this turn).
+      // Before #422 R3 refused it and the income garrisoned T2. But taking T3 loses 1 and leaves
+      // 2 there: 3 at most, under the +5 the completed bonus pays next turn even if it falls.
       expect(armiesToTake(2, STD)).toBe(3);
       expect(armiesToTake(12, STD)).toBe(20);
       expect(armiesToTake(13, STD)).toBe(21);
       const p = planTurn({ graph: g, board: at(16), me: ME, income: 5, settings: STD, options: { goal } });
-      expect(attacks(p)).toEqual([]);
-      expect(p.expected.bonusesCompleted).toEqual([]);
-      expect(p.warnings).toContain(NOT_COMPLETED);
-      // Warned once, however many passes looked at the capture.
-      expect(p.warnings.filter((w) => w === NOT_COMPLETED)).toHaveLength(1);
-      expect(p.rationale.join('\n')).toMatch(/Do not complete bonus B901 \(#901\)/);
-      // The income garrisons the threatened T2 (holding needs 3) instead.
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 3 })]);
+      expect(p.expected.bonusesCompleted).toEqual([901]);
+      expect(p.warnings).not.toContain(NOT_COMPLETED);
+      expect(p.rationale.join('\n')).toMatch(
+        /Complete bonus B901 \(#901\) though its frontier cannot be held next turn \(it needs 11 more armies, next income 10\): it can lose at most 3 armies \(1 killed taking it, 2 left on T3 \(#3\)\), no more than the \+5 it pays next turn \(#422\)\./,
+      );
+      // The income still garrisons the threatened T2 (it protects +2 either way).
       expect(deployedTo(p, 2)).toBe(5);
       expect(deploySum(p)).toBe(5);
       expect(p.conceded).toEqual([]);
@@ -1585,8 +1588,11 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
     expect(attacks(p)).toEqual([]);
     expect(p.expected.bonusesCompleted).toEqual([]);
     expect(p.warnings.join('\n')).toMatch(/completing B950 \(#950\) leaves T8 \(#8\) indefensible .*: not completed/);
-    expect(p.rationale.join('\n')).toMatch(/Deploy 3 to T1 \(#1\) so it holds/);
-    expect(p.conceded).toEqual([]);
+    // #425: T1 is the only way into B950, whose other member the enemy holds, so it protects +0 and is
+    // conceded (it was held for the whole +3); as my only territory it still gets every army.
+    expect(p.warnings.join('\n')).toMatch(/T1 \(#1\) cannot be held economically \(needs 3, protects \+0\): conceded/);
+    expect(p.conceded).toEqual([1]);
+    expect(p.deploys).toEqual([{ territoryId: 1, armies: 10 }]);
     expect(deploySum(p)).toBe(10);
   });
 

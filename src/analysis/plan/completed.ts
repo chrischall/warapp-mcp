@@ -3,7 +3,7 @@
 // what neither could fund is the leftover's first call (rule 5, plan/leftover.ts), and a combined
 // capture (#17) it is a source of is rebalanced at the same kills to leave armies on it
 // (plan/captures.ts, `rebalanceCombined`).
-import type { PlanCtx, PlanState } from './state.js';
+import { paybackLive, type PlanCtx, type PlanState } from './state.js';
 import type { Threats } from './threats.js';
 
 /** A weak member: the residual threat it faces, the armies it still needs, and its bonus. */
@@ -29,7 +29,8 @@ export function completedMembers(
   const { g, mine, mineSet, completedBy, bonusTs, unitsAt, toTake } = pc;
   const before = new Set(completedBy(mineSet));
   const now = completedBy(new Set([...mine, ...ps.captured]))
-    .filter((b) => !before.has(b) && (g.bonusById.get(b)?.value ?? 0) > 0)
+    // #422: a payback completion is expected to fall next turn: its members are no weak members to fund.
+    .filter((b) => !before.has(b) && !paybackLive(ps, ps.paybackBonuses, b) && (g.bonusById.get(b)?.value ?? 0) > 0)
     .sort((a, b) => g.bonusById.get(b)!.value - g.bonusById.get(a)!.value || a - b);
   const weakMember = (id: number): WeakMember | undefined => {
     if (!now.length || !mineSet.has(id) || !open(id)) return undefined;

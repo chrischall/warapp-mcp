@@ -70,7 +70,7 @@ export function pickTerritoryLimit(
   settings: Pick<GameSettings, 'territoryLimit' | 'distributionMode'> | undefined,
   players: number,
   pickable: number,
-): { limit: number; warning?: string } {
+): { limit: number; warning?: string; fullDeal?: true } {
   const set = settings?.territoryLimit;
   if (set !== undefined && set > 0) return { limit: set };
   if (fullDistribution(settings)) {
@@ -78,6 +78,7 @@ export function pickTerritoryLimit(
     const limit = Math.max(1, Math.floor(pickable / n));
     return {
       limit,
+      fullDeal: true,
       warning: `Full distribution (DistributionMode 0, no territory limit): every territory is dealt, so each of the ${n} players gets about ${limit} of the ${pickable} pickable; the list only says which you would rather hold.`,
     };
   }
@@ -257,6 +258,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
         spread: spread === true,
         ...(team ? { team: { teammates: team.length, ...(lists.some((l) => l.length) ? { lists } : {}) } } : {}),
         ...(budgetMs !== undefined ? { budgetMs } : {}),
+        ...(limitRead.fullDeal ? { fullDeal: true } : {}),
       });
       } catch (e) {
         // A failure inside the advisor is a tool error with a reason, never a silent host failure.
