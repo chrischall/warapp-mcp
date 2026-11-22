@@ -3,7 +3,7 @@ import type { TerritoryState } from '../src/board.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import type { Card, CardChoice } from '../src/cards.js';
 import type { GameSettings, Player } from '../src/normalize.js';
-import { adviseCards, intelOrders, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
+import { adviseCards, giftInOrders, intelOrders, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
 import { normalizeSettings } from '../src/normalize.js';
 import { turnOrdersArg } from '../src/tools/turn.js';
 import { board, mine, neutral, tinyMap } from './analysis/helpers.js';
@@ -377,6 +377,32 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(view.gift).toEqual({ player: MATE.id, bonus: 101, territories: [3], orders: [{ kind: 'card', card: 'd'.repeat(32), target: 3, player: MATE.id }] });
     const theirs = { ...gift, owner: 444444 };
     expect(adviseCards(input({ territories, game, me: a, plan, hand: [theirs] })).view.gift).toBeUndefined();
+    // #435: Gift is unverified live, so the advice stays out of the orders.
+    expect(giftInOrders(view).cards).toEqual([]);
+  });
+
+  it('#435: a completing Gift whose play is verified goes into the orders, the transfers it drops out', () => {
+    const MATE: Player = { ...FOE, id: 5544444411, name: 'Dee', team: 1 };
+    const a = { ...ME, team: 1 };
+    const b = { ...FOE, team: 2 };
+    const mate = (territoryId: number, armies: number): TerritoryState => ({ territoryId, owner: { kind: 'player', playerId: MATE.id }, armies });
+    const team = { sharedBonuses: [{ bonusId: 101, value: 3, mine: [3], teammates: [{ player: MATE.id, territories: [1, 2] }], others: [], nearer: MATE.id }] };
+    // An idle army walks off the member (45731288 turn 6): before #435 that hid the gift.
+    const moves = [{ from: 3, to: 4, armies: 1, kind: 'transfer' as const, reason: 'moves idle interior armies toward the front' }];
+    const plan = { deploys: [], moves, moveSlots: [], enemyDeploy: 5, conceded: [], team };
+    const territories = [mate(1, 2), mate(2, 2), me(3, 4), me(4, 4), foe(5, 3)];
+    const game = { players: [a, MATE, b], settings: settings() };
+    const gift = { ...card(7, 'Gift'), owner: ME_IN };
+    const unverified = adviseCards(input({ territories, game, me: a, plan, hand: [gift] }));
+    expect(unverified.view.gift).toMatchObject({ territories: [3], drop: [{ from: 3, to: 4 }] });
+    expect(unverified.view.gift).not.toHaveProperty('inOrders');
+    expect(unverified.warnings.join('\n')).toMatch(/Drop the transfer 3 → 4.*Advice only, not in the orders/);
+    const verified = adviseCards(input({ territories, game, me: a, plan, hand: [gift], unverifiedPlays: new Set() }));
+    expect(verified.view.gift).toMatchObject({ inOrders: true, drop: [{ from: 3, to: 4 }] });
+    const inOrders = giftInOrders(verified.view);
+    expect(inOrders.cards).toEqual([{ kind: 'card', card: 'd'.repeat(32), target: 3, player: MATE.id }]);
+    expect(inOrders.drops({ from: 3, to: 4 })).toBe(true);
+    expect(inOrders.drops({ from: 4, to: 5 })).toBe(false);
   });
 
   it('every advised order is one warapp_submit_turn takes', () => {

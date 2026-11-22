@@ -231,14 +231,34 @@ describe('giftAdvice (D2)', () => {
     expect(out.why).toMatch(/^Gift 3 to your teammate 40: .*\+3 a turn for the team/);
   });
 
-  it('not without a Gift card, not when I am nearer, not with a unit on it or moves out of it', () => {
+  it('not without a Gift card, not when I am nearer, not with a unit on it or an attack out of it', () => {
     const c = cb(ts(), { friends: new Set([MATE]) });
     expect(giftAdvice(c, shared, 0)).toBeUndefined();
     expect(giftAdvice(c, [{ ...shared[0]!, nearer: ME }], 1)).toBeUndefined();
     expect(giftAdvice(c, [{ ...shared[0]!, others: [7] }], 1)).toBeUndefined();
-    expect(giftAdvice({ ...c, moves: [{ from: 3, to: 4, armies: 3, kind: 'transfer' }] }, shared, 1)).toBeUndefined();
+    // #435: an attack launched from it is the plan's own: the gift (phase 47, before the moves) would cancel it.
+    expect(giftAdvice({ ...c, moves: [{ from: 3, to: 2, armies: 3, kind: 'attack' }] }, shared, 1)).toBeUndefined();
     const unit = ts().map((t) => (t.territoryId === 3 ? { ...t, specialUnits: [{ kind: 'commander' as const, id: 'd'.repeat(32), playerId: ME }] } : t));
     expect(giftAdvice(cb(unit, { friends: new Set([MATE]) }), shared, 1)).toBeUndefined();
+  });
+});
+
+describe('giftAdvice before the idle transfers (#435)', () => {
+  const shared: SharedBonus[] = [{ bonusId: 101, value: 3, mine: [3], teammates: [{ player: MATE, territories: [1, 2] }], others: [], nearer: MATE }];
+  const ts = () => [mate(1, 2), mate(2, 2), mine(3, 4), mine(4, 4), b(5, 3)];
+
+  it('a transfer out of (or into) the member does not stop the gift: it names the transfers to drop, which would not run', () => {
+    // 45731288 turn 6: an idle army walked off the member the gift needed, and the advice vanished.
+    const c = cb(ts(), { friends: new Set([MATE]), moves: [{ from: 3, to: 4, armies: 1, kind: 'transfer' }, { from: 4, to: 5, armies: 3, kind: 'attack' }] });
+    const out = giftAdvice(c, shared, 1)!;
+    expect(out).toMatchObject({ player: MATE, bonus: 101, territories: [3], drop: [{ from: 3, to: 4 }] });
+    expect(out.why).toMatch(/Drop the transfer 3 → 4: the Gift lands before the moves run/);
+    const into = giftAdvice(cb(ts(), { friends: new Set([MATE]), moves: [{ from: 4, to: 3, armies: 2, kind: 'transfer' }] }), shared, 1)!;
+    expect(into.drop).toEqual([{ from: 4, to: 3 }]);
+  });
+
+  it('nothing to drop with no move touching the member', () => {
+    expect(giftAdvice(cb(ts(), { friends: new Set([MATE]) }), shared, 1)!.drop).toEqual([]);
   });
 });
 

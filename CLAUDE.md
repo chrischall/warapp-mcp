@@ -823,7 +823,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `redeploy` — an idle stack, only my land beside it and unused by the plan, two or more steps from the target, or one
   cut off from my main holdings, with more than `REDEPLOY_MIN_ARMIES` (3) to spare, to the strike stack, else the
   thinnest border), a
-  Gift of the members that complete a teammate's nearer bonus, and (#434, `blockadeOffer` in `card-threats.ts`) a
+  Gift of the members that complete a teammate's nearer bonus (#435, proposed: judged before the idle transfers — a transfer
+  out of or into a gifted member no longer hides it but is listed in `gift.drop`, since the Gift, phase 47, lands before the
+  moves; an attack from it still does; once Gift leaves `UNVERIFIED_CARD_PLAYS` the gift is `inOrders` and plan_turn's
+  `orders` carry it with `drop` taken out, `giftInOrders`), and (#434, `blockadeOffer` in `card-threats.ts`) a
   Blockade (`cards.advice.blockade`) on a border the plan concedes that is the one way into held bonuses or my commander
   (`opensBehind`, #291), when its armies after the plan × `BlockadeCard.MultiplyAmount` stop the stack beside it —
   never on a member of a bonus I hold (it breaks the bonus) or my commander's territory. **The spy cards (G2, `intelAdvice`)** only
