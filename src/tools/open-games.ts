@@ -114,8 +114,8 @@ export function registerOpenGamesTool(server: McpServer, ctx: LiveContext): void
       });
       // #134: advisory — the neutral-cost part needs each lobby's GameFeed settings, so only the join preview has it.
       const games = (await markLotteries(ctx, filtered)).map((g) => {
-        const { breaks } = joiningPolicy(g, null);
-        return breaks.length ? { ...g, policyBreaks: breaks } : g;
+        const { breaks, warnings } = joiningPolicy(g, null);
+        return { ...g, ...(breaks.length ? { policyBreaks: breaks } : {}), ...(warnings ? { policyWarnings: warnings } : {}) };
       });
       return respond(undefined, ['compact'], () => ({
         games,
