@@ -319,7 +319,8 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
     const tr = input.tracks?.find((x) => x.playerId === player);
     // Its income, a Reinforcement card left out: the card is counted once, in the deploy.
     const e = estimates.get(player);
-    const income = Math.max(tr?.income ?? 0, (e?.estimate ?? 0) - (e?.card?.armies ?? 0));
+    // #427: a tracked figure a card play had set counts without it.
+    const income = Math.max(e?.cardInTrack ? e.cardInTrack.income : (tr?.income ?? 0), (e?.estimate ?? 0) - (e?.card?.armies ?? 0));
     return {
       unexplained: Math.max(0, Math.floor(tr?.unexplained ?? 0)),
       cap: income > 0 ? HIDDEN_POOL_INCOMES * income : null,
@@ -1068,6 +1069,13 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           const used = track.turns.filter((x) => e.trackedTurns.includes(x.from));
           rationale.push(
             `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog${e.coverage ? `, read from ${coverageText(e.coverage)}` : ''}; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+          );
+        }
+        // #427: a card play the tracker read as income, taken out of its figure.
+        if (e.cardInTrack) {
+          const c = e.cardInTrack;
+          warnings.push(
+            `Player ${p}'s tracked income of ${c.was} counts the Reinforcement card it played on turn ${c.turns.join(', ')}: ${c.income} without it (#427), so the card is counted once, on the clock, not carried as income.`,
           );
         }
         // #164: a Reinforcement card the clock says it may hold, on top of its income.

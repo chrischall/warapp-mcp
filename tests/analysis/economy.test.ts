@@ -205,7 +205,8 @@ describe('#125 turns to finish count the layers a chain needs', () => {
   it('a three-deep chain is three turns away, not one', () => {
     const p = plan(sc);
     const line = p.rationale.find((l) => l.includes('closest to completion first'));
-    expect(line).toMatch(/B101 \(#101\) 10 armies to finish, 2 turns at income 5, B100 \(#100\) 9, 3 turns/);
+    // #416: the 3 movable armies on 1 stand beside both and are credited; B100's depth still holds it at 3 turns.
+    expect(line).toMatch(/B101 \(#101\) 10 armies to finish \(3 standing beside it\), 2 turns at income 5, B100 \(#100\) 9 \(3 standing beside it\), 3 turns/);
   });
 });
 
@@ -265,13 +266,14 @@ describe('#125 staging: unthreatened stacks move toward a capture not yet afford
 });
 
 describe('#125 saving is only for a step this turn cannot afford', () => {
-  // Ridge (+3) [1,2]: 2 is a 2-neutral my 1 can take, but the completed bonus would face an enemy
+  // Ridge (+3) [1,2]: 2 is a 4-neutral my 1 can take, but the completed bonus would face an enemy
   // 30-stack (R3: indefensible), so it is refused. That is no reason to save the leftover toward it.
+  // #422: at 4 (3 killed taking it, 4 left there: more than +3) the payback exemption does not apply.
   it('a refused, affordable step gets no saving', () => {
     const p = plan({
       edges: '1-2 2-3 1-4 4-6',
       bonuses: [[100, 3, [1, 2]]],
-      cells: { 1: 'M5', 2: 'n2', 3: 'E30', 4: 'M3', 6: 'n2' },
+      cells: { 1: 'M5', 2: 'n4', 3: 'E30', 4: 'M3', 6: 'n2' },
       turn: 3,
     });
     expect(p.warnings.join('\n')).toMatch(/indefensible/);

@@ -33,7 +33,7 @@ import { knownFirst, lateArrivals, lateNet, type Holds } from './holds.js';
 import { isDoomedOut } from './doomed-out.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';
-import type { PlanCtx, PlanState } from './state.js';
+import { paybackLive, type PlanCtx, type PlanState } from './state.js';
 import { stackFacing, type StrikeStack } from './strike.js';
 import type { Targets } from './targets.js';
 import type { Border, Threats } from './threats.js';
@@ -840,7 +840,8 @@ export function leftoverDeploy(
      * #288: a source facing no threat whose every neighbour is mine or captured this turn has nothing
      * left to attack once the captures land, so a leftover there idles: it goes with its attacks whose
      * targets still have a step onward (most steps onward first, then id). Never under No-Split (an
-     * order already carries the whole stack), nor with a combined capture or a softener.
+     * order already carries the whole stack), nor with a combined capture or a softener, nor onto a
+     * member a #422 payback completion may lose next turn.
      */
     const joinsOf = (src: number): PlannedMove[] | undefined => {
       if (noSplit || borders.has(src) || pc.myCommanders.has(src) || leftToAttack(src).length) return undefined;
@@ -848,7 +849,14 @@ export function leftoverDeploy(
       const out = moves
         .filter(
           (m) =>
-            m.kind === 'attack' && m.from === src && captured.has(m.to) && !ps.combined.has(m.to) && state.get(m.to)?.owner.kind === 'neutral' && onward(m.to) > 0,
+            m.kind === 'attack' &&
+            m.from === src &&
+            captured.has(m.to) &&
+            !ps.combined.has(m.to) &&
+            // #422: never onto a member a payback completion expects to lose next turn.
+            !paybackLive(ps, ps.paybackFalls, m.to) &&
+            state.get(m.to)?.owner.kind === 'neutral' &&
+            onward(m.to) > 0,
         )
         .sort((a, b) => onward(b.to) - onward(a.to) || a.to - b.to);
       return out.length ? out : undefined;

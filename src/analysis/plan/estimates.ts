@@ -508,6 +508,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     untrustedAt,
     decidedGame,
     paybackTurns,
+    capturePaybackTurns: paybackTurns,
   };
 }
 

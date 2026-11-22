@@ -26,21 +26,47 @@ export function plainEconomy(pc: PlanCtx, tgt: Targets, id: number, gain: number
   if (pc.inFocus(id) || tgt.economicMember.has(id)) return null;
   const lost = straightKills(pc.defenceAt(id), pc.rates.defensiveKillRate);
   const worth = pc.plainWorth(id, gain);
-  return (worth > 0 ? lost > pc.paybackTurns * worth : lost > PLAIN_EXPANSION_LOSS) ? { lost, worth } : null;
+  return (worth > 0 ? lost > pc.capturePaybackTurns * worth : lost > PLAIN_EXPANSION_LOSS) ? { lost, worth } : null;
+}
+
+/**
+ * #426: a neutral in view whose defenders kill none of my attackers (0 armies at the usual 70% defensive
+ * rate): its capture costs only the armies that land on it, which stay mine. Live (a guard-off game of
+ * 0-army neutrals, turn 4), 25 of them beside idle stacks were skipped as members of bonuses too costly to
+ * finish, though a bonus's cost says nothing about a territory that loses nothing. Never a negative
+ * bonus's member (it would cut income).
+ */
+export function noLossNeutral(pc: PlanCtx, tgt: Targets, id: number): boolean {
+  const st = pc.territories.get(id);
+  return (
+    st?.owner.kind === 'neutral' &&
+    st.armies !== null &&
+    !tgt.negativeMember.has(id) &&
+    straightKills(pc.defenceAt(id), pc.rates.defensiveKillRate) === 0
+  );
+}
+
+/**
+ * #426: whether pass 3 takes `id` only as a no-loss capture ({@link noLossNeutral}): a member of an
+ * uneconomic bonus no other exemption lets through. Its reason line says so.
+ */
+export function onlyNoLoss(pc: PlanCtx, tgt: Targets, id: number): boolean {
+  return tgt.uneconomicMember.has(id) && !tgt.economicMember.has(id) && !plainEligible(pc, tgt, id, false, false) && noLossNeutral(pc, tgt, id);
 }
 
 /**
  * Pass 3's eligibility (#125): not a player's under `balanced` (but #281's empty enemy territory), and
  * not only a member of an uneconomic bonus (but #281's denial: what it denies the opponent beside it is
- * its worth, not my bonus; and #417's land a static seat left, outside a negative bonus: the breach force
- * takes it while it is up for taking).
+ * its worth, not my bonus; #417's land a static seat left, outside a negative bonus: the breach force
+ * takes it while it is up for taking; and #426's no-loss neutral). `noLoss` false leaves #426 out.
  */
-export function plainEligible(pc: PlanCtx, tgt: Targets, id: number, enemy: boolean): boolean {
+export function plainEligible(pc: PlanCtx, tgt: Targets, id: number, enemy: boolean, noLoss = true): boolean {
   return (
     !(pc.balanced && enemy && !tgt.emptyEnemies.has(id)) &&
     (tgt.economicMember.has(id) ||
       !tgt.uneconomicMember.has(id) ||
       tgt.denials.has(id) ||
+      (noLoss && noLossNeutral(pc, tgt, id)) ||
       // #417, the breach force: land a static seat left is taken while it is up for taking.
       (pc.vacated.has(id) && !tgt.negativeMember.has(id)) ||
       (pc.territoryShare(1) > 0 && !tgt.negativeMember.has(id)))
