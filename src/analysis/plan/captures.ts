@@ -949,7 +949,7 @@ export function bonusPasses(
   prev: ReturnType<typeof captureRules> & ReturnType<typeof captureHelper>,
 ) {
   const {
-    g, s, guarded, paybackTurns, territories: state, label, bonusName, mineSet, incomeGain, incomeAfter, defenceAt,
+    g, s, guarded, capturePaybackTurns: paybackTurns, territories: state, label, bonusName, mineSet, incomeGain, incomeAfter, defenceAt,
     bonusTs, completedBy, inFocus,
   } = pc;
   const {

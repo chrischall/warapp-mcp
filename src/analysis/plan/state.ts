@@ -7,6 +7,7 @@
 // plan has made so far. A phase moved out of planner.ts takes `(ctx, state)` explicitly instead of
 // closing over planPass's locals; planPass still names each field as the local it was.
 
+import type { ShortGates } from './horizon.js';
 import type { Siege } from './siege.js';
 import type { IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
@@ -110,6 +111,14 @@ export interface OpponentsCtx {
   decidedGame: { state: 'winning' | 'losing'; turns: number; loser: number; rate: number; estimated?: true } | undefined;
   /** The turns every payback test counts (#201). */
   paybackTurns: number;
+  /**
+   * #432: the turns a capture's payback test counts (pass 3, a bonus's economy, staging, a two-move stage, a push's
+   * cap, the stand-still completion): {@link paybackTurns}, or fewer while a 1v1's gates are short — set right after
+   * the threats phase, so read it from the context when called. Holds keep `paybackTurns`.
+   */
+  capturePaybackTurns: number;
+  /** #432: the start-of-turn gate budget of a 1v1 is short (set right after the threats phase, with `paybackTurns`). */
+  shortGates?: ShortGates;
 }
 
 /** The territories as the board shows them, and what they are worth (cards aside). */

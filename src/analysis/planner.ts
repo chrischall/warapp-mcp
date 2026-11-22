@@ -1668,6 +1668,7 @@ import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js
 import { deployBook } from './plan/orders.js';
 import { holdsPhase, priorOnlyHold, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
+import { applyShortGates } from './plan/horizon.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
@@ -2050,6 +2051,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- 1t. threat trend, 1. defence (plan/threats.ts) ----
   const threats = threatsPhase(pc, ps, input, book.valueOf);
+  // #432: a 1v1 whose gates are short at the start judges its captures on a shorter payback horizon from here on
+  // (every capture test after this reads `pc.capturePaybackTurns`; holds keep `paybackTurns`).
+  applyShortGates(pc, ps, threats);
   const { growthOf, reinforcementAt, borders, facing, borderAt } = threats;
 
   // ---- 1. holds, #172, 1h, 1b, 1c, #122 garrisons (plan/holds.ts) ----
@@ -2921,7 +2925,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           if (reach >= t.cost)
             rationale.push(
               worth > 0
-                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${paybackTurns} turns of it pay back.`
+                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${pc.capturePaybackTurns} turns of it pay back.`
                 : `Do not expand into ${label(t.id)}: it adds no income and loses ~${lost} armies (more than ${PLAIN_EXPANSION_LOSS}), in no bonus worth completing.`,
             );
           continue;
