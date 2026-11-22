@@ -456,4 +456,27 @@ describe("opponentReinforcement (#164): an opponent's Reinforcement card on the 
     expect(opponentReinforcement(undefined, [])).toBeUndefined();
     expect(opponentReinforcement(settings(), [])).toBeUndefined();
   });
+  it('#427: with pieces drawn at random it runs at the expected weighted rate, not the fastest', () => {
+    // 3 pieces a turn: Reinforcement's minimum 1, the other 2 drawn by weight (1 of 6.2), so 1 + 2/6.2
+    // ≈ 1.32 Reinforcement pieces a capturing turn — not the 3 of the fastest (every random piece its).
+    // The first card needs 3 more (5 less 2 to start): 3 capturing turns, playable on turn 4 (fastest:
+    // turn 2); the second 8: 7 turns, so 4 per card (fastest: 2).
+    const drawn = normalizeSettings({
+      NumberOfCardsToReceiveEachTurn: 3,
+      ReinforcementCard: { NumPieces: 5, InitialPieces: 2, MinimumPiecesPerTurn: 1, Weight: 1, Mode: 0, FixedArmies: 5 },
+      BlockadeCard: { NumPieces: 5, InitialPieces: 2, MinimumPiecesPerTurn: 0, Weight: 1, MultiplyAmount: 4 },
+      DiplomacyCard: { NumPieces: 5, InitialPieces: 3, MinimumPiecesPerTurn: 0, Weight: 1.5, Duration: 2 },
+      SanctionsCard: { NumPieces: 5, InitialPieces: 0, MinimumPiecesPerTurn: 0, Weight: 1, Duration: 1, Percentage: 0.5 },
+      ReconnaissanceCard: { NumPieces: 5, InitialPieces: 3, MinimumPiecesPerTurn: 0, Weight: 1.7, Duration: 1 },
+    });
+    expect(opponentReinforcement(drawn, [])).toEqual({ firstTurn: 4, armies: 5, turnsPerCard: 4 });
+  });
+  it('#427: a card every player starts with and never draws again comes once, on turn 1', () => {
+    const once = normalizeSettings({
+      NumberOfCardsToReceiveEachTurn: 1,
+      ReinforcementCard: { NumPieces: 10, InitialPieces: 10, MinimumPiecesPerTurn: 0, Weight: 0, Mode: 0, FixedArmies: 10 },
+      SpyCard: { NumPieces: 3, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1 },
+    });
+    expect(opponentReinforcement(once, [])).toEqual({ firstTurn: 1, armies: 10, turnsPerCard: null });
+  });
 });

@@ -929,6 +929,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
   orders (a move's reason only); captures, next income and concessions unchanged.
 - **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #433 and #427 is open).
+- **#427 (draft, owner approval pending).** (1) Bug: the tracker reads every deploy as income, so an opponent's
+  Reinforcement play it saw set its tracked figure (max observed, then carried) while the clock added the next card
+  on top: one card counted twice, every turn. `enemyDeployEstimates` now reads the figure again with each counted
+  play's card armies out when only card plays set it (`EnemyDeployEstimate.cardInTrack`, a "… counts the
+  Reinforcement card it played on turn N: M without it (#427)" warning; `hiddenPool` uses the same figure). Golden: 0
+  of 4653 plans changed. (2) Rule: `opponentReinforcement` runs the opponents' clock at the expected weighted rate
+  (minimum plus the weighted share of the random pieces), not the fastest; identical wherever no piece is drawn at
+  random. Not done: reading opponents' plays when card plays are not fogged (the history's order shape is unverified
+  live).
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to
