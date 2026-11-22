@@ -94,3 +94,29 @@ describe('#426 a no-loss neutral capture is taken even in a bonus too costly to 
   });
 });
 
+describe('#426 rule 4d lets a no-loss capture through when only fog faces its new border', () => {
+  // My T1 (2) alone, guarded goal. T2, a 0-army neutral beside it, borders T3: player 20's, its armies hidden
+  // (owner shown, armies fogged), whose deploy is ~12 (a what-if): holding T2 next turn would need more than
+  // my next income of 5, so rule 4d stopped it. With T3 in view (player 20's 1 army there), the border faces
+  // a stack I can see: still stopped.
+  const fogged = (id: number): TerritoryState => ({ territoryId: id, owner: { kind: 'player', playerId: 20 }, armies: null, fogLevel: 'OwnerOnly' });
+  const sc: Scenario = { edges: '1-2 2-3 1-4', cells: { 1: 'M2', 2: 'n0', 4: 'n9' }, income: 5 };
+  const deploy12 = (i: PlanInput): PlanInput => ({ ...i, options: { ...i.options, enemyDeploy: 12 } });
+  const withFog = (): PlanInput => {
+    const i = deploy12(input({ ...sc, cells: { ...sc.cells, 3: 'E1' } }));
+    return { ...i, board: { ...i.board, territories: i.board.territories.map((t) => (t.territoryId === 3 ? fogged(3) : t)) } };
+  };
+
+  it('takes it, and says only the fog faces the new border', () => {
+    const p = planTurn(withFog());
+    expect(attacked(p, 2)).toBe(true);
+    expect(why(p)).toMatch(/Take T2 \(#2\).*only the fog faces its new border.*#426/);
+  });
+
+  it('still stops it when a stack in view faces the new border', () => {
+    const p = planTurn(deploy12(input({ ...sc, cells: { ...sc.cells, 3: 'E1' } })));
+    expect(attacked(p, 2)).toBe(false);
+    expect(why(p)).toMatch(/Frontier grows|frontier would then need/);
+  });
+});
+
