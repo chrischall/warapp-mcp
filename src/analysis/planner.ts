@@ -828,6 +828,11 @@
 //     absorbed by its own neighbours' growth) and is now cheaper to take than it
 //     was; never under `expand`/`defend`). Fogged or unknown neighbours are never attacked — they
 //     produce a warning.
+//     #430 (owner decision of 2026-11-22): under `balanced`, the opponents' territories that retake
+//     a bonus I held in full on `previousBoard` are bonus targets too, in every format, when the retake
+//     completes it this turn (every missing member in view, beside mine), costs at most RETAKE_VALUE_TURNS
+//     (5) × its value, and the profile does not read me behind; it ranks as any completion, so a stronger hold
+//     funds first (plan/targets.ts, `retakeMembers`).
 //  3. Capture cost (#126): the fewest armies whose exact `winChance` reaches the capture's
 //     chance — certain (chance 1) means every roll and rounding takes it: `armiesToTake` at 0%
 //     luck under straight rounding, one army more where weighted-random rounding could round a
