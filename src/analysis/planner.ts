@@ -942,7 +942,10 @@
 //     scored by its net worth (rule 4c), not its value, in every test above.
 //     One owner per bonus (PLAN-TEAMS C3.3): a positive bonus with a member my teammate visibly
 //     holds is not scored at all (a bonus pays only the player holding every member), focused or
-//     not (a focus on it is ignored with a warning); its other members are plain expansion. The
+//     not (a focus on it is ignored with a warning); its other members are plain expansion — unless
+//     (#435) I alone hold the most members: then it is mine to work, its other members scored and
+//     advanced, the teammate's left for them to hand over (a Gift), never completable while they
+//     stand; an uneconomic one is still skipped as before. The
 //     plan's `team.sharedBonuses` (plan/team.ts) lists each such bonus I hold members of too, and
 //     who holds the most (`nearer`), from the start-of-turn board. No-team plans are unchanged.
 //     Team focus (PLAN-TEAMS C3.4): with my teammates' entered orders read (V5, unverified), a

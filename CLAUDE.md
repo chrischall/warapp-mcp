@@ -1656,7 +1656,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     line in the reads. Inform only (P1): the planner does not size refills on it.
   - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
     teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
-    warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus
+    warning); its other members are plain expansion. #435 (proposed, owner approval pending): one I alone hold the
+    most members of (`nearer`; a tie is nobody's) is mine to work — its other members are scored and advanced,
+    the teammate's are theirs to hand over (a Gift), never captured or costed, and it is never `completable`
+    while they stand (no income claimed); one that is then uneconomic stays skipped as before, its members
+    never marked uneconomic. `team.sharedBonuses` (advisory) lists each bonus
     we both hold members of and who holds the most (`nearer`), from the start-of-turn board; a fogged
     teammate territory is unknown (team vision unverified). Absent outside a team game.
   - **Commit to the closest bonus (#101, rule 4f).** While no bonus is held, and in the opening
