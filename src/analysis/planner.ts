@@ -1078,7 +1078,8 @@
 //     income and the shortfall) and warns when its own captures open a gate the income cannot hold.
 //     #426 (draft): a no-loss neutral (its defenders kill none of my attackers, `noLossNeutral`) is taken
 //     by pass 3 even in an uneconomic bonus, and rule 4d lets one through when only the fog faces its new
-//     border (`outgrows`, not in a 1v1); a stack idle two turns beside one is warned of (plan/free-capture.ts).
+//     border and the hold it adds is at most 1× the next income (`outgrows`, not in a 1v1); a stack idle two
+//     turns beside one is warned of (plan/free-capture.ts).
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
 //     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative

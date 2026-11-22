@@ -7,6 +7,7 @@ import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
+import { syntheticInput } from './golden/corpus.js';
 import { board } from './helpers.js';
 
 const ME = 10;
@@ -94,11 +95,10 @@ describe('#426 a no-loss neutral capture is taken even in a bonus too costly to 
   });
 });
 
-describe('#426 rule 4d lets a no-loss capture through when only fog faces its new border', () => {
+describe('#426 rule 4d lets a no-loss capture through when only the fog faces its new border', () => {
   // My T1 (2) alone, guarded goal. T2, a 0-army neutral beside it, borders T3: player 20's, its armies hidden
   // (owner shown, armies fogged), whose deploy is ~12 (a what-if): holding T2 next turn would need more than
-  // my next income of 5, so rule 4d stopped it. With T3 in view (player 20's 1 army there), the border faces
-  // a stack I can see: still stopped.
+  // my next income of 5. With T3 in view (player 20's 1 army there), the border faces a stack I can see.
   const fogged = (id: number): TerritoryState => ({ territoryId: id, owner: { kind: 'player', playerId: 20 }, armies: null, fogLevel: 'OwnerOnly' });
   const sc: Scenario = { edges: '1-2 2-3 1-4', cells: { 1: 'M2', 2: 'n0', 4: 'n9' }, income: 5 };
   const deploy12 = (i: PlanInput): PlanInput => ({ ...i, options: { ...i.options, enemyDeploy: 12 } });
@@ -107,10 +107,22 @@ describe('#426 rule 4d lets a no-loss capture through when only fog faces its ne
     return { ...i, board: { ...i.board, territories: i.board.territories.map((t) => (t.territoryId === 3 ? fogged(3) : t)) } };
   };
 
-  it('takes it, and says only the fog faces the new border', () => {
+  // Golden synthetic board 602 (6 seats): T23, beside T26, has defenders the board's 0.7% defensive rate kills
+  // none of, and only the fog beside it. Taking it raises the frontier's next-turn hold from 2 to 15 against a
+  // next income of 13 — over the income, so rule 4d stopped it, but the 13 it adds are within it (1×, the cap).
+  it('takes it when the hold its new border adds is within the next income, and says why', () => {
+    const p = planTurn(syntheticInput(602));
+    expect(attacked(p, 23)).toBe(true);
+    expect(why(p)).toMatch(/Take T23 \(#23\).*only the fog faces its new border.*#426/);
+  });
+
+  // The owner's cap (2026-11-22): over 1× the next income, rule 4d decides as before. Here T2's border alone
+  // needs well over the next income of 5.
+  it('leaves it to rule 4d when the hold its new border adds is over the next income', () => {
     const p = planTurn(withFog());
-    expect(attacked(p, 2)).toBe(true);
-    expect(why(p)).toMatch(/Take T2 \(#2\).*only the fog faces its new border.*#426/);
+    expect(attacked(p, 2)).toBe(false);
+    expect(why(p)).not.toMatch(/#426/);
+    expect(why(p)).toMatch(/frontier would then need/);
   });
 
   it('still stops it when a stack in view faces the new border', () => {

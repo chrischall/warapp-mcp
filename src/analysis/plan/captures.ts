@@ -1176,10 +1176,13 @@ export function bonusPasses(
     // #426: a no-loss neutral whose new border faces only the fog (no player's territory beside it shown with
     // its armies): its hold cost prices a stack nobody has seen, and the capture risks only the armies that
     // land. Not in a 1v1, where #297's gate budget prices the one opponent's floating deploy wherever it is.
-    if (!gate && noLossNeutral(pc, tgt, t) && fogOnlyFaces(t)) {
+    // The owner's cap (2026-11-22): only while the hold the capture adds is at most the next income (1×);
+    // over it, rule 4d decides as before (a golden synthetic board let one through at 85 against an income of 9).
+    const adds = f.holdCost - frontierOf(without, stays).holdCost;
+    if (!gate && adds <= next && noLossNeutral(pc, tgt, t) && fogOnlyFaces(t)) {
       denied.set(
         t,
-        `Take ${label(t)} though holding it next turn would need ${f.holdCost} (the next income is ${next}): its defenders kill none of the attackers and only the fog faces its new border, so all it risks is the armies that land there (#426).`,
+        `Take ${label(t)} though holding the frontier next turn would then need ${f.holdCost} (the next income is ${next}): its defenders kill none of the attackers, only the fog faces its new border and the ${adds} it adds are within that income, so all it risks is the armies that land there (#426).`,
       );
       return null;
     }
