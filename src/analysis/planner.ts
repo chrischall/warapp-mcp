@@ -514,9 +514,10 @@
 //     and counts. The leftover's revival may still hold a capped border after all. Off under a `defend`
 //     goal the caller gave, and with `options.holdCap: false` (tests of earlier hold rules use it).
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
-//     of my complete bonuses containing it, plus incomplete bonuses containing it
-//     that I would lose all access to without it, plus (#122) its share of every other
-//     incomplete bonus containing it that I am building — value × the members I hold ÷ its
+//     of my complete bonuses containing it, plus (#122) its share of every
+//     incomplete bonus containing it that I am building (#425: one it is my only way into
+//     included — it used to count whole, whatever stood on the rest; now its share, and nothing
+//     when an enemy holds or roams a member; a fogged member keeps it, owner decision 2026-11-22) — value × the members I hold ÷ its
 //     size, one decimal, when every missing member is a visible neutral and finishing it passes
 //     rule 4's economy tests (PAYBACK_TURNS, WASTELAND_FACTOR); #298: or when the missing members
 //     are visible neutrals and visible foe territories, one of them a foe's movable stack beside the
@@ -1023,7 +1024,13 @@
 //     bonuses this turn's earlier captures completed share the same next income (their added
 //     needs count too). Then: under `balanced`/`defend` the capture is
 //     refused (warning "… indefensible …: not completed"); under `expand` and
-//     `complete-bonus` it is made with a warning. Under `balanced`/`defend` a bonus's
+//     `complete-bonus` it is made with a warning. #422, the payback exemption: a completion whose
+//     losses — the attackers its captures into the bonus lose this turn plus the armies left on the
+//     members that would fall — are at most the bonus's value is made anyway (a "Complete bonus …
+//     (#422)" line): held at the end of this turn, the bonus pays that value next turn even if it
+//     falls after. Such a bonus keeps no conceded border (rule 1c), gets no #122 garrison or #265
+//     weak-member call, and the leftover never rides an attack onto a member it may lose (#288).
+//     Under `balanced`/`defend` a bonus's
 //     score is value / (capture cost + DEFENSE_DISCOUNT × that defence cost).
 //  4d. Frontier cost (#71). Every capture pays for the frontier it adds, in armies: for each
 //     territory it touches (the capture and its held neighbours), its border cost after minus
@@ -1081,6 +1088,10 @@
 //     rule 4e's contact fallback, where 4d is only a cost (#114), runs it too. The plan reports `gates` (each gate's
 //     need and armies, conceded ones marked, the summed need, what stands on them, the per-gate deficit, the next
 //     income and the shortfall) and warns when its own captures open a gate the income cannot hold.
+//     #426 (draft): a no-loss neutral (its defenders kill none of my attackers, `noLossNeutral`) is taken
+//     by pass 3 even in an uneconomic bonus, and rule 4d lets one through when only the fog faces its new
+//     border and the hold it adds is at most 1× the next income (`outgrows`, not in a 1v1); a stack idle two
+//     turns beside one is warned of (plan/free-capture.ts).
 //  4e. Never stand still (#104, #107; every goal but `complete-bonus`, after pass 3). A plan that
 //     makes no capture at all (no expansion, break, finishing off or strike) in the opening or
 //     expansion phase takes one neutral capture toward a positive bonus (net > 0, never a negative
@@ -1667,12 +1678,14 @@ import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js
 import { deployBook } from './plan/orders.js';
 import { holdsPhase, priorOnlyHold, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
+import { applyShortGates } from './plan/horizon.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
 import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { contestedBonuses } from './plan/stockpile.js';
-import { afterLeftoverCaptures, plainEconomy, plainEligible } from './plan/after-leftover.js';
+import { warnIdleBesideFree } from './plan/free-capture.js';
+import { afterLeftoverCaptures, onlyNoLoss, plainEconomy, plainEligible } from './plan/after-leftover.js';
 import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
@@ -1695,7 +1708,7 @@ export * from './plan/observe.js';
 export * from './plan/deploy-estimates.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
 export { TRUCE_RELAX_VALUE } from './plan/relations.js';
-export { SPREAD_INCOME_SLACK, SPREAD_LAST_TURN, SPREAD_TERRITORIES } from './plan/targets.js';
+export { HOLDS_BONUS_MIN_VALUE, SPREAD_INCOME_SLACK, SPREAD_LAST_TURN, SPREAD_TERRITORIES } from './plan/targets.js';
 
 /** Passes that refine the cut set (#172) before falling back to the plan that cuts nothing. */
 const TWO_STEP_PASSES = 3;
@@ -2049,6 +2062,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- 1t. threat trend, 1. defence (plan/threats.ts) ----
   const threats = threatsPhase(pc, ps, input, book.valueOf);
+  // #432: a 1v1 whose gates are short at the start judges its captures on a shorter payback horizon from here on
+  // (every capture test after this reads `pc.capturePaybackTurns`; holds keep `paybackTurns`).
+  applyShortGates(pc, ps, threats);
   const { growthOf, reinforcementAt, borders, facing, borderAt } = threats;
 
   // ---- 1. holds, #172, 1h, 1b, 1c, #122 garrisons (plan/holds.ts) ----
@@ -2920,15 +2936,19 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           if (reach >= t.cost)
             rationale.push(
               worth > 0
-                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${paybackTurns} turns of it pay back.`
+                ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${pc.capturePaybackTurns} turns of it pay back.`
                 : `Do not expand into ${label(t.id)}: it adds no income and loses ~${lost} armies (more than ${PLAIN_EXPANSION_LOSS}), in no bonus worth completing.`,
             );
           continue;
         }
       }
       // #281 × #282: a denial is never sourced from the territory my commander walks from (its transit hold).
-      if (tgt.denials.has(t.id)) withoutTransit(pc, tgt, t.id, () => tryExpand(t.id, 'expands territory'));
-      else tryExpand(t.id, 'expands territory');
+      // #426: a no-loss capture in a bonus too costly to finish says why it is taken all the same.
+      const reason = onlyNoLoss(pc, tgt, t.id)
+        ? `expands territory: a no-loss capture (its defenders kill none of the attackers; what lands stays mine), so the cost of finishing its bonus does not stop it (#426)`
+        : 'expands territory';
+      if (tgt.denials.has(t.id)) withoutTransit(pc, tgt, t.id, () => tryExpand(t.id, reason));
+      else tryExpand(t.id, reason);
     }
     dropEmptyEnemyTargets(ps, tgt, empties);
   }
@@ -3408,6 +3428,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- expected, frontier, two-step holds, gambled and shared borders (plan/report.ts) ----
   const expected = reportExpected(pc, ps, book, threats, hd, tgt, caps);
+  // #426: a stack idle two turns beside a no-loss neutral (plan/free-capture.ts), report only.
+  warnIdleBesideFree(pc, ps, tgt, input.previousBoard);
   // ---- offence report (#72), the warnings after the deploys, "Not attacking" (#167) (plan/report.ts) ----
   const { sentAt } = reportOffence(pc, ps, book, threats, hd, tgt, holdLocked, leadSpareFor);
   // ---- 7. schedule the moves (#127), the exits (#179), Order Priority (plan/move-order.ts) ----

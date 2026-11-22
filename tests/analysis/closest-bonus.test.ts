@@ -131,7 +131,8 @@ describe('commit to the closest bonus while none is held (#101)', () => {
     // neither Gamma's 31 nor Delta's 41 is attacked.
     expect(targets(p)).toEqual([11, 12, 21]);
     expect(why(p)).toMatch(
-      /No bonus held: expansion goes to the bonus closest to completion first — Alpha \(#301\) 6 armies to finish, 2 turns at income 5, Beta \(#302\) 6, 2 turns, Delta \(#304\) 18, 6 turns \(6 layers deep\), Gamma \(#303\) 18, 6 turns \(6 layers deep\) — /,
+      // #416: the 3 movable armies on 1 and on 2 stand beside each bonus and count toward its turns.
+      /No bonus held: expansion goes to the bonus closest to completion first — Alpha \(#301\) 6 armies to finish \(3 standing beside it\), 1 turn at income 5, Beta \(#302\) 6 \(3 standing beside it\), 1 turn, Delta \(#304\) 18 \(3 standing beside it\), 6 turns \(6 layers deep\), Gamma \(#303\) 18 \(3 standing beside it\), 6 turns \(6 layers deep\) — /,
     );
     expect(attacks(p).find((m) => m.to === 21)!.reason).toMatch(/advances bonus Beta \(#302\) \(\+2, 6 armies to finish\)/);
     expect(valid(p, b, 5)).toEqual([]);
@@ -210,6 +211,24 @@ describe('commit to the closest bonus while none is held (#101)', () => {
     // Value per army again: Delta (9 / 18) and Gamma (8 / 18) are advanced before Beta (2 / 5).
     expect(attacks(p).map((m) => m.to)).toEqual([41, 31, 21]);
     expect(valid(p, b, 7)).toEqual([]);
+  });
+
+  it('(d) #416: a bonus worth only +1 held does not end the commitment', () => {
+    // As (d), on a map where Alpha is worth +1: one point of income is no bonus to build on.
+    const g1 = buildGraph(makeMap(IDS, EDGES, BONUSES.map(([id, name, value, ts]) => [id, name, id === ALPHA ? 1 : value, ts])));
+    const b = board([
+      mine(1, 8),
+      mine(11, 1),
+      mine(12, 1),
+      mine(2, 8),
+      neutral(21, 2),
+      player(22, 1, P2),
+      ...neutrals([31, 32, 33, 34, 35, 36, 41, 42, 43, 44, 45, 46]),
+      player(90, 3, P2),
+    ]);
+    const p = planTurn({ graph: g1, board: b, me: ME, income: 7, settings: STD, game: DUEL });
+    expect(p.profile.phase).toBe('contact');
+    expect(why(p)).toMatch(/No bonus worth more than \+1 held: expansion goes to the bonus closest to completion first — Beta \(#302\)/);
   });
 
   it('(e) in an FFA in contact, it keeps committing while neutrals remain in reach (#132)', () => {
