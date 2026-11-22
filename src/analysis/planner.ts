@@ -514,9 +514,10 @@
 //     and counts. The leftover's revival may still hold a capped border after all. Off under a `defend`
 //     goal the caller gave, and with `options.holdCap: false` (tests of earlier hold rules use it).
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
-//     of my complete bonuses containing it, plus incomplete bonuses containing it
-//     that I would lose all access to without it, plus (#122) its share of every other
-//     incomplete bonus containing it that I am building — value × the members I hold ÷ its
+//     of my complete bonuses containing it, plus (#122) its share of every
+//     incomplete bonus containing it that I am building (#425: one it is my only way into
+//     included — it used to count whole, whatever stood on the rest; now its share, and nothing
+//     when an enemy holds or roams a member; a fogged member keeps it, owner decision 2026-11-22) — value × the members I hold ÷ its
 //     size, one decimal, when every missing member is a visible neutral and finishing it passes
 //     rule 4's economy tests (PAYBACK_TURNS, WASTELAND_FACTOR); #298: or when the missing members
 //     are visible neutrals and visible foe territories, one of them a foe's movable stack beside the
