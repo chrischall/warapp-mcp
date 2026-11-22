@@ -691,6 +691,7 @@ describe('planTurn — value-aware defence', () => {
 
   it('counts a bonus I would lose access to, and per-territory income', () => {
     // T1 is my only foothold in the +3 bonus {1, 4} (T4 neutral); T8 is a 6-army enemy.
+    // #425: the only way in carries its building share, 3 × 1 ÷ 2, not the whole +3.
     const g = buildGraph(
       makeMap(
         [1, 4, 8],
@@ -705,7 +706,7 @@ describe('planTurn — value-aware defence', () => {
     const p = planTurn({ graph: g, board: s, me: ME, income: 5, settings: STD, options: { goal: 'defend' } });
     expect(p.conceded).toEqual([]);
     expect(p.deploys).toEqual([{ territoryId: 1, armies: 5 }]);
-    expect(p.rationale.join('\n')).toMatch(/Deploy 5 to T1 \(#1\).*protects \+3/);
+    expect(p.rationale.join('\n')).toMatch(/Deploy 5 to T1 \(#1\).*protects \+1\.5\)/);
 
     // With one army per territory held (and no base income it would fall back to),
     // losing T1 also costs that army of income.
@@ -1585,8 +1586,11 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
     expect(attacks(p)).toEqual([]);
     expect(p.expected.bonusesCompleted).toEqual([]);
     expect(p.warnings.join('\n')).toMatch(/completing B950 \(#950\) leaves T8 \(#8\) indefensible .*: not completed/);
-    expect(p.rationale.join('\n')).toMatch(/Deploy 3 to T1 \(#1\) so it holds/);
-    expect(p.conceded).toEqual([]);
+    // #425: T1 is the only way into B950, whose other member the enemy holds, so it protects +0 and is
+    // conceded (it was held for the whole +3); as my only territory it still gets every army.
+    expect(p.warnings.join('\n')).toMatch(/T1 \(#1\) cannot be held economically \(needs 3, protects \+0\): conceded/);
+    expect(p.conceded).toEqual([1]);
+    expect(p.deploys).toEqual([{ territoryId: 1, armies: 10 }]);
     expect(deploySum(p)).toBe(10);
   });
 

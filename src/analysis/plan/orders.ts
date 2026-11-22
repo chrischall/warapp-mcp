@@ -337,10 +337,18 @@ export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardSta
         continue;
       }
       // An incomplete bonus I am working on (T is in it): lost access if T is my only way in.
+      // #425: the only way in carries the share #122 gives a member of a bonus being built (value ×
+      // members held ÷ size: T alone here), and only when the bonus passes `building()`. It used to
+      // carry the whole bonus whatever stood on the rest, so a lone foothold in a bonus an enemy holds
+      // or roams a member of drew a full bonus's hold (on the finished games' truth boards 276 of 285
+      // such borders were in a bonus an enemy held part of; 7 of the 285 bonuses were ever completed).
       const access = (has: (x: number) => boolean) =>
         ts.some((x) => has(x) || neighborsOf(g, x).some(has));
       if (!access(mineWithout)) {
-        v += b.value;
+        if (building(ts, b.value)) {
+          const held = ts.filter((x) => ps.holdings.has(x) || x === t).length;
+          v += Math.round(((b.value * held) / ts.length) * 10) / 10;
+        }
         continue;
       }
       // #122: a member of a bonus I am building carries its share of the bonus — value × the
