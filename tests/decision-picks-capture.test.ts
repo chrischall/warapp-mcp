@@ -43,6 +43,7 @@ describe('pickWarningCode', () => {
       ['In a 1v1 the best primary group within 4 hops scores 3, but one spread to any distance scores 9 (at least 1.5× as much): …', 'spread-relaxed'],
       ['Only 2 pickable territories for a limit of 3: the list has no full fallback.', 'short-pickable'],
       ['The fallback group scores more than the primary (12 vs 10; …). Weigh the trade before submitting.', 'fallback-outscores'],
+      ['Primary pick 2 is T3, not T9: in the 1 award outcomes … (#429). The primary’s joint score is 17; weigh it before submitting.', 'primary-answered'],
       ['Territory limit missing from settings; assumed 4.', 'assumed-territory-limit'],
       ['Full distribution (DistributionMode 0, no territory limit): every territory is dealt, so each of the 2 players gets about 5 of the 10 pickable; the list only says which you would rather hold.', 'full-distribution'],
       ['Could not tell which seat is yours in this team game: every other player is treated as an opponent.', 'team-seat-unknown'],
