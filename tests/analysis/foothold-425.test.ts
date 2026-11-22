@@ -3,14 +3,15 @@
 // the 36 finished games' truth boards that branch fired on 285 threatened borders, 276 of them in a
 // bonus an enemy already held part of; the bonus was completed later in 7. Since #425 the only-way-in
 // branch credits what #122 credits a member of a bonus being built — value × members held ÷ size, and
-// only when the bonus passes `building()` — so a foothold in a bonus an enemy holds or roams adds +0.
+// only while no enemy holds or roams a member of the bonus (else +0). Owner decision of 2026-11-22: a
+// member merely hidden by the fog keeps the share (`building()` itself refuses a fogged member).
 // Synthetic maps (every id and name here is made up).
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn, type PlannerSettings } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, mine, neutral } from './helpers.js';
+import { board, fogged, mine, neutral } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -60,5 +61,11 @@ describe('#425: the only-way-in branch credits the foothold its building share',
     const p = plan([neutral(2, 2), enemy(3, 2), neutral(4, 2)]);
     expect(text(p)).not.toMatch(/protects \+4/);
     expect(text(p)).not.toMatch(/T1 \(#1\).*protects \+[1-9]/);
+  });
+
+  it('a lone foothold in a bonus with a fogged member keeps its share (owner, 2026-11-22)', () => {
+    const p = plan([neutral(2, 2), fogged(3), neutral(4, 2)]);
+    expect(text(p)).toMatch(/T1 \(#1\).*protects \+1\b/);
+    expect(text(p)).not.toMatch(/protects \+4/);
   });
 });

@@ -516,8 +516,8 @@
 //  1a. Triage (every goal). Each threatened border's protected value is the sum
 //     of my complete bonuses containing it, plus (#122) its share of every
 //     incomplete bonus containing it that I am building (#425: one it is my only way into
-//     included — it used to count whole, whatever stood on the rest; now its share, and only when
-//     being built, so nothing when an enemy holds or roams a member) — value × the members I hold ÷ its
+//     included — it used to count whole, whatever stood on the rest; now its share, and nothing
+//     when an enemy holds or roams a member; a fogged member keeps it, owner decision 2026-11-22) — value × the members I hold ÷ its
 //     size, one decimal, when every missing member is a visible neutral and finishing it passes
 //     rule 4's economy tests (PAYBACK_TURNS, WASTELAND_FACTOR); #298: or when the missing members
 //     are visible neutrals and visible foe territories, one of them a foe's movable stack beside the
