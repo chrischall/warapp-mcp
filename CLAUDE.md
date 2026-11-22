@@ -1790,6 +1790,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     an all-in that failed, it is dropped for `DROP_TURNS` (3) turns, this one included: not scored, and rule 4e's
     contact fallback, #203's lead steps and #272's attack out of a conceded border never go into its missing members.
     warapp_plan_turn reports `bonusPush`, and a rationale line names the failed turns. No memory, no change (golden).
+  - **Retake a lost held-bonus member (#430, `retakeMembers` in `plan/targets.ts`; owner decision of 2026-11-22).**
+    Under `balanced` an opponent's territory was only a break or counter target, so a bonus I held in full on
+    `previousBoard` that lost a member to a player was retaken only by the 1v1 strike stack. Now each such member is a
+    bonus target in every format when the retake completes the bonus this turn (every missing member in view, beside
+    mine, no special unit, not #298-dropped), the capture costs together are at most `RETAKE_VALUE_TURNS` (5) × its value (the owner tightened the draft's 10×), and the
+    profile does not read me behind; a "Retake … (#430)" line names it. It then ranks as a completion (rule 4a), so a
+    hold scoring higher funds first, and R3 still refuses one that cannot be held; #298's attempt memory bounds retries.
+    Golden: 1 of 6253 plans changed (rationale only).
   - **One deploy reinforces one target (#277, `src/analysis/plan/second-sizing.ts`).** Once every attack is sized
     (after the #226 margin and #240's drops; not under No-Split or Local Deployment), when two or more attacks on one
     player's territories are each sized for its whole deploy, the one sending the most keeps its size and the others

@@ -95,6 +95,12 @@ export function targetsPhase(
   return { ...c4, denials, emptyEnemies };
 }
 
+/**
+ * #430 (owner decision of 2026-11-22): a retake of a held bonus's lost members costs at most this many
+ * times the bonus's value — tighter than PAYBACK_TURNS (10), which the first draft used.
+ */
+export const RETAKE_VALUE_TURNS = 5;
+
 /** The enemy bonuses I could break and the counter-attacks (under `balanced`, #72). */
 export function breakTargets(pc: PlanCtx, input: PlanInput) {
   const { g, me, foe, balanced, territories: state, mineSet, unitsAt, costAt } = pc;
@@ -182,6 +188,50 @@ export function captureTargets(
   const pileMembers = new Set(
     [...(input.stockpileAllIn ?? [])].flatMap((id) => (g.bonusById.has(id) ? bonusTerritories(g, id).filter((t) => !mineSet.has(t)) : [])),
   );
+  /**
+   * #430: the opponents' territories that retake a bonus I held in full on `previousBoard`. Under
+   * `balanced` an enemy territory was only a break or counter target, so a held bonus that lost a
+   * member to a player was never retaken outside the 1v1 strike stack (0 of 166 breaks regained in
+   * planner-era games). Such a member is a bonus target, in every format, when the retake completes
+   * the bonus this turn (every missing member in view, beside mine, no special unit, a foe's or a
+   * neutral; none of #298's dropped members), its capture costs together are at most
+   * RETAKE_VALUE_TURNS (5) × the value, and the profile does not read me behind (behind, the turn goes to
+   * holds and strikes: the evidence's confound). It then competes as a completion in the bonus passes
+   * and rule 4a's greedy step, so a hold that scores higher is still funded first, and R3 still
+   * refuses a retake that cannot be held.
+   */
+  const retakeMembers = new Set<number>();
+  if (balanced && input.previousBoard && profile.standing !== 'behind') {
+    const before = new Map(input.previousBoard.territories.map((t) => [t.territoryId, t]));
+    for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
+      const ts = bonusTs.get(b.id) ?? [];
+      if (b.value <= 0 || !ts.length || ts.every((t) => mineSet.has(t)) || bonusDropped.has(b.id)) continue;
+      const heldBefore = ts.every((t) => {
+        const was = visibleState(before.get(t));
+        return was?.owner.kind === 'player' && was.owner.playerId === pc.me;
+      });
+      if (!heldBefore) continue;
+      const missing = ts.filter((t) => !mineSet.has(t));
+      let cost = 0;
+      const ok = missing.every((t) => {
+        const st = state.get(t);
+        if (!st || st.armies === null || st.owner.kind === 'unknown' || st.owner.kind === 'available') return false;
+        if (st.owner.kind === 'player' && (!foe(st.owner.playerId) || pc.truce.noTarget(t))) return false;
+        if (uncounted(t) || droppedMembers.has(t) || !neighborsOf(g, t).some((n) => mineSet.has(n))) return false;
+        const c = costAt(t);
+        if (c === null) return false;
+        cost += c;
+        return true;
+      });
+      if (!ok || cost > RETAKE_VALUE_TURNS * b.value) continue;
+      const theirs = missing.filter((t) => state.get(t)!.owner.kind === 'player');
+      if (!theirs.length) continue;
+      for (const t of theirs) retakeMembers.add(t);
+      rationale.push(
+        `Retake ${theirs.map(label).join(', ')}: ${theirs.length > 1 ? 'they complete' : 'it completes'} bonus ${b.name} (+${b.value}) again, which I held in full last turn, for ${cost} armies (at most ${RETAKE_VALUE_TURNS} × its value), so ${theirs.length > 1 ? 'they are' : 'it is'} a bonus target (#430).`,
+      );
+    }
+  }
   /**
    * #240: territories my attacks failed on repeatedly while their owner reinforced them
    * (`input.repulsed`, {@link repulsedAttacks}): still that opponent's, armies in view, next to mine,
@@ -351,7 +401,7 @@ export function captureTargets(
       continue;
     }
     const enemy = st.owner.kind === 'player';
-    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t))) && !pileMembers.has(t)) {
+    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t))) && !pileMembers.has(t) && !retakeMembers.has(t)) {
       if (!leadStepsOn || unitsAt(t) > 0 || droppedMembers.has(t) || !g.map.bonuses.some((b) => b.value > 0 && bonusTs.get(b.id)!.includes(t))) continue;
       const defenders = defenceAt(t);
       const extra = reinforcementAt(t);
@@ -370,7 +420,9 @@ export function captureTargets(
   // Bonus passes work toward my own bonuses; under `balanced` enemy targets are only break candidates.
   // #203: a lead step is a bonus target too.
   // #421: a member of a contested bonus a stockpile pushes all-in is a bonus target too.
-  const bonusTarget = (t: number) => targets.has(t) && !(balanced && targets.get(t)!.enemy && !leadSteps.has(t) && !pileMembers.has(t));
+  // #430: a member that retakes a bonus I held last turn is a bonus target too.
+  const bonusTarget = (t: number) =>
+    targets.has(t) && !(balanced && targets.get(t)!.enemy && !leadSteps.has(t) && !pileMembers.has(t) && !retakeMembers.has(t));
   return { targets, leadSteps, leadStepsOn, leadTry, leadNote, bonusTarget, repulsed, costFor, sizeOf, allInTries, bonusDropped, droppedMembers };
 }
 
