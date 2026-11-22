@@ -9,6 +9,7 @@ import { capturesPhase } from '../../src/analysis/plan/captures.js';
 import { reserveCommanderMove } from '../../src/analysis/plan/commander.js';
 import { noteEstimates, planContext } from '../../src/analysis/plan/estimates.js';
 import { holdsPhase } from '../../src/analysis/plan/holds.js';
+import { applyShortGates } from '../../src/analysis/plan/horizon.js';
 import { deployBook } from '../../src/analysis/plan/orders.js';
 import { newPlanState } from '../../src/analysis/plan/state.js';
 import { chooseStrikeStack, strikesPhase } from '../../src/analysis/plan/strike.js';
@@ -42,6 +43,7 @@ function upToStrikes(i: number) {
   const book = deployBook(ctx, state);
   reserveCommanderMove(ctx, state);
   const threats = threatsPhase(ctx, state, input, book.valueOf);
+  applyShortGates(ctx, state, threats); // #432: planPass's step right after the threats
   const pass = noPass();
   const hd = holdsPhase(ctx, state, book, threats, pass);
   const tgt = targetsPhase(ctx, state, input, threats, hd);

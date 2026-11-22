@@ -12,6 +12,7 @@ import { bonusTerritories } from '../bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from '../combat.js';
 import { classifyExchange, type ExchangeCase } from '../exchange.js';
 import { neighborsOf } from '../graph.js';
+import { poolShortfall } from '../local-deploy.js';
 import {
   bonusesAtRisk,
   captureCost,
@@ -78,7 +79,7 @@ export function reportExpected(
   const { warnings, rationale, absorbLines, captured, moves, survivorsAt } = ps;
   const { heldNow } = book;
   const { borders } = threats;
-  const { conceded, heldAgainst, keptIncome, stayAt, twoStepBound, twoStepCited, twoStepHold, twoStepNote } = hd;
+  const { conceded, heldAgainst, keptIncome, keptHeld, stayAt, twoStepBound, twoStepCited, twoStepHold, twoStepNote } = hd;
   const { frontierOf, startHold } = tgt;
   const { notCompleted, stopped, stoppedLine, denied } = caps;
   // ---- expected ----
@@ -140,7 +141,12 @@ export function reportExpected(
     const need = list.reduce((n, g) => n + g.needs, 0);
     const onGates = list.reduce((n, g) => n + g.armies, 0);
     const deficit = list.reduce((n, g) => n + Math.max(0, g.needs - g.armies), 0);
-    return { player, gates: list, need, onGates, deficit, income: frontier.income, short: Math.max(0, deficit - frontier.income) };
+    if (!pc.s.localDeployments)
+      return { player, gates: list, need, onGates, deficit, income: frontier.income, short: Math.max(0, deficit - frontier.income) };
+    // #433: under Local Deployment a bonus's pool pays only for the gates in it; the rest falls on the free income.
+    const lacks = new Map(list.map((x) => [x.id, Math.max(0, x.needs - x.armies)]));
+    const { short, deployable } = poolShortfall(g, keptHeld(after), frontier.income, lacks);
+    return { player, gates: list, need, onGates, deficit, income: frontier.income, short, deployable };
   })();
   // Warned only when this plan's own captures open a gate the budget cannot pay for (the shortfall alone is in the report).
   const opened = gates ? gates.gates.filter((x) => captured.has(x.id)).map((x) => x.id) : [];
@@ -148,7 +154,9 @@ export function reportExpected(
     warnings.push(
       `Gate budget (#297): this plan's capture of ${opened.map(label).join(', ')} opens ${opened.length === 1 ? 'a gate' : 'gates'} the income cannot hold — ${gates.gates.length} gates facing player ${gates.player}${
         gates.gates.some((x) => x.conceded) ? ` (${gates.gates.filter((x) => x.conceded).length} conceded)` : ''
-      } need ${gates.need} against its one floating deploy; ${gates.onGates} stand on them, ${gates.deficit} short across them, and the next income is ${gates.income}: ${gates.short} short.`,
+      } need ${gates.need} against its one floating deploy; ${gates.onGates} stand on them, ${gates.deficit} short across them, and the next income is ${gates.income}${
+        gates.deployable !== undefined ? ` (${gates.deployable} of it deployable on them under Local Deployment)` : ''
+      }: ${gates.short} short.`,
     );
   const startCost = startHold();
   const outgrown = frontier.holdCost > frontier.income && frontier.holdCost > startCost;
@@ -164,7 +172,7 @@ export function reportExpected(
   for (const t of [...denied.keys()].sort(byNum)) if (captured.has(t)) rationale.push(denied.get(t)!);
   if (outgrown || notTaken.length) {
     const stop = notTaken.length
-      ? ` Expansion that adds enemy borders without completing a bonus is stopped: ${notTaken.map((x) => `${label(x.t)} (the frontier would need ${x.holdCost}, next income ${x.income})`).join(', ')} not taken.`
+      ? ` Expansion that adds enemy borders without completing a bonus is stopped: ${notTaken.map((x) => `${label(x.t)} (the frontier would need ${x.holdCost}, next income ${x.income}${x.deployable !== undefined ? `, ${x.deployable} of it deployable on the gates under Local Deployment` : ''})`).join(', ')} not taken.`
       : '';
     warnings.push(
       outgrown

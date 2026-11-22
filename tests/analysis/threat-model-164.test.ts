@@ -613,3 +613,62 @@ describe("an opponent's Reinforcement card is a deploy, not income (#164 x #167/
     expect(card.profile!.ranking).toEqual(none.profile!.ranking);
   });
 });
+
+describe("a Reinforcement card read as played is no part of the tracked income (#427)", () => {
+  // A line 1-8: me on 1 2, the opponent on 3 4 in view (income 5), 5-8 fogged with a +10 bonus on 7 8,
+  // so the most it could earn (15) never cuts what it is seen to deploy. It deploys its 5 on 3 every
+  // turn, except turn 4, when it plays a 6-army card: 11.
+  const g = buildGraph(makeMap([1, 2, 3, 4, 5, 6, 7, 8], [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8]], [[101, 10, [7, 8]]]));
+  const deploys = [5, 5, 5, 11, 5, 5, 5, 5, 5];
+  const boards: { turn: number; board: ReturnType<typeof board> }[] = [];
+  let a3 = 3;
+  for (let t = 1; t <= deploys.length; t++) {
+    boards.push({ turn: t, board: board([mine(1, 5), mine(2, 50), foe(3, a3), foe(4, 2), fogged(5), fogged(6), fogged(7), fogged(8)]) });
+    a3 += deploys[t - 1]!;
+  }
+  const clock = { firstTurn: 3, armies: 6, turnsPerCard: 3 };
+  const at = (n: number) => {
+    const tracks = trackOpponents(g, boards.slice(0, n), ME, STD);
+    const e = enemyDeployEstimates(g, boards[n - 1]!.board, ME, STD, boards[n - 2]!.board, tracks, undefined, { turn: n, fog: 'Foggy', reinforcement: clock }).find((x) => x.playerId === FOE)!;
+    return { track: tracks.find((x) => x.playerId === FOE)!, e };
+  };
+
+  it('the tracker alone reads the play as income (11), which it carries', () => {
+    expect(at(5).track.income).toBe(11);
+    expect(at(9).track.income).toBe(11);
+  });
+  it('the estimate takes the card out of that figure: its income 5, the card counted once, on the clock', () => {
+    // Turn 5: the card was just played (the next is due turn 6): 5. From turn 6: 5 + 6, never 11 + 6.
+    expect(at(5).e.cardPlayed).toBe(4);
+    expect(at(5).e.card).toBeNull();
+    expect(at(5).e.estimate).toBe(5);
+    for (const n of [6, 7, 8, 9]) {
+      expect(at(n).e.card).toEqual({ armies: 6, due: 6 });
+      expect(at(n).e.estimate).toBe(11);
+    }
+    expect(at(7).e.cardInTrack).toEqual({ was: 11, income: 5, armies: 6, turns: [4] });
+  });
+  it('the plan names the figure the card was taken out of', () => {
+    const tracks = trackOpponents(g, boards.slice(0, 7), ME, STD);
+    const plan = planTurn({ graph: g, board: boards[6]!.board, previousBoard: boards[5]!.board, me: ME, income: 5, settings: STD, turn: 7, game: { turn: 7, fog: 'Foggy', reinforcement: clock }, tracks });
+    expect(plan.warnings.join('\n')).toMatch(/player 20's tracked income of 11 counts the Reinforcement card it played on turn 4: 5 without it \(#427\)/i);
+  });
+  it('without a clock (no Reinforcement card in play) the tracked figure stands', () => {
+    const tracks = trackOpponents(g, boards.slice(0, 7), ME, STD);
+    const e = enemyDeployEstimates(g, boards[6]!.board, ME, STD, boards[5]!.board, tracks, undefined, { turn: 7, fog: 'Foggy' }).find((x) => x.playerId === FOE)!;
+    expect(e.estimate).toBe(11);
+    expect(e.cardInTrack ?? null).toBeNull();
+  });
+  it('an income that rose since is kept: only the card turn is lowered', () => {
+    const risen = [5, 5, 5, 11, 9, 9, 9];
+    const bs: typeof boards = [];
+    let a = 3;
+    for (let t = 1; t <= risen.length; t++) {
+      bs.push({ turn: t, board: board([mine(1, 5), mine(2, 50), foe(3, a), foe(4, 2), fogged(5), fogged(6), fogged(7), fogged(8)]) });
+      a += risen[t - 1]!;
+    }
+    const tracks = trackOpponents(g, bs, ME, STD);
+    const e = enemyDeployEstimates(g, bs[6]!.board, ME, STD, bs[5]!.board, tracks, undefined, { turn: 7, fog: 'Foggy', reinforcement: clock }).find((x) => x.playerId === FOE)!;
+    expect(e.estimate - (e.card?.armies ?? 0)).toBe(9);
+  });
+});
