@@ -120,3 +120,32 @@ describe('#426 rule 4d lets a no-loss capture through when only fog faces its ne
   });
 });
 
+describe('#426 a stack idle two turns beside a no-loss neutral is named', () => {
+  // My T1 (3) faces no one; T2, a 0-army neutral beside it, borders player 20's 9 on T5 (a ~12 deploy, a
+  // what-if). Rule 4d stops T2 (a stack in view faces its new border), so T1's armies stay. Last turn T1
+  // stood there with 3 beside the same neutral.
+  const sc: Scenario = {
+    edges: '1-2 1-4 2-5',
+    cells: { 1: 'M3', 2: 'n0', 4: 'M1', 5: 'E9' },
+    income: 5,
+    previous: { 1: 'M3', 2: 'n0', 4: 'M1', 5: 'E9' },
+  };
+  const deploy12 = (i: PlanInput): PlanInput => ({ ...i, options: { ...i.options, enemyDeploy: 12 } });
+
+  it('warns once it has stood two turns beside it untaken', () => {
+    const p = planTurn(deploy12(input(sc)));
+    expect(attacked(p, 2)).toBe(false);
+    expect(p.warnings.join('\n')).toMatch(/T1 \(#1\).*idle.*two turns.*T2 \(#2\).*#426/);
+  });
+
+  it('says nothing on its first turn there', () => {
+    const p = planTurn(deploy12(input({ ...sc, previous: { ...sc.previous!, 1: 'M1' } })));
+    expect(p.warnings.join('\n')).not.toMatch(/#426/);
+  });
+
+  it('says nothing without a previous board', () => {
+    const { previous: _, ...first } = sc;
+    const p = planTurn(deploy12(input(first)));
+    expect(p.warnings.join('\n')).not.toMatch(/#426/);
+  });
+});

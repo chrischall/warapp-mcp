@@ -928,6 +928,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   territory beside vacated land still untaken and cheap (`breachOf`: fogged, or costing at most `VACATED_MAX_COST`;
   a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
   orders (a move's reason only); captures, next income and concessions unchanged.
+- **No-loss neutral captures (#426, DRAFT: needs the owner's approval).** A neutral in view whose defenders kill none of my
+  attackers (`noLossNeutral`, `plan/after-leftover.ts`: 0 armies at the usual 70%; never a negative bonus's member) costs
+  only the armies that land on it. (1) Pass 3 (and rule 5b) take one even as a member of a bonus too costly to finish
+  (`plainEligible`; the reason says "a no-loss capture … (#426)"), so it is planned before the leftover's comfort margins.
+  (2) Rule 4d's `outgrows` lets one through, outside a 1v1, when only the fog faces its new border (no foe territory beside
+  it shown with its armies; `fogOnlyFaces`), with a "Take … (#426)" line. (3) A warning (`warnIdleBesideFree`,
+  `plan/free-capture.ts`, report only) names a stack of mine, not my commander's, idle last turn and again this plan beside
+  such a neutral its own movable armies take. Not done: the issue's "the leftover rides the widest capture" (#288/#407
+  already send it with captures; "widest" needs a definition). Golden: 17 of 6253 plans changed, 10 in their orders.
 - **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #433 and #427 is open).
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
