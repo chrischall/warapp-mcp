@@ -82,7 +82,7 @@ export function targetsPhase(
   const c1 = { ...c0, ...captureTargets(pc, ps, input, threats, c0) };
   const c2 = { ...c1, ...frontierCosts(pc, threats, hd, c1) };
   const c3 = { ...c2, ...bonusScoring(pc, ps, threats, c2) };
-  const c4 = { ...c3, ...closestBonus(pc, ps, input, c3) };
+  const c4 = { ...c3, ...closestBonus(pc, ps, input, c3, hd) };
   // #281: the vacated land worth denying and (the owner's extension) the empty enemy territories
   // pass 3 may take, each judged once on the board as it stands.
   const denials = denialsOf(pc);
@@ -778,9 +778,10 @@ export function closestBonus(
   ps: PlanState,
   input: PlanInput,
   prev: ReturnType<typeof breakTargets> & ReturnType<typeof captureTargets> & ReturnType<typeof frontierCosts> & ReturnType<typeof bonusScoring>,
+  hd?: Pick<Holds, 'keepFor'>,
 ) {
-  const { g, me, income, profile, territories: state, label, bonusName, mine, mineSet, bonusTs, toTake } = pc;
-  const { rationale } = ps;
+  const { g, me, income, profile, territories: state, label, bonusName, mine, mineSet, bonusTs, toTake, armiesOf, guard } = pc;
+  const { rationale, avail } = ps;
   const { fogNote, plans } = prev;
   // ---- #101: commit to the closest bonus ----
   // While no bonus is held (and in the opening and expansion phases), expansion goes to the bonus
@@ -817,8 +818,36 @@ export function closestBonus(
    */
   const fromMine = bfsDistances(g, mine);
   const depthOf = (p: BonusPlan) => Math.max(0, ...p.remaining.map((t) => fromMine.get(t) ?? 0));
-  /** Turns to finish a bonus at this income, and at least its depth (with no income, its armies to finish). */
-  const turnsOf = (p: BonusPlan) => (income > 0 ? Math.max(Math.ceil(p.cost / income), depthOf(p)) : p.cost);
+  /**
+   * #416: the armies already standing beside a bonus's missing members — each territory of mine next to
+   * one, counted once, with what it can send beyond the guard and beyond what holds it (`keepFor`:
+   * exact holds come first). A start on 10 armies beside a bonus finishes it without waiting for the
+   * income, so counting only the income ranked it level with a bonus the deploys need two turns for.
+   */
+  const standing = new Map<number, number>();
+  const standingBeside = (p: BonusPlan) => {
+    const was = standing.get(p.bonusId);
+    if (was !== undefined) return was;
+    const rest = new Set(p.remaining);
+    let n = 0;
+    for (const x of mine) {
+      if (!neighborsOf(g, x).some((t) => rest.has(t))) continue;
+      const movable = Math.min(avail.get(x) ?? 0, armiesOf(x) - guard);
+      const keep = hd ? hd.keepFor(x, () => false) : 0;
+      n += Math.max(0, movable - keep);
+    }
+    const credit = Math.min(n, p.cost);
+    standing.set(p.bonusId, credit);
+    return credit;
+  };
+  /**
+   * Turns to finish a bonus at this income once the armies standing beside it are spent (#416), and at
+   * least its depth (with no income, its armies to finish less those).
+   */
+  const turnsOf = (p: BonusPlan) => {
+    const left = Math.max(0, p.cost - standingBeside(p));
+    return income > 0 ? Math.max(Math.ceil(left / income), depthOf(p)) : left;
+  };
   const scoreRank = new Map(plans.map((p, i) => [p.bonusId, i]));
   /**
    * #438: every bonus a plan's capture completes — each plan whose missing members are all among
@@ -847,8 +876,13 @@ export function closestBonus(
     : plans;
   const turnsText = (p: BonusPlan) => {
     const n = turnsOf(p);
-    const deep = n > Math.ceil(p.cost / income) ? ` (${n} layers deep)` : '';
+    const deep = n > Math.max(1, Math.ceil(Math.max(0, p.cost - standingBeside(p)) / income)) ? ` (${n} layers deep)` : '';
     return income > 0 ? `${n} turn${n === 1 ? '' : 's'}${deep}` : 'no income';
+  };
+  /** #416: the armies standing beside it, when any count toward its turns. */
+  const standingNote = (p: BonusPlan) => {
+    const n = standingBeside(p);
+    return n > 0 ? ` (${n} standing beside it)` : '';
   };
   if (committing && byCloseness.length > 1) {
     const why = holdsBonus
@@ -860,7 +894,7 @@ export function closestBonus(
       `${why}: expansion goes to the bonus closest to completion first — ${byCloseness
         .map(
           (p, i) =>
-            `${bonusName(p.bonusId)} ${i ? p.cost : `${p.cost} armies to finish`}${fogNote(p)}, ${turnsText(p)}${i || income <= 0 ? '' : ` at income ${income}`}`,
+            `${bonusName(p.bonusId)} ${i ? p.cost : `${p.cost} armies to finish`}${fogNote(p)}${standingNote(p)}, ${turnsText(p)}${i || income <= 0 ? '' : ` at income ${income}`}`,
         )
         .join(', ')} — and a farther bonus gets only armies the closer ones cannot use.`,
     );
@@ -907,7 +941,7 @@ export function closestBonus(
     ps.warnings.push(
       `${mine.length} territories, no bonus: the captures are spread (income ${income}, base ${base}). ` +
         (nearest
-          ? `Nearest bonus to complete: ${bonusName(nearest.bonusId)}, ${nearest.cost} armies to finish${fogNote(nearest)}, ` +
+          ? `Nearest bonus to complete: ${bonusName(nearest.bonusId)}, ${nearest.cost} armies to finish${fogNote(nearest)}${standingNote(nearest)}, ` +
             `${turnsText(nearest)}${income > 0 ? ` at income ${income}` : ''} (rule 4f).`
           : 'No bonus is worth completing from here.') +
         ' Complete one before taking more territories outside it (#319).',

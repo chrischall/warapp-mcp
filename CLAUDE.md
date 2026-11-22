@@ -1665,7 +1665,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (plan/vacated.ts) over my board history gives each fogged territory's newest sighting (owner, and armies when
     shown — never from a GameFeed history board, unverified in play: those give the owner only); `foggedLastSeen` is its owners, `lastSeen` its counts. Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input 1017 of 6253 plans, 722
     orders, captures +21/−2, next income lower on 1; with sightings from each input's previous board, 51 plans, 34 orders,
-    captures +1. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
+    captures +1. #416 (draft, owner approval pending): turns to finish count the armies already standing beside a
+    bonus — each territory of mine next to a missing member, once, beyond the guard and what holds it (`keepFor`) —
+    before the income (the rationale's "(N standing beside it)"). Golden: 603 of 6253 plans, 19 in their orders. #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
     are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or

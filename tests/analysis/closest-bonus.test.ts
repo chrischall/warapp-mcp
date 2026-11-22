@@ -131,7 +131,8 @@ describe('commit to the closest bonus while none is held (#101)', () => {
     // neither Gamma's 31 nor Delta's 41 is attacked.
     expect(targets(p)).toEqual([11, 12, 21]);
     expect(why(p)).toMatch(
-      /No bonus held: expansion goes to the bonus closest to completion first — Alpha \(#301\) 6 armies to finish, 2 turns at income 5, Beta \(#302\) 6, 2 turns, Delta \(#304\) 18, 6 turns \(6 layers deep\), Gamma \(#303\) 18, 6 turns \(6 layers deep\) — /,
+      // #416: the 3 movable armies on 1 and on 2 stand beside each bonus and count toward its turns.
+      /No bonus held: expansion goes to the bonus closest to completion first — Alpha \(#301\) 6 armies to finish \(3 standing beside it\), 1 turn at income 5, Beta \(#302\) 6 \(3 standing beside it\), 1 turn, Delta \(#304\) 18 \(3 standing beside it\), 6 turns \(6 layers deep\), Gamma \(#303\) 18 \(3 standing beside it\), 6 turns \(6 layers deep\) — /,
     );
     expect(attacks(p).find((m) => m.to === 21)!.reason).toMatch(/advances bonus Beta \(#302\) \(\+2, 6 armies to finish\)/);
     expect(valid(p, b, 5)).toEqual([]);
