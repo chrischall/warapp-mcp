@@ -268,6 +268,12 @@ export interface PlanPicksInput {
   budgetMs?: number;
   /** The clock the budget reads (tests give a fake one); default `Date.now`. */
   clock?: () => number;
+  /** Research hook (#476): plan as a very large map above this many pickables instead of {@link LARGE_PICKABLE}. */
+  largeAbove?: number;
+  /** Research hook (#476): the large-map knobs (default: the constants above); Infinity switches an approximation off. */
+  scale?: { candidateBonuses?: number; candidateTerritories?: number; centralitySamples?: number; hopDepth?: number };
+  /** Research hook (#476): also score this group on the full model (`PickPlan.evaluated`), whatever mode planned. */
+  evaluate?: readonly number[];
 }
 
 type PickGroupName = 'primary' | 'fallback';
@@ -412,6 +418,8 @@ export interface PickPlan {
   partial?: boolean;
   /** Very large map: only these territories were ranked (`LARGE_PICKABLE`); absent on a map that was planned whole. */
   candidates?: { ranked: number; pickable: number; bonuses: number };
+  /** Research hook (#476): the joint opening score of `PlanPicksInput.evaluate`, on the full model. */
+  evaluated?: number;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -1165,11 +1173,12 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
   // Contestedness from centrality among the pickables.
   const contestWeight = Math.min(CONTEST_MAX, Math.max(0, (players - 2) * CONTEST_PER_PLAYER));
   const meanDist = new Map<number, number>();
-  const large = pickable.length > LARGE_PICKABLE;
+  const large = pickable.length > (input.largeAbove ?? LARGE_PICKABLE);
   if (large) {
     // Mean distance to every other pickable, read from evenly spaced sources (distances are symmetric).
-    const step = Math.max(1, Math.floor(pickable.length / CENTRALITY_SAMPLES));
-    const sources = pickable.filter((_, i) => i % step === 0).slice(0, CENTRALITY_SAMPLES);
+    const samples = input.scale?.centralitySamples ?? CENTRALITY_SAMPLES;
+    const step = Math.max(1, Math.floor(pickable.length / samples));
+    const sources = pickable.filter((_, i) => i % step === 0).slice(0, samples);
     const sums = new Map<number, { sum: number; count: number }>();
     for (const q of sources) {
       for (const [t, d] of bfsDistances(g, [q])) {
@@ -1352,12 +1361,12 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
     const best = new Map<number, number>();
     let used = 0;
     for (const { b, per } of ranked) {
-      if (used >= CANDIDATE_BONUSES && best.size >= Math.max(CANDIDATE_TERRITORIES / 2, maxPicks * 4)) break;
+      if (used >= (input.scale?.candidateBonuses ?? CANDIDATE_BONUSES) && best.size >= Math.max((input.scale?.candidateTerritories ?? CANDIDATE_TERRITORIES) / 2, maxPicks * 4)) break;
       used++;
       for (const m of b.members) if (pickSetNow.has(m)) best.set(m, Math.max(best.get(m) ?? 0, per));
-      if (used >= CANDIDATE_BONUSES && best.size >= maxPicks * 4) break;
+      if (used >= (input.scale?.candidateBonuses ?? CANDIDATE_BONUSES) && best.size >= maxPicks * 4) break;
     }
-    cands = [...best].sort((a, c) => c[1] - a[1] || a[0] - c[0]).slice(0, Math.max(CANDIDATE_TERRITORIES, maxPicks * 4)).map(([t]) => t).sort(byNum);
+    cands = [...best].sort((a, c) => c[1] - a[1] || a[0] - c[0]).slice(0, Math.max(input.scale?.candidateTerritories ?? CANDIDATE_TERRITORIES, maxPicks * 4)).map(([t]) => t).sort(byNum);
     // Never fewer than the list needs: pad with the remaining pickables (by id) when the best bonuses hold too few.
     if (cands.length < Math.min(maxPicks, pickable.length)) {
       const have = new Set(cands);
@@ -1373,7 +1382,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
   // Hop distances on the map graph (the one warapp_plan_route uses), cached per territory.
   const bfsCache = new Map<number, Map<number, number>>();
   const hops = (a: number, b: number) => {
-    if (!bfsCache.has(a)) bfsCache.set(a, large ? boundedDistances(g, a, SCALE_HOP_DEPTH) : bfsDistances(g, [a]));
+    if (!bfsCache.has(a)) bfsCache.set(a, large ? boundedDistances(g, a, input.scale?.hopDepth ?? SCALE_HOP_DEPTH) : bfsDistances(g, [a]));
     return bfsCache.get(a)!.get(b) ?? Infinity;
   };
 
@@ -2046,6 +2055,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
       rationale,
       ...(partial ? { partial: true } : {}),
       ...(candidateReport ? { candidates: candidateReport } : {}),
+      ...(input.evaluate ? { evaluated: round2(simulate(ctx, [...input.evaluate], NO_TAKEN).score) } : {}),
     },
     completes: (start, taken) => new Set(simulate(plain, start, new Set(taken)).completions.keys()),
     bonuses,
