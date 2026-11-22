@@ -1697,7 +1697,7 @@ export * from './plan/observe.js';
 export * from './plan/deploy-estimates.js';
 export { alliesOf, planEnemyEstimates } from './plan/estimates.js';
 export { TRUCE_RELAX_VALUE } from './plan/relations.js';
-export { SPREAD_INCOME_SLACK, SPREAD_LAST_TURN, SPREAD_TERRITORIES } from './plan/targets.js';
+export { HOLDS_BONUS_MIN_VALUE, SPREAD_INCOME_SLACK, SPREAD_LAST_TURN, SPREAD_TERRITORIES } from './plan/targets.js';
 
 /** Passes that refine the cut set (#172) before falling back to the plan that cuts nothing. */
 const TWO_STEP_PASSES = 3;

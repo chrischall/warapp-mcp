@@ -205,7 +205,8 @@ describe('#125 turns to finish count the layers a chain needs', () => {
   it('a three-deep chain is three turns away, not one', () => {
     const p = plan(sc);
     const line = p.rationale.find((l) => l.includes('closest to completion first'));
-    expect(line).toMatch(/B101 \(#101\) 10 armies to finish, 2 turns at income 5, B100 \(#100\) 9, 3 turns/);
+    // #416: the 3 movable armies on 1 stand beside both and are credited; B100's depth still holds it at 3 turns.
+    expect(line).toMatch(/B101 \(#101\) 10 armies to finish \(3 standing beside it\), 2 turns at income 5, B100 \(#100\) 9 \(3 standing beside it\), 3 turns/);
   });
 });
 
