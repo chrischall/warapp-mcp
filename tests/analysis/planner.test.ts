@@ -1493,21 +1493,23 @@ describe('planTurn — defensibility-aware bonus completion (R3)', () => {
   });
 
   for (const goal of ['balanced', 'defend'] as const)
-    it(`(${goal}) does not complete a bonus whose new member falls next turn; it garrisons instead`, () => {
+    it(`(${goal}) completes a cheap bonus whose new member falls next turn: it pays for itself in one turn (#422)`, () => {
       // T9 (16): threat 15 movable + 5 deploy = 20. Taking T3 leaves 2 armies there,
       // which need 13 to hold (13 armies need 21 > 20): 11 more than it has, above
       // the next income of 5 + 5 = 10 (and a fresh capture cannot be deployed to this turn).
+      // Before #422 R3 refused it and the income garrisoned T2. But taking T3 loses 1 and leaves
+      // 2 there: 3 at most, under the +5 the completed bonus pays next turn even if it falls.
       expect(armiesToTake(2, STD)).toBe(3);
       expect(armiesToTake(12, STD)).toBe(20);
       expect(armiesToTake(13, STD)).toBe(21);
       const p = planTurn({ graph: g, board: at(16), me: ME, income: 5, settings: STD, options: { goal } });
-      expect(attacks(p)).toEqual([]);
-      expect(p.expected.bonusesCompleted).toEqual([]);
-      expect(p.warnings).toContain(NOT_COMPLETED);
-      // Warned once, however many passes looked at the capture.
-      expect(p.warnings.filter((w) => w === NOT_COMPLETED)).toHaveLength(1);
-      expect(p.rationale.join('\n')).toMatch(/Do not complete bonus B901 \(#901\)/);
-      // The income garrisons the threatened T2 (holding needs 3) instead.
+      expect(attacks(p)).toEqual([expect.objectContaining({ from: 1, to: 3, armies: 3 })]);
+      expect(p.expected.bonusesCompleted).toEqual([901]);
+      expect(p.warnings).not.toContain(NOT_COMPLETED);
+      expect(p.rationale.join('\n')).toMatch(
+        /Complete bonus B901 \(#901\) though its frontier cannot be held next turn \(it needs 11 more armies, next income 10\): it can lose at most 3 armies \(1 killed taking it, 2 left on T3 \(#3\)\), no more than the \+5 it pays next turn \(#422\)\./,
+      );
+      // The income still garrisons the threatened T2 (it protects +2 either way).
       expect(deployedTo(p, 2)).toBe(5);
       expect(deploySum(p)).toBe(5);
       expect(p.conceded).toEqual([]);

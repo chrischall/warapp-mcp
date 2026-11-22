@@ -73,7 +73,7 @@ export function capturesPhase(
 export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threats: Threats, hd: Holds) {
   const {
     g, s, foe, goal, guarded, reserve, deployOf, territories: state, label, bonusName, mine, mineSet, armiesOf,
-    unitsAt, defenceAt, bonusTs, completedBy, guard, toTake, noSplit, myCommanders,
+    unitsAt, defenceAt, bonusTs, completedBy, guard, toTake, noSplit, myCommanders, rates,
   } = pc;
   const { warnings, rationale, deployed, avail, captured, survivorsAt, incoming } = ps;
   const { guardAt, valueOf } = book;
@@ -96,8 +96,9 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
    * The total need is checked, not each member alone: holding the bonus needs every
    * exposed member held. The leftover is as of this check; a later capture this turn
    * may still spend it (defence funds held borders first, so this is rarely material).
+   * `lost`: the attackers the capture of `t` loses (#422), for the payback exemption below.
    */
-  const defensible = (t: number, survivors: number): boolean => {
+  const defensible = (t: number, survivors: number, lost?: number): boolean => {
     const after = new Set([...mine, ...captured]);
     const completes = g.map.bonuses
       .filter((b) => {
@@ -137,6 +138,8 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
       .flatMap(exposedOf))
       earlier.set(e.id, Math.max(earlier.get(e.id) ?? 0, e.added));
     let ok = true;
+    /** #422: the completions let through on payback, kept only when the capture is (no other bonus refuses it). */
+    const payback: { line: string; bonusId: number; falls: number[] }[] = [];
     for (const b of completes) {
       const exposed = exposedOf(b.id);
       const total = exposed.reduce((sum, e) => sum + e.added, 0);
@@ -146,11 +149,29 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
       // A completion that adds no exposure (total 0) is never refused: refusing it saves nothing,
       // whatever the earlier completions need (it only adds income).
       if (total === 0 || total + before <= nextIncome + Math.min(spare, held)) {
+        // #422: judged holdable now (a later try, with more income), so no longer a payback completion.
+        ps.paybackBonuses.delete(b.id);
         if (anyway.length && guarded)
           rationale.push(
             `Complete bonus ${bonusName(b.id)} though ${anyway.map((e) => label(e.id)).join(', ')} may fall next turn: ${anyway.length === 1 ? 'it is' : 'they are'} exposed whether or not it is completed, so refusing would save nothing.`,
           );
         continue;
+      }
+      // #422: the payback exemption. A bonus held at the end of this turn pays its value in next turn's
+      // income even if it falls straight after, so a completion whose losses — the attackers its captures
+      // lose this turn plus the armies left on the members that would fall — are at most that value
+      // repays itself in one turn: refusing it only gives the income up.
+      if (guarded) {
+        const falls = exposed.filter((e) => e.added > 0);
+        const left = falls.reduce((n, e) => n + stays(e.id), 0);
+        const killed = bonusTerritories(g, b.id)
+          .filter((m) => captured.has(m) && !mineSet.has(m))
+          .reduce((n, m) => n + (m === t && lost !== undefined ? lost : straightKills(defenceAt(m), rates.defensiveKillRate)), 0);
+        if (killed + left <= b.value) {
+          const line = `Complete bonus ${bonusName(b.id)} though its frontier cannot be held next turn (it needs ${total} more armies${before ? `, on top of the ${before} this turn's other completions need` : ''}, next income ${nextIncome}): it can lose at most ${killed + left} armies (${killed} killed taking it, ${left} left on ${falls.map((e) => label(e.id)).join(', ')}), no more than the +${b.value} it pays next turn (#422).`;
+          payback.push({ line, bonusId: b.id, falls: falls.map((e) => e.id) });
+          continue;
+        }
       }
       const worst = [...exposed].sort((a, b) => b.added - a.added || b.need - a.need || a.id - b.id)[0]!;
       const head = `completing ${bonusName(b.id)} leaves ${label(worst.id)} indefensible (player ${worst.player} can take it for ${worst.take}; next income ${nextIncome})`;
@@ -167,6 +188,12 @@ export function captureRules(pc: PlanCtx, ps: PlanState, book: DeployBook, threa
         if (!warnings.includes(w)) warnings.push(w);
       }
     }
+    if (ok)
+      for (const x of payback) {
+        if (!rationale.includes(x.line)) rationale.push(x.line);
+        for (const f of x.falls) ps.paybackFalls.set(f, x.line);
+        ps.paybackBonuses.set(x.bonusId, x.line);
+      }
     return ok;
   };
 
@@ -543,7 +570,7 @@ export function captureHelper(
     captured.add(t);
     const survivors = sent - straightKills(defendersSeen(t), rates.defensiveKillRate);
     // A commander strike is never refused by R3: killing the commander eliminates a player.
-    if (!strikes.has(t) && !r3Exempt.has(t) && !defensible(t, survivors)) {
+    if (!strikes.has(t) && !r3Exempt.has(t) && !defensible(t, survivors, sent - survivors)) {
       // Undo: under a guarded goal a bonus that falls next turn is not completed.
       avail.set(src, avail.get(src)! + sent - need);
       const left = (deployed.get(src) ?? 0) - need;
@@ -697,7 +724,9 @@ export function captureHelper(
     }
     avail.set(plan.finisher, avail.get(plan.finisher)! - plan.armies);
     captured.add(t);
-    if (!defensible(t, plan.survivors)) {
+    // #422: what the combined capture loses — every softener's dead and the finisher's.
+    const lost = plan.softeners.reduce((n, x) => n + x.armies - x.survivors, 0) + plan.armies - plan.survivors;
+    if (!defensible(t, plan.survivors, lost)) {
       for (const [k, v] of before.avail) avail.set(k, v);
       incoming.clear();
       for (const [k, v] of before.incoming) incoming.set(k, v);
@@ -964,6 +993,7 @@ export function bonusPasses(
       for (const t of snap.combined) combined.add(t);
       survivorsAt.clear();
       for (const [k, v] of snap.survivorsAt) survivorsAt.set(k, v);
+
       staged.clear();
       for (const [k, v] of snap.staged) staged.set(k, v);
       // A lead step's sure sizing (#203) goes with its undone capture.

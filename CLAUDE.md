@@ -1962,7 +1962,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       it leaves: when holding the members a visible enemy could take next turn needs more than
       the next income, `balanced`/`defend` refuse it ("… indefensible …: not completed") and
       keep the armies for defence; `expand`/`complete-bonus` complete it with a warning. A
-      completion's score is discounted by that defence cost (`DEFENSE_DISCOUNT`).
+      completion's score is discounted by that defence cost (`DEFENSE_DISCOUNT`). **#422 (draft, owner
+      approval pending): the payback exemption.** A completion whose losses — attackers its captures into
+      the bonus lose this turn plus the armies left on the members that would fall — are at most the bonus's
+      value is made anyway ("Complete bonus … (#422)"): it pays that value next turn even if it then falls.
+      Such a bonus (`ps.paybackBonuses`, read through `paybackLive`: live while its line stands) keeps no
+      conceded border, gets no #122 garrison or #265 call, and #288's leftover never rides onto a member it
+      may lose. Golden: 16 of 6253 plans changed, all gaining that completion.
     - **Combined attacks (#17).** A target no single source can afford may be taken by two or
       more of my start-of-turn stacks in a fixed order (the first attacks only wear it down),
       with exact arithmetic — only at 0% luck under straight rounding (else skipped with a
