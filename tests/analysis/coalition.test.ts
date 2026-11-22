@@ -21,8 +21,11 @@ describe('coalitionAdvice (#445)', () => {
   });
 
   it('asks only the best partner, or every one within 10% of its income (owner, 2026-11-22)', () => {
+    // Player 4 borders the leader (the best partner) at income 6; player 3 at 9 is not weaker, so it is asked too.
     const one = coalitionAdvice({ rows, me: 1, leader: 2, bordersLeader: new Set([4]) })!;
-    expect(one.outreach).toEqual([4]);
+    expect(one.outreach).toEqual([4, 3]);
+    const alone = coalitionAdvice({ rows: [rows[0]!, rows[1]!, rows[2]!, { playerId: 4, armies: 30, income: 3 }], me: 1, leader: 2, bordersLeader: new Set([3]) })!;
+    expect(alone.outreach).toEqual([3]);
     const close = coalitionAdvice({
       rows: [{ playerId: 1, armies: 40, income: 12 }, { playerId: 2, armies: 90, income: 30 }, { playerId: 3, armies: 70, income: 10 }, { playerId: 4, armies: 60, income: 9.5 }, { playerId: 5, armies: 20, income: 4 }],
       me: 1, leader: 2, bordersLeader: new Set(),
