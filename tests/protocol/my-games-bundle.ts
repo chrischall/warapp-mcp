@@ -24,6 +24,8 @@ export const MY_GAMES_BUNDLE = [
     'e.b8=a.Ua()?P.Sd(a,function(){return Gp.Ha(a,e,d)}):null;' +
     'e.c1=P.Yc(a);e.c2=P.Yc(a);e.c3=P.Yc(a);e.c4=P.Yc(a);e.c5=a.Ua()?Sx.Ha(a,e,d):null;e.c6=Gt.Ha(a);' +
     'e.c7=P.Yc(a);e.c8=P.ak(a);e.c9=a.Ua()?Ox.Ha(a,e,d):null;e.d1=P.ak(a);return e};',
+  // GameInfoTournament: a coin structure (here an optional number), a number, the tournament id.
+  'W["warlight.shared.GameInfoTournament"]=Ox;',
   'W["warlight.shared.GameInfoPlayer"]=Gp;',
   'Gp.Ha=function(a,b,d){var e=new Gp;e.p1=a.Ua()?Cl.Ha(a,e,d):null;e.p2=P.Yc(a);e.p3=P.Yc(a);e.p4=P.Ya(a);' +
     'e.p5=P.Yc(a);e.p6=P.wc(a);e.p7=P.Ya(a);e.p8=Ps.Ha(a);e.p9=P.Ya(a);e.q1=P.Yc(a);return e};',
@@ -36,7 +38,7 @@ export const MY_GAMES_BUNDLE = [
     'e.t3=P.Yc(a);e.t4=P.uy(a);e.t5=P.Yc(a);e.t6=P.ak(a);e.t7=P.Ya(a);e.t8=Mo.Ha(a,b);e.t9=P.Yc(a);e.u1=P.Yc(a);' +
     'e.u2=P.Ya(a);e.u3=P.ak(a);e.u4=P.Yc(a);e.u5=P.Yc(a);e.u6=Rm.Ha(a,b);return e};',
   'Mo.Ha=function(a){return P.uq(a)};Rm.Ha=function(a){return P.uq(a)};',
-  'Ox.Ha=function(a,b,d){var e=new Ox;e.o1=P.Ya(a);return e};',
+  'Ox.Ha=function(a,b,d){var e=new Ox;e.o1=a.Ua()?P.Ya(a):null;e.o2=P.Ya(a);e.o3=P.Ya(a);return e};',
   'W["warlight.shared.GameColor"]=Cl;Cl.Ha=function(a,b,d){var e=new Cl;e.k=P.Ya(a);return e};',
   // Player: 33 fields; the 19th (index 18) is the secondary colour, the 33rd (index 32) the preferred.
   'W["warlight.shared.Player"]=Pr;',
@@ -119,6 +121,8 @@ export interface SyntheticGame {
   settings?: SyntheticSettings | null;
   /** GameInfo's unread-chat flags (0-based fields 8, 17, 18, 23; #311); each default false. */
   unread?: { group?: boolean; private?: boolean; public?: boolean; team?: boolean };
+  /** A tournament game's tournament id (GameInfoTournament, field 25; #423); absent: none. */
+  tournament?: number;
 }
 
 function writePlayer(w: Writer, p: SyntheticGamePlayer): void {
@@ -163,7 +167,10 @@ export function writeGameInfo(w: Writer, g: SyntheticGame): void {
   w.bool(u.private ?? false).bool(u.public ?? false).bool(g.realTime ?? false).bool(false);
   if (g.settings === null) w.bool(false);
   else writeSettings(w.bool(true), g.settings ?? {});
-  w.u8(g.state).bool(u.team ?? false).float64(0).bool(false).float64(0);
+  w.u8(g.state).bool(u.team ?? false).float64(0);
+  if (g.tournament === undefined) w.bool(false);
+  else w.bool(true).bool(false).int32(1).int32(g.tournament);
+  w.float64(0);
 }
 
 /** The result of GetMyGames (present flag first), as the synthetic bundle reads it. */

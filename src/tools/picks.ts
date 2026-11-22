@@ -70,7 +70,7 @@ export function pickTerritoryLimit(
   settings: Pick<GameSettings, 'territoryLimit' | 'distributionMode'> | undefined,
   players: number,
   pickable: number,
-): { limit: number; warning?: string } {
+): { limit: number; warning?: string; fullDeal?: true } {
   const set = settings?.territoryLimit;
   if (set !== undefined && set > 0) return { limit: set };
   if (fullDistribution(settings)) {
@@ -78,6 +78,7 @@ export function pickTerritoryLimit(
     const limit = Math.max(1, Math.floor(pickable / n));
     return {
       limit,
+      fullDeal: true,
       warning: `Full distribution (DistributionMode 0, no territory limit): every territory is dealt, so each of the ${n} players gets about ${limit} of the ${pickable} pickable; the list only says which you would rather hold.`,
     };
   }
@@ -171,7 +172,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           'way into every region matter more than the fastest start — the user chooses per game. ' +
           'Its `submitPicks` is exactly what warapp_submit_picks ' +
           'takes — review it with the user first. Refuses outside the picking stage or when nothing is pickable. ' +
-          'On a very large map (over 400 pickable territories) only the territories of the best bonuses are ranked (`candidates` says how many); ' +
+          'On a very large map (over 400 pickable territories) only the territories that score best alone are ranked, 400 at the default budget and more with a larger one (`candidates` says how many); ' +
           'the plan has a time budget (20 s; `WARAPP_PICKS_BUDGET_MS` sets it, 0 for none) and, when it runs out, answers `partial: true` with a valid list; ' +
           'the compact view caps its reasons, threats, coverage and warning lists (counts say what was cut; `submitPicks` is never cut). ' +
           'In a team game only the players off your team are threats, `team` names your teammates, and the list is judged by both award ' +
@@ -257,6 +258,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
         spread: spread === true,
         ...(team ? { team: { teammates: team.length, ...(lists.some((l) => l.length) ? { lists } : {}) } } : {}),
         ...(budgetMs !== undefined ? { budgetMs } : {}),
+        ...(limitRead.fullDeal ? { fullDeal: true } : {}),
       });
       } catch (e) {
         // A failure inside the advisor is a tool error with a reason, never a silent host failure.

@@ -482,9 +482,21 @@ export function frontierCosts(
     }
     return { borders, enemyBorders, holdCost };
   };
+  /**
+   * #433: each border's share of {@link frontierOf}'s hold cost (the same borders: a conceded one only while its
+   * garrison stands), for the Local Deployment pools that can pay it.
+   */
+  const frontierNeeds = (held: ReadonlySet<number>, haveOf: (x: number) => number): Map<number, number> => {
+    const needs = new Map<number, number>();
+    for (const x of [...held].sort(byNum)) {
+      const b = borderOf(x, held, haveOf(x));
+      if ((!conceded.has(x) || stood.has(x)) && b.need > 0) needs.set(x, b.need);
+    }
+    return needs;
+  };
   /** The frontier's hold cost at the start of the turn (my armies then; today's concessions left out). */
   const startHold = () => frontierOf(mineSet, armiesOf).holdCost;
-  return { survivorsOf, borderOf, borderCost, frontierDelta, edgeCost, scoreCost, targetScoreCost, landScoreCost, offence, offenceSkip, skipOffence, badTrades, frontierOf, startHold };
+  return { survivorsOf, borderOf, borderCost, frontierDelta, edgeCost, scoreCost, targetScoreCost, landScoreCost, offence, offenceSkip, skipOffence, badTrades, frontierOf, frontierNeeds, startHold };
 }
 
 /** Bonus scoring (rule 4, R3, #70, #101, #125, #167): the bonuses worth working toward, best first. */

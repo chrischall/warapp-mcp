@@ -763,12 +763,12 @@ export function heldBonusUnits(
    * concedes (it does not plan to hold them, so the bonuses they break do not pay for anything).
    * R3, rule 4d and the frontier report use it.
    */
-  const keptIncome = (after: ReadonlySet<number>) =>
-    incomeAfter(
-      new Set(
-        [...after].filter(
-          (t) => !conceded.has(t) && !units.some((u) => (u.conceded || u.contested) && u.members.some((m) => m.id === t)),
-        ),
+  const keptIncome = (after: ReadonlySet<number>) => incomeAfter(keptHeld(after));
+  /** #433: the territories {@link keptIncome} counts (its bonuses are next turn's Local Deployment pools). */
+  const keptHeld = (after: ReadonlySet<number>): Set<number> =>
+    new Set(
+      [...after].filter(
+        (t) => !conceded.has(t) && !units.some((u) => (u.conceded || u.contested) && u.members.some((m) => m.id === t)),
       ),
     );
   /** Borders a funded unit (or an individual hold) already holds. */
@@ -962,7 +962,7 @@ export function heldBonusUnits(
     return true;
   };
   return {
-    keptIncome, heldBorders, commanderHeld, buildUnits, unitBorders, concedeUnit, leftFor, fundUnit, fundNearMiss,
+    keptIncome, keptHeld, heldBorders, commanderHeld, buildUnits, unitBorders, concedeUnit, leftFor, fundUnit, fundNearMiss,
   };
 }
 

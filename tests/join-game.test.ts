@@ -172,6 +172,19 @@ describe('warapp_join_game', () => {
     expect(p.preview.screen).toMatchObject({ cheapestNeutral: 2, armiesToTake: 3, passes: true });
   });
 
+  it('#423: a tournament lobby previews with a warning and is never refused for it', async () => {
+    const tourney: SyntheticGame = { ...OPEN.plain!, tournament: 66805 };
+    h = await harness({ warapp: joinServer().warapp, feed: [feedGame(3001, false)], games: [tourney] });
+    const p = payload<{ confirmToken: string; preview: { policy: { passes: boolean; breaks: string[]; warnings?: string[] }; policyOverridden?: boolean } }>(
+      await h.call('warapp_join_game', { game_id: 3001 }),
+    );
+    expect(p.confirmToken).toEqual(expect.any(String));
+    expect(p.preview.policy.passes).toBe(true);
+    expect(p.preview.policy.breaks).toEqual([]);
+    expect(p.preview.policy.warnings?.join(' ')).toMatch(/tournament 66805/);
+    expect(p.preview.policyOverridden).toBeUndefined();
+  });
+
   it('says whether the lobby keeps the joining policy, advisory: it still previews a lobby that breaks it (#134)', async () => {
     h = await harness({ warapp: joinServer().warapp, feed: [feedGame(3001, false)] });
     const ok = payload<{ preview: { policy: Record<string, unknown> } }>(await h.call('warapp_join_game', { game_id: 3001 }));
