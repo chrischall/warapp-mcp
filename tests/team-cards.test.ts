@@ -82,7 +82,7 @@ describe('claimedCardUses (G3): my orders against what my teammates entered', ()
     const w = claimedCardWarning(claimedCardUses([{ card: R1, kind: 'play' }], claimed));
     expect(w).toMatch(new RegExp(`plays the Reinforcement card ${R1.id}, which player 11 has already entered a play of`));
     expect(w).toMatch(/one card twice/);
-    expect(w).toMatch(/UNVERIFIED live/);
+    expect(w).toMatch(/verified live before commit/);
     expect(claimedCardWarning([])).toBeUndefined();
   });
   it('puts the unclaimed cards first, so a card named by its type is one nobody entered', () => {

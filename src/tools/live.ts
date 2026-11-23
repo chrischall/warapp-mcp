@@ -36,7 +36,7 @@ import {
 } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
 import { loadLiveGame, loadLiveTerritories, loadPicks, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
-import { readTeammatePicks } from './team.js';
+import { notTeammateWarning, readTeammatePicks } from './team.js';
 import { mapOf } from './map.js';
 import { resolvePlayer, resolveTerritory } from './resolve.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
@@ -427,12 +427,20 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
         // playing has its list read as warapp_plan_picks reads it (V5 teammate orders, else V6
         // GetTerritoryPicks); an unread one refuses the submit unless the caller says to go without it.
         // An empty list read is no refusal: the teammate has not picked yet, and picks around mine.
+        // V6 (verified live 2026-11-22): a refusal that never lifts (187: war.app calls the player an opponent;
+        // 188: automatic distribution) is no unread list — it would hold every submit for good — so it does not
+        // refuse; 187 is named in the preview, as the team read may be wrong.
         const unread: number[] = [];
+        const notMates: number[] = [];
         if (isTeamGame(game.players)) {
           const entries = teammateOrdersOf(info, game.players);
-          for (const mate of teammatesOf(game.players, me).filter((p) => (p.state ?? 'Playing') === 'Playing'))
-            if ((await readTeammatePicks(ctx, game.id, mate, entries?.find((e) => e.playerId === mate.id))) === null) unread.push(mate.id);
+          for (const mate of teammatesOf(game.players, me).filter((p) => (p.state ?? 'Playing') === 'Playing')) {
+            const read = await readTeammatePicks(ctx, game.id, mate, entries?.find((e) => e.playerId === mate.id));
+            if (read === null) unread.push(mate.id);
+            else if (read.refused === 'not-teammate') notMates.push(mate.id);
+          }
         }
+        if (notMates.length) lengthWarnings.push(notTeammateWarning(notMates));
         if (unread.length && without_teammate_list !== true)
           throw new McpToolError(
             `Your teammate's list (player ${unread.join(', ')}) could not be read, so an overlap with yours cannot be seen: a pick you both list goes to one of you.`,

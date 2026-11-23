@@ -242,6 +242,30 @@ describe('warapp_get_team', () => {
     expect(payload<TeamPayload>(res).teammates[0]!.picks).toBeNull();
   });
 
+  it('#435 (V6, verified live 2026-11-22): a refusal that names the player an opponent (187) or the game automatic (188) is not unknown', async () => {
+    h = await liveHarness({
+      feed: [game('DistributingTerritories')],
+      pages: ME_PAGE,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: latest(PICK_BOARD),
+        [Method.GetTerritoryPicks]: () => ({ error: { code: 187, message: 'CannotGetOpponentsPicks' } }),
+      }),
+    });
+    const p = payload<TeamPayload>(await h.call('warapp_get_team', { game_id: GAME }));
+    expect(p.teammates[0]!.picks).toEqual({ source: 'territory-picks', territories: [], refused: 'not-teammate' });
+    await h.harness.close();
+    h = await liveHarness({
+      feed: [game('DistributingTerritories')],
+      pages: ME_PAGE,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: latest(PICK_BOARD),
+        [Method.GetTerritoryPicks]: () => ({ error: { code: 188, message: 'CannotGetPicksInAutomaticDistribution' } }),
+      }),
+    });
+    const q = payload<TeamPayload>(await h.call('warapp_get_team', { game_id: GAME }));
+    expect(q.teammates[0]!.picks).toEqual({ source: 'territory-picks', territories: [], refused: 'automatic-distribution' });
+  });
+
   it('counts unread team chat from the web chat (no text), mine and other channels left out', async () => {
     h = await liveHarness({
       feed: [game('Playing')],

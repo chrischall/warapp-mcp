@@ -3,8 +3,8 @@
 // unread team chat. Read-only.
 //
 // UNVERIFIED live: GameFeed's player `team` (V1; without it the team comes from GetMyGames' GameInfoPlayer,
-// read from the bundle), the teammate orders in LatestGameInfo (V5), GetTerritoryPicks with a teammate's id
-// (V6). How a team's hand is keyed is VERIFIED (V8, #310). Every read here is tolerant: what cannot be read is
+// read from the bundle) and the pick list in LatestGameInfo's teammate orders. VERIFIED live 2026-11-22 (#435):
+// the teammate orders before the teammate commits (V5), GetTerritoryPicks with a teammate's id (V6). How a team's hand is keyed is VERIFIED (V8, #310). Every read here is tolerant: what cannot be read is
 // unknown (`null`), never an error — except a game that is not a team game, which is refused.
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { visibleIncomeFor } from '../analysis/plan/shared.js';
 import { cardRules, handReadable, readHand } from '../cards.js';
 import { parseGameId } from '../client.js';
+import { WarappServerError } from '../protocol/rpc.js';
 import { boardStateFromLive, inGameOf } from '../live.js';
 import type { Player } from '../normalize.js';
 import { withTeammateOrders, type TeammateOrders, type TeamOrders } from '../team-orders.js';
@@ -29,10 +30,10 @@ import { accountUnknown } from './write-kit.js';
 
 const NOTES = [
   "GameFeed's player team is UNVERIFIED (V1); when it sends none, the team comes from GetMyGames (from the client bundle).",
-  "Teammate orders and picks come from the live board's TeammateOrders (client bundle, UNVERIFIED live, V5): `null` " +
-    'means unknown — none entered, or war.app did not send them — never "nothing entered".',
+  "Teammate orders and picks come from the live board's TeammateOrders (orders entered before the teammate commits " +
+    'verified live, V5; the pick list there unverified): `null` means unknown — none entered, or war.app did not send them — never "nothing entered".',
   "While distributing, a teammate's picks not in the board are asked with GetTerritoryPicks and the teammate's id " +
-    '(UNVERIFIED, V6); a refusal reads as unknown.',
+    "(verified live, V6); war.app refusing an opponent's list (187) or any list in automatic distribution (188) is `refused`, any other refusal unknown.",
   "The team's hand is every card under me and my teammates: war.app keeps each player's cards under that player's id (`heldBy`), and the limit is the team's (V8, verified).",
 ];
 
@@ -43,11 +44,26 @@ const BOARD_STATES = new Set(['Playing', DISTRIBUTING]);
 export interface TeammatePicks {
   source: 'teammate-orders' | 'territory-picks';
   territories: number[];
+  /**
+   * War.app refused GetTerritoryPicks for a reason that never lifts in this game (V6, verified live
+   * 2026-11-22), so there is no list for me to read and `territories` is empty: `not-teammate` — error 187
+   * (CannotGetOpponentsPicks), war.app counts the player as an opponent, not my teammate (the team read may be
+   * wrong); `automatic-distribution` — error 188 (CannotGetPicksInAutomaticDistribution), nobody picks.
+   */
+  refused?: 'not-teammate' | 'automatic-distribution';
 }
+
+/** GetTerritoryPicks refusals that never lift in a game (EnumSerialization_ErrorTypes, the client bundle; V6 live). */
+const PICKS_REFUSALS: Readonly<Record<number, NonNullable<TeammatePicks['refused']>>> = {
+  187: 'not-teammate', // CannotGetOpponentsPicks
+  188: 'automatic-distribution', // CannotGetPicksInAutomaticDistribution
+};
 
 /**
  * A teammate's pick list: the live board's TeammateOrders entry first (V5), else GetTerritoryPicks with the
- * teammate's in-game id (V6). `null` is unknown — an AI seat, or a read war.app refused. Never throws.
+ * teammate's in-game id (V6, verified live 2026-11-22: a teammate's list is answered, an opponent's is refused
+ * with 187, every list in an automatic-distribution game with 188 — both read as `refused`, an empty list).
+ * `null` is unknown — an AI seat, or any other failure. Never throws.
  */
 export async function readTeammatePicks(
   ctx: LiveContext,
@@ -60,9 +76,19 @@ export async function readTeammatePicks(
   if (inGame === undefined) return null;
   try {
     return { source: 'territory-picks', territories: await loadPicks(ctx, gameId, inGame) };
-  } catch {
-    return null; // refused or unreadable (V6): unknown
+  } catch (e) {
+    const refused = e instanceof WarappServerError ? PICKS_REFUSALS[e.code] : undefined;
+    if (refused) return { source: 'territory-picks', territories: [], refused };
+    return null; // any other refusal, or unreadable: unknown
   }
+}
+
+/** #435: the warning for teammates war.app refused a pick list for as an opponent's (GetTerritoryPicks 187, V6 verified live). */
+export function notTeammateWarning(players: readonly number[]): string {
+  return (
+    `War.app refused the pick list of player ${players.join(', ')} as an opponent's (GetTerritoryPicks error 187, CannotGetOpponentsPicks): ` +
+    'it does not count them as your teammate, so the team read may be wrong. Their list never becomes readable; the plan treats it as empty.'
+  );
 }
 
 export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
@@ -140,10 +166,10 @@ export function registerTeamTool(server: McpServer, ctx: LiveContext): void {
       for (const p of mates) {
         const inGame = inGameOf(p);
         const entry: TeammateOrders | undefined = board?.teammateOrders?.find((e) => e.playerId === p.id);
-        let picks: { source: string; territories: Array<{ id: number; name: string }> } | null = null;
+        let picks: { source: string; territories: Array<{ id: number; name: string }>; refused?: string } | null = null;
         if (game.state === DISTRIBUTING && board) {
           const read = await readTeammatePicks(ctx, game.id, p, entry);
-          picks = read && { source: read.source, territories: read.territories.map(name) };
+          picks = read && { source: read.source, territories: read.territories.map(name), ...(read.refused ? { refused: read.refused } : {}) };
         }
         teammates.push({
           id: p.id,

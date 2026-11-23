@@ -95,6 +95,45 @@ describe('readTeammateOrders', () => {
     expect(got?.has(333333)).toBe(false);
   });
 
+  it('#435 (V5, verified live 2026-11-22): reads the shape war.app sent for an uncommitted teammate', () => {
+    // A decoded LatestGameInfo as read live (ids made up): the dict holds only the teammate's entry (never mine),
+    // filled before the teammate commits; Armies carries a leading flag and a null unit list; picks null while playing.
+    const live = {
+      $type: 'warlight.shared.LatestGameInfo',
+      a: [],
+      f: [],
+      g: [
+        [
+          MATE,
+          {
+            $type: 'warlight.shared.TeammateOrders',
+            s: 1,
+            o: [
+              {
+                $type: 'warlight.shared.GameOrderAttackTransfer',
+                t: false,
+                m: 3,
+                p: false,
+                f: 47,
+                a: { $type: 'warlight.shared.Armies', c: false, n: 2, u: null },
+                to: 46,
+                pl: MATE,
+                x: null,
+                y: null,
+              },
+            ],
+            k: null,
+          },
+        ],
+      ],
+    };
+    expect(readTeammateOrders(live)).toEqual(
+      new Map([[MATE, { inGameId: MATE, orders: { deploys: [], moves: [{ from: 47, to: 46, armies: 2, mode: 'attack-transfer' }], cards: [], discards: [], unread: [] }, picks: null }]]),
+    );
+    // A teammate with nothing entered: war.app sent the dict empty, which no value names, so it reads as unknown.
+    expect(readTeammateOrders({ ...live, g: [] })).toBeUndefined();
+  });
+
   it('never throws on a malformed entry: what it cannot read is listed as unread', () => {
     const odd = {
       $type: 'warlight.shared.LatestGameInfo',

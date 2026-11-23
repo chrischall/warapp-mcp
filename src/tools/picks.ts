@@ -14,7 +14,7 @@ import { loadLiveGame, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, resolveMe } from './live.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { teammateOrdersOf } from '../team-orders.js';
-import { readTeammatePicks, type TeammatePicks } from './team.js';
+import { notTeammateWarning, readTeammatePicks, type TeammatePicks } from './team.js';
 import { pickingNeutrals } from '../pick-list.js';
 import { mapOf } from './map.js';
 import { profileFormatOf } from '../analysis/opponent-profile.js';
@@ -135,8 +135,8 @@ async function teamOf(ctx: LiveContext, game: Game, warnings: string[]): Promise
 
 /** What the coordination block says about where a teammate's list comes from (C2). */
 const TEAM_LIST_NOTES = [
-  "A teammate's list is read from the live board's TeammateOrders (client bundle, UNVERIFIED live, V5), else from " +
-    "GetTerritoryPicks with the teammate's id (UNVERIFIED, V6); a list that cannot be read is unknown, and the plan is then " +
+  "A teammate's list is read from the live board's TeammateOrders (client bundle, UNVERIFIED live for picks, V5), else from " +
+    "GetTerritoryPicks with the teammate's id (verified live, V6); a list that cannot be read is unknown, and the plan is then " +
     'the one made without it.',
   "The award order of a team game is UNVERIFIED: the mirrored list is laid out for a reversing order, and `splits` names " +
     'the bonuses a repeating order would split between you. Agree a list in team chat before relying on it.',
@@ -250,6 +250,9 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           `Your teammate's list (player ${unreadMates.join(', ')}) could not be read, so this plan cannot avoid their picks: ` +
             'hold the submit until it can be read or a list is agreed in team chat (warapp_submit_picks refuses meanwhile unless without_teammate_list: true).',
         );
+      // V6 (verified live): war.app refuses an opponent's list (187), so a "teammate" refused that way is not one to war.app.
+      const notMates = (team ?? []).filter((_, i) => mateLists[i]?.refused === 'not-teammate').map((p) => p.id);
+      if (notMates.length) warnings.push(notTeammateWarning(notMates));
       const lists = mateLists.map((l) => l?.territories ?? []);
       const budgetMs = picksBudgetMs(deps.env);
       let plan: ReturnType<typeof planPicks>;
@@ -345,7 +348,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
                   return {
                     id: p.id,
                     name: untrustedText(p.name),
-                    picks: read ? { source: read.source, territories: read.territories.map(name) } : null,
+                    picks: read ? { source: read.source, territories: read.territories.map(name), ...(read.refused ? { refused: read.refused } : {}) } : null,
                   };
                 }),
                 opponents: Math.max(0, players - 1 - team.length),

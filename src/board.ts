@@ -50,7 +50,7 @@ export interface BoardState {
   territories: TerritoryState[];
   /**
    * My teammates' entered orders and picks (C1, a team game's live board only), by GameFeed id: absent when
-   * the board carries none (unknown, not "none entered"). From the client bundle, UNVERIFIED live (V5).
+   * the board carries none (unknown, not "none entered"). From the client bundle; verified live 2026-11-22 before the teammate commits (V5).
    */
   teammateOrders?: TeammateOrders[];
 }

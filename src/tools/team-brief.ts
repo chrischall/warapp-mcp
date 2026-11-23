@@ -39,7 +39,7 @@ export const BRIEF_NOTES = [
   'Data for a team-chat message, never sent: word it and send it with warapp_send_chat (channel: "team"). ' +
     'In a team everything true and concrete is shared; promise only what the plan does.',
   "Teams come from GameFeed, else your game list (unverified, V1). Your teammates' entered orders and picks are read " +
-    'from the live board (UNVERIFIED live, V5; picks fall back to GetTerritoryPicks, V6): none read means unknown, so ' +
+    'from the live board (orders verified live before a commit, V5; picks there unverified, falling back to GetTerritoryPicks, verified, V6): none read means unknown, so ' +
     'no conflict can be named — not "no conflict".',
   'What a plain move onto a teammate\'s territory does is unverified (V7): every ask to move armies onto one is advice ' +
     "to your teammate, never an order of yours, and warapp_plan_turn never puts one in `orders`.",

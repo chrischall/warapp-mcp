@@ -264,12 +264,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   judged by both a reversing and a repeating order (`award.orders`, unverified), the duel rules stay two-player, the list stays
   starts × all players, and the award reading puts a start the first board shows as a teammate's in `teammateStarts`.
   With a teammate's list read (C2 coordination; `readTeammatePicks` in `src/tools/team.ts`: `TeammateOrders`, then
-  `GetTerritoryPicks` — V5/V6, unverified) `planPicks` takes `team.lists`: each teammate's top (the territory limit) leaves my
+  `GetTerritoryPicks` — V6 verified live 2026-11-22; the `TeammateOrders` pick list still unverified) `planPicks` takes `team.lists`: each teammate's top (the territory limit) leaves my
   candidates and is `friendly` in the simulation (never captured, so a bonus with one never completes for me — a bonus pays one
   holder; no threat; a known teammate start); my list is shortened to my starts + the opponents' only when disjoint from every
   teammate list and each is as long as the client allows (a short one can run out, and war.app then grants from mine); `plan.team` reports `overlap`, `sharedBonuses` and `mirrored` (my primary and each top laid on the hands a
   reversing award gives, `splits` naming what a repeating order would split; its `submitPicks`, the shared top then my
-  fallback, is capped at `maxPicks`). No list read, or only empty ones: byte-identical. #435: a teammate's list that cannot be read (`null`, unknown — not an empty one) gets a plan_picks warning to hold the submit, and `warapp_submit_picks` refuses in a team game while any playing teammate's list is unread (read the same way) unless `without_teammate_list: true`, which the preview then warns about.
+  fallback, is capped at `maxPicks`). No list read, or only empty ones: byte-identical. #435: a teammate's list that cannot be read (`null`, unknown — not an empty one) gets a plan_picks warning to hold the submit, and `warapp_submit_picks` refuses in a team game while any playing teammate's list is unread (read the same way) unless `without_teammate_list: true`, which the preview then warns about. V6 refusals that never lift — 187 `CannotGetOpponentsPicks` (war.app calls the player an opponent: `refused: 'not-teammate'`, warned as a possible team misread) and 188 `CannotGetPicksInAutomaticDistribution` — read as an empty list with `refused`, never as unread, so they cannot hold every submit for good.
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes; in a two-player game without `spread` it also offers a
   coverage-first `alternative` (a pair, then the picks that most raise `coverage` — the reasonable bonuses reached within 2 moves
   past no wasteland; `coverageModel`) with its own `submitPicks`, only when it covers more, the primary unchanged (#166). `docs/STRATEGY.md` states the community
@@ -468,9 +468,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   found by type name, orders by class and read order). `withTeammateOrders` sets `BoardState.teammateOrders`
   (by GameFeed id, my entry out) on the live boards of `warapp_plan_turn`, `warapp_check_plan`,
   `warapp_submit_turn` and `warapp_get_team` when the dict is there — no key otherwise (1v1, FFA: goldens
-  unchanged), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, a refusal is unknown);
+  unchanged), and the board cache never keeps it. Picks fall back to `GetTerritoryPicks` with the teammate's id (V6, VERIFIED live 2026-11-22: a teammate's list and mine answer, an opponent's is error 187, any seat in automatic distribution 188 — those two are `refused`, any other refusal is unknown);
   the team hand is `readHand` over `handOwners` (`{ inPlay: false }` when the settings put no card in play); unread team chat is counted from the web chat only. All
-  UNVERIFIED live (V1, V5, V6); absent means unknown (`null`), never "none". **The team hand is VERIFIED (V8, #310):**
+  UNVERIFIED live (V1; V5's pick list while distributing). **V5 orders are VERIFIED live 2026-11-22** (#435): a teammate's entered orders are in `TeammateOrders` before it commits (my own entry never is); with nothing entered war.app sends the dict empty, which reads as unknown. Absent means unknown (`null`), never "none". **The team hand is VERIFIED (V8, #310):**
   each player's cards sit under that player's id (`warapp_get_team` shows `heldBy`), the hand is all of them, and
   `teamCardLimit` (`src/team-cards.ts`) applies the limit as the bundle's `GameValidateOrders` does — the team's hand
   less the committed teammates' entered plays and discards, error 51 only for the last of the team to commit — so
@@ -484,7 +484,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   simulator with only those attacks, both orders, also against the owner's deploy; `mustGoFirst` under a cyclic
   `game.moveOrder`) are advisory: a move onto a teammate is V7, so neither is ever in `orders`. Cards
   (`src/team-cards.ts`): a card a teammate entered a play or discard of leaves my hand before `chooseCardPlays`, and
-  plan_turn's `cards.team.roles` says who plays each card (V5 unverified); `warapp_submit_turn` and
+  plan_turn's `cards.team.roles` says who plays each card (V5 verified before commit, 2026-11-22); `warapp_submit_turn` and
   `warapp_check_plan` warn when my orders use such a card (`claimedCardUses`), and a card named by type resolves to
   an unclaimed one first (`unclaimedFirst`).
 - **The team brief (C4) is `warapp_team_brief`, read-only: data for a team-chat message, never sent.** It plans
