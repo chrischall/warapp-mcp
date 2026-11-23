@@ -491,6 +491,8 @@ const PICK_WARNING_CODES: ReadonlyArray<readonly [RegExp, string]> = [
   [/^In a 1v1 the best /, 'spread-relaxed'],
   [/^Only \d+ pickable territor/, 'short-pickable'],
   [/^The fallback group scores more than the primary/, 'fallback-outscores'],
+  // #429: a primary pick replaced by one that pays when a pick above it goes to the opponent.
+  [/^Primary pick \d+ is /, 'primary-answered'],
   [/^Territory limit missing/, 'assumed-territory-limit'],
   [/^Full distribution \(DistributionMode 0/, 'full-distribution'],
   [/^Could not tell which seat is yours/, 'team-seat-unknown'],

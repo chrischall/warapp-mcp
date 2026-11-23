@@ -407,21 +407,35 @@ export function cardPieceOption(settings: GameSettings | undefined, hand: readon
 }
 
 /**
- * #164: an opponent's Reinforcement card for the threat model: the first turn one can be in a hand
- * (the card clock's fastest), the armies it adds (a fixed card's `FixedArmies`, else the
- * Reinforcement card in my hand as it is worth now) and the capturing turns each further card
- * takes. `undefined` when no Reinforcement card is in play or what it adds is unknown.
+ * #164: an opponent's Reinforcement card for the threat model: the first turn one can be in a hand,
+ * the armies it adds (a fixed card's `FixedArmies`, else the Reinforcement card in my hand as it is
+ * worth now) and the capturing turns each further card takes. `undefined` when no Reinforcement card
+ * is in play, none ever comes, or what it adds is unknown.
+ *
+ * #427 (proposed, owner approval pending): the clock runs at the EXPECTED weighted rate — the card's
+ * minimum per capturing turn plus its weighted share of the pieces drawn at random (`capturePieceValue`'s
+ * rate) — not the fastest (every random piece a Reinforcement piece), which counted a card every turn or
+ * two where one comes every few. Where no piece is drawn at random (most games) the two are the same.
  */
 export function opponentReinforcement(settings: GameSettings | undefined, hand: readonly Card[]): ReinforcementClock | undefined {
-  const entry = cardClock(settings)?.cards.find((c) => c.card === 'Reinforcement');
-  const first = entry?.firstPlayableTurn.fastest;
-  if (!entry || first === null || first === undefined) return undefined;
+  const clock = cardClock(settings);
+  const entry = clock?.cards.find((c) => c.card === 'Reinforcement');
+  if (!clock || !entry) return undefined;
+  const drawWeight = clock.cards.reduce((n, c) => n + c.weight, 0);
+  const rate = entry.minimumPerTurn + (entry.weight > 0 && drawWeight > 0 ? (clock.randomPerTurn * entry.weight) / drawWeight : 0);
+  // Capturing turns until the k-th card is complete (pieces carried over); null when it never comes.
+  const turnsFor = (k: number): number | null => {
+    const need = k * entry.pieces - entry.initialPieces;
+    return need <= 0 ? 0 : rate > 0 ? Math.ceil(need / rate - 1e-9) : null;
+  };
+  const firstTurns = turnsFor(1);
+  if (firstTurns === null) return undefined;
   const raw = settings!.raw.ReinforcementCard;
   const fixed = typeof raw === 'object' && raw !== null ? Number((raw as Record<string, unknown>).FixedArmies) : NaN;
   const inHand = hand.find((c) => c.type === CARD_REINFORCEMENT && c.armies !== undefined && c.armies > 0)?.armies;
   const armies = Number.isFinite(fixed) && fixed > 0 ? Math.floor(fixed) : inHand;
   if (armies === undefined || armies <= 0) return undefined;
-  const after = entry.cardsAfter.fastest;
-  const turnsPerCard = after && after.length >= 2 ? Math.max(1, after[1]! - after[0]!) : null;
-  return { firstTurn: first, armies, turnsPerCard };
+  const second = turnsFor(2);
+  // Pieces arrive at the end of a turn, so the first card is playable the turn after its last piece.
+  return { firstTurn: firstTurns + 1, armies, turnsPerCard: second === null ? null : Math.max(1, second - firstTurns) };
 }

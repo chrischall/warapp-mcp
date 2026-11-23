@@ -13,6 +13,7 @@ import type { PlanCtx, PlanState } from './state.js';
 import type { Targets } from './targets.js';
 import type { Threats } from './threats.js';
 import { byNum } from './util.js';
+import { isDoomedOut } from './doomed-out.js';
 
 
 /** #125: the step rule 4e ranked first and could not afford this turn (its size, nothing else). */
@@ -151,7 +152,8 @@ export function standStillKit(
     const rLine = r >= 0 ? rationale.splice(r, 1)[0] : undefined;
     const w = warnings.findIndex((l) => l.startsWith(`The withdrawal from ${label(x)} only executes`));
     const wLine = w >= 0 ? warnings.splice(w, 1)[0] : undefined;
-    if (!moves.some((o) => o.kind === 'transfer' && o.reason === WITHDRAWS)) ps.cardAdvice = null;
+    // #431's orders out of a doomed stack keep the advice too.
+    if (!moves.some((o) => (o.kind === 'transfer' && o.reason === WITHDRAWS) || isDoomedOut(o))) ps.cardAdvice = null;
     return () => {
       moves.splice(i, 0, m);
       avail.set(x, had.avail);
@@ -638,7 +640,7 @@ export function neverStandStill(
       // does not is ranked like any other capture.
       const repays = (p: Pick) => {
         const id = completedBy(p);
-        return id !== undefined && costOfPick(p.st.t) <= pc.paybackTurns * g.bonusById.get(id)!.value;
+        return id !== undefined && costOfPick(p.st.t) <= pc.capturePaybackTurns * g.bonusById.get(id)!.value;
       };
       const teamFocused = (p: Pick): p is Extract<Pick, { kind: 'enemy' }> => p.kind === 'enemy' && pc.teamFocus.has(p.st.player);
       const keyOf = (p: Pick) => [
@@ -903,7 +905,7 @@ export function neverStandStill(
         // #240: a completion that repays its cost goes first among the affordable candidates.
         if (repays(taken) && !repays(p))
           return [
-            `${label(t)} ${after}: taking ${label(taken.st.t)} completes bonus ${bonusName(completedBy(taken)!)} this turn, which repays its cost of ${costOfPick(taken.st.t)} within ${pc.paybackTurns} turns`,
+            `${label(t)} ${after}: taking ${label(taken.st.t)} completes bonus ${bonusName(completedBy(taken)!)} this turn, which repays its cost of ${costOfPick(taken.st.t)} within ${pc.capturePaybackTurns} turns`,
           ];
         // PLAN-TEAMS C3.4: equal but for the team focus.
         if (teamFocused(taken) && !teamFocused(p) && keyOf(p).slice(0, FOCUS_KEY).every((k, i) => k === keyOf(taken)[i]))

@@ -27,6 +27,21 @@ import { byNum } from './util.js';
 /** #272: a target holding at most this many armies is "empty or near-empty". */
 export const CONCEDED_OUT_MAX = 2;
 
+/**
+ * #286: rule 1c keeps my `x` — a positive bonus containing it is completed by this turn's captures —
+ * so its armies would not withdraw: they are its garrison, not a free step. Live, a +2 member
+ * attacked out with 3 into an uneconomic bonus, was kept, and ended 1 army short of its hold.
+ */
+export function keptByCompletion(pc: PlanCtx, ps: PlanState, x: number): boolean {
+  const { g, mineSet } = pc;
+  const holding = (y: number) => mineSet.has(y) || ps.captured.has(y);
+  return g.map.bonuses.some((b) => {
+    if (b.value <= 0) return false;
+    const ts = bonusTerritories(g, b.id);
+    return ts.includes(x) && ts.every(holding) && !ts.every((y) => mineSet.has(y));
+  });
+}
+
 export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook, hd: Holds, tgt: Targets, caps: Captures): void {
   const { g, goal, foe, territories: state, label, bonusName, mineSet, unitsAt, uncounted, defenceAt, costAt, myCommanders, noSplit } = pc;
   const { avail, captured, spared, rationale } = ps;
@@ -48,17 +63,7 @@ export function attackOutOfConceded(pc: PlanCtx, ps: PlanState, book: DeployBook
     }
     return { completes, advances };
   };
-  /**
-   * #286: rule 1c keeps `x` — a positive bonus containing it is completed by this turn's captures —
-   * so its armies would not withdraw: they are its garrison, not a free step. Live, a +2 member
-   * attacked out with 3 into an uneconomic bonus, was kept, and ended 1 army short of its hold.
-   */
-  const keptBy1c = (x: number) =>
-    g.map.bonuses.some((b) => {
-      if (b.value <= 0) return false;
-      const ts = bonusTerritories(g, b.id);
-      return ts.includes(x) && ts.every(holding) && !ts.every((y) => mineSet.has(y));
-    });
+  const keptBy1c = (x: number) => keptByCompletion(pc, ps, x);
   const tried = new Set<number>();
   for (;;) {
     const cands: { t: number; from: number; cost: number; bonus: number; value: number; completes: boolean; focus: boolean }[] = [];
