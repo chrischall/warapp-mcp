@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/chrischall/warapp-mcp/compare/v0.8.0...v0.9.0) (2026-11-23)
+
+
+### Features
+
+* **cards:** read opponents' unfogged Reinforcement plays from the history ([#427](https://github.com/chrischall/warapp-mcp/issues/427)) ([#499](https://github.com/chrischall/warapp-mcp/issues/499)) ([0091646](https://github.com/chrischall/warapp-mcp/commit/009164661b84fc85f4728a3b45b8cf673edfbd36))
+* **planner:** the nearest bonus's steps are funded first while [#319](https://github.com/chrischall/warapp-mcp/issues/319) fires ([#416](https://github.com/chrischall/warapp-mcp/issues/416)) ([#502](https://github.com/chrischall/warapp-mcp/issues/502)) ([81fdcc8](https://github.com/chrischall/warapp-mcp/commit/81fdcc88b7a6298937aae71ed8189a4d783ad984))
+* **turn:** read back my committed orders (warapp_get_my_orders) ([#501](https://github.com/chrischall/warapp-mcp/issues/501)) ([698acd0](https://github.com/chrischall/warapp-mcp/commit/698acd005b96b04741718298ec12a63f4b09a14b))
+
+
+### Bug Fixes
+
+* **teams:** verify teammate order and pick reads live ([#435](https://github.com/chrischall/warapp-mcp/issues/435)) ([#498](https://github.com/chrischall/warapp-mcp/issues/498)) ([0793336](https://github.com/chrischall/warapp-mcp/commit/0793336fae469a03c70bbc6023c6287e68a1a30f))
+
 ## [0.8.0](https://github.com/chrischall/warapp-mcp/compare/v0.7.0...v0.8.0) (2026-11-23)
 
 
