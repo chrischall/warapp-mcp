@@ -753,6 +753,25 @@ describe('warapp_get_chat', () => {
     expect(h.exchanges).toEqual([]);
   });
 
+  it('decodes territory and bonus links into names and `links`; an id the map lacks keeps its token (chat links)', async () => {
+    const chat = [
+      { playerID: String(BOB.inGame), message: 'hold <a t=1> and <a b=1>, not <a t=999999>' },
+      { playerID: String(BOB.inGame), message: 'plain words' },
+    ];
+    h = await liveHarness({ feed: [game('Playing', { chat })] });
+    const msgs = payload(await h.call('warapp_get_chat', { game_id: GAME })).messages as Array<Record<string, unknown>>;
+    expect(msgs[0]).toMatchObject({
+      text: '⟦hold Lands of Always Winter and House Stark, not <a t=999999>⟧',
+      links: [
+        { kind: 'territory', id: 1, name: '⟦Lands of Always Winter⟧' },
+        { kind: 'bonus', id: 1, name: '⟦House Stark⟧' },
+        { kind: 'territory', id: 999999, name: null },
+      ],
+    });
+    expect(msgs[1]!.text).toBe('⟦plain words⟧');
+    expect('links' in msgs[1]!).toBe(false);
+  });
+
   it('falls back to a wrapped-id sender match', async () => {
     h = await liveHarness({ feed: [game('Playing', { chat: [{ playerID: ANN.feed, message: 'hi' }] })] });
     expect(payload(await h.call('warapp_get_chat', { game_id: GAME })).messages).toMatchObject([{ from: '⟦Ann⟧', text: '⟦hi⟧' }]);
@@ -1290,6 +1309,50 @@ describe('warapp_send_chat', () => {
       await h.harness.close();
       h = undefined;
     }
+  });
+
+  it('links: [[t:…]] / [[b:…]] markers resolve against the map and go out as the client\'s tokens', async () => {
+    const s = chatServer();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp });
+    const args = { game_id: GAME, message: 'hold [[t:1]] and [[b:house stark]]' };
+    const preview = payload<{ preview: Record<string, unknown> }>(await h.call('warapp_send_chat', args));
+    expect(preview.preview).toMatchObject({
+      rendered: '⟦hold Lands of Always Winter and House Stark⟧',
+      links: [
+        { kind: 'territory', id: 1, name: '⟦Lands of Always Winter⟧' },
+        { kind: 'bonus', id: 1, name: '⟦House Stark⟧' },
+      ],
+    });
+    expect(s.sent).toEqual([]);
+    await confirmed('warapp_send_chat', args);
+    expect(s.sent[0]).toMatchObject({ text: 'hold <a t=1> and <a b=1>', channel: -1 });
+  });
+
+  it('links: an ambiguous or unknown name is refused before anything is sent, listing the matches', async () => {
+    const s = chatServer();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp });
+    const res = await h.call('warapp_send_chat', { game_id: GAME, message: 'meet at [[t:Mistwood]]' });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/matches 2 territories: .*\(\d+\), .*\(\d+\)/);
+    const unknown = await h.call('warapp_send_chat', { game_id: GAME, message: 'meet at [[t:Nowhere at all]]' });
+    expect(textOf(unknown)).toMatch(/No territory on this game's map matches/);
+    expect(s.sent).toEqual([]);
+  });
+
+  it('links: link_territories links every mention of a territory name, repeats included', async () => {
+    const s = chatServer();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp });
+    await confirmed('warapp_send_chat', { game_id: GAME, message: 'Bay of Ice, then bay of ice again', link_territories: true });
+    expect(s.sent[0]).toMatchObject({ text: '<a t=8193>, then <a t=8193> again' });
+  });
+
+  it('links: a plain message is sent byte-identical, with no links in the preview', async () => {
+    const s = chatServer();
+    h = await liveHarness({ pages: SIGNED_IN_ANN, warapp: s.warapp });
+    const preview = payload<{ preview: Record<string, unknown> }>(await h.call('warapp_send_chat', { game_id: GAME, message: 'gl  hf [x]' }));
+    expect('links' in preview.preview).toBe(false);
+    await confirmed('warapp_send_chat', { game_id: GAME, message: 'gl  hf [x]' });
+    expect(s.sent[0]).toMatchObject({ text: 'gl  hf [x]' });
   });
 
   /** A team game: Ann on team 1, Bob on team 2, private messages as `pm` says. */

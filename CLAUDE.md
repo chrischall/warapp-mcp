@@ -386,7 +386,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
   one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id
-  is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`. The interpreter's registration
+  is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`.
+  **Chat links (`src/chat-links.ts`, docs/WEB-PROTOCOL.md "Territory and bonus links in chat").** The client sends a
+  link as the bare token `<a t=<territoryId>>` / `<a b=<bonusId>>` in the text (its editor span and name are dropped
+  before posting) and renders the name from the map: territory and bonus links VERIFIED live (owner, 2026-11-23:
+  sent and read back through GameRefresh; the bonus check, a private message with `<a t=1>` and `<a b=1>` read back as
+  both links with the text rendered by name). `warapp_send_chat` resolves
+  `[[t:…]]` / `[[b:…]]` markers (id first, else the one case-insensitive exact name; unknown or shared names refused
+  before any send, listing ids) and, with `link_territories`, every whole-word territory name (longest first; never
+  inside a marker or token; a shared name refused); the map is read only then, and a message with nothing to link
+  is sent byte-identical. The preview adds `rendered`, `links` and `linksNote`; the read-back compares the wire text.
+  `shown()` decodes tokens for `warapp_get_chat`, `warapp_chat_inbox` and the plan's chat (`links`; name from the
+  cached map, `null` and the raw token kept when unknown). The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
 - **Chat is game information (#415, `docs/PLAN-CHAT-STRATEGY.md`): classified, advised, never sent on its own.**
   `src/analysis/chat-intent.ts` (`classifyMessage`, pure, pattern-based, never throws) labels another player's

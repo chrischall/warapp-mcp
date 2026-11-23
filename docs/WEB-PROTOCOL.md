@@ -759,6 +759,29 @@ with the auth block first; field orders are the client writers' and readers' rea
   which is notifications is not named in the bundle) and, when it opens the notifications screen,
   clears both locally if either is set; that clearing sends nothing.
 
+### Territory and bonus links in chat
+
+**Territory and bonus links VERIFIED live** (owner, 2026-11-23): territory links by a sent message read back through
+GameRefresh; bonus links by a private message carrying `<a t=1>` and `<a b=1>`, confirmed sent through
+`warapp_send_chat` and read back through GameRefresh as `links` [territory 1, bonus 1] with the text rendered by name.
+
+- The editor shows a link as `<span class="ujsChatLink" contenteditable="false" data-link="t_<id>">Name</span>`
+  (`b_<id>` for a bonus; `data-link` must match `^[tb]_[0-9]+$` when pasted HTML is rebuilt). The client inserts
+  one when a territory or bonus is clicked with the link button down (`ChatTab`: `"t_" + id` with the territory's
+  name, `"b_" + bonus.id` with the bonus's name).
+- Serializing the editor (`TMP_InputField`'s walk of the contenteditable) writes a link span as
+  `<a t_<id>>Name</a>`. Before posting, `ChatTab`'s send rewrites every `<a X>…</a>` whose `X` splits on `_` into two
+  parts to `<a X0=X1>` and **drops the name and `</a>`**. The SendChat text therefore carries only the bare token:
+  `<a t=<territoryId>>` or `<a b=<bonusId>>`, inline with the rest of the text.
+- Receiving (`warlight.shared.vm.ChatChunk`'s parser): at each `<a `, `t=` or `b=` must follow, then the id runs to
+  the next `>`, 1 to 10 characters (parsed as an integer) — a `ChatChunkTerritory` / `ChatChunkBonus`; anything
+  else stays text. `ChatMessage` renders a territory chunk as the map's territory name (a link that centres the
+  map on it), `(???)` when the map lacks the id.
+- This server: `src/chat-links.ts`. `warapp_send_chat` turns `[[t:<id or name>]]` / `[[b:<id or name>]]` (and,
+  with `link_territories`, every whole-word territory name) into the token; `warapp_get_chat` /
+  `warapp_chat_inbox` decode `<a ([tb])=(\d{1,10})>` into the name and `links: [{kind, id, name}]`, keeping the raw
+  token for an id the map lacks.
+
 ### Marking a game's chat read
 
 - **`RegisterChatView` (43)**, `POST /Services?m=RegisterChatView&js=1`. After the auth block:
