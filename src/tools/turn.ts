@@ -35,6 +35,7 @@ import {
   incomeDetail,
   armyCapPoolsUncertainty,
   deployCheckUncertainties,
+  unreadSanctionsUncertainty,
   overrideUncertainties,
   neighborsOf,
   PAYBACK_TURNS,
@@ -2447,7 +2448,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'exact where the fog shows every owner (No, Light, Dense fog); every one of these figures, the fog prior and the thin-evidence range included, cut by ' +
           'Sanctions on it from the turn after the card was played (a figure read from deploys already under the card is left whole); ' +
           "plus its Reinforcement card — the game's value, flat or progressive — from the turn the card clock says one can be due until a play of it is seen, " +
-          'shown apart per opponent in `enemyDeployDetail` (`cardBonus`, `sanctionApplied`); ' +
+          'shown apart per opponent in `enemyDeployDetail` (`cardBonus`, `sanctionApplied`); a progressive card by the client\'s formula (10%, say, of the ' +
+          'territories every player holds — those in view, a floor under fog — or of the turn), or a Reinforcement card in your hand when worth more, ' +
+          'said in `cardBonusBasis` ("client formula" | "my card\'s value"); ' +
           'a neighbour whose armies the fog hides counts its unaccounted armies (at most two turns of its income), and a large stack that left view counts where it can reach, with a warning a turn ahead where it can stand beside a border next turn; ' +
           'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
           'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement (in a team ' +
@@ -2831,7 +2834,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...sanction.warnings,
         ...effect.unsure,
         ...deployCheckUncertainties(game.settings, {
-          sanctionsApplied: sanction.applied,
+          sanctionsUnmodelled: sanction.unmodelled,
           ...(setup.incomeCap ? { armyCap: setup.incomeCap } : {}),
         }).map((r) => `Income ${income} may be off: ${r}`),
         ...(setup.capUnknown ? [`Income ${income} is not cut by the army cap: an army count of yours is unreadable on the board.`] : []),
@@ -3152,7 +3155,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             .map((e) => ({
               player: playerRef(e.playerId),
               deploy: e.estimate,
-              ...(e.card ? { cardBonus: e.card.armies, cardDue: e.card.due } : {}),
+              ...(e.card ? { cardBonus: e.card.armies, cardDue: e.card.due, ...(e.card.basis ? { cardBonusBasis: e.card.basis } : {}) } : {}),
               ...(e.sanctioned?.applied && e.sanctioned.after !== undefined
                 ? { sanctionApplied: { player: e.playerId, percentage: sanctionPercentage(e.sanctioned.percentages), before: e.sanctioned.before, after: e.sanctioned.after } }
                 : {}),
@@ -3902,8 +3905,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               : [
                   ...deployCheckUncertainties(game.settings, {
                     ...(incomeOnBoard.cap ? { armyCap: incomeOnBoard.cap } : {}),
-                    ...(sanction.applied ? { sanctionsApplied: true } : {}),
+                    ...(sanction.unmodelled ? { sanctionsUnmodelled: true } : {}),
                   }),
+                  ...unreadSanctionsUncertainty(game.settings, { sanctionsOnMe: sanction.applied || sanction.unmodelled }),
                   ...commerceCheck.uncertain,
                 ],
           poolsUncertain: [

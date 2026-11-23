@@ -468,23 +468,36 @@ export interface ReinforcementClock {
   armies: number;
   turnsPerCard: number | null;
   /**
-   * A progressive card (`ReinforcementCard.Mode` other than Fixed): each opponent's card is valued by the game's
-   * formula, round(`percentage` × its territories in view) or round(`percentage` × the turn its latest card
-   * could come, turn − 1), at least 1 ({@link reinforcementArmiesFor}). The Mode values and the formula
-   * follow the mod API's `ReinforcementCardMode` (Fixed, ProgressiveByNumberOfTerritories,
-   * ProgressiveByTurnNumber) — UNVERIFIED against a live game.
+   * A progressive card (`ReinforcementCard.Mode` other than Fixed), valued by the client's own formula
+   * (verified in the client bundle, `ReinforcementCardMode`): when a card is earned, round(`percentage` × the
+   * territories ANY player holds, neutrals left out) for Mode 1 / ProgressiveByNumberOfTerritories, or
+   * round(`percentage` × the turn it is earned) for Mode 2 / ProgressiveByTurnNumber — to the nearest, .5
+   * down, at least 1. See {@link reinforcementArmiesFor}.
    */
   progressive?: { by: 'territories' | 'turns'; percentage: number };
 }
 
-/** Round to the nearest, .5 up. */
-const roundHalfUp = (x: number): number => Math.floor(x + 0.5 + 1e-9);
+/** Round to the nearest, .5 down: the client's rounding of a progressive card (`Round(x, false)`). */
+const roundHalfDown = (x: number): number => {
+  const whole = Math.floor(x);
+  return x - whole > 0.5 + 1e-9 ? whole + 1 : whole;
+};
 
-/** An opponent's Reinforcement card under `r`: a progressive card by its formula, else the flat (or hand) figure. */
-export function reinforcementArmiesFor(r: ReinforcementClock, opts: { territories: number; turn: number }): number {
-  if (!r.progressive) return r.armies;
+/** Where an opponent's progressive Reinforcement card's value comes from (`cardBonusBasis`). */
+export type CardBonusBasis = 'client formula' | "my card's value";
+
+/**
+ * An opponent's Reinforcement card under `r`: a flat card's armies, or a progressive one by the client's formula.
+ * `territories` is every territory a player (any player, me included) holds in view: under fog only a floor of
+ * the count the game uses, so a Reinforcement card in my hand worth more (`r.armies`: the client's figure for
+ * the same formula in the same game) is taken instead, labelled "my card's value". `turn` is the turn being
+ * played: the latest card was earned on the turn before it.
+ */
+export function reinforcementArmiesFor(r: ReinforcementClock, opts: { territories: number; turn: number }): { armies: number; basis?: CardBonusBasis } {
+  if (!r.progressive) return { armies: r.armies };
   const basis = r.progressive.by === 'territories' ? opts.territories : Math.max(0, opts.turn - 1);
-  return Math.max(1, roundHalfUp(r.progressive.percentage * basis));
+  const formula = Math.max(1, roundHalfDown(r.progressive.percentage * basis));
+  return r.armies > formula ? { armies: r.armies, basis: "my card's value" } : { armies: formula, basis: 'client formula' };
 }
 
 /** #164: GameFeed fog levels that show every territory's owner (No, Light and Dense fog): income is exact. */
@@ -1259,7 +1272,7 @@ export interface EnemyDeployEstimate {
    * turn it became due. `null` before then, after a deployment above its income was seen (until the
    * next card can be due), or without a clock.
    */
-  card: { armies: number; due: number } | null;
+  card: { armies: number; due: number; basis?: CardBonusBasis } | null;
   /** #164: the latest turn a deployment above its income was seen (a Reinforcement card played); else `null`. */
   cardPlayed: number | null;
   /** #427: `cardPlayed` was seen in that turn's orders (card plays not fogged), not read from a deploy. */

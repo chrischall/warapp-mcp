@@ -915,9 +915,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   deploys on or after `SureSanction.fromTurn` (`untilTurn` − Duration, the turn after the play), which already
   carries the cut (`sanctioned.carried`). check_plan's `enemyDeploy` and plan_turn's `enemyDeployDetail` report
   `sanctionApplied` and the clock's `cardBonus`; check_plan's `assume_enemy_cards: "none"` sizes replies without
-  the card. A progressive Reinforcement card (`Mode` 1 by territories in view, 2 by turn − 1, ×
-  `ProgressivePercentage`, round half up, at least 1; the mod API's enum order, UNVERIFIED) is valued per
-  opponent (`reinforcementArmiesFor`), no longer at the card in my hand. Golden: 0 of 6253 plans changed. The
+  the card. A progressive Reinforcement card is valued by the client's formula, VERIFIED from the client bundle:
+  when earned, `ProgressivePercentage` × the territories EVERY player holds (neutrals out; `Mode` 1) or × the turn
+  earned (`Mode` 2), round half DOWN, at least 1 — the same for every opponent, counted over the territories in view
+  (a floor under fog), or my hand's card when worth more (`reinforcementArmiesFor`; `cardBonusBasis` says which). The
   `SanctionsCard.Percentage` scale (a fraction) is UNVERIFIED for GameFeed. The Sanctions advice passes
   over a truce partner and a player a Diplomacy card keeps at peace with me, saying why. Anything not sure is
   a warning and changes nothing; the plan reports `cardsInEffect` (`verified: false`), and
