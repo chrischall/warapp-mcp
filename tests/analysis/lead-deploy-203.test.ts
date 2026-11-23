@@ -178,19 +178,18 @@ const reasonFor = (p: TurnPlan, id: number) =>
   p.rationale.find((l) => l.startsWith('Not attacking'))?.split(/; (?=T\d+ \(#\d+\) \(player)/).find((s) => s.includes(`T${id} (#${id}) (player`)) ?? '';
 
 describe('#203 review: a lead step its bonus pass does not take', () => {
-  it('goes back to its ordinary cost: rule 4e takes it at that size from the conceded border', () => {
+  it('goes back to its ordinary cost once its bonus pass does not take it', () => {
     // T13 (player 30, 3 armies, a member of B1002 +1) costs 21 as a lead step (3 + its owner's ~10)
-    // but 18 at its plain size: the bonus pass cannot fund 21, and rule 4e's fallback takes it with
-    // the 18 on conceded T2 — a favourable exchange — rather than withdraw T2 and strike T7 at -4.
+    // but 5 at its plain size: the bonus pass cannot fund 21, and afterwards it is ranked at 5.
+    // #431 (owner approval pending): conceded T2's 19 are doomed (the expected ~51 attack takes them)
+    // and have nowhere to withdraw to, so they merge into conceded T3, which then holds, before rule
+    // 4e's fallback could take T13 with them (18 against 13 if its owner reinforces it: 0% to win).
     const i = sweepInput('retire');
     const p = planTurn(i);
-    const hit = attacks(p).find((m) => m.to === 13);
-    expect(hit).toMatchObject({ from: 2, armies: 18 });
+    expect(p.moves.find((m) => m.from === 2)).toMatchObject({ to: 3, kind: 'transfer', armies: 18 });
     expect(why(p)).not.toMatch(/T13 \(#13\) does not fit what the holds leave: it needs 21/);
-    expect(why(p)).toMatch(/Exchange of attacks on players \(#167\): T13 \(#13\) from T2 \(#2\) with 18: favourable exchange/);
-    // Sized for its armies now, not its owner's deploy: the plan says so.
-    expect(p.warnings.some((w) => w.startsWith('Attack on enemy T13 (#13) assumes its owner does not reinforce it first'))).toBe(true);
-    expect(attacks(p).map((m) => m.to)).not.toContain(7);
+    expect(why(p)).toMatch(/T13 \(#13\) \(player 30, 3 armies\): taking it needs 5 \(21 if player 30 deploys its ~10 there first\)/);
+    expect(valid(p, i)).toEqual([]);
   });
 
   it("the skip line counts no deploy twice and points to no line that is not there", () => {
@@ -209,14 +208,18 @@ describe('#203 review: a lead step its bonus pass does not take', () => {
 });
 
 describe('#203 review: a lead step tried and not taken', () => {
-  it("leaves no sure sizing behind: rule 4e ranks player 30's T2 and T21 by the armies on them now", () => {
+  it("leaves no sure sizing behind: player 30's T21 is priced at the armies on it now", () => {
     // Both are lead steps the bonus passes could not fund (41 and 45 for sure). Left assumed sure,
     // T21 read as losing ~8 and T2 was taken instead, from T6, as a "sure" attack it is not.
     const i = sweepInput('rollback');
     const p = planTurn(i);
-    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[11, 21, 11]]);
-    expect(why(p)).toMatch(/T2 \(#2\) is ranked after T21 \(#21\): it costs 5 \(loses ~2 armies, and its 3 survivors may fall next turn\) against 4/);
-    expect(p.warnings.some((w) => w.startsWith('Attack on enemy T21 (#21) assumes its owner does not reinforce it first'))).toBe(true);
+    // #431 (owner approval pending): conceded T11's 12 are doomed and have nowhere to withdraw to, so
+    // all 11 movable take the neutral T4 (2) rather than strike T21 at its plain size (0% to win if
+    // player 30 reinforces it); rule 4e's fallback then expands into T1 from T15.
+    expect(attacks(p).map((m) => [m.from, m.to, m.armies])).toEqual([[11, 4, 11], [15, 1, 15]]);
+    // Neither lead step keeps its sure sizing: both are ranked at the armies on them now.
+    expect(why(p)).toMatch(/T21 \(#21\) \(player 30, 5 armies\): taking it needs 8 \(45 if player 30 deploys its ~22 there first\)/);
+    expect(why(p)).not.toMatch(/T21 \(#21\)[^;]*needs 45 —/);
     expect(valid(p, i)).toEqual([]);
   });
 });

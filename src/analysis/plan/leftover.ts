@@ -30,6 +30,7 @@ export const DETERRENT_MIN_VALUE = 5;
 /** #440: how many times the most any border being topped up protects that territory must protect. */
 export const DETERRENT_VALUE_RATIO = 2;
 import { knownFirst, lateArrivals, lateNet, type Holds } from './holds.js';
+import { isDoomedOut } from './doomed-out.js';
 import type { DeployBook } from './orders.js';
 import type { SaveStep } from './stand-still.js';
 import { paybackLive, type PlanCtx, type PlanState } from './state.js';
@@ -83,7 +84,7 @@ export function leftoverDeploy(
 ) {
   const { g, territories: state, label, bonusName, mine, mineSet, armiesOf, unitsAt, toTake, noSplit, bombOn } = pc;
   const { warnings, rationale, deployed, avail, locked, captured, moves, incoming } = ps;
-  const { orderOf, deploy, undeploy, pools, roomAt, valueOf } = book;
+  const { orderOf, deploy, undeploy, pools, roomAt, valueOf, coverOf } = book;
   const { borders } = threats;
   const { conceded, kept, garrisoned, stood, threatened, stayAt } = hd;
   const { committing, byCloseness, bonusTarget, targets, repulsed } = tgt;
@@ -820,6 +821,8 @@ export function leftoverDeploy(
     let spreadRest: Map<number, number> | undefined;
     let where: number;
     let why: string;
+    /** #431: the move out of a doomed stack's border the leftover goes with (every territory of mine left). */
+    let ridesOut: PlannedMove | undefined;
     let lock = false;
     /** #163: the leftover concentrates for one attack (strike, saving, expansion): no Bomb split. */
     let concentrating = false;
@@ -1029,9 +1032,17 @@ export function leftoverDeploy(
         where = b;
         why = 'my biggest stack';
       } else {
-        where = biggest(mine)!;
+        // #431: never the border a doomed stack just left, while another territory of mine remains;
+        // when none does, the leftover leaves with that stack's move out (deploys land before moves).
+        const others = mine.filter((x) => !ps.doomedOut.has(x));
+        where = biggest(others.length ? others : mine)!;
         why = 'my biggest stack';
-        warnings.push(`Every territory I hold is conceded; the leftover ${ps.budget} goes to ${label(where)} anyway.`);
+        ridesOut = ps.doomedOut.has(where) ? moves.find((m) => m.from === where && isDoomedOut(m)) : undefined;
+        warnings.push(
+          ridesOut
+            ? `Every territory I hold is conceded; the leftover ${ps.budget} goes to ${label(where)} and leaves with its move out (#431).`
+            : `Every territory I hold is conceded; the leftover ${ps.budget} goes to ${label(where)} anyway.`,
+        );
       }
     }
     let n = roomAt(where);
@@ -1134,6 +1145,21 @@ export function leftoverDeploy(
     } else if (n > 0 && !spreadRest) {
       rationale.push(`Deploy the leftover ${n} to ${label(where)}: ${why}.`);
       deploy(where, n);
+      // #431: the border its doomed stack left is lost for sure: the deploy goes with that stack.
+      if (ridesOut) {
+        const m = ridesOut;
+        const add = Math.min(n, avail.get(where)! - (pc.noSplit ? 0 : coverOf(where)));
+        if (add > 0) {
+          avail.set(where, avail.get(where)! - add);
+          m.armies += add;
+          if (m.kind === 'transfer') incoming.set(m.to, (incoming.get(m.to) ?? 0) + add);
+          else {
+            if (ps.survivorsAt.has(m.to)) ps.survivorsAt.set(m.to, ps.survivorsAt.get(m.to)! + add);
+            m.winChance = pc.chanceOf(m.armies, pc.defenceAt(m.to));
+          }
+          rationale.push(`The ${add} deployed on ${label(where)} leave with its move out to ${label(m.to)} (#431): ${m.armies} go.`);
+        }
+      }
       // Keep a strike or expansion stack there: the transfer step must not walk it back as "idle
       // interior" armies. Only when it got deploys (under Local Deployment it may get none).
       if (lock) locked.add(where);
@@ -1163,6 +1189,9 @@ export function leftoverDeploy(
           (a, b) =>
             // No-Split (#124): a member that issues an order would send the pool away with it.
             Number(orderOf(a) !== undefined) - Number(orderOf(b) !== undefined) ||
+            // #431: a border a doomed stack left (merged or attacked out of) is lost for sure: the pool
+            // goes to any other member first, even an interior one.
+            Number(ps.doomedOut.has(a)) - Number(ps.doomedOut.has(b)) ||
             Number(borders.has(b)) - Number(borders.has(a)) ||
             Number(lost(a)) - Number(lost(b)) ||
             danger(b) - danger(a) ||

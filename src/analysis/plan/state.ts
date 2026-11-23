@@ -280,6 +280,8 @@ export interface PlanState {
   captureOrder: number[];
   /** How to take back each capture's attacks (rule 4c's guard), by target. */
   captureUndo: Map<number, () => void>;
+  /** #431: conceded borders a doomed stack merged or attacked out of: no deploy goes there after. */
+  doomedOut: Set<number>;
   /** Captures that stage a positive bonus under rule 4c(c), with the bonus they stage. */
   staged: Map<number, number>;
   /** The expansion stack: the source of the first bonus pass's finishing attack (the leftover deploy's home). */
@@ -368,6 +370,7 @@ export function newPlanState(): PlanState {
     paybackBonuses: new Map(),
     captureOrder: [],
     captureUndo: new Map(),
+    doomedOut: new Set(),
     staged: new Map(),
     anchor: undefined,
     assumeGone: () => false,
