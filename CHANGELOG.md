@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.0](https://github.com/chrischall/warapp-mcp/compare/v0.9.0...v0.10.0) (2026-11-23)
+
+
+### Features
+
+* **calibrate:** split the opening benchmark by era, with medians and missed turns apart ([#507](https://github.com/chrischall/warapp-mcp/issues/507)) ([6e4542f](https://github.com/chrischall/warapp-mcp/commit/6e4542fdc92fa3e2245f4a7afeb0a928f0dcb816))
+* **chat:** unread chat in the game list and inbox, one-step mark read ([#510](https://github.com/chrischall/warapp-mcp/issues/510)) ([69f5ef6](https://github.com/chrischall/warapp-mcp/commit/69f5ef676126e0fc0cce01bb1dfbf14c37c28137))
+* **turn:** warn when the orders delay the nearest bonus ([#508](https://github.com/chrischall/warapp-mcp/issues/508)) ([9ffcabf](https://github.com/chrischall/warapp-mcp/commit/9ffcabf4c29c7d8692ee955d260f2a84696e731a))
+
 ## [0.9.0](https://github.com/chrischall/warapp-mcp/compare/v0.8.0...v0.9.0) (2026-11-23)
 
 
