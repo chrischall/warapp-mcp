@@ -206,7 +206,7 @@ export function planChatView(
     const shownRows = rows.slice(-MAX_PLAN_CHAT_MESSAGES);
     const messages = shownRows.map(({ i, r }) => {
       const l = read.lines[i]!;
-      const s = shown(l, true, game.players, byInGame, read.me);
+      const s = shown(l, true, game.players, byInGame, read.me, game.map);
       return {
         from: s.from,
         fromId: s.fromId,

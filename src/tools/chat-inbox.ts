@@ -234,7 +234,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
             continue;
           }
           const messages = shownAt.map((i) => ({
-            ...shown(read.lines[i]!, fresh[i]!, game.players, byInGame, me),
+            ...shown(read.lines[i]!, fresh[i]!, game.players, byInGame, me, game.map),
             ...readingFields(reading(i, fresh[i]!)),
             ...(fresh[i] ? {} : { seenLocally: true }),
           }));

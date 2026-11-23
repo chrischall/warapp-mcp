@@ -31,7 +31,8 @@ import {
 } from '../chat-cursor.js';
 import { parseGameId } from '../client.js';
 import { inGameId, inGameOf, playersByInGameId } from '../live.js';
-import type { Game, Player } from '../normalize.js';
+import type { Game, GameMap, Player } from '../normalize.js';
+import { decodeChatLinks, encodeChatLinks, hasChatLinkMarkers } from '../chat-links.js';
 import type { ReplyEnvelope, Writer } from '../protocol/codec.js';
 import {
   CHAT_CHANNEL_PUBLIC,
@@ -65,6 +66,11 @@ import { resolveTeams } from './team-source.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_CHAT_LENGTH = 2000;
+
+/** The send preview's note on links: what goes out, and what is verified. */
+const LINKS_NOTE =
+  'Each link goes out as the client\'s token (`<a t=ID>` territory, `<a b=ID>` bonus) and players see the name from ' +
+  'the map. Territory links are verified live; bonus links are read from the client and UNVERIFIED live.';
 
 /**
  * Which read answered: the web client or GameFeed. A web read that GameFeed's chat filled (#313) is still
@@ -395,7 +401,14 @@ const playerOf = (players: readonly Player[], byInGame: Map<number, Player>, id:
   byInGame.get(id) ?? players.find((p) => p.id === id);
 
 /** A line as the tool shows it: players by GameFeed id, names and the text delimited. */
-export function shown(line: ChatLine, isNew: boolean, players: readonly Player[], byInGame: Map<number, Player>, me: ChatMe) {
+export function shown(
+  line: ChatLine,
+  isNew: boolean,
+  players: readonly Player[],
+  byInGame: Map<number, Player>,
+  me: ChatMe,
+  map?: GameMap,
+) {
   let from: string | null = null;
   let fromId: number | null = null;
   if (line.sender !== null) {
@@ -410,10 +423,13 @@ export function shown(line: ChatLine, isNew: boolean, players: readonly Player[]
     const p = playerOf(players, byInGame, line.to);
     to = { id: p?.id ?? null, name: p ? untrustedText(p.name) : null };
   }
+  // Territory and bonus links (`<a t=ID>` / `<a b=ID>`): rendered as their names, listed in `links`.
+  const decoded = decodeChatLinks(line.text, map);
   return {
     from,
     fromId,
-    text: untrustedBody(line.text),
+    text: untrustedBody(decoded.text),
+    ...(decoded.links.length ? { links: decoded.links.map((l) => ({ ...l, name: l.name === null ? null : untrustedText(l.name) })) } : {}),
     ...(line.time !== undefined ? { time: line.time } : {}),
     turn: line.turn,
     channel: line.channel,
@@ -497,7 +513,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
       const picked = read.lines.map((l, i) => [l, fresh[i]!, i] as const).filter(([l]) => wanted(l));
       // #415: each message another player sent is labelled, and an unread one advised on (this machine's logs only).
       const reading = chatReader(read.lines, game, me, await chatAdviceContext(ctx, game, me));
-      const messages = picked.slice(-n).map(([l, isNew, i]) => ({ ...shown(l, isNew, game.players, byInGame, me), ...readingFields(reading(i, isNew)) }));
+      const messages = picked.slice(-n).map(([l, isNew, i]) => ({ ...shown(l, isNew, game.players, byInGame, me, game.map), ...readingFields(reading(i, isNew)) }));
       const marked = mark_seen
         ? await markChatSeen(ctx, game.id, me, read, cursor, channel === undefined || channel === 'all' ? [...CHAT_CHANNELS] : [channel])
         : undefined;
@@ -583,6 +599,10 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
         'advances the agreement, a notice moves it to notice-by-me); warapp_submit_turn warns when later orders break one. ' +
         'Pass `automated: true` for a reply the owner did not tell you to send (e.g. an advice\'s `send`): it is refused ' +
         'unless WARAPP_CHAT_AUTOMATION is on (off by default: the owner sends replies), and even then it is confirm-gated. ' +
+        'Link a territory or bonus as players see it in the official client with `[[t:<id or name>]]` / `[[b:<id or name>]]` ' +
+        'in the message, or set `link_territories` to link every territory name it mentions: names resolve against the ' +
+        "game's map (exact, case-insensitive; an unknown or shared name is refused, listing the ids), and the preview shows " +
+        'the message as rendered with its `links`. ' +
         `${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Send a war.app chat message',
@@ -593,7 +613,19 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
       }),
       inputSchema: z.object({
         game_id: gameIdArg,
-        message: z.string().trim().min(1).max(MAX_CHAT_LENGTH).describe('The message text.'),
+        message: z
+          .string()
+          .trim()
+          .min(1)
+          .max(MAX_CHAT_LENGTH)
+          .describe('The message text. `[[t:<id or name>]]` links a territory, `[[b:<id or name>]]` a bonus (shown as its name).'),
+        link_territories: z
+          .boolean()
+          .optional()
+          .describe(
+            'true: also link every whole-word mention of a territory name in the message, repeats included (the longest ' +
+              'name where names overlap; never inside a [[…]] link). Default false.',
+          ),
         channel: z
           .enum(['public', 'team'])
           .optional()
@@ -611,7 +643,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
               'WARAPP_CHAT_AUTOMATION is on; default false (a send the owner asked for).',
           ),
       }),
-      async plan({ game_id, message, channel, to, commitments, automated }) {
+      async plan({ game_id, message, channel, to, commitments, automated, link_territories }) {
         // #415: an automated reply is refused with the gate off, before any request.
         const auto = automated === true;
         if (auto && (ctx.chatAutomation ?? chatAutomationMode(opts.env ?? process.env)) !== 'on') {
@@ -629,7 +661,17 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
         // Read the game for every message (#130): one GameFeed does not know is refused here. Its
         // settings say whether private messages are allowed. Commitments are checked on a plan: the map too.
         const promises = commitments?.length ? commitments : undefined;
-        const feed = await ctx.client.getGame(gameId, { map: promises !== undefined, settings: true });
+        // Territory and bonus links resolve against the map (src/chat-links.ts); a message with none goes as written.
+        const linking = link_territories === true || hasChatLinkMarkers(message);
+        const feed = await ctx.client.getGame(gameId, { map: promises !== undefined || linking, settings: true });
+        const linked = linking ? encodeChatLinks(message, mapOf(feed), { linkTerritories: link_territories === true }) : undefined;
+        const links = linked?.links.length ? linked : undefined;
+        const text = links ? links.wire : message;
+        if (text.length > MAX_CHAT_LENGTH) {
+          throw new McpToolError(`With its links the message is ${text.length} characters, over ${MAX_CHAT_LENGTH}: nothing was sent.`, {
+            hint: 'Shorten the message or link fewer places.',
+          });
+        }
         // The message goes out as whoever is signed in: bind that account, so an
         // approval given while one account was signed in never posts as another (#133:
         // refused when it cannot be read, as every write is).
@@ -712,7 +754,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
             payload: {
               method: 'SendChat',
               gameId,
-              text: message,
+              text,
               channel: chatChannel,
               recipient: recipient?.id ?? null,
               ...(promised ? { commitments: promised.commitments } : {}),
@@ -732,6 +774,13 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
                   : 'Other players will see this message; it cannot be unsent.',
               game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state },
               ...(shownRecipient ? { recipient: shownRecipient } : {}),
+              ...(links
+                ? {
+                    rendered: untrustedBody(links.rendered),
+                    links: links.links.map((l) => ({ ...l, name: l.name === null ? null : untrustedText(l.name) })),
+                    linksNote: LINKS_NOTE,
+                  }
+                : {}),
               ...(auto ? { automated: true, automatedNote: 'An automated reply (WARAPP_CHAT_AUTOMATION is on): the owner did not ask for this message.' } : {}),
               ...(promised
                 ? {
@@ -748,7 +797,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
           },
           state: {
             gameId,
-            text: message,
+            text,
             kind,
             channel: chatChannel,
             ...(recipient ? { recipient } : {}),
