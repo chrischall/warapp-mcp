@@ -629,11 +629,12 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
       return [...src.matchAll(/defineGatedWrite\([\s\S]*?name: '(warapp_\w+)'/g)].map((m) => m[1]!);
     })
     .sort();
-  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen'];
+  const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen'];
   // How the store-facing prose names each write.
   const plain: Record<string, RegExp> = {
     warapp_accept_surrender: /\baccept/i,
     warapp_begin_turn: /\bbegin/i,
+    warapp_close_finished_game: /\bclos(e|ing)\b/i,
     warapp_delete_notification: /\bdelet/i,
     warapp_dismiss_notification: /\bnotifications?\b/i,
     warapp_import_state: /\bimport/i,
@@ -866,7 +867,7 @@ describe('packaging for chat as game information (#415)', () => {
     const all = flat(claude);
     expect(all).toContain('D2 automated chat is off unless `WARAPP_CHAT_AUTOMATION=on`');
     for (const s of ['src/analysis/chat-intent.ts', 'src/analysis/chat-advice.ts', 'src/analysis/chat-read.ts', 'src/chat-automation.ts']) expect(all, s).toContain(s);
-    expect(all).toContain('**Fourteen tools write, all confirm-gated:**');
+    expect(all).toContain('**Fifteen tools write, all confirm-gated:**');
   });
 
   it('the chat turn block (task 4b): README, the skill and CLAUDE.md name WARAPP_CHAT_BLOCKS_TURN, off by default, and chat_reviewed', () => {

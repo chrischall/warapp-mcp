@@ -41,6 +41,6 @@ await runMcp({
   tools: [(server) => registerAllTools(server, { bridge })],
   shutdown: { onSignal: () => bridge.transport().close() },
   banner:
-    `[warapp-mcp] v${VERSION} — war.app (Warzone) advisor; joining, leaving or surrendering a game, accepting a surrender, Begin, picks, turn orders, withdrawing them, chat, marking notifications and chat read, deleting notifications, importing local history and linking a session are confirm-gated. Set WARAPP_EMAIL and WARAPP_API_TOKEN. ` +
+    `[warapp-mcp] v${VERSION} — war.app (Warzone) advisor; joining, leaving or surrendering a game, closing out a finished game, accepting a surrender, Begin, picks, turn orders, withdrawing them, chat, marking notifications and chat read, deleting notifications, importing local history and linking a session are confirm-gated. Set WARAPP_EMAIL and WARAPP_API_TOKEN. ` +
     'This project was developed and is maintained by AI (Claude). Use at your own discretion.',
 });

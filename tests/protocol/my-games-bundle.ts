@@ -123,6 +123,8 @@ export interface SyntheticGame {
   unread?: { group?: boolean; private?: boolean; public?: boolean; team?: boolean };
   /** A tournament game's tournament id (GameInfoTournament, field 25; #423); absent: none. */
   tournament?: number;
+  /** GameInfo field 20, the seen-end-game-window flag (#523 close-out); default false. */
+  seenEndGame?: boolean;
 }
 
 function writePlayer(w: Writer, p: SyntheticGamePlayer): void {
@@ -164,7 +166,7 @@ export function writeGameInfo(w: Writer, g: SyntheticGame): void {
   else w.bool(true).list(seats, (ww, n) => ww.int32(n));
   if (g.players === null) w.bool(false);
   else w.bool(true).list(g.players, writePlayer);
-  w.bool(u.private ?? false).bool(u.public ?? false).bool(g.realTime ?? false).bool(false);
+  w.bool(u.private ?? false).bool(u.public ?? false).bool(g.realTime ?? false).bool(g.seenEndGame ?? false);
   if (g.settings === null) w.bool(false);
   else writeSettings(w.bool(true), g.settings ?? {});
   w.u8(g.state).bool(u.team ?? false).float64(0);

@@ -101,9 +101,12 @@ export function registerGameTool(
           'else from the boards cached then — a backfill; no other request), as warapp_profile_opponents reads them. ' +
           'A finished game of mine also gets its end-of-game pass once (`endOfGame`: its history read once — one more ' +
           'request — and kept name-free for later games: the outcome, my picks, every player\'s income and bonuses by turn, ' +
-          'what stood where my attacks failed — then folded into the opponent profiles, the map\'s record and the lessons ' +
+          'what stood where my attacks failed, and every player\'s end-of-game screen (`endOfGame.stats`: armies produced, lost ' +
+          'and killed, highest income, cards, and the All Graphs series — armies, territories, income, deployed and luck per ' +
+          'turn; shown on every later read) — then folded into the opponent profiles, the map\'s record and the lessons ' +
           '(`endOfGame.processed`); a failed read is recorded and not retried, except by a call with ' +
-          '`include_history`, which re-runs it from that read). ' +
+          '`include_history`, which re-runs it from that read and adds the stats to a game processed before them ' +
+          '(`backfilled`). To take a finished game off the app\'s My Games use warapp_close_finished_game. ' +
           'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
       ),
       _meta: lookupMeta(['warzone game', 'war.app game', 'whose turn is it', 'game status']),

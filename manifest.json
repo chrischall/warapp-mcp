@@ -4,7 +4,7 @@
   "name": "warapp-mcp",
   "display_name": "war.app (Warzone)",
   "version": "0.11.0",
-  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, accepting another player's surrender, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends, marking notifications and chat read, deleting notifications, importing local history into a hosted server and linking a session (local only) are confirm-gated.",
+  "description": "war.app (Warzone) game advisor for Claude — your games, maps, bonuses, board analysis and routes via the GameFeed API, plus your games list (waiting on you first), opponent scouting with your head-to-head, the live board, territory picks, cards, turn planning and submission, turn notifications, and chat through your signed-in war.app tab (ContextMint Bridge). Joining, leaving or surrendering a game, closing out a finished game, accepting another player's surrender, Begin on a speed first turn, picks, turn orders, withdrawing them, chat sends, marking notifications and chat read, deleting notifications, importing local history into a hosted server and linking a session (local only) are confirm-gated.",
   "author": {
     "name": "Chris Hall",
     "email": "chris.c.hall@gmail.com",
@@ -135,6 +135,10 @@
     {
       "name": "warapp_leave_game",
       "description": "Leave a game that has not started, giving up your seat (confirm-gated), confirmed from game state"
+    },
+    {
+      "name": "warapp_close_finished_game",
+      "description": "Close out a finished game so the app's My Games stops listing it (marks its end-of-game window seen; confirm-gated)"
     },
     {
       "name": "warapp_surrender",

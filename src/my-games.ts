@@ -45,6 +45,12 @@ const GI = { gameId: 7, name: 13, lastTurn: 14, players: 16, state: 22 } as cons
  */
 const GI_UNREAD = { group: 8, private: 17, public: 18, team: 23 } as const;
 export const GAME_INFO_FIELDS = 27;
+/**
+ * #523: GameInfo field 20, the client's `SeenEndGameWindow` for my seat (the GameInfo reader's 21st read; GamePlayer
+ * names the same minified field `SeenEndGameWindow`). Read from the bundle, UNVERIFIED live: the read-back of
+ * warapp_close_finished_game.
+ */
+const GI_SEEN_END = 20;
 /** GameInfoPlayer field positions in read order, and its whole field count. */
 const GP = { committed: 2, name: 5, id: 6, state: 7, team: 8 } as const;
 export const GAME_INFO_PLAYER_FIELDS = 10;
@@ -60,6 +66,8 @@ export interface RawMyGame {
   players: Array<{ id: number; name: string; stateCode: number; committed: boolean; team?: number }>;
   /** The game's unread-chat flags (#311), only when all four read as booleans: UNVERIFIED live. */
   unreadChat?: UnreadChatFlags;
+  /** #523: GameInfo's seen-end-game-window flag, only when it reads `true` (UNVERIFIED live). */
+  seenEndGame?: true;
 }
 
 /** Which of a game's chats war.app counts unread for the account (GameInfo, #311; UNVERIFIED live). */
@@ -193,6 +201,7 @@ function gameOf(g: unknown): RawMyGame {
     stateCode: state,
     players: (players ?? []).filter((p) => p !== null).map(playerOf),
     ...(unreadChat ? { unreadChat } : {}),
+    ...(f[GI_SEEN_END] === true ? { seenEndGame: true as const } : {}),
   };
 }
 

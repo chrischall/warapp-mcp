@@ -20,6 +20,7 @@
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { BoardState } from '../board.js';
 import { decisionTruth } from '../analysis/decision-truth.js';
+import { endGameStats } from '../analysis/end-game-stats.js';
 import { captureFinished, excludedKind, outcomeOf, type FinishedCapture, type GameKind } from '../analysis/finished-game.js';
 import { compactDecisionLog, decisionLogMode, finishDecisionLogs, recordTruth } from '../decision-log.js';
 import { teammatesOf } from '../teams.js';
@@ -43,14 +44,18 @@ import {
   finishedPath,
   finishedRecordOf,
   markProcessed,
+  readFinishedRecord,
   readFinishedState,
   readProcessed,
+  storedStats,
   touchFinished,
   writeFinishedRecord,
   type FinishedFailure,
   type FinishedRecord,
   type FinishedStatus,
+  type StoredEndStats,
 } from '../finished-store.js';
+import { playerKey } from '../player-record-store.js';
 import type { Game } from '../normalize.js';
 import { withPathLock } from '../path-lock.js';
 import { finalOutlookOf, readOutlookLog } from '../outlook-log.js';
@@ -102,6 +107,35 @@ export interface EndOfGameResult {
   profileFold?: FinishedFold;
   /** With `captured`: what the history was processed into (#312 E2). */
   processed?: Processed;
+  /**
+   * #523: every player's end-of-game stats from the record (captured now, kept before, or `backfilled` into a
+   * record kept before them from an `include_history` read), by GameFeed id.
+   */
+  stats?: EndStatsView;
+  /** #523: the stats were added to a record kept before them (an `include_history` call; nothing else re-run). */
+  backfilled?: 'stats';
+}
+
+/** #523: the stats as a tool shows them: per player by GameFeed id, mine marked. */
+export interface EndStatsView {
+  turnsRead: number;
+  /** What each figure is (the client's end-of-game screen definitions). */
+  note: string;
+  players: (StoredEndStats & { playerId: number; me?: true })[];
+}
+
+export const END_STATS_NOTE =
+  "From the game's history, as the client's end-of-game screen defines them: produced = every army deployed (card armies included); lost = its armies killed attacking and defending; killed = armies it killed attacking (neutrals included: killedNeutral) and defending; highestIncome = the most board income it had (cards and the army cap aside). `series` are the client's All Graphs: armies, territories and income per history board from the start (the line stops when the seat left), deployed per turn, and cumulative luck, offensiveLuck and defensiveLuck from 0.";
+
+/** The record's stats with the keys put back to `players`' ids (a key is never reversed: matched). */
+function statsView(rec: { stats?: { turnsRead: number; players: Record<string, StoredEndStats> } }, salt: string, players: readonly { id: number }[], me: number): EndStatsView | undefined {
+  if (!rec.stats) return undefined;
+  const out: EndStatsView['players'] = [];
+  for (const p of players) {
+    const s = rec.stats.players[playerKey(salt, p.id)];
+    if (s) out.push({ playerId: p.id, ...(p.id === me ? { me: true as const } : {}), ...s });
+  }
+  return { turnsRead: rec.stats.turnsRead, note: END_STATS_NOTE, players: out };
 }
 
 /**
@@ -222,7 +256,8 @@ export async function endOfGame(
         await closeOnly();
         return { status: 'record-unreadable' };
       }
-      if (state !== 'missing' && (!opts.retry || state.status === 'captured' || !opts.history)) return { status: 'already-processed' };
+      if (state !== 'missing' && state.status === 'captured') return await keptOrBackfilled(dataDir, path, salt, me, opts.history ?? seen, opts.history);
+      if (state !== 'missing' && (!opts.retry || !opts.history)) return { status: 'already-processed' };
       // The one history read: the caller's, else one request, sent once (no transport retry) and never retried.
       let game: Game | undefined = opts.history;
       let failure: FinishedFailure | undefined;
@@ -269,8 +304,10 @@ export async function endOfGame(
       const processed = history && game ? await processHistory(dataDir, env, salt, me, gameId, game, history) : undefined;
       // #412: the decision log's truth (from the full history, before any cut) and its compaction.
       await closeDecisionLog(dataDir, env, me, gameId, game ?? shown, history && game ? history : undefined);
+      const view = shown ? statsView(record, salt, shown.players, me) : undefined;
       return {
         status: record.status,
+        ...(view ? { stats: view } : {}),
         ...(record.turns ? { turns: record.turns.length } : {}),
         ...(record.failure ? { failure: record.failure } : {}),
         ...(processed ? { processed } : {}),
@@ -286,6 +323,43 @@ export async function endOfGame(
     // Shown finished (or, with no read, passed as finished by the sweep or a game-ended notice).
     if (((read ?? seen)?.state ?? 'Finished') === 'Finished') await closeOnly();
     return { status: 'failed' };
+  }
+}
+
+/**
+ * #523: a captured record, already processed: its stats shown when it keeps them; else, given a read WITH the
+ * history (an explicit `include_history` call, never a trigger), the stats computed from that read and added to the
+ * record (`backfilled`) — nothing else is re-run (no profile fold, map record, lessons or decision-log truth), so
+ * nothing is counted twice. Called under the record's path lock. Never throws (an unreadable record: as kept).
+ */
+async function keptOrBackfilled(
+  dataDir: string,
+  path: string,
+  salt: string,
+  me: number,
+  shown: Game | undefined,
+  history: Game | undefined,
+): Promise<EndOfGameResult> {
+  const rec = await readFinishedRecord(path);
+  if (typeof rec === 'string') return { status: 'already-processed' };
+  const players = shown?.players ?? [];
+  if (rec.stats || !history || history.state !== 'Finished') {
+    const view = statsView(rec, salt, players, me);
+    return { status: 'already-processed', ...(view ? { stats: view } : {}) };
+  }
+  try {
+    const stats = endGameStats(history.history, history.players);
+    if (!stats || !('read' in historyReport(history))) return { status: 'already-processed' };
+    const boards = historyBoards(history.history, history.players, history.numberOfTurns !== undefined ? { numberOfTurns: history.numberOfTurns } : {});
+    const map = history.map ? mapOf(history) : undefined;
+    const c = capture(history, me, boards, new Map(), map ? graphOf(map) : undefined, undefined);
+    if (!c) return { status: 'already-processed' };
+    const next = { ...rec, stats: storedStats(stats, c, (id) => playerKey(salt, id)) };
+    await writeFinishedRecord(dataDir, path, next);
+    const view = statsView(next, salt, history.players, me);
+    return { status: 'already-processed', backfilled: 'stats', ...(view ? { stats: view } : {}) };
+  } catch {
+    return { status: 'already-processed' };
   }
 }
 
@@ -349,8 +423,10 @@ async function buildRecord(
   const graph = map ? graphOf(map) : undefined;
   const captured = capture(read, me, boards, orders, graph, facts.leftTurn)!;
   const kinds = kindsOf(read, me, captured, facts);
+  // #523: the per-player stats from the same history (its orders), no further request.
+  const stats = endGameStats(read.history, read.players);
   return {
-    record: finishedRecordOf({ ...common, status: 'captured', layout: report.read.layout, noMap: !map, capture: captured, boards, kinds }),
+    record: finishedRecordOf({ ...common, status: 'captured', layout: report.read.layout, noMap: !map, capture: captured, boards, kinds, stats }),
     history: { capture: captured, boards, orders, graph, kinds },
   };
 }

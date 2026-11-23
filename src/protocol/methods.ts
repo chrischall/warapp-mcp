@@ -34,6 +34,12 @@ export const Method = {
   GetTerritoryPicks: 81,
   UnCommit: 82,
   GetTurns: 83,
+  /**
+   * #523: the end-of-game window's data, which the client asks for when it shows that window (`EndGameWindowVM`) and
+   * which sets my seat's SeenEndGameWindow — the flag the app's My Games (the Default list) drops a finished game on.
+   * Parameters as UnCommit's (auth, int32 game id), read from the bundle's writer; UNVERIFIED live.
+   */
+  GetEndGameWindowData: 85,
   Subscribe: 242,
   GameUpdated: 245,
   GetInAppNotifications: 323,
@@ -221,6 +227,11 @@ export function writeBeginFirstTurnParams(w: Writer, gameId: number): void {
  * the int32 game id — no trailing bools — and no result payload.
  */
 export function writeUnCommitParams(w: Writer, gameId: number): void {
+  w.int32(gameId);
+}
+
+/** GetEndGameWindowData(auth, gameId) — the parameters after the auth block (#523; the bundle's writer, UNVERIFIED live). */
+export function writeGetEndGameWindowDataParams(w: Writer, gameId: number): void {
   w.int32(gameId);
 }
 

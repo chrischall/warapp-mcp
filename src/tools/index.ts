@@ -37,6 +37,7 @@ import { registerTurnTools } from './turn.js';
 import { registerMyOrdersTool } from './my-orders.js';
 import { registerUncommitTool } from './uncommit.js';
 import { registerLeaveGameTool } from './leave-game.js';
+import { registerCloseFinishedGameTool } from './close-finished-game.js';
 import { registerWhereTool } from './where.js';
 import { registerStateTools } from './state.js';
 import { blobStoreFromEnv, type BlobStore } from '@chrischall/mcp-utils/export';
@@ -131,6 +132,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerOpenGamesTool(server, live);
   registerJoinGameTool(server, live);
   registerLeaveGameTool(server, live);
+  registerCloseFinishedGameTool(server, live);
   registerSurrenderTool(server, live);
   registerAcceptSurrenderTool(server, live);
   registerBeginTurnTool(server, live);
