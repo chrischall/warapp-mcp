@@ -1,6 +1,7 @@
 // #319: in the opening (turns 2–6), many territories and no bonus means the captures are spread: the plan
-// warns, naming the nearest bonus to complete with rule 4f's armies and turns. A warning only: no order
-// changes for it. Synthetic map: every id and name is made up.
+// warns, naming the nearest bonus to complete with rule 4f's armies and turns. #416 (owner 2026-11-22): it also
+// binds the deploys to that bonus until its reachable steps are funded (spread-bind-416.test.ts).
+// Synthetic map: every id and name is made up.
 import { describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
@@ -59,8 +60,12 @@ describe('spread captures in the opening (#319)', () => {
     expect(w).toMatch(/Nearest bonus to complete: B\d \(#50\d\), 3 armies to finish \(\d standing beside it\), 1 turn at income 5 \(rule 4f\)\./);
   });
 
-  it('changes no order', () => {
+  // #416 (owner 2026-11-22): #319 binds the deploys to the nearest bonus until its reachable steps are funded
+  // (tests/analysis/spread-bind-416.test.ts). Here B0's one step is funded first, so the rest flows as without #319.
+  it('funds the nearest bonus first, then changes no order once its steps are taken (#416)', () => {
     const p = plan(field([20]), 4);
+    expect(p.moves.find((m) => m.kind === 'attack' && m.to === 3)?.reason).toBe('completes bonus B0 (#500) (+3)');
+    expect(p.rationale.some((r) => r.includes('#319 binds'))).toBe(false);
     const { warnings: _w, ...rest } = p;
     const q = planTurn({
       graph: g,
