@@ -131,7 +131,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'differ from the default plan by design. ' +
           'In a free-for-all with a truce in force (the agreement ledger), its partner is still tried — `safe` is safe ' +
           'against a break too — each reply that attacks a territory a truce covers is marked `breaksTruce`, and ' +
-          '`safeIfTruceHolds` is the verdict over the other replies (null when every reply is a break). ' +
+          '`safeIfTruceHolds` is the verdict over the other replies (null when every reply is a break); a partner-approved ' +
+          'truce exception on this turn opens its territories (no break) and is listed under `relations`. ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
           'war.app; it never submits orders.',
       ),
@@ -709,6 +710,18 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             }
           : {}),
         summary,
+        // Partner-approved truce exceptions on this turn: normal targets (mine), or open to the partner (theirs).
+        ...(binding.some((r) => r.exceptions?.length)
+          ? {
+              relations: binding
+                .filter((r) => r.exceptions?.length)
+                .map((r) => ({
+                  player: who(r.player),
+                  ...(r.agreement ? { agreement: r.agreement } : {}),
+                  exceptions: r.exceptions!.map((e) => ({ direction: e.direction, territories: e.territories.map(name) })),
+                })),
+            }
+          : {}),
         exact: report.exact,
         // Where the teams came from (GameFeed, else the game list), in a team game only.
         ...(teamSource !== 'none' ? { teamSource } : {}),

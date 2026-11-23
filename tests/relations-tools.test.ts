@@ -133,7 +133,7 @@ describe('warapp_record_agreement', () => {
     const players = readFileSync(join(h.dataDir, 'relations', 'players.json'), 'utf8');
     for (const s of [BOB.feed, ANN.feed, String(GAME), 'Bob', 'Ann']) expect(players).not.toContain(s);
     const stored = Object.values((JSON.parse(players) as { players: Record<string, { tallies: unknown; entries: unknown[] }> }).players);
-    expect(stored.map((x) => x.tallies)).toEqual([{ made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 0 }]);
+    expect(stored.map((x) => x.tallies)).toEqual([{ made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 0, exceptionsMine: 0, exceptionsTheirs: 0 }]);
     expect(stored[0]!.entries).toEqual([
       expect.objectContaining({
         format: { players: expect.any(Number), teams: false, ffaSize: expect.any(Number) },
@@ -237,7 +237,7 @@ describe('warapp_get_relations', () => {
       players: Record<string, { tallies: object; entries: Array<Record<string, unknown>> }>;
     };
     const stored = Object.values(players.players)[0]!;
-    expect(stored.tallies).toEqual({ made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 1, brokenByMe: 0 });
+    expect(stored.tallies).toEqual({ made: 1, kept: 0, endedWithNotice: 0, brokenByThem: 1, brokenByMe: 0, exceptionsMine: 0, exceptionsTheirs: 0 });
     // The break: its turn, the strongest flag the cached boards showed, and the context.
     expect(stored.entries[0]).toMatchObject({
       outcome: 'broken-by-them',
@@ -610,6 +610,133 @@ describe('warapp_submit_turn — breaking a truce (B2)', () => {
     expect(done.outcome).toBe('unconfirmed');
     expect(done.agreementsBroken).toEqual([{ agreement: 'a1', ledger: 'not-recorded', why: expect.stringMatching(/broken-by-me/) }]);
     expect(ledgerFile().agreements[0]!.status).toBe('agreed');
+  });
+});
+
+// Partner-approved exceptions: an attack the partner agreed to is no break — recorded with
+// warapp_record_agreement `exceptions` or, at submit time, `partner_approved: true`.
+describe('truce exceptions the partner approved', () => {
+  const ME_PAGE = { 'https://war.app/InviteToken': `<p>Your invite token is ${ANN.feed}</p>` };
+  const ATTACK = [
+    { kind: 'deploy', territory: 159, armies: 5 },
+    { kind: 'move', from: 161, to: 158, armies: 2 },
+  ];
+  const withOrders = (sent: unknown[]) => (req: DecodedRequest): Partial<ReplyFrame> => {
+    if (req.method === Method.SendOrders) {
+      sent.push(req);
+      return { body: (w) => w.bool(false) };
+    }
+    return live(boardAt())(req);
+  };
+  const submit = (args: Record<string, unknown>) => h!.call('warapp_submit_turn', { game_id: GAME, orders: ATTACK, ...args });
+  type Ex = { id: string; direction: string; territories: number[]; fromTurn: number; toTurn: number; recordedTurn: number; note?: string };
+  const ledgerFile = () => JSON.parse(readFileSync(join(h!.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')) as {
+    agreements: Array<{ id: string; status: string; exceptions?: Ex[] }>;
+  };
+  const tallies = () =>
+    Object.values((JSON.parse(readFileSync(join(h!.dataDir, 'relations', 'players.json'), 'utf8')) as { players: Record<string, { tallies: Record<string, number> }> }).players)[0]!
+      .tallies;
+
+  it('warapp_record_agreement adds exceptions in any status, names scrubbed from the note, and counts them apart', async () => {
+    h = await liveHarness({ feed: [game('2')] });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const r = payload<RecordPayload & { agreement: { exceptions: Array<Record<string, unknown>> } }>(
+      await record({ agreement_id: 'a1', exceptions: [{ territories: [158], turns: 3, note: 'Bob said I may take it' }, { territories: [161], turns: [3, 4], direction: 'theirs' }] }),
+    );
+    expect(r.agreement.status).toBe('agreed');
+    expect(r.agreement.exceptions).toEqual([
+      expect.objectContaining({ id: 'e1', direction: 'mine', territories: [expect.objectContaining({ id: 158 })], turns: [3, 3], inForce: true }),
+      expect.objectContaining({ id: 'e2', direction: 'theirs', territories: [expect.objectContaining({ id: 161 })], turns: [3, 4] }),
+    ]);
+    const stored = ledgerFile().agreements[0]!.exceptions!;
+    expect(stored[0]).toEqual({ id: 'e1', direction: 'mine', territories: [158], fromTurn: 3, toTurn: 3, recordedTurn: 3, note: `Player ${BOB.feed} said I may take it` });
+    expect(readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')).not.toMatch(/Bob|Ann/);
+    expect(tallies()).toMatchObject({ made: 1, brokenByMe: 0, brokenByThem: 0, exceptionsMine: 1, exceptionsTheirs: 1 });
+    expect(textOf(await record({ agreement_id: 'a1', exceptions: [{ territories: [158], turns: [5, 4] }] }))).toMatch(/run backwards: nothing was recorded/);
+  });
+
+  it('a recorded exception lets the attack through on its turn without break_agreement, and nothing is broken', async () => {
+    const sent: unknown[] = [];
+    // record twice, preview, confirm, read back (the turn resolved).
+    h = await liveHarness({ feed: [game('2'), game('2'), game('2'), game('2'), game('3')], pages: ME_PAGE, warapp: withOrders(sent) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a1', exceptions: [{ territories: [158], turns: 3 }] }));
+    const preview = payload<{ confirmToken: string; preview: { warnings?: string[] } }>(await submit({}));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    const done = payload<Record<string, unknown>>(await submit({ confirmToken: preview.confirmToken }));
+    expect(done).toMatchObject({ outcome: 'confirmed' });
+    expect(done).not.toHaveProperty('agreementsBroken');
+    expect(sent).toHaveLength(1);
+    expect(ledgerFile().agreements[0]!.status).toBe('agreed');
+  });
+
+  it('an expired exception blocks the attack again', async () => {
+    h = await liveHarness({ feed: [game('3')], pages: ME_PAGE, warapp: withOrders([]) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    // Turn 4 now: the exception ran for turns 2–3.
+    payload(await record({ agreement_id: 'a1', exceptions: [{ territories: [158], turns: [2, 3] }] }));
+    expect(textOf(await submit({}))).toMatch(/These orders break a truce — agreement a1 .*: nothing was sent/);
+  });
+
+  it('partner_approved records a one-turn exception, not a break, once the orders are committed', async () => {
+    const sent: unknown[] = [];
+    h = await liveHarness({ feed: [game('2'), game('2'), game('2'), game('3')], pages: ME_PAGE, warapp: withOrders(sent) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const preview = payload<{ confirmToken: string; preview: { warnings: string[]; truceExceptions: unknown[] } }>(
+      await submit({ partner_approved: true, note: 'Bob agreed in chat' }),
+    );
+    expect(preview.preview.truceExceptions).toEqual([{ agreement: 'a1', with: Number(BOB.feed), turn: 3, territories: [expect.objectContaining({ id: 158 })] }]);
+    expect(preview.preview.warnings.join('\n')).toMatch(/partner_approved is true: .*one-turn exception \(turn 3, no break\) on agreement a1 with player \d+ for 158/);
+    expect(preview.preview.warnings.join('\n')).not.toMatch(/break_agreement is true/);
+    const done = payload<{ outcome: string; exceptionsRecorded: unknown[] }>(await submit({ partner_approved: true, note: 'Bob agreed in chat', confirmToken: preview.confirmToken }));
+    expect(done.outcome).toBe('confirmed');
+    expect(done).not.toHaveProperty('agreementsBroken');
+    expect(done.exceptionsRecorded).toEqual([{ agreement: 'a1', territories: [158], ledger: 'recorded', id: 'e1', playerRecord: 'updated' }]);
+    expect(ledgerFile().agreements[0]).toMatchObject({
+      status: 'agreed',
+      exceptions: [{ id: 'e1', direction: 'mine', territories: [158], fromTurn: 3, toTurn: 3, note: `Player ${BOB.feed} agreed in chat` }],
+    });
+    expect(tallies()).toMatchObject({ brokenByMe: 0, exceptionsMine: 1 });
+  });
+
+  it('partner_approved with break_agreement is refused as ambiguous; with no covered target it is ignored with a note', async () => {
+    const sent: unknown[] = [];
+    h = await liveHarness({ feed: [game('2')], pages: ME_PAGE, warapp: withOrders(sent) });
+    payload(await record({ with: 'Bob', status: 'agreed', territories: [159, 161] }));
+    expect(textOf(await submit({ partner_approved: true, break_agreement: true }))).toMatch(/both true.*nothing was sent/);
+    const preview = payload<{ confirmToken: string; preview: { warnings: string[] } }>(await submit({ partner_approved: true }));
+    expect(preview.preview.warnings.join('\n')).toMatch(/partner_approved is ignored: no order attacks/);
+    expect(preview.preview).not.toHaveProperty('truceExceptions');
+    expect(sent).toEqual([]);
+  });
+
+  it('a theirs exception suppresses the broken flag when the partner takes the covered territory by agreement', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a1', exceptions: [{ territories: [161], turns: 3, direction: 'theirs' }] }));
+    payload(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
+    const dir = h.dataDir;
+    await h.harness.close();
+    h = await liveHarness({ dataDir: dir, feed: [game('3')], warapp: live(boardAt({ bobTakes161: true })) });
+    const p = payload<RelationsPayload>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
+    expect(p.agreements[0]!.flags.map((f) => f.kind)).not.toContain('broken');
+    expect(p.agreements[0]!.trust?.level).toBe('clear');
+  });
+
+  it('warapp_plan_turn and warapp_check_plan list the exceptions in force under relations', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a1', exceptions: [{ territories: [158], turns: 3 }, { territories: [161], turns: 3, direction: 'theirs' }] }));
+    const p = payload<{ relations: Array<{ exceptions?: unknown[] }>; rationale: string[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.relations[0]!.exceptions).toEqual([
+      { direction: 'mine', territories: [expect.objectContaining({ id: 158 })] },
+      { direction: 'theirs', territories: [expect.objectContaining({ id: 161 })] },
+    ]);
+    expect(p.rationale.join('\n')).toMatch(/agreed to an exception this turn, so .*158.* normal target/);
+    const c = payload<{ relations?: Array<{ agreement: string; exceptions: unknown[] }> }>(
+      await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [{ kind: 'deploy', territory: 159, armies: 5 }] }),
+    );
+    expect(c.relations).toEqual([expect.objectContaining({ agreement: 'a1', exceptions: expect.arrayContaining([expect.objectContaining({ direction: 'theirs' })]) })]);
   });
 });
 

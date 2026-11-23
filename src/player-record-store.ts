@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import {
   addCounts,
+  CORE_COUNT_KEYS,
   COUNT_KEYS,
   MAX_RECORD_PLAYERS,
   talliesOf,
@@ -130,9 +131,10 @@ const count = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v 
 const intOrNull = (v: unknown) => v === null || (typeof v === 'number' && Number.isInteger(v));
 
 function talliesFrom(v: unknown): RecordCounts | undefined {
-  if (!isRec(v) || !COUNT_KEYS.every((k) => count(v[k]))) return undefined;
+  // The exception tallies came later: absent reads as 0, present must be a count.
+  if (!isRec(v) || !CORE_COUNT_KEYS.every((k) => count(v[k])) || !COUNT_KEYS.every((k) => v[k] === undefined || count(v[k]))) return undefined;
   const out: RecordCounts = { ...ZERO_COUNTS };
-  for (const k of COUNT_KEYS) out[k] = v[k] as number;
+  for (const k of COUNT_KEYS) if (v[k] !== undefined) out[k] = v[k] as number;
   return out;
 }
 

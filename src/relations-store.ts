@@ -6,6 +6,10 @@
 // record (src/player-record-store.ts); nothing is sent to war.app. Reads are loose: an unusable
 // file or entry is dropped, never thrown on.
 //
+// An agreement's `exceptions` (partner-approved attacks that are no break: territory ids, turns, a
+// direction) may carry a short `note` — the owner's own words, never a chat message, with every player
+// name scrubbed to `Player <id>` before it is written (`scrubNames`). Files written before it have none.
+//
 // `commitments` (part B4): what my chat messages promised (warapp_send_chat's declared commitments,
 // never the text), recorded once a message is sent; warapp_submit_turn warns when orders break one.
 //
@@ -20,8 +24,12 @@ import { join } from 'node:path';
 import { withPathLock } from './path-lock.js';
 import {
   AGREEMENT_STATUSES,
+  EXCEPTION_DIRECTIONS,
+  MAX_EXCEPTION_NOTE,
+  MAX_EXCEPTIONS,
   MAX_NOTICE_TURNS,
   type Agreement,
+  type AgreementException,
   type AgreementScope,
   type AgreementStatus,
   type AgreementTerms,
@@ -111,7 +119,27 @@ export function agreementOf(v: unknown): Agreement | undefined {
   if (isInt(v.endedTurn)) a.endedTurn = v.endedTurn;
   if (typeof v.enforced === 'boolean') a.enforced = v.enforced;
   if (typeof v.retaliated === 'boolean') a.retaliated = v.retaliated;
+  const exceptions = Array.isArray(v.exceptions) ? v.exceptions.map(exceptionOf).filter((e): e is AgreementException => e !== undefined).slice(-MAX_EXCEPTIONS) : [];
+  if (exceptions.length) a.exceptions = exceptions;
   return a;
+}
+
+/** A partner-approved exception read back, or `undefined` when it is unusable (files before it have none). */
+function exceptionOf(v: unknown): AgreementException | undefined {
+  if (!isRec(v) || typeof v.id !== 'string' || !/^e\d{1,9}$/.test(v.id)) return undefined;
+  if (typeof v.direction !== 'string' || !(EXCEPTION_DIRECTIONS as readonly string[]).includes(v.direction)) return undefined;
+  const territories = ints(v.territories);
+  if (!territories?.length || !isInt(v.fromTurn) || !isInt(v.toTurn) || v.fromTurn > v.toTurn || !isInt(v.recordedTurn)) return undefined;
+  const e: AgreementException = {
+    id: v.id,
+    direction: v.direction as AgreementException['direction'],
+    territories,
+    fromTurn: v.fromTurn,
+    toTurn: v.toTurn,
+    recordedTurn: v.recordedTurn,
+  };
+  if (typeof v.note === 'string' && v.note.length) e.note = v.note.slice(0, MAX_EXCEPTION_NOTE);
+  return e;
 }
 
 const COMMITMENT_ID = /^c(\d{1,9})$/;

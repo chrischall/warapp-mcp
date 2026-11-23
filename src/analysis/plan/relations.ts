@@ -735,6 +735,12 @@ export function reportTruce(
                   : '.')
           : `${name}${notice}: none of its ${r.coveredTheirs.length} covered ${r.coveredTheirs.length === 1 ? 'territory is' : 'territories are'} a target this turn (T1), and player ${r.player} is no front for the no-second-front rule or the idle armies (T4).`,
       );
+      for (const e of r.exceptions ?? [])
+        rationale.push(
+          e.direction === 'mine'
+            ? `${name}: player ${r.player} agreed to an exception this turn, so ${e.territories.map(label).join(', ')} ${e.territories.length === 1 ? 'is a normal target' : 'are normal targets'} — no break.`
+            : `${name}: I agreed to an exception this turn, so player ${r.player} may attack ${e.territories.map(label).join(', ')}: ${e.territories.length === 1 ? 'it is' : 'they are'} held as against any opponent.`,
+        );
       if (mineRelaxed.length)
         rationale.push(
           `${name}: ${mineRelaxed.map(label).join(', ')} ${mineRelaxed.length === 1 ? 'faces' : 'face'} only player ${r.player}, so ${mineRelaxed.length === 1 ? 'it is' : 'they are'} held against its visible stacks there attacking with no deploy (T2) — a break needs a visible build-up first; ${freed} ${freed === 1 ? 'army' : 'armies'} freed this turn.`,
@@ -766,6 +772,7 @@ export function reportTruce(
       armiesFreed: freed,
       ...(tp?.capMoved.get(i)?.length ? { capMoved: tp.capMoved.get(i)! } : {}),
       ...(r.breach ? { breach: r.breach } : {}),
+      ...(r.exceptions?.length ? { exceptions: r.exceptions } : {}),
       // T6: filled in once the plan's orders are final (truceBreakLosses).
       lossIfBroken: null,
     };

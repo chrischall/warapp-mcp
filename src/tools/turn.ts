@@ -156,8 +156,8 @@ import { readDecisionLog, scrubNames, type LoggedChatMessage, type LoggedSent, t
 import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
-import { planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
-import { recordBrokenByMe } from './relations.js';
+import { MAX_EXCEPTION_NOTE, planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
+import { exceptionNote, recordBrokenByMe, recordPartnerApproved } from './relations.js';
 import { readPlayerRecord } from '../player-record-store.js';
 import { withTeammateOrders } from '../team-orders.js';
 import {
@@ -460,6 +460,8 @@ interface TurnState {
   cardPlayCheck?: string;
   /** B2: the agreements these orders break (`break_agreement: true`), recorded broken-by-me once committed. */
   breaks?: string[];
+  /** `partner_approved: true`: the one-turn exceptions to record once committed (territories hit, the note scrubbed). */
+  exceptions?: { agreement: string; territories: number[]; note?: string }[];
   /** #274: the commander risk accepted with `accept_commander_risk`, recorded in the result. */
   commanderRisk?: CommanderRisk;
   /** #412: who chose orders that differ from the plan, and why (names already scrubbed), for the decision log. */
@@ -2391,6 +2393,25 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       return notRecorded(`re-reading the game failed (${failureText(e)}): record it with warapp_record_agreement (status broken-by-me)`);
     }
   };
+  /**
+   * `warapp_submit_turn` with `partner_approved`: record a one-turn exception on each agreement its orders
+   * hit — only once the orders are confirmed committed; otherwise say how to record it by hand. Never throws.
+   */
+  const recordApproved = async (st: TurnState, committed: boolean) => {
+    const list = st.exceptions ?? [];
+    const notRecorded = (why: string) => list.map((x) => ({ agreement: x.agreement, territories: x.territories, ledger: 'not-recorded' as const, why }));
+    const byHand = `record it with warapp_record_agreement (exceptions: territories, turns ${st.turnNumber})`;
+    if (!committed) return notRecorded(`the orders are not confirmed committed: once warapp_get_game shows them in, ${byHand}`);
+    if (!ctx.dataDir) return notRecorded('this server keeps no data directory');
+    try {
+      const { game } = await resolveTeams(ctx, await ctx.client.getGame(st.gameId, { settings: true }));
+      const me = game.players.find((p) => p.id === st.feedPlayerId);
+      if (!me) return notRecorded('you are no longer listed in the game');
+      return await recordPartnerApproved({ dir: ctx.dataDir, env: opts.env, game, me, map: mapOf(game), exceptions: list, turn: st.turnNumber });
+    } catch (e) {
+      return notRecorded(`re-reading the game failed (${failureText(e)}): ${byHand}`);
+    }
+  };
   server.registerTool(
     'warapp_plan_turn',
     {
@@ -2464,7 +2485,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'In a free-for-all, `relations` reports each truce recorded with warapp_record_agreement as the plan treated it ' +
           '(no covered territory of the partner attacked while it is active or in notice; a covered border facing only ' +
           'the partner held against its stacks with no deploy, except your commander\'s, a valuable border, or while trust ' +
-          'is watch; a border cap kept), `advice` says `give-notice` when the endgame or the partner outgrowing you made ' +
+          'is watch; a border cap kept; a partner-approved truce exception on this turn makes its territories normal ' +
+          'targets, listed under the truce as `exceptions`), `advice` says `give-notice` when the endgame or the partner outgrowing you made ' +
           'the trust watch, a truce the board shows broken is planned as an ordinary opponent, and `tacit` lists quiet ' +
           'borders with no agreement (a report, never a truce). The plan never reads what your chat promised ' +
           "(warapp_send_chat's `commitments`): a warning says when its moves would break one still in force. " +
@@ -3284,6 +3306,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 fullHold: r.fullHold.map((f) => ({ territory: name(f.territory), why: f.why })),
                 ...(r.capMoved ? { capMoved: r.capMoved.map((m) => ({ from: name(m.from), to: name(m.to), armies: m.armies })) } : {}),
                 ...(r.breach ? { breach: { ...r.breach, territories: r.breach.territories.map(name) } } : {}),
+                ...(r.exceptions ? { exceptions: r.exceptions.map((e) => ({ direction: e.direction, territories: e.territories.map(name) })) } : {}),
                 lossIfBroken: r.lossIfBroken
                   ? {
                       ...r.lossIfBroken,
@@ -3442,8 +3465,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       .describe(
         'Only when an order attacks (or a Bomb hits) a territory an active or in-notice truce covers (warapp_get_relations): true breaks ' +
           'it on purpose — the preview names the agreement, and once the orders are committed the ledger records it ' +
-          'broken-by-me (the partner\'s player record too). Without it such orders are refused. Ask the owner first.',
+          'broken-by-me (the partner\'s player record too). Without it such orders are refused. Ask the owner first. ' +
+          'Not with partner_approved.',
       ),
+    partner_approved: z
+      .boolean()
+      .optional()
+      .describe(
+        'The truce partner agreed to these attacks: true records a one-turn exception (the agreement and the territories ' +
+          'hit) instead of refusing, and nothing is broken — no broken-by-me, the player record counts an exception. ' +
+          'Ignored (a preview note) when no order hits a covered territory. Not with break_agreement.',
+      ),
+    note: z
+      .string()
+      .max(MAX_EXCEPTION_NOTE)
+      .optional()
+      .describe("With partner_approved: the owner's own words on what the partner agreed, kept on the exception (player names scrubbed)."),
     accept_commander_risk: z
       .boolean()
       .optional()
@@ -3538,7 +3575,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'a border below what the default plan made now (warapp_plan_turn with no options, or its border guess when the deploys ' +
         'are the guess\'s) leaves standing there, naming each with the difference (the plan\'s figure carries its surplus). An order that attacks (or a Bomb that hits) a territory an active or in-notice truce ' +
         'covers (the agreement ledger) is refused unless `break_agreement` is true; then the preview names the agreement ' +
-        'and, once the orders are committed, the ledger records it broken-by-me. In a Commanders game, orders that ' +
+        'and, once the orders are committed, the ledger records it broken-by-me. When the partner agreed to it, ' +
+        '`partner_approved: true` (optional `note`) records a one-turn truce exception instead — no break; an exception ' +
+        'already recorded (warapp_record_agreement `exceptions`) lets the attack through by itself. In a Commanders game, orders that ' +
         'leave your commander takeable by one opponent\'s single deploy, or two striking together when you lead a ' +
         'free-for-all (each reply sized at the larger of its estimate and your income, on the live board; your Airlifts counted, ' +
         'after the deploys and before the moves) are refused with the armies that would hold, and so is a Blockade or Gift ' +
@@ -3556,7 +3595,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         openWorld: true,
       }),
       inputSchema: submitSchema,
-      async plan({ game_id, player, orders, income: givenIncome, break_agreement, accept_commander_risk, cities, override_reason, override_by, chat_reviewed }) {
+      async plan({ game_id, player, orders, income: givenIncome, break_agreement, partner_approved, note, accept_commander_risk, cities, override_reason, override_by, chat_reviewed }) {
+        if (partner_approved === true && break_agreement === true) {
+          throw new McpToolError('break_agreement and partner_approved are both true, so it is unclear whether this breaks the truce or is an exception the partner agreed to: nothing was sent.', {
+            hint: 'Pass partner_approved: true when the partner agreed to these attacks (no break), or break_agreement: true to break it on purpose — not both.',
+          });
+        }
         // #415 task 4b: the chat comes in the same GameFeed read (GetChat=true), so the chat block check adds no request.
         const feed = await ctx.client.getGame(parseGameId(game_id), { settings: true, chat: true });
         requireTurnPhase(feed);
@@ -3781,12 +3825,26 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               bombs: bombs.map((x) => x.target),
             })
           : [];
-        if (breaks.length && break_agreement !== true) {
+        // `partner_approved`: each hit becomes a one-turn exception on its agreement, recorded once committed — no break.
+        const approved =
+          partner_approved === true
+            ? breaks.map((b) => {
+                const n = exceptionNote(note, game);
+                return {
+                  agreement: b.agreement,
+                  with: b.with,
+                  territories: [...new Set([...b.moves.map((m) => m.to), ...(b.bombs ?? []).map((x) => x.target)])].sort((x, y) => x - y),
+                  ...(n ? { note: n } : {}),
+                };
+              })
+            : [];
+        if (breaks.length && break_agreement !== true && partner_approved !== true) {
           throw new McpToolError(`${breaksText(breaks, moves, bombPlays)}: nothing was sent.`, {
             hint:
               'Drop those orders, or give notice (warapp_record_agreement status notice-by-me) and wait until it runs. ' +
               'If the partner broke it first, record broken-by-them with warapp_record_agreement. To break it on purpose ' +
-              '(ask the owner first), resend with break_agreement: true — the ledger then records it broken-by-me.',
+              '(ask the owner first), resend with break_agreement: true — the ledger then records it broken-by-me. If the ' +
+              'partner agreed to these attacks, resend with partner_approved: true — a one-turn exception, no break.',
           });
         }
         const { warnings } = validateTurn({
@@ -3832,7 +3890,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             `Deploys checked against income ${modelled}, not cut by the army cap: an army count of yours is unreadable on the board, ` +
               "so the cap's cut could not be worked out (pass the game's own number as income if it differs).",
           );
-        if (breaks.length)
+        if (partner_approved === true && !breaks.length)
+          warnings.unshift('partner_approved is ignored: no order attacks (or Bomb hits) a territory an active or in-notice truce covers, so there is no exception to record.');
+        else if (note !== undefined && partner_approved !== true) warnings.unshift('note is ignored: it is kept only on an exception recorded with partner_approved: true.');
+        if (approved.length)
+          warnings.unshift(
+            `partner_approved is true: once these orders are committed the ledger records a one-turn exception (turn ${turnNumber}, no break) on ` +
+              approved.map((x) => `agreement ${x.agreement} with player ${x.with} for ${x.territories.join(', ')}`).join('; ') +
+              '. Nothing is recorded broken-by-me; the player record counts an exception.',
+          );
+        else if (breaks.length)
           warnings.unshift(
             `${breaksText(breaks, moves, bombPlays)}. break_agreement is true: once these orders are committed the ledger records ` +
               `${breaks.length === 1 ? 'it' : 'them'} broken-by-me, and the partner's player record says so. That is final: ` +
@@ -4083,6 +4150,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               account: shownAccount(me.name, me.id),
               note: 'These orders reach the game; once the turn resolves, other players see the results.',
               ...(attacks.length ? { attacks: attacks.map((a) => ({ ...a, from: shownPlace(a.from), to: shownPlace(a.to) })) } : {}),
+              // `partner_approved`: the truce exceptions recorded once committed (agreement, partner by id, territories).
+              ...(approved.length
+                ? { truceExceptions: approved.map((x) => ({ agreement: x.agreement, with: x.with, turn: turnNumber, territories: x.territories.map((t) => shownPlace(resolveTerritory(map, t))) })) }
+                : {}),
               ...(warnings.length ? { warnings } : {}),
               ...(chatWarnings.length ? { chatWarnings } : {}),
               untrusted: UNTRUSTED_PREVIEW_NOTE,
@@ -4100,7 +4171,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             ...(givenIncome !== undefined ? { incomeGiven: true } : {}),
             ...(placedDelays.length ? { orderDelayCheck: orderDelayCheck(placedDelays.map((p) => placedAt(p)!)) } : {}),
             ...(unverifiedPlays.length ? { cardPlayCheck: cardPlayCheck(unverifiedPlays) } : {}),
-            ...(breaks.length ? { breaks: breaks.map((b) => b.agreement) } : {}),
+            ...(breaks.length && !approved.length ? { breaks: breaks.map((b) => b.agreement) } : {}),
+            ...(approved.length ? { exceptions: approved.map(({ with: _with, ...x }) => x) } : {}),
             ...(commanderRisk ? { commanderRisk: commanderRisk.risk } : {}),
             checks,
             ...(chat_reviewed === true ? { chatReviewed: { blocks: blocks.map((b) => ({ case: b.case, intent: b.intent, from: b.from, messageIds: b.messageIds })) } } : {}),
@@ -4185,8 +4257,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         });
         const withChat = st.chatReviewed ? { ...result, chatReviewed: st.chatReviewed } : result;
         const withRisk = st.commanderRisk ? { ...withChat, commanderRiskAccepted: st.commanderRisk } : withChat;
-        if (!st.breaks?.length) return withRisk;
-        return { ...withRisk, agreementsBroken: await recordBreaks(st, result.outcome === 'confirmed') };
+        const withExceptions = st.exceptions?.length ? { ...withRisk, exceptionsRecorded: await recordApproved(st, result.outcome === 'confirmed') } : withRisk;
+        if (!st.breaks?.length) return withExceptions;
+        return { ...withExceptions, agreementsBroken: await recordBreaks(st, result.outcome === 'confirmed') };
 
       },
     },

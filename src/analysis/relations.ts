@@ -115,6 +115,58 @@ export interface Agreement {
   retaliated?: boolean;
   /** Every status it was recorded in, oldest first. */
   history: { turn: number; status: AgreementStatus }[];
+  /**
+   * Partner-approved exceptions (oldest first; absent when none): attacks on covered territories the
+   * partner agreed to, for some turns, that are no break. Never a status change.
+   */
+  exceptions?: AgreementException[];
+}
+
+/**
+ * Who an exception lets attack: `mine` — the partner agreed I may attack its covered territories;
+ * `theirs` — I agreed the partner may attack (or take) covered territories of mine.
+ */
+export const EXCEPTION_DIRECTIONS = ['mine', 'theirs'] as const;
+export type ExceptionDirection = (typeof EXCEPTION_DIRECTIONS)[number];
+/** Exceptions kept per agreement (the newest). */
+export const MAX_EXCEPTIONS = 50;
+/** The longest note an exception keeps (the owner's own words, names scrubbed). */
+export const MAX_EXCEPTION_NOTE = 200;
+
+/** One partner-approved exception to a truce: these territories, these turns (inclusive), one direction. */
+export interface AgreementException {
+  /** Unique within its agreement: `e1`, `e2`, … */
+  id: string;
+  direction: ExceptionDirection;
+  /** The territories it lets be attacked, ascending. */
+  territories: number[];
+  /** The first and last turn it applies (inclusive). */
+  fromTurn: number;
+  toTurn: number;
+  /** The turn it was recorded. */
+  recordedTurn: number;
+  /** The owner's own words, player names scrubbed to `Player <id>`; absent when none. */
+  note?: string;
+}
+
+/** The next exception id on `a`: `e1`, `e2`, … */
+export function nextExceptionId(a: Pick<Agreement, 'exceptions'>): string {
+  const n = (a.exceptions ?? []).reduce((m, e) => Math.max(m, Number(/^e(\d+)$/.exec(e.id)?.[1] ?? 0)), 0);
+  return `e${n + 1}`;
+}
+
+/** `a` with `exceptions` appended (fresh ids), at most {@link MAX_EXCEPTIONS} kept (the newest). */
+export function withExceptions(a: Agreement, exceptions: readonly Omit<AgreementException, 'id'>[]): Agreement {
+  let next: Agreement = a;
+  for (const e of exceptions) next = { ...next, exceptions: [...(next.exceptions ?? []), { id: nextExceptionId(next), ...e }] };
+  return next.exceptions && next.exceptions.length > MAX_EXCEPTIONS ? { ...next, exceptions: next.exceptions.slice(-MAX_EXCEPTIONS) } : next;
+}
+
+/** The territories `a`'s exceptions in `direction` open on `turn` (the turn's orders), ascending. */
+export function exceptedOn(a: Pick<Agreement, 'exceptions'>, turn: number, direction: ExceptionDirection): Set<number> {
+  const out = new Set<number>();
+  for (const e of a.exceptions ?? []) if (e.direction === direction && e.fromTurn <= turn && turn <= e.toTurn) for (const t of e.territories) out.add(t);
+  return out;
 }
 
 /** A player as the ledger needs it (a GameFeed player fits). */
@@ -363,7 +415,8 @@ export interface BreachInput {
  *   leaves ambiguous;
  * - `outgrowing`: its income passed {@link TRUCE_OUTGROW_RATIO} × mine;
  * - `kept`: the consecutive quiet turns up to the newest board (when nothing broke).
- * A proposal that was never agreed has no flags.
+ * A covered territory under a `theirs` exception on a turn (the partner may attack it by agreement) raises
+ * nothing that turn. A proposal that was never agreed has no flags.
  */
 export function breachWatch(input: BreachInput): WatchFlag[] {
   const { agreement: a, graph, me } = input;
@@ -388,7 +441,10 @@ export function breachWatch(input: BreachInput): WatchFlag[] {
     const taken: number[] = [];
     const attacked: number[] = [];
     const ambiguous: number[] = [];
+    // A `theirs` exception on this turn: the partner may attack or take these by agreement — no event.
+    const allowed = exceptedOn(a, from.turn, 'theirs');
     for (const c of covered) {
+      if (allowed.has(c)) continue;
       const after = now.get(c);
       const shown = ownerShown(after);
       const neighbours = neighborsOf(graph, c);
@@ -681,7 +737,8 @@ export interface TruceBreak {
 /**
  * B2 (warapp_submit_turn): the active or in-notice agreements that `moves` would break — an order that
  * attacks a territory the partner holds on `board` and the terms cover (a transfer-only order attacks
- * nothing), or a Bomb (`bombs`, the targets) on such a territory. By agreement id; empty when nothing binds. Pure; reads only the ledger's own agreements and
+ * nothing), or a Bomb (`bombs`, the targets) on such a territory — except one a `mine` exception opens on `turn`
+ * (the partner agreed to it). By agreement id; empty when nothing binds. Pure; reads only the ledger's own agreements and
  * the board (the breach watch is not consulted: a break by them is recorded as broken-by-them first).
  */
 export function truceBreaksIn(input: {
@@ -700,7 +757,9 @@ export function truceBreaksIn(input: {
     const state = agreementState(a, input.turn, input.players);
     if (state.phase !== 'active' && state.phase !== 'notice') continue;
     const held = new Set(input.board.territories.filter((t) => ownerShown(t) && ownerOn(t) === a.with).map((t) => t.territoryId));
-    const covered = new Set(coveredTerritories(input.graph, a.terms.scope, held));
+    // A `mine` exception on this turn: the partner agreed to these attacks — no break.
+    const allowed = exceptedOn(a, input.turn, 'mine');
+    const covered = new Set(coveredTerritories(input.graph, a.terms.scope, held).filter((t) => !allowed.has(t)));
     const moves = input.moves.flatMap((m, index) => (m.mode !== 'transfer-only' && covered.has(m.to) ? [{ index, from: m.from, to: m.to }] : []));
     const bombs = (input.bombs ?? []).flatMap((target, index) => (covered.has(target) ? [{ index, target }] : []));
     if (moves.length || bombs.length) out.push({ agreement: a.id, with: a.with, state: state.phase, moves, ...(bombs.length ? { bombs } : {}) });
@@ -735,10 +794,21 @@ export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanR
     if (a.status === 'notice-by-them') watch.push('their-notice');
     if (endgame) watch.push('endgame');
     const broke = flags.find((f) => f.kind === 'broken' && !f.ambiguous);
+    // Partner-approved exceptions on this turn: those territories are no longer covered (normal targets
+    // for me, or open to the partner), and the plan lists them.
+    const exceptMine = exceptedOn(a, turn, 'mine');
+    const exceptTheirs = exceptedOn(a, turn, 'theirs');
+    const coveredMine = coveredTerritories(graph, a.terms.scope, mine);
+    const coveredTheirs = coveredTerritories(graph, a.terms.scope, holding(a.with));
+    const exceptions = [
+      { direction: 'mine' as const, territories: coveredTheirs.filter((t) => exceptMine.has(t)) },
+      { direction: 'theirs' as const, territories: coveredMine.filter((t) => exceptTheirs.has(t)) },
+    ].filter((e) => e.territories.length);
     relations.push({
       player: a.with,
-      coveredMine: coveredTerritories(graph, a.terms.scope, mine),
-      coveredTheirs: coveredTerritories(graph, a.terms.scope, holding(a.with)),
+      coveredMine: coveredMine.filter((t) => !exceptTheirs.has(t)),
+      coveredTheirs: coveredTheirs.filter((t) => !exceptMine.has(t)),
+      ...(exceptions.length ? { exceptions } : {}),
       state: broke ? 'broken' : state.phase,
       ...(state.endsTurn !== undefined ? { endsTurn: state.endsTurn } : {}),
       ...(a.terms.borderCap !== undefined ? { borderCap: a.terms.borderCap } : {}),
