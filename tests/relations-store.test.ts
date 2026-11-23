@@ -16,7 +16,7 @@ import {
   ZERO_COUNTS,
   type RecordEntry,
 } from '../src/analysis/player-record.js';
-import { newAgreement, transitionAgreement, type Agreement, type AgreementStatus } from '../src/analysis/relations.js';
+import { newAgreement, transitionAgreement, withExceptions, type Agreement, type AgreementStatus } from '../src/analysis/relations.js';
 import {
   entryKey,
   legacyEntryKey,
@@ -245,7 +245,7 @@ describe('the tallies', () => {
       entry(walk(['agreed', 'ended']), 5, { proposedAgain: true }),
     ];
     // The tallies outlive entries dropped past the bound: here one more kept than the entries show.
-    const tallies = { made: 6, kept: 3, endedWithNotice: 1, brokenByThem: 1, brokenByMe: 1 };
+    const tallies = { ...ZERO_COUNTS, made: 6, kept: 3, endedWithNotice: 1, brokenByThem: 1, brokenByMe: 1 };
     expect(playerRecord(tallies, entries)).toEqual({
       ...tallies,
       keptRate: 0.8,
@@ -357,7 +357,8 @@ describe('the cross-game record on disk', () => {
     const key = playerKey(salt, P);
     const counts = { made: 2, kept: 1, endedWithNotice: 0, brokenByThem: 1, brokenByMe: 0 };
     writeFileSync(playerRecordPath(dir), JSON.stringify({ version: 2, players: { [key]: { counts, updated: 1 } } }));
-    expect(await readPlayerRecord(dir, P, {})).toEqual({ tallies: counts, entries: [] });
+    // Written before the exception tallies: they read as 0.
+    expect(await readPlayerRecord(dir, P, {})).toEqual({ tallies: { ...counts, exceptionsMine: 0, exceptionsTheirs: 0 }, entries: [] });
     const e = recordEntryFor(walk(['agreed', 'broken-by-them']), { key: legacyEntryKey(salt, GAME, 'a1'), format, now: 1 });
     writeFileSync(playerRecordPath(dir), JSON.stringify({ version: 1, players: { [key]: { entries: [e, { key: 'nope' }] } } }));
     expect(await readPlayerRecord(dir, P, {})).toEqual({ tallies: { ...ZERO_COUNTS, made: 1, brokenByThem: 1 }, entries: [e] });
@@ -411,5 +412,44 @@ describe('#386: the intel in the ledger', () => {
     expect(await recordTruceUsage(dir, 1, 2, 4, [])).toBe(true);
     expect((await readLedger(dir, 1, 2))?.intel).toEqual(want);
     expect(intelOf({ avoidTerritories: [], avoidPlayers: [], incomes: [] })).toEqual({});
+  });
+});
+
+describe('truce exceptions in the ledger and the player record', () => {
+  const ex = { direction: 'mine' as const, territories: [4], fromTurn: 3, toTurn: 3, recordedTurn: 3, note: 'Player 20 agreed' };
+
+  it('round-trip on the agreement; a file written before them still loads; an unusable one is dropped', async () => {
+    const dir = tmp();
+    const a = withExceptions(walk(['agreed']), [ex]);
+    const ledger = { ...emptyLedger(GAME, ME), agreements: [a] };
+    expect(await writeLedger(dir, ledger)).toBe(true);
+    expect(await readLedger(dir, GAME, ME)).toEqual(ledger);
+    const raw = JSON.parse(readFileSync(relationsPath(dir, GAME, ME), 'utf8'));
+    raw.agreements[0].exceptions.push({ id: 'e2', direction: 'sideways', territories: [4], fromTurn: 3, toTurn: 3, recordedTurn: 3 }, { id: 'e3', direction: 'mine', territories: [4], fromTurn: 5, toTurn: 3, recordedTurn: 3 });
+    writeFileSync(relationsPath(dir, GAME, ME), JSON.stringify(raw));
+    expect((await readLedger(dir, GAME, ME))?.agreements[0]!.exceptions).toEqual(a.exceptions);
+    delete raw.agreements[0].exceptions;
+    writeFileSync(relationsPath(dir, GAME, ME), JSON.stringify(raw));
+    expect((await readLedger(dir, GAME, ME))?.agreements[0]).not.toHaveProperty('exceptions');
+  });
+
+  it('are counted apart from breaks, once each, and old tallies without them read as 0', async () => {
+    const before = walk(['agreed']);
+    const after = withExceptions(before, [ex, { ...ex, direction: 'theirs' }]);
+    expect(recordDelta(before, after)).toEqual({ ...ZERO_COUNTS, exceptionsMine: 1, exceptionsTheirs: 1 });
+    expect(recordDelta(after, withExceptions(after, [ex]))).toEqual({ ...ZERO_COUNTS, exceptionsMine: 1 });
+    expect(recordEntryFor(after, { key: 'k', format: { players: 3, teams: false, ffaSize: 3 }, now: 1 })).toMatchObject({ outcome: 'open', exceptions: { mine: 1, theirs: 1 } });
+    const dir = tmp();
+    const fresh = walk(['agreed']);
+    expect(
+      await updatePlayerRecord(dir, P, (salt) => ({ delta: recordDelta(undefined, fresh), entries: [recordEntryFor(fresh, { key: entryKey(salt, ME, GAME, 'a1'), format: { players: 3, teams: false, ffaSize: 3 }, now: 1 })] }), {}, 1),
+    ).toBe('updated');
+    const file = JSON.parse(readFileSync(playerRecordPath(dir), 'utf8')) as { players: Record<string, { tallies: Record<string, number> }> };
+    for (const p of Object.values(file.players)) {
+      delete p.tallies.exceptionsMine;
+      delete p.tallies.exceptionsTheirs;
+    }
+    writeFileSync(playerRecordPath(dir), JSON.stringify(file));
+    expect(await readPlayerRecord(dir, P, {})).toMatchObject({ tallies: { ...ZERO_COUNTS, made: 1 } });
   });
 });

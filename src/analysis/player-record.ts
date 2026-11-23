@@ -8,6 +8,8 @@
 //   terms, the outcome (kept, ended with notice and whether it was honoured, broken by them or by
 //   me), the break turn and the strongest breach flag my boards showed, the context at the break
 //   (endgame, who led, outgrowing), whether they retaliated and whether they proposed again;
+// - partner-approved exceptions (attacks the partner agreed to, either way) are no break: counted apart
+//   (`exceptionsMine` / `exceptionsTheirs`, and per entry), never in the outcome;
 // - tallies (`RecordCounts`), each moved once by the recorded transition that earns it
 //   (`recordDelta`), so recording the same agreement again never counts it twice, and an entry
 //   dropped past the bound still counts.
@@ -70,6 +72,8 @@ export interface RecordEntry {
   context?: BreakContext;
   /** After I broke it: whether they retaliated, when recorded. */
   retaliated?: boolean;
+  /** Partner-approved exceptions recorded on it, by direction (absent when none): never a break. */
+  exceptions?: { mine: number; theirs: number };
   /** They proposed a new agreement in the same game after this one was over. */
   proposedAgain?: boolean;
   /** When the entry was last written (ms since the epoch). */
@@ -125,6 +129,7 @@ export function recordEntryFor(
     ...outcomeOf(a),
     ...(previous?.proposedAgain ? { proposedAgain: true } : {}),
     ...(a.retaliated !== undefined ? { retaliated: a.retaliated } : {}),
+    ...(a.exceptions?.length ? { exceptions: exceptionCounts(a) } : {}),
     updated: input.now,
   };
   if (a.status === 'broken-by-them' || a.status === 'broken-by-me') {
@@ -154,10 +159,30 @@ export interface RecordCounts {
   endedWithNotice: number;
   brokenByThem: number;
   brokenByMe: number;
+  /** Partner-approved exceptions recorded: it let me attack (`mine`) — never a break, counted apart. */
+  exceptionsMine: number;
+  /** …and I let it attack (`theirs`). */
+  exceptionsTheirs: number;
 }
 
-export const ZERO_COUNTS: Readonly<RecordCounts> = Object.freeze({ made: 0, kept: 0, endedWithNotice: 0, brokenByThem: 0, brokenByMe: 0 });
+export const ZERO_COUNTS: Readonly<RecordCounts> = Object.freeze({
+  made: 0,
+  kept: 0,
+  endedWithNotice: 0,
+  brokenByThem: 0,
+  brokenByMe: 0,
+  exceptionsMine: 0,
+  exceptionsTheirs: 0,
+});
 export const COUNT_KEYS = Object.keys(ZERO_COUNTS) as (keyof RecordCounts)[];
+/** The tallies every stored version carries; the exception tallies came later and read as 0 when absent. */
+export const CORE_COUNT_KEYS: readonly (keyof RecordCounts)[] = ['made', 'kept', 'endedWithNotice', 'brokenByThem', 'brokenByMe'];
+
+/** `a`'s exceptions counted by direction. */
+function exceptionCounts(a: Pick<Agreement, 'exceptions'>): { mine: number; theirs: number } {
+  const list = a.exceptions ?? [];
+  return { mine: list.filter((e) => e.direction === 'mine').length, theirs: list.filter((e) => e.direction === 'theirs').length };
+}
 
 const OUTCOME_COUNT: Partial<Record<RecordOutcome, keyof RecordCounts>> = {
   kept: 'kept',
@@ -178,6 +203,13 @@ export function recordDelta(before: Agreement | undefined, after: Agreement): Re
     const key = OUTCOME_COUNT[outcomeOf(after).outcome];
     if (key) delta[key] = 1;
   }
+  // Each exception once, by its id: one already on `before` is not counted again.
+  const had = new Set((before?.exceptions ?? []).map((e) => e.id));
+  for (const e of after.exceptions ?? []) {
+    if (had.has(e.id)) continue;
+    if (e.direction === 'mine') delta.exceptionsMine++;
+    else delta.exceptionsTheirs++;
+  }
   return delta;
 }
 
@@ -196,6 +228,8 @@ export function talliesOf(entries: readonly RecordEntry[]): RecordCounts {
     if (e.agreedTurn !== null) out.made++;
     const key = OUTCOME_COUNT[e.outcome];
     if (key) out[key]++;
+    out.exceptionsMine += e.exceptions?.mine ?? 0;
+    out.exceptionsTheirs += e.exceptions?.theirs ?? 0;
   }
   return out;
 }

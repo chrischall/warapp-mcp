@@ -15,6 +15,8 @@ import {
   AGREEMENT_STATUSES,
   agreementState,
   breachWatch,
+  EXCEPTION_DIRECTIONS,
+  MAX_EXCEPTION_NOTE,
   MAX_NOTICE_TURNS,
   newAgreement,
   OPENING_STATUSES,
@@ -26,7 +28,9 @@ import {
   TRUCE_OUTGROW_RATIO,
   trust,
   truceEndgame,
+  withExceptions,
   type Agreement,
+  type AgreementException,
   type AgreementScope,
   type AgreementTerms,
   type RelationPlayer,
@@ -51,6 +55,7 @@ import { recordProfile } from './profile-hook.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 import { boardHistory, plannerSettings } from './turn.js';
 import { captureObservation } from './decision-capture.js';
+import { scrubNames } from '../decision-log.js';
 import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -209,8 +214,27 @@ function agreementView(a: Agreement, game: Game, map: GameMap, turn: number, run
     },
     ...(a.enforced !== undefined ? { enforced: a.enforced } : {}),
     ...(a.retaliated !== undefined ? { retaliated: a.retaliated } : {}),
+    ...(a.exceptions?.length
+      ? {
+          exceptions: a.exceptions.map((e) => ({
+            id: e.id,
+            direction: e.direction,
+            territories: e.territories.map(name),
+            turns: [e.fromTurn, e.toTurn],
+            inForce: e.fromTurn <= turn && turn <= e.toTurn,
+            recordedTurn: e.recordedTurn,
+            ...(e.note !== undefined ? { note: untrustedText(e.note) } : {}),
+          })),
+        }
+      : {}),
     ...(rung === 'full' ? { history: a.history } : {}),
   };
+}
+
+/** An exception's note as stored: trimmed, player names scrubbed (`Player <id>`), capped; absent when empty. */
+export function exceptionNote(note: string | undefined, game: Game): string | undefined {
+  const t = note?.trim();
+  return t ? scrubNames(t, game.players).slice(0, MAX_EXCEPTION_NOTE) : undefined;
 }
 
 /** An entry as a result shows it: everything but its key. */
@@ -349,6 +373,67 @@ export async function recordBrokenByMe(o: {
   }
 }
 
+/** One exception `recordPartnerApproved` was asked to record, and what became of it. */
+export interface ExceptionRecorded {
+  agreement: string;
+  /** The territories it opens (ids, ascending). */
+  territories: number[];
+  /** `recorded`: on the agreement now (`id`); `refused`: the ledger could not take it (`why`). */
+  ledger: 'recorded' | 'refused';
+  id?: string;
+  why?: string;
+  playerRecord?: 'updated' | 'off' | 'failed';
+}
+
+/**
+ * `warapp_submit_turn`'s `partner_approved`: record, once the orders are committed, a one-turn `mine`
+ * exception on each agreement the orders hit (its territories hit, the note already scrubbed) — under the
+ * ledger's lock, then the partner's player record (D5: an exception, never a break). Never throws.
+ */
+export async function recordPartnerApproved(o: {
+  dir: string;
+  env: EnvSource | undefined;
+  game: Game;
+  me: Player;
+  map: GameMap;
+  exceptions: readonly { agreement: string; territories: readonly number[]; note?: string }[];
+  turn: number;
+}): Promise<ExceptionRecorded[]> {
+  const { dir, env, game, me, map, turn } = o;
+  const graph = graphOf(map);
+  const refused = (why: string) => o.exceptions.map((x) => ({ agreement: x.agreement, territories: [...x.territories], ledger: 'refused' as const, why }));
+  try {
+    return await withLedgerLock(dir, game.id, me.id, async () => {
+      const read = await readLedgerForWrite(dir, game.id, me.id);
+      if (read === null || read === 'unreadable') return refused(read === null ? 'no ledger for this game' : 'the ledger exists but cannot be read');
+      let ledger = read;
+      const out: ExceptionRecorded[] = [];
+      for (const x of o.exceptions) {
+        const territories = [...new Set(x.territories)].sort((a, b) => a - b);
+        const found = ledger.agreements.find((a) => a.id === x.agreement);
+        if (!found) {
+          out.push({ agreement: x.agreement, territories, ledger: 'refused', why: 'not in the ledger' });
+          continue;
+        }
+        const ex: Omit<AgreementException, 'id'> = { direction: 'mine', territories, fromTurn: turn, toTurn: turn, recordedTurn: turn, ...(x.note ? { note: x.note } : {}) };
+        const moved = withExceptions(found, [ex]);
+        const rest = ledger.agreements.filter((a) => a.id !== found.id);
+        const next = { ...ledger, agreements: [...rest, moved] };
+        if (!(await writeLedger(dir, next))) {
+          out.push({ agreement: x.agreement, territories, ledger: 'refused', why: 'the ledger could not be written' });
+          continue;
+        }
+        ledger = next;
+        const playerRecord = await updateAgreementRecord({ dir, env, game, me, map, graph, agreement: moved, before: found, created: false, others: rest });
+        out.push({ agreement: x.agreement, territories, ledger: 'recorded', id: moved.exceptions!.at(-1)!.id, playerRecord });
+      }
+      return out;
+    });
+  } catch (e) {
+    return refused((e as Error).message);
+  }
+}
+
 /** One commitment of a sent message, and what the ledger made of it. */
 export interface CommitmentRecorded {
   index: number;
@@ -442,7 +527,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           'its state this turn (`proposed`, `active`, in `notice` with the turn it ends, or `over` and why: ended, broken, ' +
           'the partner eliminated or turned AI, only two players left, its end condition met, its notice run), and for a ' +
           'live one: watch `flags` from your own board history — `broken` (the partner took or attacked a covered territory ' +
-          'of yours), `cap-exceeded` (a partner stack on the covered border above the agreed cap), `massing` (its visible ' +
+          'of yours — not one a `theirs` exception you recorded allowed that turn), `cap-exceeded` (a partner stack on the covered border above the agreed cap), `massing` (its visible ' +
           'armies near the covered border grew two turns running, or an event the fog leaves ambiguous), `outgrowing` (its ' +
           `estimated income above ${TRUCE_OUTGROW_RATIO}× yours) and \`kept\` (quiet turns) — and \`trust\`: \`clear\`, or \`watch\` ` +
           'on any flag but kept, on their notice, and in the endgame (no other opponent still a match for either of you). ' +
@@ -560,7 +645,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
     'warapp_record_agreement',
     {
       title: 'Record an agreement in a war.app game',
-      _meta: mintMeta('change', ['record a truce', 'we agreed a truce', 'they broke the truce', 'give notice']),
+      _meta: mintMeta('change', ['record a truce', 'we agreed a truce', 'they broke the truce', 'give notice', 'truce exception']),
       description: untrustedDescription(
         'Record a truce you made, proposed or received in a war.app (Warzone) free-for-all, or a change to one, in this ' +
           "machine's agreement ledger. Nothing is sent to war.app or to any player (so there is no confirmation " +
@@ -571,7 +656,12 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           'new `status`: agreed, notice-by-me, notice-by-them, ended, broken-by-them, broken-by-me (terms change only ' +
           'while proposed; an ended or broken agreement takes nothing more but `retaliated` after broken-by-me). Refused ' +
           'for a partner who is you, an AI, out of the game or your teammate, in a 1v1 or once two players remain, and for ' +
-          'a territory or bonus not on the map. An agreement exists only because you record it here: chat is never read ' +
+          'a territory or bonus not on the map. `exceptions` records partner-approved exceptions that are no break, in any ' +
+          'status (agreed included): each lists `territories`, `turns` (one turn or [from, to], inclusive), `direction` ' +
+          '(mine: the partner agreed I may attack its covered territories there — warapp_plan_turn targets them and ' +
+          'warapp_submit_turn sends the attack without break_agreement; theirs: I agreed it may attack or take mine — ' +
+          'warapp_get_relations raises no `broken` flag for it) and an optional `note` (player names scrubbed). The player ' +
+          'record counts exceptions apart from breaks. An agreement exists only because you record it here: chat is never read ' +
           'into one. With the cross-game player record on (owner decision D5: on unless WARAPP_PLAYER_RECORD=off, local and ' +
           'hosted), each agreement is also kept per partner under a salted hash, name-free (no id, no name, no game, no ' +
           'message): the format, the turns agreed and ended, the shape of the terms, the outcome, a break\'s turn, flag and ' +
@@ -593,6 +683,23 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         until_player_out: playerRef.optional().describe('It ends when this player (name or id) is out of the game.'),
         against: playerRef.optional().describe('The player (name or id) it is aimed at, when it names one.'),
         retaliated: z.boolean().optional().describe('After broken-by-me: whether the partner retaliated.'),
+        exceptions: z
+          .array(
+            z.object({
+              territories: z.array(playerRef).min(1).max(MAX_SCOPE_ITEMS).describe('The territories (names or ids) the exception opens.'),
+              turns: z
+                .union([z.coerce.number().int().min(1), z.array(z.coerce.number().int().min(1)).length(2)])
+                .describe('One turn, or [from, to] (inclusive).'),
+              direction: z
+                .enum(EXCEPTION_DIRECTIONS)
+                .optional()
+                .describe('mine (default): the partner agreed I may attack these; theirs: I agreed the partner may attack or take these of mine.'),
+              note: z.string().max(MAX_EXCEPTION_NOTE).optional().describe("The owner's own words on what was agreed (player names are scrubbed)."),
+            }),
+          )
+          .max(10)
+          .optional()
+          .describe('Partner-approved exceptions to add: attacks the partner agreed to, which are no break. Any status.'),
       }),
     },
     async (args) => {
@@ -651,6 +758,22 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         return t;
       };
 
+      /** The exceptions `args` add, resolved and checked: territories by id, turns in order, the note scrubbed. */
+      const exceptionsFrom = (): Omit<AgreementException, 'id'>[] =>
+        (args.exceptions ?? []).map((x) => {
+          const [fromTurn, toTurn] = typeof x.turns === 'number' ? [x.turns, x.turns] : [x.turns[0]!, x.turns[1]!];
+          if (fromTurn > toTurn) refuse(`An exception's turns [${fromTurn}, ${toTurn}] run backwards`, 'Give [from, to] with from ≤ to, or one turn.');
+          const note = exceptionNote(x.note, game);
+          return {
+            direction: x.direction ?? 'mine',
+            territories: [...new Set(x.territories.map((t) => resolveTerritory(map, t).id))].sort((a, b) => a - b),
+            fromTurn,
+            toTurn,
+            recordedTurn: turn,
+            ...(note ? { note } : {}),
+          };
+        });
+
       /** The change `args` make to `ledger`: the agreement after it, and as it stood. Refuses what cannot be recorded. */
       const change = (ledger: RelationsLedger): { agreement: Agreement; before: Agreement | undefined; created: boolean } => {
         let agreement: Agreement;
@@ -677,8 +800,8 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           before = found;
           if (args.with !== undefined && resolvePlayer(game.players, args.with).id !== agreement.with)
             refuse(`Agreement ${agreement.id} is with player ${agreement.with}`, 'Omit `with` when updating, or record a new agreement.');
-          if (args.status === undefined && !termsGiven && args.retaliated === undefined)
-            refuse('Nothing to record: give a new `status`, terms, or `retaliated`', 'Pass the status the agreement moved to.');
+          if (args.status === undefined && !termsGiven && args.retaliated === undefined && !args.exceptions?.length)
+            refuse('Nothing to record: give a new `status`, terms, `retaliated` or `exceptions`', 'Pass the status the agreement moved to.');
           if (termsGiven) {
             if (agreement.status !== 'proposed-by-me' && agreement.status !== 'proposed-by-them')
               refuse(`The terms of agreement ${agreement.id} (${agreement.status}) can no longer change`, 'End it and record a new agreement with the new terms.');
@@ -699,6 +822,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
             agreement = { ...agreement, retaliated: args.retaliated };
           }
         }
+        if (args.exceptions?.length) agreement = withExceptions(agreement, exceptionsFrom());
         return { agreement, before, created };
       };
 

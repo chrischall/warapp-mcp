@@ -625,6 +625,11 @@ export interface PlanRelation {
   noticeBy?: 'me' | 'them';
   /** T8: what broke it — the term, the turn and the board's evidence. */
   breach?: { term: string; turn: number; evidence: string; territories: readonly number[] };
+  /**
+   * Partner-approved exceptions on this turn (absent when none): `mine` — its covered territories I may
+   * attack (left out of `coveredTheirs`); `theirs` — mine it may attack (left out of `coveredMine`).
+   */
+  exceptions?: readonly { direction: 'mine' | 'theirs'; territories: readonly number[] }[];
 }
 
 /** B2: one truce as the plan reports it. */
@@ -657,6 +662,8 @@ export interface PlanRelationView {
   /** T5: the armies moved back from a covered border to keep at most the cap there. */
   capMoved?: { from: number; to: number; armies: number }[];
   breach?: PlanRelation['breach'];
+  /** The partner-approved exceptions on this turn (absent when none). */
+  exceptions?: PlanRelation['exceptions'];
   /**
    * T6: what a break would cost this turn — the partner's whole estimated deploy on any territory of
    * its beside my costliest covered territory (covered by the truce or not) and an attack on mine from

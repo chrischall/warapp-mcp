@@ -7,6 +7,8 @@ import {
   agreementState,
   breachWatch,
   coveredTerritories,
+  exceptedOn,
+  withExceptions,
   newAgreement,
   partyRefusal,
   planRelationsFrom,
@@ -366,5 +368,66 @@ describe('planRelationsFrom: Diplomacy cards in effect (PLAN-TEAMS D3, T9)', () 
   it('a card already gone by this turn, or naming me, is left out', () => {
     expect(plan([], [{ player: P, untilTurn: 4 }])).toEqual([]);
     expect(plan([], [{ player: ME, untilTurn: 6 }])).toEqual([]);
+  });
+});
+
+// Partner-approved exceptions: attacks the partner agreed to are no break, for their turns only.
+describe('truce exceptions', () => {
+  const ex = (over: Partial<{ direction: 'mine' | 'theirs'; territories: number[]; fromTurn: number; toTurn: number }> = {}) => ({
+    direction: 'mine' as const,
+    territories: [5],
+    fromTurn: 4,
+    toTurn: 4,
+    recordedTurn: 4,
+    ...over,
+  });
+
+  it('numbers exceptions per agreement and reads them by turn (inclusive) and direction', () => {
+    const a = withExceptions(agreed(), [ex(), ex({ direction: 'theirs', territories: [4], fromTurn: 3, toTurn: 5 })]);
+    expect(a.exceptions!.map((e) => e.id)).toEqual(['e1', 'e2']);
+    expect(withExceptions(a, [ex()]).exceptions!.at(-1)!.id).toBe('e3');
+    expect([...exceptedOn(a, 4, 'mine')]).toEqual([5]);
+    expect([...exceptedOn(a, 5, 'mine')]).toEqual([]);
+    expect([...exceptedOn(a, 3, 'theirs')]).toEqual([4]);
+    expect([...exceptedOn(a, 5, 'theirs')]).toEqual([4]);
+    expect([...exceptedOn(a, 6, 'theirs')]).toEqual([]);
+    // The status is never touched: an exception is no break.
+    expect(a.status).toBe('agreed');
+  });
+
+  it('truceBreaksIn: a mine exception lets the attack through on its turn; expired, it breaks again', () => {
+    const b = at(4).board;
+    const a = withExceptions(agreed(), [ex()]);
+    const check = (turn: number) => truceBreaksIn({ agreements: [a], graph, board: b, me: ME, turn, players: players(), moves: [{ from: 4, to: 5 }] });
+    expect(check(4)).toEqual([]);
+    expect(check(5)).toEqual([expect.objectContaining({ agreement: 'a1', moves: [{ index: 0, from: 4, to: 5 }] })]);
+    // A theirs exception does not open the partner's territory to me.
+    const other = withExceptions(agreed(), [ex({ direction: 'theirs' })]);
+    expect(truceBreaksIn({ agreements: [other], graph, board: b, me: ME, turn: 4, players: players(), moves: [{ from: 4, to: 5 }] })).toHaveLength(1);
+  });
+
+  it('breachWatch: a theirs exception suppresses the broken flag for its turn only', () => {
+    const boards = [at(3), at(4, { t4: theirs(4, 3) })];
+    const allowed = withExceptions(agreed(), [ex({ direction: 'theirs', territories: [4], fromTurn: 3, toTurn: 3 })]);
+    expect(breachWatch({ agreement: allowed, graph, me: ME, boards }).map((f) => f.kind)).not.toContain('broken');
+    const late = withExceptions(agreed(), [ex({ direction: 'theirs', territories: [4], fromTurn: 4, toTurn: 4 })]);
+    expect(breachWatch({ agreement: late, graph, me: ME, boards })).toEqual([expect.objectContaining({ kind: 'broken', turn: 3, territories: [4] })]);
+    const wrongWay = withExceptions(agreed(), [ex({ direction: 'mine', territories: [4], fromTurn: 3, toTurn: 3 })]);
+    expect(breachWatch({ agreement: wrongWay, graph, me: ME, boards }).map((f) => f.kind)).toContain('broken');
+  });
+
+  it('planRelationsFrom: excepted territories leave the covered sets for the turn and are listed', () => {
+    const a = withExceptions(agreed(), [ex(), ex({ direction: 'theirs', territories: [4] })]);
+    const input = { graph, board: at(4).board, boards: [at(4)], me: ME, players: players(), incomes: { mine: 5, opponents: new Map([[P, 5], [OTHER, 5]]) } };
+    const [r] = planRelationsFrom({ ...input, agreements: [a], turn: 4 }).relations;
+    expect(r!.coveredTheirs).toEqual([6]);
+    expect(r!.coveredMine).toEqual([1, 2, 3]);
+    expect(r!.exceptions).toEqual([
+      { direction: 'mine', territories: [5] },
+      { direction: 'theirs', territories: [4] },
+    ]);
+    const [later] = planRelationsFrom({ ...input, agreements: [a], turn: 5 }).relations;
+    expect(later!.coveredTheirs).toEqual([5, 6]);
+    expect(later).not.toHaveProperty('exceptions');
   });
 });

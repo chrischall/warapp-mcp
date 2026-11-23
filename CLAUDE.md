@@ -584,7 +584,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the live board only) unless `break_agreement: true`; then the preview names the agreement, and once the
   outcome is `confirmed` the ledger records `broken-by-me` and the player record updates
   (`agreementsBroken`; otherwise it says to record it by hand). That is final: `warapp_uncommit_turn`
-  does not undo it, and says so (`agreementsStillBroken`, the agreements broken-by-me on that turn). Not yet: writing `broken-by-them` to the
+  does not undo it, and says so (`agreementsStillBroken`, the agreements broken-by-me on that turn). **Partner-approved
+  exceptions** (`Agreement.exceptions`, additive: `{id, direction: mine|theirs, territories, fromTurn, toTurn, recordedTurn,
+  note?}`, turns inclusive, the note the owner's words with names scrubbed, `scrubNames`) are no break and no status change:
+  `exceptedOn` drops them from `truceBreaksIn` (mine), `breachWatch` (theirs: no `broken`) and the plan's covered sets
+  (`PlanRelation.exceptions`); `warapp_record_agreement` `exceptions` adds them in any status, `warapp_submit_turn`
+  `partner_approved` records a one-turn `mine` one once committed (`recordPartnerApproved`; with `break_agreement`: refused);
+  the player record counts them apart (`exceptionsMine` / `exceptionsTheirs`, absent in older tallies = 0). Not yet: writing `broken-by-them` to the
   ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
 - **Deals outside the ledger (#375): `avoid_territories` / `avoid_players`** on `warapp_plan_turn` and
   `warapp_check_plan`, for this call only (`PlanOptions.avoid`). The planner treats each like a truce's covered
