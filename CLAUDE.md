@@ -938,6 +938,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   territory beside vacated land still untaken and cheap (`breachOf`: fogged, or costing at most `VACATED_MAX_COST`;
   a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
   orders (a move's reason only); captures, next income and concessions unchanged.
+- **Rule 6 behind conceded borders (owner, 2026-11-22).** With no front and no territory not mine reachable without
+  crossing a border the plan concedes (the last neutral taken, the enemy past those borders: golden s246, the gap #426
+  exposed), rule 6 had no target and its idle stacks stood deep inside. `distBehind` (`plan/transfers.ts`) now walks
+  them up behind the conceded borders on the way to the enemy (`distEnemyThrough`) — never into one, never into a
+  territory an attack leaves from this turn or one beside a rival at the start of the turn (golden s1405: a step into
+  the source of the strike that ends a player took its first-order slot) — and a stack beside one waits there (#367),
+  with a "… walk up behind X, past which lies Y …" reason. Golden: 142 of 6253 plans gain 475 interior transfers; no
+  attack, deploy or capture changes.
 - **No-loss neutral captures (#426, owner decisions of 2026-11-22).** A neutral in view whose
   defenders kill none of my attackers (`noLossNeutral`, `plan/after-leftover.ts`: 0 armies at the usual 70%; never a
   negative bonus's member) costs only the armies that land on it — the owner's definition of a free capture. (1) Pass 3
