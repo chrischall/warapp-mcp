@@ -181,18 +181,17 @@ export function incomeRules(settings: Pick<GameSettings, 'minimumArmyBonus' | 'b
  * the game uses is modelled (base, BonusArmyPer, held bonuses, card armies,
  * overridden bonus values once read — only unreadable overrides are listed).
  * Cities and per-player income mods have no known settings key, so they are
- * not detected: those games still get the hard deploy-total check. Sanctions is
- * flagged when the card is merely enabled: the live board's active-card decoder is
- * unverified (#163), so the model cannot be sure whether I am sanctioned this turn
- * (docs/WARAPP-API.md, the trade-off). With `sanctionsApplied` (PLAN-TEAMS D3: the
- * income already carries the Sanctions read on me) it is left out: the cut is modelled. An army cap is
+ * not detected: those games still get the hard deploy-total check. Sanctions are a reason only
+ * when they are on me and their cut is not modelled (`sanctionsUnmodelled`: under Local Deployment,
+ * where the pools the cut comes from are unknown); an enabled card nobody played on me, or Sanctions
+ * on me that the income already carries (PLAN-TEAMS D3), are none. An army cap is
  * modelled ({@link armyCapIncome}, #253) and verified by six live cases, yet stays listed (where the
  * card armies and Local Deployment's pools fall is not verified): with
  * `armyCap` (the figure the caller applied) the reason states its arithmetic.
  */
 export function incomeUncertainties(
   settings: GameSettings | undefined,
-  opts: { sanctionsApplied?: boolean; armyCap?: ArmyCapIncome } = {},
+  opts: { sanctionsUnmodelled?: boolean; armyCap?: ArmyCapIncome } = {},
 ): string[] {
   const out: string[] = [];
   if (settings?.minimumArmyBonus === undefined)
@@ -209,14 +208,28 @@ export function incomeUncertainties(
   }
   // Overrides that were read are applied to the map (applyBonusOverrides), so only unreadable ones make income uncertain.
   if (settings?.overriddenBonusesUnparsed) out.push(OVERRIDES_UNPARSED);
-  // Owner spec 2026-11-23: once the Sanctions on me are modelled (`sanctionsApplied`), the deploy check matches
-  // them, so they are no reason to doubt the income; only a game with the card and none read on me is.
-  if (settings?.cards.includes('Sanctions') && !opts.sanctionsApplied) {
-    const pct = settings.raw?.SanctionsCard;
+  // Owner spec 2026-11-23: the Sanctions on me are modelled (the income carries the cut), so the card is no
+  // reason to doubt the income — only Sanctions on me whose cut the model could not apply are.
+  if (opts.sanctionsUnmodelled) {
+    const pct = settings?.raw?.SanctionsCard;
     const p = isRecord(pct) && typeof pct.Percentage === 'number' ? ` by ${Math.round(pct.Percentage * 100)}%` : '';
-    out.push(`This game has the Sanctions card, which cuts a sanctioned player's income${p}; the model does not apply it.`);
+    out.push(`Sanctions are on you, which cut your income${p}; the model does not apply the cut here (Local Deployment).`);
   }
   return out;
+}
+
+/**
+ * warapp_submit_turn only: a game with the Sanctions card and none read on me this turn. The board's
+ * active-card reader is unverified (#163), so a deploy total below the model still warns there rather
+ * than refuses. Not an income doubt for warapp_plan_turn (it plans on the Sanctions it reads).
+ */
+export function unreadSanctionsUncertainty(settings: GameSettings | undefined, opts: { sanctionsOnMe: boolean }): string[] {
+  if (!settings?.cards.includes('Sanctions') || opts.sanctionsOnMe) return [];
+  const pct = settings.raw?.SanctionsCard;
+  const p = isRecord(pct) && typeof pct.Percentage === 'number' ? ` by ${Math.round(pct.Percentage * 100)}%` : '';
+  return [
+    `This game has the Sanctions card, which cuts a sanctioned player's income${p}; none is read on you this turn, but the board's active-card reader is unverified, so a lower total is not refused.`,
+  ];
 }
 
 /**
@@ -225,7 +238,7 @@ export function incomeUncertainties(
  */
 export function deployCheckUncertainties(
   settings: GameSettings | undefined,
-  opts: { sanctionsApplied?: boolean; armyCap?: ArmyCapIncome } = {},
+  opts: { sanctionsUnmodelled?: boolean; armyCap?: ArmyCapIncome } = {},
 ): string[] {
   return [...new Set([...incomeUncertainties(settings, opts), ...overrideUncertainties(settings)])];
 }

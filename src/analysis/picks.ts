@@ -170,6 +170,7 @@ import {
 import { bfsDistances, neighborsOf, type MapGraph } from './graph.js';
 import { captureCost } from './planner.js';
 import { boardIncome, DEFAULT_BASE_INCOME } from './player.js';
+import { HUGE_MAP_TERRITORIES, rankSingleStarts, SINGLE_HORIZON, SINGLE_PICK_SHOWN, singleStartReasons, type SingleStart } from './single-pick.js';
 
 /** Turns the opening simulation runs (income by turn 3). */
 export const PICK_HORIZON = 3;
@@ -303,6 +304,10 @@ export interface PlanPicksInput {
   scale?: { candidateTerritories?: number; centralitySamples?: number; hopDepth?: number };
   /** Research hook (#476): also score this group on the full model (`PickPlan.evaluated`), whatever mode planned. */
   evaluate?: readonly number[];
+  /** Single-pick mode ({@link singlePickMode}): the 1-based page of the ranking to detail (default 1). */
+  singlePage?: number;
+  /** The game overrides bonus values (`OverriddenBonuses` read, at least one): required for {@link singlePickMode}. */
+  overridden?: boolean;
 }
 
 type PickGroupName = 'primary' | 'fallback';
@@ -449,6 +454,23 @@ export interface PickPlan {
   candidates?: { ranked: number; pickable: number; bonuses: number };
   /** Research hook (#476): the joint opening score of `PlanPicksInput.evaluate`, on the full model. */
   evaluated?: number;
+  /** Single-pick distribution on a huge map ({@link singlePickMode}): the page of the ranking shown, with reasons. */
+  single?: SingleStartsReport;
+}
+
+/** The ranked single starts of a huge-map, territory-limit-1 game (`src/analysis/single-pick.ts`). */
+export interface SingleStartsReport {
+  /** 1-based ranks shown on this page, of how many pickable. */
+  shown: { from: number; to: number; of: number };
+  page: number;
+  pages: number;
+  /** Starts the flood opening simulated (the rest ranked by their quick score). */
+  simulated: number;
+  /** Bonuses that pay at the game's values. */
+  paying: number;
+  starts: SingleStart[];
+  /** The ranking came from the per-map cache (an earlier call with the same input). */
+  cached?: true;
 }
 
 const byNum = (a: number, b: number) => a - b;
@@ -2186,6 +2208,7 @@ function planCore(input: PlanPicksInput, friendlyIds: readonly number[] = []): C
  * not credited to me — with a {@link TeamPicksReport}; with none, or only empty ones, exactly as before.
  */
 export function planPicks(input: PlanPicksInput): PickPlan {
+  if (singlePickMode(input)) return singlePickPlan(input);
   const lists = input.team?.lists ?? [];
   if (!input.team || !lists.some((l) => l.length)) return planCore(input).plan;
   return coordinate(input, input.team.teammates, lists);
@@ -2594,3 +2617,127 @@ function coverageModel(input: CoverageInput): (picks: readonly number[]) => Cove
 export function coverage(input: CoverageInput, picks: readonly number[]): CoverageReport {
   return coverageModel(input)(picks);
 }
+
+/**
+ * Single-pick distribution on a huge map (mega-game spec part 2): a game that overrides bonus values,
+ * a territory limit of 1, not a team game, not a full deal, three or more players, a map of at least
+ * {@link HUGE_MAP_TERRITORIES} territories and more pickable territories than one page shows. Every
+ * other plan is the group search, byte-identical (the owner: games without overrides or with a limit
+ * above 1 must not change).
+ */
+export function singlePickMode(input: PlanPicksInput): boolean {
+  const g = input.graph;
+  return (
+    input.overridden === true &&
+    Math.floor(input.territoryLimit) === 1 &&
+    input.team === undefined &&
+    !input.fullDeal &&
+    Math.floor(input.players) >= 3 &&
+    g.map.territories.length >= HUGE_MAP_TERRITORIES &&
+    new Set(input.pickable.filter((t) => g.territoryById.has(t))).size > SINGLE_PICK_SHOWN
+  );
+}
+
+/**
+ * The single-pick plan: the ranking of every pickable start (`rankSingleStarts`), the best first as the
+ * primary, the next as the fallback in rank order, cut at `maxPicks` (the client's players × 1), so the
+ * submit list stays within the client's max; one page of SINGLE_PICK_SHOWN starts carries reasons.
+ */
+function singlePickPlan(input: PlanPicksInput): PickPlan {
+  const g = input.graph;
+  const s = input.settings ?? {};
+  const r = rankSingleStarts({
+    graph: g,
+    pickable: input.pickable,
+    settings: s,
+    players: input.players,
+    ...(input.neutralArmies ? { neutralArmies: input.neutralArmies } : {}),
+    ...(input.budgetMs !== undefined ? { budgetMs: input.budgetMs } : {}),
+    ...(input.clock ? { clock: input.clock } : {}),
+  });
+  const pages = Math.max(1, Math.ceil(r.ranked.length / SINGLE_PICK_SHOWN));
+  const page = Math.min(pages, Math.max(1, Math.floor(input.singlePage ?? 1)));
+  const from = (page - 1) * SINGLE_PICK_SHOWN;
+  const starts = r.ranked.slice(from, from + SINGLE_PICK_SHOWN).map((x) => ({ ...x, reasons: singleStartReasons(g, x, r.base, s.commanders === true) }));
+  const reasonsOf = new Map(starts.map((x) => [x.territoryId, x.reasons]));
+  const maxPicks = Math.max(1, Math.floor(input.maxPicks));
+  const list = r.ranked.slice(0, maxPicks);
+  const picks: PickChoice[] = list.map((x, i) => ({
+    territoryId: x.territoryId,
+    group: i === 0 ? 'primary' : 'fallback',
+    score: x.score,
+    reasons: reasonsOf.get(x.territoryId) ?? [],
+  }));
+  const top = list[0]!;
+  const pickSet = new Set(r.ranked.map((x) => x.territoryId));
+  const threatsOf = (bonusId: number, turn: number) => {
+    const near = new Set<number>();
+    for (const m of bonusTerritories(g, bonusId))
+      for (const [t] of boundedDistances(g, m, turn + 1)) if (t !== top.territoryId && pickSet.has(t)) near.add(t);
+    return [...near].sort(byNum);
+  };
+  const rest = list.slice(1).map((x) => x.territoryId);
+  let far = 0;
+  for (const a of rest) {
+    const d = bfsDistances(g, [a]);
+    for (const b of rest) far = Math.max(far, d.get(b) ?? Number.POSITIVE_INFINITY);
+  }
+  const groups = {
+    primary: {
+      territoryIds: [top.territoryId],
+      score: top.score,
+      bonuses: top.bonuses.map((b) => ({ bonusId: b.bonusId, name: b.name, value: b.value, turn: b.turn, threats: threatsOf(b.bonusId, b.turn) })),
+      twoOrderCaptures: [],
+      maxHops: 0,
+    },
+    fallback: {
+      territoryIds: rest,
+      score: list[1]?.score ?? 0,
+      bonuses: [],
+      twoOrderCaptures: [],
+      maxHops: rest.length ? (Number.isFinite(far) ? far : null) : 0,
+    },
+  };
+  const warnings: string[] = [];
+  const luck = luckPercent(s.luckModifier);
+  if (luck > 0) warnings.push(`Luck is ${luck}%: capture costs carry a margin and can still fail.`);
+  if (s.localDeployments)
+    warnings.push('Local deployments are on: the flood opening pools every army, so bonus income it deploys anywhere is an upper bound.');
+  if (s.minimumArmyBonus === undefined) warnings.push(`Base income missing from settings; assumed ${DEFAULT_BASE_INCOME}.`);
+  if (r.partial)
+    warnings.push(
+      `The ${input.budgetMs} ms time budget ran out: ${r.simulated} of ${r.pickable} starts were simulated; the rest are ranked by their quick score (nearest paying bonus).`,
+    );
+  const rationale = [
+    `Single pick on a huge map (${g.map.territories.length} territories, ${r.pickable} pickable, ${Math.floor(input.players)} players, territory limit 1): ` +
+      'each pickable territory is ranked as a lone start instead of searching groups.',
+    `Score: the income above the ${r.base} base over ${SINGLE_HORIZON + 1} turns of a flood opening at the game's bonus values (${r.paying} bonuses pay; ` +
+      'a bonus worth 0 is crossed, never counted), each completed bonus discounted by the chance a rival starts within reach of it, ' +
+      'less a safety charge in starting armies: rival starts within 3 hops, open approaches and entries into the 2-hop pocket' +
+      `${s.commanders ? ' (doubled: Commanders are on)' : ''}, wastelands shielding an approach credited.`,
+    `The submit list is the ranking in priority order, cut at ${maxPicks} (the client's max: players × 1); ` +
+      `starts ${from + 1}–${from + starts.length} carry reasons (page ${page} of ${pages}; ask for another page to see the next ${SINGLE_PICK_SHOWN}).`,
+  ];
+  if (r.simulated < r.pickable && !r.partial)
+    rationale.push(`Only the ${r.simulated} starts with the best quick score were simulated (the pool cap); the rest follow by quick score.`);
+  return {
+    picks,
+    groups,
+    side: mapSides(g, [top.territoryId], []),
+    coverage: coverage({ graph: g, pickable: input.pickable, settings: s, ...(input.neutralArmies ? { neutralArmies: input.neutralArmies } : {}) }, [top.territoryId]),
+    warnings,
+    rationale,
+    ...(r.partial ? { partial: true } : {}),
+    candidates: { ranked: r.simulated, pickable: r.pickable, bonuses: r.paying },
+    single: {
+      shown: { from: from + 1, to: from + starts.length, of: r.pickable },
+      page,
+      pages,
+      simulated: r.simulated,
+      paying: r.paying,
+      starts,
+      ...(r.cached ? { cached: true as const } : {}),
+    },
+  };
+}
+

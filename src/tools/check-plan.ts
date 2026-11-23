@@ -22,6 +22,7 @@ import { withTeammateOrders } from '../team-orders.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
 import { readLedger } from '../relations-store.js';
 import { resolveIntel } from '../analysis/intel.js';
+import { allyAttackLine, attacksOnAllies, modAllianceWarnings } from './mod-alliances.js';
 import { avoidPlayersArg, avoidTerritoriesArg, gameIdArg, graphOf, knownIncomeArg, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
@@ -47,9 +48,11 @@ import { resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
-import { COMMANDER_SIZING, commanderCheckOn } from './commander-check.js';
+import { COMMANDER_SIZING, commanderCheckOn, foggedAttackersArg, foggedCommanderOn, foggedCommanderText, myLargestStack } from './commander-check.js';
+import { DEFAULT_FOGGED_ATTACKERS, foggedStack } from '../analysis/commander-fog.js';
 import { captureCheck, checkPlanLog } from './decision-capture.js';
 import type { CardPlayKind } from '../protocol/methods.js';
+import { farSummary, opponentScope } from '../analysis/scale.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -88,7 +91,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
     {
       title: 'Stress-test a planned turn in a war.app game',
       description: untrustedDescription(
-        'Stress-test a list of orders for your turn in an in-progress war.app (Warzone) game before you submit it: ' +
+        'Stress-test a list of orders for your turn in an in-progress war.app (Warzone) game before you submit it ' +
+          '(in a game of more than 16 opponents, `unseenOpponents` lists only those near your land — `unseenOpponentsMore` ' +
+          'counts the rest — and `scale` sums the opponents not in view or within 2 steps of your land): ' +
           'the orders (the `orders` array warapp_plan_turn returns, or your own edit of it) are carried out on the ' +
           'live board, turn rules included (deploys first, then attacks and transfers interleaved in the zigzag move ' +
           'order; each order an attack or a transfer by who holds its target when it runs; kill rates, the guard ' +
@@ -114,7 +119,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'board, `commander` says where it stands after the orders, the armies there and `needs`: the armies its ' +
           'territory needs to survive every reply tried, by the check warapp_submit_turn refuses on (each reply at the larger ' +
           'of the estimate and your income, enemy_deploy only raising it, both move orders, your Airlifts counted); when a ' +
-          'reply kills it, the summary starts with it. Exact with no luck and ' +
+          'reply kills it, the summary starts with it. `commander.fogged` tests it against `fogged_attackers` (default 2) ' +
+          'unknown opponents the fog may hide within two moves of where it ends, striking together (each a start of the ' +
+          "game's starting armies, else your largest stack, plus a deploy of your income; luck-free): `safe`, `needs`, where " +
+          'they may come from; the summary names it when it can fall, and it never changes `safe`. Exact with no luck and ' +
           'straight rounding; otherwise battles are resolved at their expectation and `exact` is false. It does not ' +
           `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. When this server kept your pick list, \`award\` says what the ` +
           "award of picks showed (as in warapp_plan_turn): the opponent's proven starts stand on the board the " +
@@ -125,7 +133,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'income). An opponent whose estimate one observation broke (see warapp_plan_turn) is tried at the larger of what it ' +
           'implied and your own income (`enemyDeploy` source `untrusted`), said in the first warning. Each `enemyDeploy` entry ' +
           "shows the Reinforcement card the clock says it may hold apart as `cardBonus` (in `deploy` unless `assume_enemy_cards` is " +
-          '"none") and, under Sanctions, `sanctionApplied` (its income before and after the cut). ' +
+          '"none"; a progressive card\'s source in `cardBonusBasis`, as warapp_plan_turn has it) and, under Sanctions, `sanctionApplied` (its income before and after the cut). ' +
           '`belowPlan` compares these orders with the default plan made now on the same board (warapp_plan_turn with no ' +
           'options, the award of picks read as it reads it), or with its border guess when the deploys given are the ' +
           "guess's (`belowPlanAgainst`: plan or guess): each border they leave below what that plan leaves standing there, " +
@@ -136,6 +144,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'against a break too — each reply that attacks a territory a truce covers is marked `breaksTruce`, and ' +
           '`safeIfTruceHolds` is the verdict over the other replies (null when every reply is a break); a partner-approved ' +
           'truce exception on this turn opens its territories (no break) and is listed under `relations`. ' +
+          'In a game running the Diplomacy 2 mod, an ally is such a truce too, and a warning names any order that attacks ' +
+          'a territory an ally holds (the game skips it; its armies sit idle). ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
           'war.app; it never submits orders.',
       ),
@@ -166,6 +176,12 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
               'Income in the fog is unseen, so raise it to test a stronger opponent.',
           ),
         known_income: knownIncomeArg,
+        fogged_attackers: foggedAttackersArg.describe(
+          `With your commander on the board: how many unknown opponents the fog may hide within two moves of where it ends ` +
+            `strike it together (default ${DEFAULT_FOGGED_ATTACKERS}; 0 skips the test). Each is taken as a player's start ` +
+            "(the game's starting armies, else your largest stack) plus a deploy of your income. Reported as `commander.fogged`; " +
+            'never changes `safe`.',
+        ),
         avoid_territories: avoidTerritoriesArg,
         avoid_players: avoidPlayersArg,
         first_mover: z
@@ -190,7 +206,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ),
       }),
     },
-    async ({ game_id, player, orders, enemy_deploy, known_income, avoid_territories, avoid_players, first_mover, assume_enemy_cards, view }) => {
+    async ({ game_id, player, orders, enemy_deploy, known_income, fogged_attackers, avoid_territories, avoid_players, first_mover, assume_enemy_cards, view }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(feed);
       const map = mapOf(feed);
@@ -377,9 +393,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // `income` is the board's, card armies out — the same figure warapp_plan_turn passes.
       // PLAN-TEAMS D3: a Diplomacy card in effect that the decoder is sure of is a truce here in any format
       // (T9: the game enforces it). Its player stays among the opponents too: the decoder is unverified.
-      const truces =
-        (await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks, diplomacy: effect.diplomacy }))
-          ?.relations ?? [];
+      // T9 too: a Diplomacy 2 mod alliance (read only in a game that runs the mod) is a truce the game enforces.
+      const resolvedTruces = await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks, diplomacy: effect.diplomacy });
+      const truces = resolvedTruces?.relations ?? [];
+      const modRead = resolvedTruces?.mod;
       const binding = truces.filter(
         (r) =>
           !friend(r.player) &&
@@ -622,8 +639,23 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // The count and `needs` come from one run (the commander check's), so the line never pairs a count
       // the full run found with armies the targeted run says hold.
       const commanderLine = guard ? commanderText(guard, guard.killers) : undefined;
+      // Part 5 (mega game): my commander against unknown opponents in the fog striking it together (report only).
+      const fogged = guard
+        ? foggedCommanderOn({
+            graph,
+            board,
+            me: me.id,
+            settings,
+            deploys,
+            moves,
+            count: fogged_attackers ?? DEFAULT_FOGGED_ATTACKERS,
+            stack: foggedStack(game.settings?.initialPlayerArmiesPerTerritory, myLargestStack(board, me.id)),
+            deploy: income,
+          })
+        : undefined;
       const summary =
         (guard && (guard.killers > 0 || guard.lostUnanswered) && commanderLine ? `${commanderLine} ` : '') +
+        (fogged && !fogged.safe ? `${foggedCommanderText(fogged)} ` : '') +
         (report.safe === null
           ? `Nothing could be tested this turn: no opposing stack in view touches you.${blind}${ahead}`
           : report.safe
@@ -651,6 +683,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         const o = board.territories.find((t) => t.territoryId === id)?.owner;
         return o?.kind === 'player' ? o.playerId : undefined;
       };
+      // A Diplomacy 2 ally's territory (owner at the start of the turn): the game skips the attack, its armies sit idle.
+      const allyHits = modRead ? attacksOnAllies(modRead, moves, ownerOf) : [];
       const avoidedHits = [...new Set(moves.map((m) => m.to))].filter(
         (to) => !mine.has(to) && (avoidT.has(to) || avoidP.has(ownerOf(to) ?? Number.NaN)),
       );
@@ -661,6 +695,13 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(avoidedHits.length
           ? [`These orders attack ${avoidedHits.map((t) => name(t)).join(', ')}, which you asked to avoid (avoid_territories / avoid_players).`]
           : []),
+        ...(allyHits.length
+          ? [
+              `These orders attack a Diplomacy 2 ally — ${allyHits.map((a) => allyAttackLine(a, (t) => name(t).name)).join('; ')}: ` +
+                'the game skips each such attack and its armies sit idle this turn (warapp_submit_turn refuses it unless attack_ally is true).',
+            ]
+          : []),
+        ...(modRead ? modAllianceWarnings(modRead) : []),
         // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
         ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, (w) => untrustedOf.get(w.player) ?? untrustedDeploy(w, income), (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
         ...(award ? assumedWarning(award) : []),
@@ -705,7 +746,20 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       ];
       const atRiskList = <T>(rows: readonly T[]) => rows.slice(0, LIST_MAX);
 
+      // Scale: a large game (more than LARGE_GAME_OPPONENTS opponents) lists only the opponents near my land and
+      // sums the rest in `scale`; every other game is unchanged.
+      const scope = opponentScope(graph, seen, me.id, opponents.map((o) => o.id));
+      const inScope = (p: number) => !scope.large || scope.near.includes(p);
       return respond(view, VIEWS, (rung) => ({
+        ...(scope.large
+          ? {
+              scale: {
+                opponents: scope.near.length + scope.far.length,
+                near: scope.near.length,
+                far: farSummary(scope.far, (p) => opponents.find((o) => o.id === p)?.deploy),
+              },
+            }
+          : {}),
         game: { id: game.id, name: game.name ?? null, turn },
         player: { id: me.id, name: me.name },
         safe: report.safe,
@@ -757,7 +811,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             deploy: o.deploy,
             source: enemy_deploy !== undefined ? 'enemy_deploy' : knownOf.has(o.id) ? 'known_income' : untrustedOf.has(o.id) ? 'untrusted' : 'estimate',
             // The Reinforcement card the clock says it may hold, apart: in `deploy` under assume_enemy_cards "clock" only.
-            ...(o.cardBonus !== undefined && enemy_deploy === undefined ? { cardBonus: o.cardBonus } : {}),
+            ...(o.cardBonus !== undefined && enemy_deploy === undefined
+              ? { cardBonus: o.cardBonus, ...(o.cardBonusBasis !== undefined ? { cardBonusBasis: o.cardBonusBasis } : {}) }
+              : {}),
             // Sanctions on it: its estimate's income before and after the cut (the card left out).
             ...(o.sanctioned?.applied && o.sanctioned.after !== undefined
               ? { sanctionApplied: { player: o.id, percentage: sanctionPercentage(o.sanctioned.percentages), before: o.sanctioned.before, after: o.sanctioned.after } }
@@ -767,7 +823,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         assumeEnemyCards: assumeCards,
         // #180: in a free-for-all, whether you lead (any two opponents are then tried together).
         leader,
-        unseenOpponents: opponents.filter((o) => !inView.has(o.id)).map((o) => ({ id: o.id, name: playerName.get(o.id) ?? String(o.id) })),
+        unseenOpponents: opponents.filter((o) => !inView.has(o.id) && inScope(o.id)).map((o) => ({ id: o.id, name: playerName.get(o.id) ?? String(o.id) })),
+        ...(scope.large ? { unseenOpponentsMore: opponents.filter((o) => !inView.has(o.id) && !inScope(o.id)).length } : {}),
         plan: {
           captures: report.baseline.captured.map(name),
           failedAttacks: report.baseline.failed.map(name),
@@ -807,6 +864,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
                 sizing: COMMANDER_SIZING,
                 // A Blockade or Gift of its territory, which the check does not simulate (the submit refuses it).
                 ...(checked!.cards ? { cards: checked!.cards } : {}),
+                // Part 5: against unknown opponents the fog may hide within two moves, striking together.
+                ...(fogged
+                  ? {
+                      fogged: {
+                        text: foggedCommanderText(fogged),
+                        safe: fogged.safe,
+                        needs: fogged.needs,
+                        armies: fogged.armies,
+                        attackers: fogged.attackers,
+                        from: fogged.from.map((f) => ({ territory: name(f.territory), ...(f.via !== undefined ? { via: name(f.via) } : {}), armies: f.armies })),
+                        stack: fogged.stack,
+                        deploy: fogged.deploy,
+                      },
+                    }
+                  : {}),
               },
             }
           : {}),

@@ -4,6 +4,9 @@ import { Method, MyGamesFilterType, writeGetMyGamesParams } from '../src/protoco
 import { listMyGames, MY_GAMES_WINDOWS } from '../src/tools/my-games.js';
 import {
   anyUnreadChat,
+  bootView,
+  minutesText,
+  type BootClock,
   briefGameLine,
   chatGameIds,
   GAME_INFO,
@@ -202,6 +205,42 @@ describe('listMyGames: every game, the window widened while war.app fills it (#2
 });
 
 describe('warapp_my_games', () => {
+  it('pace: reports each multi-day game\'s boot clock, counts the ones under six hours, and session_status warns of them', async () => {
+    const H = 3_600_000;
+    const near: SyntheticGame = {
+      id: 1101,
+      name: 'Mega',
+      lastTurn: 4,
+      state: PLAYING,
+      bootTimeMs: 36 * H,
+      bankedMs: 8 * H,
+      turnForMs: 40 * H,
+      players: [
+        { id: ME.inGame, name: 'Ann', state: P_PLAYING, committed: false },
+        { id: 765432, name: 'Bob', state: P_PLAYING, committed: true },
+      ],
+    };
+    const fast: SyntheticGame = { ...near, id: 1102, name: 'Blitz', realTime: true, bootTimeMs: 5 * 60_000 };
+    await harness([near, fast]);
+    // With no game list read yet, session_status reads it itself (owner decision 2026-11-23): one GetMyGames.
+    const asked = () => h!.exchanges.filter((e) => e.request.method === Method.GetMyGames).length;
+    const before = payload(await h!.call('warapp_session_status'));
+    expect(asked()).toBe(1);
+    expect(before.bootWarning).toMatch(/Boot close: game 1101 in 4h/);
+    // A second call reuses that list: no request.
+    await h!.call('warapp_session_status');
+    expect(asked()).toBe(1);
+    const p = payload(await h!.call('warapp_my_games'));
+    const games = p.games as Array<Record<string, unknown>>;
+    expect(games.find((g) => g.id === 1101)!.boot).toEqual({ bootMinutes: 2160, bankedMinutes: 480, allowanceMinutes: 2640, leftMinutes: 240, soon: true });
+    expect(games.find((g) => g.id === 1102)).not.toHaveProperty('boot');
+    expect(p.bootSoon).toBe(1);
+    expect(p.bootNote).toMatch(/banked time/);
+    const s = payload(await h!.call('warapp_session_status'));
+    expect(s.pace).toMatchObject({ bootSoon: [{ id: 1101, leftMinutes: expect.any(Number) }] });
+    expect(s.bootWarning).toMatch(/Boot close: game 1101 in 4h/);
+  });
+
   it('lists my games through GetMyGames, waiting-on-me first, states and turns named', async () => {
     const t = await harness(GAMES);
     const res = await h!.call('warapp_my_games');
@@ -227,6 +266,8 @@ describe('warapp_my_games', () => {
       ],
       // The game list's unread-chat flags (each false by default in the synthetic list).
       unreadChat: { public: false, team: false, private: false, group: false, toMe: false },
+      // Pace: the synthetic list's 3-day boot, no bank, my turn just begun.
+      boot: { bootMinutes: 4320, bankedMinutes: 0, allowanceMinutes: 4320, leftMinutes: 4320, soon: false },
       // #317: this fake answers no GameRefresh, so the details are unread: unknown, never "none".
       surrenderPending: null,
     });
@@ -489,6 +530,7 @@ describe('readMyGames / summarizeMyGames', () => {
         stateCode: 42,
         players: [{ id: 9, name: 'Zed', stateCode: 77, committed: false }],
         unreadChat: { group: false, private: false, public: false, team: false },
+        boot: { bootMs: 5, bankedMs: 0, turnForMs: 0, realTime: false },
       },
     ]);
     const [g] = summarizeMyGames(games, 1);
@@ -633,5 +675,59 @@ describe('readMyGames / summarizeMyGames', () => {
     // A field dropped from the end is as much a layout change.
     const short = ordered(GAME_INFO, Object.values(info()).slice(1, -1));
     expect(bad(ordered(MY_GAMES_RETURN, [[short]]))).toThrow(MyGamesFormatError);
+  });
+});
+
+describe('pace: the boot clock (multi-day games)', () => {
+  const H = 3_600_000;
+  const clock = (over: Partial<BootClock> = {}): BootClock => ({ bootMs: 36 * H, bankedMs: 8 * H, turnForMs: 0, realTime: false, ...over });
+
+  it('is boot time plus bank, less how long my turn has run, only while the game waits on me', () => {
+    expect(bootView(clock({ turnForMs: 40 * H }), true)).toEqual({ bootMinutes: 2160, bankedMinutes: 480, allowanceMinutes: 2640, leftMinutes: 240, soon: true });
+    expect(bootView(clock({ turnForMs: 40 * H }), false)).toMatchObject({ allowanceMinutes: 2640, leftMinutes: null, soon: false });
+    expect(bootView(clock({ turnForMs: 50 * H }), true)).toMatchObject({ leftMinutes: 0, soon: true });
+    expect(bootView(clock({ turnForMs: 10 * H }), true)!.soon).toBe(false);
+  });
+
+  it('says nothing for a real-time game, a game with no boot time, or an unread clock', () => {
+    expect(bootView(clock({ realTime: true }), true)).toBeUndefined();
+    expect(bootView(clock({ bootMs: 0 }), true)).toBeUndefined();
+    expect(bootView(clock({ bootMs: 922_336_666_814_565 }), true)).toBeUndefined();
+    expect(bootView(undefined, true)).toBeUndefined();
+  });
+
+  it('brief names a boot under six hours away', () => {
+    const g: MyGame = { id: 1, name: 'G', state: 'Playing', turn: 3, waitingOnYou: true, players: [], boot: bootView(clock({ turnForMs: 40 * H }), true)! };
+    expect(briefGameLine(g)).toBe('G — turn 3 — waiting on you — boot in 4h');
+    expect(minutesText(2640)).toBe('1d 20h');
+    expect(minutesText(45)).toBe('45m');
+  });
+});
+
+describe('pace on the mega game fixture (game 45736172 settings, name-free)', () => {
+  it('its 2,160-minute boot and 480-minute starting bank give a 44-hour first turn', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { normalizeGame } = await import('../src/normalize.js');
+    const raw = JSON.parse(readFileSync(new URL('./fixtures/gamefeed-settings-45736172.json', import.meta.url), 'utf8')) as unknown;
+    const rules = normalizeGame(raw).endRules!;
+    expect(rules.directBootMinutes).toBe(2160);
+    expect(rules.bankingBoot).toEqual({ bankMinutes: 60, initialBankMinutes: 480 });
+    const v = bootView({ bootMs: rules.directBootMinutes! * 60_000, bankedMs: rules.bankingBoot!.initialBankMinutes * 60_000, turnForMs: 0, realTime: false }, true)!;
+    expect(v.allowanceMinutes).toBe(2640);
+    expect(minutesText(v.allowanceMinutes)).toBe('1d 20h');
+  });
+});
+
+describe('warapp_session_status pace without a list', () => {
+  it('says why when its own read of the game list fails', async () => {
+    h = await liveHarness({
+      pages: SIGNED_IN,
+      warapp: () => {
+        throw new Error('list down');
+      },
+    });
+    const s = payload(await h.call('warapp_session_status'));
+    expect(s).not.toHaveProperty('pace');
+    expect(s.paceUnread).toEqual(expect.any(String));
   });
 });

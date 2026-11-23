@@ -4,11 +4,18 @@
 // larger of its estimate and my income (and enemy_deploy, a what-if floor; an untrusted opponent's at
 // least at the figure its #275 tripwire gave it, as the stress test sizes it), both move orders, the
 // free-for-all lead (#180), Order Priority and my Airlifts. No I/O: the callers load the boards.
+import { z } from 'zod';
+import type { BoardState } from '../board.js';
+import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from '../analysis/combat.js';
+import { foggedCommanderCheck, type FoggedCommanderCheck } from '../analysis/commander-fog.js';
+
+/** The most fogged attackers a caller may ask for. */
+const MAX_FOGGED_ATTACKERS = 8;
 import { gameBaseIncome } from '../analysis/player.js';
-import { commanderSafety, type CommanderAirlift, type CommanderSafety } from '../analysis/commander-safety.js';
+import { commanderSafety, myCommanderTerritory, type CommanderAirlift, type CommanderSafety } from '../analysis/commander-safety.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { PlannerSettings } from '../analysis/index.js';
-import type { SimOrder } from '../analysis/turn-sim.js';
+import { simulateTurn, type SimOrder } from '../analysis/turn-sim.js';
 import type { CardPlayKind } from '../protocol/methods.js';
 import type { stressOpponents } from './stress-opponents.js';
 
@@ -160,4 +167,79 @@ export function guessKeepsCommander(plan: CommanderCheck | undefined, guess: Com
   if (!fails(guess)) return true;
   if (!fails(plan)) return false;
   return guess.safety.killers <= plan.safety.killers && (!guess.safety.lostUnanswered || plan.safety.lostUnanswered);
+}
+
+/**
+ * Part 5 (mega game): my commander after these orders (nobody answering) against `count` unknown
+ * opponents in the fog striking it together (`src/analysis/commander-fog.ts`): every fogged territory
+ * within two moves of where it ends may hide one, `stack` armies plus a whole deploy of `deploy` (my
+ * income). A report beside the commander check, never a refusal. Undefined when `count` is 0, my
+ * commander is not on the board, or no fogged territory is in reach.
+ */
+export function foggedCommanderOn(a: {
+  graph: MapGraph;
+  board: BoardState;
+  me: number;
+  settings: PlannerSettings;
+  deploys: readonly { territoryId: number; armies: number }[];
+  moves: readonly SimOrder[];
+  count: number;
+  stack: number;
+  /** #529: per fogged territory, the armies a hidden player there may hold (default `stack` everywhere). */
+  stackAt?: (t: number) => number;
+  deploy: number;
+}): FoggedReport | undefined {
+  if (a.count <= 0 || myCommanderTerritory(a.board, a.me) === undefined) return undefined;
+  const after = simulateTurn({
+    graph: a.graph,
+    board: a.board,
+    deploys: a.deploys.map((d) => ({ player: a.me, territoryId: d.territoryId, armies: d.armies })),
+    orders: [{ player: a.me, orders: a.moves.map((m) => ({ ...m })) }],
+    moveOrder: [a.me],
+    settings: a.settings,
+  }).territories;
+  const at = [...after].find(([, t]) => t.commander === a.me)?.[0];
+  if (at === undefined) return undefined;
+  const start = new Map(a.board.territories.map((t) => [t.territoryId, t]));
+  const view = {
+    mine: (t: number) => after.get(t)?.owner === a.me,
+    fogged: (t: number) => {
+      const st = start.get(t);
+      return !st || st.owner.kind === 'unknown' || (st.armies === null && !(st.owner.kind === 'player' && st.owner.playerId === a.me));
+    },
+    armies: (t: number) => {
+      const st = start.get(t);
+      return st && st.owner.kind !== 'unknown' && st.armies !== null ? (after.get(t)?.armies ?? st.armies) : null;
+    },
+  };
+  const c = foggedCommanderCheck(a.graph, view, at, after.get(at)!.armies, {
+    count: a.count,
+    stack: a.stackAt ?? a.stack,
+    deploy: a.deploy,
+    offensiveKillRate: a.settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
+    defensiveKillRate: a.settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
+  });
+  return c ? { ...c, stack: a.stack, deploy: a.deploy, ...(a.stackAt ? { likelyOnly: true as const } : {}) } : undefined;
+}
+
+/** {@link foggedCommanderOn}'s answer: the check, the stack and deploy it assumed, and `likelyOnly` when the stack was per territory (#529). */
+export type FoggedReport = FoggedCommanderCheck & { stack: number; deploy: number; likelyOnly?: true };
+
+/** The fogged check in one sentence (check_plan's summary and the plan's warning). */
+export function foggedCommanderText(c: FoggedReport): string {
+  const n = c.attackers;
+  const each = c.likelyOnly
+    ? `each a deploy of ${c.deploy} plus ${c.stack} armies where a start could be or a player was last seen, else the territory's usual estimate`
+    : `each ${c.stack} armies plus a deploy of ${c.deploy}`;
+  return c.safe
+    ? `Your commander on territory ${c.territory} holds against ${n} unknown opponent${n === 1 ? '' : 's'} the fog may hide within two moves (${each}) striking together.`
+    : `Your commander on territory ${c.territory} (${c.armies} armies after your orders) could fall to ${n} unknown opponent${n === 1 ? '' : 's'} the fog may hide within two moves (territories ${c.from.map((f) => f.territory).join(', ')}; ${each}) striking together: it needs ${c.needs} there.`;
+}
+
+/** The `fogged_attackers` argument of warapp_plan_turn and warapp_check_plan (each tool describes its default). */
+export const foggedAttackersArg = z.coerce.number().int().min(0).max(MAX_FOGGED_ATTACKERS).optional();
+
+/** The most armies on one territory of mine on `board` (0 with none). */
+export function myLargestStack(board: BoardState, me: number): number {
+  return board.territories.reduce((n, t) => (t.owner.kind === 'player' && t.owner.playerId === me ? Math.max(n, t.armies ?? 0) : n), 0);
 }

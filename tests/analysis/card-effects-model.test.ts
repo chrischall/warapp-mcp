@@ -80,13 +80,14 @@ describe('Sanctions on an opponent cut every income figure', () => {
 describe('Sanctions on me', () => {
   const settings = normalizeSettings({ NumberOfCardsToReceiveEachTurn: 1, SanctionsCard: { NumPieces: 4, MinimumPiecesPerTurn: 1, Weight: 1, Duration: 2, Percentage: 0.5 } });
 
-  it('drops the Sanctions reason from the income uncertainties once the cut is modelled', () => {
-    const asIs = incomeUncertainties(settings);
-    const applied = incomeUncertainties(settings, { sanctionsApplied: true });
+  it('names Sanctions in the income uncertainties only while a cut on me is not modelled', () => {
     expect(settings?.cards).toContain('Sanctions');
-    expect(asIs.join(' ')).toMatch(/Sanctions/);
-    expect(applied.join(' ')).not.toMatch(/Sanctions/);
-    expect(deployCheckUncertainties(settings, { sanctionsApplied: true }).join(' ')).not.toMatch(/Sanctions/);
+    // Nobody sanctioned me, or the cut is in the income: no reason (the stale "may be off" warning).
+    expect(incomeUncertainties(settings).join(' ')).not.toMatch(/Sanctions/);
+    expect(deployCheckUncertainties(settings).join(' ')).not.toMatch(/Sanctions/);
+    // On me under Local Deployment, where the cut is not modelled: the deploy check warns rather than refuses.
+    expect(incomeUncertainties(settings, { sanctionsUnmodelled: true }).join(' ')).toMatch(/Sanctions are on you.*50%/);
+    expect(deployCheckUncertainties(settings, { sanctionsUnmodelled: true }).join(' ')).toMatch(/Sanctions/);
   });
 });
 
@@ -123,9 +124,10 @@ describe("an opponent's Reinforcement card: the game's value, a clock that reset
     expect(opponentReinforcement(raw({ Mode: 0, FixedArmies: 7 }), [])?.progressive).toBeUndefined();
     expect(opponentReinforcement(raw({ Mode: 1, ProgressivePercentage: 0.5 }), [])).toMatchObject({ progressive: { by: 'territories', percentage: 0.5 } });
     expect(opponentReinforcement(raw({ Mode: 'ProgressiveByTurnNumber', ProgressivePercentage: 2 }), [])).toMatchObject({ progressive: { by: 'turns', percentage: 2 } });
-    // By territories: its territories in view (2) × 1.5 = 3. By turns: the turn its latest card could come (5) × 2 = 10.
-    expect(est(6, { firstTurn: 3, armies: 0, turnsPerCard: 3, progressive: { by: 'territories', percentage: 1.5 } }).card).toEqual({ armies: 3, due: 3 });
-    expect(est(6, { firstTurn: 3, armies: 0, turnsPerCard: 3, progressive: { by: 'turns', percentage: 2 } }).card).toEqual({ armies: 10, due: 3 });
+    // By territories: every player's territories in view (its 2 and my 2) × 1.5 = 6, the client's formula.
+    // By turns: the turn its latest card could come (5) × 2 = 10.
+    expect(est(6, { firstTurn: 3, armies: 0, turnsPerCard: 3, progressive: { by: 'territories', percentage: 1.5 } }).card).toEqual({ armies: 6, due: 3, basis: 'client formula' });
+    expect(est(6, { firstTurn: 3, armies: 0, turnsPerCard: 3, progressive: { by: 'turns', percentage: 2 } }).card).toEqual({ armies: 10, due: 3, basis: 'client formula' });
   });
 
   it("check_plan's assume_enemy_cards: the clock's card on top by default, dropped for none", () => {

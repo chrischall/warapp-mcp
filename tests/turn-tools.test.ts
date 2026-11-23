@@ -213,6 +213,13 @@ describe('warapp_plan_turn', () => {
     expect(p.warnings.join('\n')).toMatch(/income 5 may be off.*army cap/i);
   });
 
+  it('an enabled Sanctions card nobody played on me is no reason to call the income off', async () => {
+    // The lobby fixture enables SanctionsCard (Percentage 0.6); the board has no card in effect.
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.join('\n')).not.toMatch(/may be off: .*Sanctions/);
+  });
+
   it('the army cap (#253): plans on what the cap leaves and reports the arithmetic', async () => {
     // 9 armies of mine on the board, income 5, cap 2×: round(2 × 5) − 9 = 1.
     const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 2 };
@@ -262,6 +269,31 @@ describe('warapp_plan_turn', () => {
     expect(p.rationale.join('\n')).toMatch(/sized for at least a 90% win chance/);
     const bad = await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', min_win_chance: 0.3 });
     expect(bad.isError).toBe(true);
+  });
+
+  it('scale: a game of more than 16 opponents reports the far ones summed; a small one has no scale block', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const small = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(small).not.toHaveProperty('scale');
+    await h.harness.close();
+    const g = game('Playing');
+    const extra = Array.from({ length: 10 }, (_, i) => ({
+      id: `10${200000 + i}10`,
+      name: `Extra ${i}`,
+      isAI: 'False',
+      humanTurnedIntoAI: 'False',
+      hasCommittedOrders: 'False',
+      color: '#00FF00',
+      state: 'Playing',
+    }));
+    h = await liveHarness({ feed: [{ ...g, players: [...(g.players as unknown[]), ...extra] }], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const big = payload<PlanPayload & { scale?: { opponents: number; near: number; far: { count: number; estimatedDeploy: number | null; note: string } } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(big.scale).toMatchObject({ opponents: 18, near: 1, far: { count: 17 } });
+    expect(big.scale!.far.note).toMatch(/large game/);
+    // The orders are the planner's own: the scale block is a report.
+    expect(big.deploys).toEqual(small.deploys);
   });
 
   it('plans from the live board: deploys and moves by name and id, expected bonuses, and submit-shaped orders', async () => {

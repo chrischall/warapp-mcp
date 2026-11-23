@@ -44,6 +44,10 @@ const GI = { gameId: 7, name: 13, lastTurn: 14, players: 16, state: 22 } as cons
  * the client bundle, UNVERIFIED live. The read-back for RegisterChatView.
  */
 const GI_UNREAD = { group: 8, private: 17, public: 18, team: 23 } as const;
+/** GameInfo's boot-clock fields (pace; read from the bundle's GameInfo reader and game-list renderer). */
+const GI_BOOT = { boot: 5, realTime: 19, banked: 24, turnFor: 26 } as const;
+/** The TimeSpan maximum (war.app's "never"), as a decoded number of milliseconds. */
+const NEVER_MS = 922_336_666_814_565;
 export const GAME_INFO_FIELDS = 27;
 /**
  * #523: GameInfo field 20, the client's `SeenEndGameWindow` for my seat (the GameInfo reader's 21st read; GamePlayer
@@ -68,6 +72,25 @@ export interface RawMyGame {
   unreadChat?: UnreadChatFlags;
   /** #523: GameInfo's seen-end-game-window flag, only when it reads `true` (UNVERIFIED live). */
   seenEndGame?: true;
+  /** The boot clock (pace), only when its fields read: see {@link BootClock}. */
+  boot?: BootClock;
+}
+
+/**
+ * A game's boot clock from GameInfo, as the web client's game list shows it (read from the bundle: the list's
+ * boot label is the boot time plus my banked time, red for a real-time game, and "Your turn for …" is the time
+ * my turn has run). TimeSpans in milliseconds. Fields VERIFIED from the bundle's reader and list renderer; the
+ * arithmetic (time left = boot + bank − time my turn has run) is UNVERIFIED live.
+ */
+export interface BootClock {
+  /** Field 5: the game's boot time (`DirectBoot`); 0 or the TimeSpan maximum when the game has none. */
+  bootMs: number;
+  /** Field 24: my banked boot time (banking boot times; 0 without). */
+  bankedMs: number;
+  /** Field 26: how long my turn has run (the client's "Your turn for"). */
+  turnForMs: number;
+  /** Field 19: a real-time game. */
+  realTime: boolean;
 }
 
 /** Which of a game's chats war.app counts unread for the account (GameInfo, #311; UNVERIFIED live). */
@@ -130,6 +153,8 @@ export interface MyGame {
   players: Array<{ name: string; state: string; committed: boolean }>;
   /** The game list's unread-chat flags (null when they did not read); see {@link UnreadChatView}. */
   unreadChat?: UnreadChatView | null;
+  /** Pace: a multi-day game being played or picked with my seat playing — its boot clock ({@link bootView}). */
+  boot?: BootView;
 }
 
 /** The GetMyGames reply arrived in a shape this server does not understand. */
@@ -194,6 +219,7 @@ function gameOf(g: unknown): RawMyGame {
     throw new MyGamesFormatError('a GameInfo lacks its fields');
   }
   const unreadChat = unreadFlagsOf(f);
+  const boot = bootClockOf(f);
   return {
     id,
     name: name ?? '',
@@ -202,7 +228,60 @@ function gameOf(g: unknown): RawMyGame {
     players: (players ?? []).filter((p) => p !== null).map(playerOf),
     ...(unreadChat ? { unreadChat } : {}),
     ...(f[GI_SEEN_END] === true ? { seenEndGame: true as const } : {}),
+    ...(boot ? { boot } : {}),
   };
+}
+
+/** The boot clock, read loosely: a field that is not what it should be leaves it unknown, never refuses the list. */
+function bootClockOf(f: readonly unknown[]): BootClock | undefined {
+  const boot = f[GI_BOOT.boot];
+  const realTime = f[GI_BOOT.realTime];
+  const banked = f[GI_BOOT.banked];
+  const turnFor = f[GI_BOOT.turnFor];
+  const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  if (!num(boot) || !num(banked) || !num(turnFor) || typeof realTime !== 'boolean') return undefined;
+  return { bootMs: boot, bankedMs: banked, turnForMs: turnFor, realTime };
+}
+
+/** Under this many minutes left before a boot, a game is reported as close to one (and `warapp_session_status` warns). */
+export const BOOT_WARN_MINUTES = 6 * 60;
+
+/** What a multi-day game's boot clock means for me ({@link bootView}). */
+export interface BootView {
+  /** The game's boot time, in minutes. */
+  bootMinutes: number;
+  /** My banked time, in minutes. */
+  bankedMinutes: number;
+  /** Boot time plus bank: what a turn of mine may take before I can be booted. */
+  allowanceMinutes: number;
+  /** While the game waits on me: the allowance less the time my turn has run (at least 0); null otherwise. */
+  leftMinutes: number | null;
+  /** `leftMinutes` under {@link BOOT_WARN_MINUTES}. */
+  soon: boolean;
+}
+
+export const BOOT_NOTE =
+  "From the game list: the game's boot time plus your banked time, less how long your turn has run (the web client " +
+  'shows the first two together beside each game). Banked time is eaten once the boot time is spent. The fields are ' +
+  "read from war.app's client; the arithmetic is unverified live.";
+
+/** A multi-day game's boot view, or undefined: real-time, no boot time, the clock unread, or not a game I play. */
+export function bootView(clock: BootClock | undefined, waitingOnYou: boolean): BootView | undefined {
+  if (!clock || clock.realTime || !(clock.bootMs > 0) || clock.bootMs >= NEVER_MS) return undefined;
+  const min = (ms: number) => Math.max(0, Math.floor(ms / 60_000));
+  const bootMinutes = min(clock.bootMs);
+  const bankedMinutes = clock.bankedMs >= NEVER_MS ? 0 : min(clock.bankedMs);
+  const allowanceMinutes = bootMinutes + bankedMinutes;
+  const leftMinutes = waitingOnYou ? Math.max(0, allowanceMinutes - min(clock.turnForMs)) : null;
+  return { bootMinutes, bankedMinutes, allowanceMinutes, leftMinutes, soon: leftMinutes !== null && leftMinutes < BOOT_WARN_MINUTES };
+}
+
+/** Minutes as `2d 3h`, `5h 20m` or `45m`. */
+export function minutesText(m: number): string {
+  const d = Math.floor(m / 1440);
+  const h = Math.floor((m % 1440) / 60);
+  const mm = m % 60;
+  return d ? `${d}d${h ? ` ${h}h` : ''}` : h ? `${h}h${mm ? ` ${mm}m` : ''}` : `${mm}m`;
 }
 
 /** Read a GetMyGames result (the body positioned at the result-present flag). */
@@ -228,18 +307,21 @@ export function summarizeMyGames(games: readonly RawMyGame[], myInGameId: number
   const out = games.map((g): MyGame => {
     const me = g.players.find((p) => p.id === myInGameId);
     const active = g.stateCode === GAME_PLAYING || g.stateCode === GAME_DISTRIBUTING;
+    const waitingOnYou = active && me !== undefined && me.stateCode === PLAYER_PLAYING && !me.committed;
+    const boot = active && me?.stateCode === PLAYER_PLAYING ? bootView(g.boot, waitingOnYou) : undefined;
     return {
       id: g.id,
       name: g.name,
       state: gameStateName(g.stateCode),
       turn: g.lastTurn < 0 ? null : g.lastTurn + 1,
-      waitingOnYou: active && me !== undefined && me.stateCode === PLAYER_PLAYING && !me.committed,
+      waitingOnYou,
       players: g.players.map((p) => ({
         name: p.name,
         state: playerStateName(p.stateCode),
         committed: p.committed,
       })),
       unreadChat: unreadChatView(g.unreadChat),
+      ...(boot ? { boot } : {}),
     };
   });
   // Waiting on me first, then unread private chat, then the rest (war.app's order within each).
@@ -309,7 +391,8 @@ export function briefGameLine(game: MyGame): string {
   const u = game.unreadChat;
   const others = u ? (['public', 'team', 'group'] as const).filter((c) => u[c]) : [];
   const unread = (u?.private ? ' — unread private' : '') + (others.length ? ` — unread ${others.join(', ')}` : '');
-  const tail = ` — ${where} — ${game.waitingOnYou ? 'waiting on you' : 'waiting on others'}${unread}`;
+  const soon = game.boot?.soon && game.boot.leftMinutes !== null ? ` — boot in ${minutesText(game.boot.leftMinutes)}` : '';
+  const tail = ` — ${where} — ${game.waitingOnYou ? 'waiting on you' : 'waiting on others'}${soon}${unread}`;
   const flat = game.name.replace(/\s+/g, ' ').trim() || '(untitled)';
   const escaped = flat.startsWith('-- ') || flat.startsWith('\\') ? `\\${flat}` : flat;
   const room = BRIEF_MAX - tail.length;

@@ -75,6 +75,12 @@ describe('recordFromGame', () => {
     expect(r.players[0]!.firstBonusTurn).toBe(3);
   });
 
+  it("reads the game's overridden bonus values: a bonus worth 0 in the game is neither an anchor nor a completion", () => {
+    const game = { ...finishedGame(5, HISTORY), settings: { overriddenBonuses: new Map([[1, 0]]) } } as unknown as Game;
+    const r = recordFromGame(game, MAP);
+    expect(r.players[0]).toEqual({ playerId: A, won: true, starts: [1, 3], anchorBonusId: 2, startBonusIds: [2], firstBonusTurn: null });
+  });
+
   it('a game with no usable history still records its winner, with no starts', () => {
     const r = recordFromGame(finishedGame(6, 'garbage'), MAP);
     expect(r.turnsSeen).toBe(0);

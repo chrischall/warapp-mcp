@@ -11,7 +11,7 @@
 import { untrustedEnvelope, type EnvSource } from '@chrischall/mcp-utils';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { briefGameLine, gameStateName, isFinished, readMyGames, summarizeMyGames, type MyGame, type RawMyGame } from '../my-games.js';
+import { BOOT_NOTE, briefGameLine, gameStateName, isFinished, readMyGames, summarizeMyGames, type MyGame, type RawMyGame } from '../my-games.js';
 import { Method, MY_GAMES_DEFAULT_SORT, MyGamesFilterType, writeGetMyGamesParams, type MyGamesFilters } from '../protocol/methods.js';
 import { readAnnotations, respond, untrustedDescription, untrustedText, WARAPP_UNTRUSTED_NOTE } from './common.js';
 import { canonicalMeta } from './hints.js';
@@ -20,6 +20,7 @@ import { BRIDGE_NOTE } from './live.js';
 import { holdsSeat, playerStateName } from '../player-states.js';
 import { sweepFinished } from './end-of-game.js';
 import { accountUnknown } from './write-kit.js';
+import { rememberPace } from './pace.js';
 import { pendingSurrenders, surrenderOwed } from '../surrender-pending.js';
 import { readDetailsSeats, SURRENDER_PENDING_NOTE, surrenderMayBePending, type PendingSurrenderView } from './surrender-pending.js';
 
@@ -93,6 +94,8 @@ export async function fetchMyGames(ctx: LiveContext): Promise<{ me: number } & M
     return readMyGames(await ctx.bundle(), env.body);
   };
   const [me, list] = await Promise.all([myInGameId(ctx), listMyGames(read)]);
+  // Pace: keep the boot clocks for warapp_session_status (no request of its own).
+  rememberPace(ctx, summarizeMyGames(list.games, me), Date.now());
   return { me, ...list };
 }
 
@@ -171,6 +174,10 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
           'chat per channel (public, team, private, group) and toMe (unread private chat is addressed to you) — flags, ' +
           'not counts; null when they did not read. Games with unread private chat come right after the ones waiting on ' +
           'you, and the top-level unreadPrivateGames counts them; read them with warapp_chat_inbox. ' +
+          'A multi-day game being played or picked with your seat playing carries `boot` (pace, from the game list: its boot ' +
+          'time, your banked time, their sum, and while it waits on you `leftMinutes`, the sum less how long your turn has ' +
+          'run, with `soon` under 6 hours; unverified live); `bootSoon` counts the games close to a boot, and brief adds ' +
+          '" — boot in …" to them. ' +
           'Finished games are left out unless ' +
           '`include_finished` (`finishedLeftOut` counts them). `listed` is how many games war.app returned and ' +
           '`complete` false (with a `warning`) means the list may be partial. Use the id with the other warapp tools. ' +
@@ -221,6 +228,10 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
         count: games.length,
         waitingOnYou: games.filter((g) => g.waitingOnYou).length,
         unreadPrivateGames: games.filter((g) => g.unreadChat?.private === true).length,
+        // Pace: multi-day games whose boot is under six hours away (boot time plus bank, less my turn so far).
+        ...(games.some((g) => g.boot)
+          ? { bootSoon: games.filter((g) => g.boot?.soon).length, bootNote: BOOT_NOTE }
+          : {}),
         surrenderPending: games.filter((g) => surrenderOwed(g.surrenderPending)).length,
         surrenderNote:
           SURRENDER_PENDING_NOTE +

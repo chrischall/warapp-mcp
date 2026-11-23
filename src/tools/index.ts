@@ -17,7 +17,7 @@ import { registerJoinGameTool } from './join-game.js';
 import { registerLiveTools } from './live.js';
 import { registerMapTool } from './map.js';
 import { registerMapStatsTool } from './map-stats.js';
-import { registerMyGamesTool } from './my-games.js';
+import { fetchMyGames, registerMyGamesTool } from './my-games.js';
 import { registerNotificationTools } from './notifications.js';
 import { registerOpenGamesTool } from './open-games.js';
 import { registerOpponentsTool } from './opponents.js';
@@ -25,9 +25,11 @@ import { registerPickTools } from './picks.js';
 import { registerPushTools } from './push.js';
 import { registerRelationsTools } from './relations.js';
 import { registerDiplomacyTool } from './diplomacy.js';
+import { registerModAlliancesTool } from './mod-alliances.js';
 import { registerRouteTool } from './route.js';
 import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
+import { paceStatus } from './pace.js';
 import { registerStrategyTool } from './strategy.js';
 import { registerSurrenderTool } from './surrender.js';
 import { registerAcceptSurrenderTool } from './accept-surrender.js';
@@ -160,6 +162,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerRelationsTools(server, live, deps.env ? { env: deps.env } : {});
   // B3: truce advice (read-only): prices a deal by planning with and without it; reads no chat.
   registerDiplomacyTool(server, live, deps.env ? { env: deps.env } : {});
+  registerModAlliancesTool(server, live);
   // One push socket per process: keyed on the shared fetchproxy bridge so
   // connections share it, with requests routed through the direct-first bridge.
   // While the direct leg is active the push rides a direct WebSocket (the
@@ -181,6 +184,19 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
     },
     pushTransport: () => push.status().transport,
     decoder: () => live.decoderReport(),
+    // Pace (owner decision 2026-11-23): with no game list read yet in this process, read it now (one request).
+    pace: async (now, mayRead) => {
+      const kept = paceStatus(live, now);
+      if (kept) return kept;
+      if (!mayRead)
+        return { error: 'No game list read yet in this process, and no working direct session to read one without the browser bridge: call warapp_my_games.' };
+      try {
+        await fetchMyGames(live);
+      } catch (e) {
+        return { error: (e instanceof Error ? e.message : String(e)).slice(0, 200) };
+      }
+      return paceStatus(live, Date.now());
+    },
     identityChanged: () => live.forgetIdentity(),
     hosted,
     ...(env ? { env } : {}),

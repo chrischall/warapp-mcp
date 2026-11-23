@@ -202,6 +202,19 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   at least my income (a what-if `enemyDeploy` as given), plus the movable armies of every stack of its within two
   moves — under Multi-Attack even with no enemy beside it (a chain through my land). `PlanOptions.commanderWalks:
   false` keeps it where it is (the #61 tests use it). Golden: every commander board changed, no other.
+- **The fog's attackers (mega-game part 5, `src/analysis/commander-fog.ts`, pure).** `PlanOptions.foggedAttackers`
+  `{count, stack, starts?}` adds to rule 1k's threat on my commander's territory (`borderAt`; `visibleBorderAt` is the old
+  one, which `commanderTransit`'s step reserve keeps, so the transit hold against what is in view comes first): every
+  fogged territory beside it, or one step past a territory not mine whose armies show (less what taking that costs), may
+  hide a player with a deploy of my income; the `count` strongest strike in turn (#201's arithmetic; `FOG_PLAYER` -1 when no
+  visible opponent faces it). #529 (owner): it holds `stack` only as a likely holder — in `starts` (turn 1: the distribution
+  mode's territories, else every territory but a picking-board wasteland), an opponent shown, or a player in `lastSeen` —
+  else its usual estimate (vacated size, last sighting, picking-board neutral, else `neutralArmies`). `foggedAttackersFor`
+  (`src/tools/turn.ts`, in `livePlanSetup`) turns it on with 2 only in a Commanders free-for-all of 8+ players playing under
+  fog (`fogged_attackers` overrides), stack = `InitialPlayerArmiesPerTerritory`, else my largest stack. `foggedCommanderOn`
+  reports it (plan_turn's `commander.fogged`, check_plan's `fogged_attackers`, default 2, a uniform stack); never a submit
+  refusal. Golden 0 of 6253 (off by default); forced on as the tool sets it in all 252 commander boards: 34 plans changed,
+  13 in orders, 9 with fewer captures, 3 with a lower next income.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or
@@ -296,6 +309,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `fullDeal`) every territory is dealt, so `PlanPicksInput.fullDeal` skips the compact group search: each group and the
   fallback are the best picks by score (a warning says so). The live case plans in ~5 s, whole, not `partial`.
   `planTurn` and `stressPlan` on the same map take under 1 s (pure; the live read was not measured).
+- **Single-pick starts on a huge map (mega-game spec part 2, 2026-11-23, `src/analysis/single-pick.ts`).** `singlePickMode`:
+  `PlanPicksInput.overridden` (the tool sets it when the game overrides any bonus), territory limit 1, no team, not a full
+  deal, 3+ players, a map of `HUGE_MAP_TERRITORIES` (1,000)+ and more pickables than `SINGLE_PICK_SHOWN` (25). Then
+  `rankSingleStarts` scores each pickable alone — a `SINGLE_HORIZON` (5) turn flood opening at the game's values (pooled
+  armies, another pickable never taken, members of paying bonuses first), the income above the base over 6 turns, each
+  completed bonus discounted by `SINGLE_THREAT_LOSS` × the chance a rival starts within reach, less a safety charge in
+  starting armies (rivals within `RIVAL_RADIUS` 3, open approaches, 2-hop pocket entries, shielding wastelands credited;
+  ×2 with Commanders) — simulating at most `SINGLE_POOL` (600) by a quick score, the rest after; cached per graph
+  (4 inputs), never when `partial`. The plan's `single` (tool: `startRanking`, `page`) details 25 per page;
+  `submitPicks` is the ranking cut at `maxPicks`. Game 45736172's map (2,841 territories, 346 pickable, 97 players):
+  1.1 s → 65 ms (27 ms cached); all 2,841 pickable 1.35 s → 110 ms. Picks golden: 163 of 165 real-map plans
+  byte-identical, the 2 changed are the overridden limit-1 ones; planner golden untouched.
 - **The award of picks is read once, from my own list (#166).** The list war.app read back
   (`warapp_submit_picks`, or `warapp_get_my_picks` during distribution for the signed-in account) is kept at
   `<dataDir>/picks/<gameId>.json` (`src/pick-list.ts`, territory ids only). On turn 1 `loadAward`
@@ -399,6 +424,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `shown()` decodes tokens for `warapp_get_chat`, `warapp_chat_inbox` and the plan's chat (`links`; name from the
   cached map, `null` and the raw token kept when unknown). The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
+- **Mega games: scale and pace (2026-11-23, game 45736172's 97 seats).** Above `LARGE_GAME_OPPONENTS` (16) opponents
+  still playing (`src/analysis/scale.ts`, `opponentScope`) only the opponents near me — holding land within `NEAR_STEPS`
+  (2) of mine, or (under fog) any in view — get their own rows: the outlook's rows, comparison and evidence (the rest
+  counted in `evidence.far`; owner 2026-11-23: the surrender line alone still judges the strongest opponent anywhere,
+  `OutlookTurn.surrenderSide`), plan_turn's `reads`/`enemyDeployDetail`, check_plan's `unseenOpponents`
+  (`unseenOpponentsMore`); both tools add `scale` (`farSummary`: count, summed estimate, biggest). The planner is not
+  scoped (golden: 6253 plans byte-identical); at or under the threshold nothing changes. The inbox's `only:
+  "mentionsMe"` (`src/analysis/chat-mentions.ts`: my name or a territory I hold, whole word or `<a t=id>` link; held
+  land from GameFeed's standing else the newest cached board, no request) and `public_chat: "summary"`
+  (`publicSummary`). Pace: GameInfo fields 5 (boot), 19 (real time), 24 (my banked time) and 26 ("Your turn for")
+  — read from the bundle's GameInfo reader and game-list renderer (its boot label is field 5 + field 24) — give
+  `warapp_my_games`' `boot` (`bootView`: multi-day only; `leftMinutes` = boot + bank − turn so far, UNVERIFIED live)
+  and `bootSoon`; `fetchMyGames` keeps the clocks per context (`src/tools/pace.ts`) and `warapp_session_status`
+  reports `pace`/`bootWarning` under 6 hours from them, reading the list itself (one request, over a working direct
+  session only) when none is kept yet (owner 2026-11-23; otherwise `paceUnread` says why).
 - **Chat is game information (#415, `docs/PLAN-CHAT-STRATEGY.md`): classified, advised, never sent on its own.**
   `src/analysis/chat-intent.ts` (`classifyMessage`, pure, pattern-based, never throws) labels another player's
   message with `INTENTS` (income/position checks, truce proposal/accept/decline/end notice, coordination asks,
@@ -666,6 +706,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   owed). Each read costs one GameRefresh; nothing is cached (a surrender can come any moment). A GameFeed id and
   an in-game id are never one field: results carry `player` (GameFeed id or `null`) beside `inGameId`, and the
   in-game id of a GameFeed player comes from one helper, `inGameOf` (`src/live.ts`).
+- **Diplomacy 2 mod alliances (mod 191; `src/mod-data.ts`, `src/mod-alliances.ts`, `src/tools/mod-alliances.ts`; UNVERIFIED
+  live).** Mod data rides the same GameRefresh `nonChat` read: `GameWL` field 8 is every mod's `PublicGameData` and
+  `GameDetailsAndChat` field 3 my `PlayerGameData` (dicts of mod id → the client's mod-table XML; location and XML format
+  VERIFIED on a lobby 2026-11-23, mod 336's table). The mod (FizzerWL/ExampleMods `Diplomacy2Mod`) keeps public `Alliances`
+  `{ID, PlayerOne=proposer, PlayerTwo}` (in-game ids, no turn) and my `PendingProposals`/`Alerts`; it skips attacks between
+  allies by start-of-turn owners and applies a break (a `GameOrderCustom` `Diplomacy2_BreakAlliance_<id>` in the breaker's
+  orders) at the end of that turn. Only a game whose settings' `modIds` include 191 is read (others: no request, goldens
+  unchanged). `truceRelations` passes allies as `modAllies` → enforced T9 relations (`mod: 'Diplomacy 2'`, `ruleOnly` when no
+  agreement) with `enforcedUntil` turn + 1 (an unseen break this turn frees the ally next turn); check_plan warns and
+  submit_turn refuses an attack on an ally unless `attack_ally`; get_relations / advise_diplomacy carry `modAlliances`
+  (mismatches, notices). Propose/accept/decline go through `SendGameCustomMessage` and a break is a custom order this
+  server cannot encode: mod diplomacy is manual only, no tool sends it.
 - **Accepting another player's surrender is `AcceptSurrender` (69) via `warapp_accept_surrender`, confirm-gated**
   (#317; encoder read from the bundle's writer, golden-pinned, UNVERIFIED live). `player` names the surrendering
   player (optional with one pending). The plan reads the game details and refuses a finished game, a lobby, a game
@@ -809,6 +861,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   ends with the shared fields GUID, owner (in-game id), so the owner is the LAST field and the
   kind comes from the registered class name. Fogged territories report no units.
   `BoardState.specialUnits` keys owners by GameFeed id like territory owners.
+- **Known mods (mega-game part 4, `src/known-mods.ts`).** `settings.modIds` (`Mods[].ModID`, the same hunk as #524) lets
+  `modsWarning` (plan_turn, check_plan, submit preview) name a mod whose published source was read and that changes no turn
+  rule — only the Local Deployment Helper (336: zeroes overlapping bonuses at creation, which arrive as `OverriddenBonuses`;
+  an auto-deploy in the web client; no turn hook) — with its note instead of "the rules may not hold"; any other id (and
+  ids that did not read) keeps the general warning. Planner untouched: golden unchanged.
 - **Commanders in the planner (#61).** A commander fights as 7 armies (bundle: attack and
   defence `+7`, dies last, no partial damage), counted in every capture cost and threat.
   My commander's territory is must-hold (never conceded; all deploys go there when the hold
@@ -925,9 +982,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   deploys on or after `SureSanction.fromTurn` (`untilTurn` − Duration, the turn after the play), which already
   carries the cut (`sanctioned.carried`). check_plan's `enemyDeploy` and plan_turn's `enemyDeployDetail` report
   `sanctionApplied` and the clock's `cardBonus`; check_plan's `assume_enemy_cards: "none"` sizes replies without
-  the card. A progressive Reinforcement card (`Mode` 1 by territories in view, 2 by turn − 1, ×
-  `ProgressivePercentage`, round half up, at least 1; the mod API's enum order, UNVERIFIED) is valued per
-  opponent (`reinforcementArmiesFor`), no longer at the card in my hand. Golden: 0 of 6253 plans changed. The
+  the card. A progressive Reinforcement card is valued by the client's formula, VERIFIED from the client bundle:
+  when earned, `ProgressivePercentage` × the territories EVERY player holds (neutrals out; `Mode` 1) or × the turn
+  earned (`Mode` 2), round half DOWN, at least 1 — the same for every opponent, counted over the territories in view
+  (a floor under fog), or my hand's card when worth more (`reinforcementArmiesFor`; `cardBonusBasis` says which). The
   `SanctionsCard.Percentage` scale (a fraction) is UNVERIFIED for GameFeed. The Sanctions advice passes
   over a truce partner and a player a Diplomacy card keeps at peace with me, saying why. Anything not sure is
   a warning and changes nothing; the plan reports `cardsInEffect` (`verified: false`), and
@@ -2190,7 +2248,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       rates; only settings without them fall back to 60/70, with a warning.
     - **Local Deployment (#29).** With `localDeployments`, a held bonus's value is a pool
       deployable only on its own territories and only the rest of the income goes anywhere
-      (pool rules unverified, `docs/WARAPP-API.md`); `warapp_submit_turn` refuses a broken split.
+      (pool rules read from the client bundle 2026-11-23, not yet seen live: `docs/WARAPP-API.md`; a 0-value bonus has no
+      pool, base income — MinimumArmyBonus or territories ÷ BonusArmyPer — is free); `warapp_submit_turn` refuses a broken split.
       A bonus's own pool defends it (#103): its hold cost is judged net of the pool, the pool
       goes to its most threatened border and stays there, and a conceded bonus's garrisons are
       withdrawn only when one of its borders needs more than its pools plus every free army.
@@ -2517,7 +2576,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **A game's map comes from `mapOf(game)`** (`src/tools/map.ts`), which applies the game's
   `OverriddenBonuses` (`applyBonusOverrides`); load the game with `settings: true` wherever bonus
   values matter. The JSON shape is verified live (an array of `{ bonusID, value }` numbers); overrides
-  that do not read in full keep the submit pre-checks soft.
+  that do not read in full keep the submit pre-checks soft. Mega-game audit (2026-11-23, game settings
+  with 1,067 overrides, 397 paying, MinimumArmyBonus 15): plan_turn, check_plan, plan_picks, get_map,
+  the outlook and the stress test already read the game's values and base income, and skip bonuses
+  worth 0 or less as targets while still routing through them; the one gap was `recordFromGame`
+  (map stats), which now applies the game's overrides (records cached before keep their old reading).
+  `warapp_get_map` `income_map: true` (`incomeMap`) lists only the paying bonuses with members and size.
 - **API facts live in `docs/WARAPP-API.md`**, each marked verified or unverified. The board
   standing parser (`src/board.ts`) is unverified and must stay loose (never throw). Territory
   and bonus ids overlap, so a bonus member is a territory first and a superbonus only otherwise.

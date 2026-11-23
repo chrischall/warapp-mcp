@@ -23,6 +23,7 @@ import {
   visibleState,
   type PlanInput,
   type PlanRelation,
+  ruleOnly,
   type TruceBreakLoss,
   type TruceWatchReason,
   type TurnPlan,
@@ -707,6 +708,13 @@ export interface PlanRelationsInput {
    * sure of this turn (`cardsInEffect`, src/analysis/cards-in-effect.ts), with the turn each is gone by.
    */
   diplomacy?: readonly { player: number; untilTurn: number }[];
+  /**
+   * T9 too: my allies in the Diplomacy 2 mod (GameFeed ids; src/mod-alliances.ts). The game skips every attack
+   * between us this turn, but either side may enter a break this turn that no one else can see and that applies
+   * at its end, so the alliance is enforced until next turn only (`enforcedUntil` = turn + 1): its player still
+   * counts for next turn's look-ahead.
+   */
+  modAllies?: readonly number[];
 }
 
 /** The flag kinds that make the trust `watch`, as the planner names them. */
@@ -823,13 +831,35 @@ export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanR
         : {}),
     });
   }
+  // T9: the Diplomacy 2 mod's alliances, a game rule like a card: enforced this turn whatever the ledger says.
+  for (const player of [...new Set(input.modAllies ?? [])].sort((x, y) => x - y)) {
+    if (player === me) continue;
+    const bound = relations.filter((r) => r.player === player && (r.state === 'active' || r.state === 'notice'));
+    for (const r of bound) {
+      r.enforced = true;
+      r.enforcedUntil = turn + 1;
+      r.mod = 'Diplomacy 2';
+    }
+    if (bound.length) continue;
+    relations.push({
+      player,
+      coveredMine: [...mine].sort((x, y) => x - y),
+      coveredTheirs: [...holding(player)].sort((x, y) => x - y),
+      state: 'active',
+      trust: 'clear',
+      enforced: true,
+      enforcedUntil: turn + 1,
+      mod: 'Diplomacy 2',
+    });
+  }
   // D3 (T9): the Diplomacy cards in effect. A card is a game rule, not a promise: it binds whatever the ledger says.
   for (const d of [...(input.diplomacy ?? [])].sort((x, y) => x.player - y.player)) {
     if (d.player === me || d.untilTurn <= turn) continue;
     const bound = relations.filter((r) => r.player === d.player && (r.state === 'active' || r.state === 'notice'));
     for (const r of bound) {
       r.enforced = true;
-      r.enforcedUntil = d.untilTurn;
+      // A mod alliance enforcing it already: the card keeps it at least as long.
+      r.enforcedUntil = r.enforcedUntil !== undefined ? Math.max(r.enforcedUntil, d.untilTurn) : d.untilTurn;
     }
     if (bound.length) continue;
     relations.push({
@@ -1030,7 +1060,8 @@ export function priceTruce(
           trust: 'clear',
           enforced: true,
           ...(enforcing.enforcedUntil !== undefined ? { enforcedUntil: enforcing.enforcedUntil } : {}),
-          card: 'Diplomacy',
+          // A Diplomacy 2 alliance binds like a card, with or without the deal.
+          ...(enforcing.mod && !enforcing.card ? { mod: enforcing.mod } : { card: 'Diplomacy' as const }),
         },
       ]
     : [];
@@ -1043,7 +1074,7 @@ export function priceTruce(
   const coveredTheirs = coveredTerritories(input.graph, terms.scope, holding(player));
   // The board's reading of a recorded truce with this player (planRelationsFrom) is kept: words
   // never clear a flag, and a price never trusts more than warapp_plan_turn does (PLAN-TEAMS §4).
-  const standing = (input.relations ?? []).find((r) => r.player === player && !r.card);
+  const standing = (input.relations ?? []).find((r) => r.player === player && !ruleOnly(r));
   const watch = [...new Set([...(standing?.watch ?? []), ...(opts.watch ?? [])])];
   const trusted: 'clear' | 'watch' = standing?.trust === 'watch' || opts.trust === 'watch' ? 'watch' : 'clear';
   const state = standing?.state ?? 'active';

@@ -161,6 +161,10 @@
       "description": "Look up a war.app game: state, turn, players and who has committed, settings digest"
     },
     {
+      "name": "warapp_get_mod_alliances",
+      "description": "Read the Diplomacy 2 mod's alliances in a war.app game (allied, breaking, pending proposals), read-only"
+    },
+    {
       "name": "warapp_get_map",
       "description": "Rank a game map's bonuses (easiest first) and find its chokepoints"
     },

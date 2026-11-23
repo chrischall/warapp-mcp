@@ -231,6 +231,12 @@ export interface GameSettings {
    * entries' shape is unverified, so only the count is kept.
    */
   mods?: number;
+  /**
+   * The mods' ids (`Mods[].ModID`, decimal text in the feed — VERIFIED live 2026-11-23 on game 45736172:
+   * `[{ ModID: "336", Name: … }, { ModID: "191", Name: "Diplomacy 2" }]`), ascending; absent when the feed
+   * sends no list or an entry carries no readable id (unknown, never "none").
+   */
+  modIds?: number[];
   distributionMode?: number;
   territoryLimit?: number;
   initialPlayerArmiesPerTerritory?: number;
@@ -351,6 +357,10 @@ export function normalizeSettings(raw: unknown): GameSettings {
   if (r.Mods !== undefined && r.Mods !== null) {
     const empty = r.Mods === '' || (isRec(r.Mods) && Object.keys(r.Mods).length === 0);
     s.mods = Array.isArray(r.Mods) ? r.Mods.length : empty ? 0 : -1;
+    if (Array.isArray(r.Mods)) {
+      const ids = r.Mods.map((m) => (isRec(m) ? asInt(m.ModID) : undefined));
+      if (ids.every((id): id is number => id !== undefined)) s.modIds = [...new Set(ids)].sort((a, b) => a - b);
+    } else if (empty) s.modIds = [];
   }
   if (r.OverriddenBonuses !== undefined && r.OverriddenBonuses !== null) {
     const o = parseOverriddenBonuses(r.OverriddenBonuses);

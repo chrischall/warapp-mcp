@@ -3,7 +3,7 @@
 // check (#274), so both size a reply alike.
 import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart, type PlannerSettings } from '../analysis/index.js';
 import type { MapGraph } from '../analysis/graph.js';
-import type { EnemyDeployEstimate, FogPace } from '../analysis/plan/shared.js';
+import type { CardBonusBasis, EnemyDeployEstimate, FogPace } from '../analysis/plan/shared.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import type { BoardState } from '../board.js';
@@ -54,9 +54,15 @@ export type AssumeEnemyCards = 'none' | 'clock';
  * An opponent's deploy for the stress test and its card apart: the estimate (its card on top) under `clock`,
  * the estimate without the card under `none`; `cardBonus` the card's armies, absent with no card.
  */
-export function opponentDeploy(e: Pick<EnemyDeployEstimate, 'estimate' | 'card'>, assume: AssumeEnemyCards): { deploy: number; cardBonus?: number } {
+export function opponentDeploy(
+  e: Pick<EnemyDeployEstimate, 'estimate' | 'card'>,
+  assume: AssumeEnemyCards,
+): { deploy: number; cardBonus?: number; cardBonusBasis?: CardBonusBasis } {
   const card = e.card?.armies ?? 0;
-  return { deploy: assume === 'none' ? e.estimate - card : e.estimate, ...(card > 0 ? { cardBonus: card } : {}) };
+  return {
+    deploy: assume === 'none' ? e.estimate - card : e.estimate,
+    ...(card > 0 ? { cardBonus: card, ...(e.card?.basis ? { cardBonusBasis: e.card.basis } : {}) } : {}),
+  };
 }
 
 export function stressOpponents(input: StressOpponentsInput) {
@@ -136,6 +142,7 @@ export function stressOpponents(input: StressOpponentsInput) {
         base: e?.base ?? base,
         ...(e?.card ? { card: e.card.armies } : {}),
         ...(sized.cardBonus !== undefined ? { cardBonus: sized.cardBonus } : {}),
+        ...(sized.cardBonusBasis !== undefined ? { cardBonusBasis: sized.cardBonusBasis } : {}),
         ...(e?.sanctioned ? { sanctioned: e.sanctioned } : {}),
       };
     });

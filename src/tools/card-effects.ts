@@ -35,8 +35,8 @@ export function sanctionMyIncome(
   income: number,
   effect: CardsInEffect,
   opts: { localDeployments?: boolean },
-): { income: number; applied: boolean; warnings: string[] } {
-  if (!effect.sanctionsOnMe.length) return { income, applied: false, warnings: [] };
+): { income: number; applied: boolean; unmodelled: boolean; warnings: string[] } {
+  if (!effect.sanctionsOnMe.length) return { income, applied: false, unmodelled: false, warnings: [] };
   const pcts = effect.sanctionsOnMe.map((s) => s.percentage);
   const pctText = pcts.map((p) => `${Math.round(p * 100)}%`).join(' then ');
   const until = Math.max(...effect.sanctionsOnMe.map((s) => s.untilTurn));
@@ -44,6 +44,7 @@ export function sanctionMyIncome(
     return {
       income,
       applied: false,
+      unmodelled: true,
       warnings: [
         `Sanctions are on you (${pctText}, until turn ${until}): under Local Deployment the plan does not know which pools the cut comes from, so it plans on ${income} — deploy what the game shows.`,
       ],
@@ -52,6 +53,7 @@ export function sanctionMyIncome(
   return {
     income: cut,
     applied: true,
+    unmodelled: false,
     warnings: [`Sanctions are on you (${pctText}, until turn ${until}): the plan's income is ${cut}, not ${income} (the client's rule, rounded to the nearest).`],
   };
 }

@@ -19,7 +19,7 @@ const GAME = 12345678;
 const ANN = { feed: '3312345644', inGame: 123456 };
 
 /** The lobby fixture turned into a 25-player picking game on the synthetic big map. */
-function bigGame(): { feed: Record<string, unknown>; board: SyntheticTerritory[] } {
+function bigGame(limit = 3): { feed: Record<string, unknown>; board: SyntheticTerritory[] } {
   const { graph, pickable } = bigUs();
   const f = lobbyFixture();
   const base = (f.players as Array<Record<string, string>>)[0]!;
@@ -31,7 +31,12 @@ function bigGame(): { feed: Record<string, unknown>; board: SyntheticTerritory[]
     state: 'DistributingTerritories',
     numberOfTurns: '-1',
     players,
-    settings: { ...(f.settings as Record<string, unknown>), TerritoryLimit: 3 },
+    settings: {
+      ...(f.settings as Record<string, unknown>),
+      TerritoryLimit: limit,
+      // The single-pick ranking runs only in a game that overrides bonus values; a limit-3 game is planned as before with one.
+      ...(limit === 1 ? { OverriddenBonuses: [{ bonusID: graph.map.bonuses[0]!.id, value: 0 }] } : {}),
+    },
     map: { id: '24591', name: 'Synthetic Big', territories, bonuses, distributionModes: [] },
   };
   return { feed, board: pickable.map((id) => ({ id, fogLevel: 2, owner: -2, armies: 8 })) };
@@ -96,4 +101,55 @@ describe('the picks time budget', () => {
     expect(picksBudgetMs({ WARAPP_PICKS_BUDGET_MS: '0' })).toBeUndefined();
     expect(picksBudgetMs({ WARAPP_PICKS_BUDGET_MS: 'soon' })).toBe(20_000);
   });
+});
+
+interface StartRanking {
+  shown: { from: number; to: number; of: number };
+  page: number;
+  pages: number;
+  starts: Array<{
+    rank: number;
+    territory: { id: number; name: string };
+    score: number;
+    firstIncomeTurn: number | null;
+    safety: { approaches: number; entries: number; nearestStart: number | null };
+    reasons: string[];
+  }>;
+}
+
+describe('warapp_plan_picks with a territory limit of 1 on a huge map (mega-game spec part 2)', () => {
+  it('ranks single starts: 25 shown with reasons and safety, the submit list the ranking within the client max', async () => {
+    const { feed, board } = bigGame(1);
+    h = await liveHarness({ feed: [feed], warapp: (req) => reply(board)(req) });
+    const t0 = Date.now();
+    const result = await h.call('warapp_plan_picks', { game_id: GAME });
+    expect(result.isError).toBeFalsy();
+    expect(Date.now() - t0).toBeLessThan(10_000);
+    const p = payload<Plan & { startRanking: StartRanking }>(result);
+    const r = p.startRanking;
+    expect(r.shown).toEqual({ from: 1, to: 25, of: board.length });
+    expect(r.starts).toHaveLength(25);
+    expect(r.starts.map((x) => x.rank)).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
+    expect(r.starts[0]!.territory.name).toEqual(expect.any(String));
+    expect(r.starts[0]!.reasons.join('\n')).toMatch(/safety/);
+    // players × 1 = 25 picks, in rank order.
+    expect(p.submitPicks.territories).toHaveLength(25);
+    expect(p.submitPicks.territories).toEqual(r.starts.map((x) => x.territory.id));
+    const two = payload<Plan & { startRanking: StartRanking }>(await h.call('warapp_plan_picks', { game_id: GAME, page: 2 }));
+    expect(two.startRanking.shown.from).toBe(26);
+    expect(two.startRanking.starts[0]!.rank).toBe(26);
+    expect(two.submitPicks.territories).toEqual(p.submitPicks.territories);
+  }, 90_000);
+
+  it('a territory limit of 3, or no overrides, on the same map keeps the group plan (no start ranking)', async () => {
+    const plain = bigGame(1);
+    delete ((plain.feed.settings as Record<string, unknown>).OverriddenBonuses);
+    h = await liveHarness({ feed: [plain.feed], warapp: (req) => reply(plain.board)(req) });
+    expect(payload<Record<string, unknown>>(await h.call('warapp_plan_picks', { game_id: GAME }))).not.toHaveProperty('startRanking');
+    await h.harness.close();
+    const { feed, board } = bigGame(3);
+    h = await liveHarness({ feed: [feed], warapp: (req) => reply(board)(req) });
+    const p = payload<Record<string, unknown>>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p).not.toHaveProperty('startRanking');
+  }, 90_000);
 });

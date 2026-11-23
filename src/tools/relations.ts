@@ -5,6 +5,7 @@
 // and hosted, name-free per-agreement entries and tallies) — nothing is sent to war.app or to any
 // player, so it is not confirm-gated. An agreement exists only because the player recorded it here with
 // structured terms: chat is never parsed into one, and words change no flag — only the board does.
+import { modRelationsView, readModAlliances } from './mod-alliances.js';
 import { McpToolError, toolAnnotations, type EnvSource } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -536,7 +537,10 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           '`record`: how it kept earlier agreements — tallies, a kept rate, its notices honoured or broken, its breaks in ' +
           'the endgame or while leading, retaliation, proposing again and turns to a break (`full` adds the entries) — keyed ' +
           'by a salted hash, never its id or name. `playerRecord` says on, off or unreadable. Words in chat never change a ' +
-          `flag or the trust: only the board does. ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read.`,
+          'flag or the trust: only the board does. Each agreement carries `source: "ledger"`; in a game running the Diplomacy 2 ' +
+          'mod (mod 191) `modAlliances` lists the mod\'s alliances with you (`source: "mod"`, UNVERIFIED live) with `mismatches` ' +
+          '(`mod-only`: allied with no agreement recorded; `ledger-only`: a truce the game does not enforce) and `notices` (an ' +
+          `ally's break, shown once it applied). ${BRIDGE_NOTE} Read-only on war.app; it caches the board it read.`,
       ),
       _meta: lookupMeta(['my truces', 'agreements', 'is my truce holding', 'diplomacy', 'who kept their word']),
       annotations: readAnnotations('Read war.app agreements'),
@@ -617,6 +621,15 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
       ]);
       const tacit = tacitTruces({ graph, boards, me: me.id, exclude: excluded });
       const recordState = await playerRecordState(ctx.dataDir, env);
+      // The Diplomacy 2 mod's alliances beside the ledger's (a game without the mod: no request, no field).
+      const liveAgreements = ledger.agreements.filter((a) => {
+        const st = agreementState(a, turn, relationPlayers(game.players));
+        return st.phase === 'active' || st.phase === 'notice';
+      });
+      const modView = modRelationsView(await readModAlliances(ctx, game, me), liveAgreements, (id) => {
+        const p = game.players.find((x) => x.id === id);
+        return { id, name: p ? untrustedText(p.name) : null };
+      });
       const name = namer(map);
       const playerName = (id: number) => {
         const p = game.players.find((x) => x.id === id);
@@ -626,6 +639,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), state: game.state, turn },
         player: { id: me.id, name: untrustedText(me.name) },
         agreements: agreements.map((x) => ({
+          source: 'ledger' as const,
           ...agreementView(x.agreement, game, map, turn, rung),
           ...(x.trust ? { trust: x.trust, endgame: x.endgame } : {}),
           flags: x.flags.map((f) => ({ ...f, territories: f.territories.map(name) })),
@@ -633,6 +647,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           ...(rung === 'full' && x.entries ? { recordEntries: x.entries.map(entryView) } : {}),
         })),
         tacit: tacit.map((t) => ({ player: playerName(t.player), quietTurns: t.quietTurns, border: t.border.map(name) })),
+        ...(modView ? { modAlliances: modView } : {}),
         boards: { turns: boards.map((b) => b.turn).sort((a, b) => a - b), live },
         incomes: { mine: incomes.mine, opponents: Object.fromEntries(incomes.opponents) },
         playerRecord: recordState,
