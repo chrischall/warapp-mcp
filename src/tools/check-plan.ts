@@ -48,7 +48,7 @@ import { resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
-import { COMMANDER_SIZING, commanderCheckOn, foggedAttackersArg, foggedCommanderOn, foggedCommanderText, myLargestStack } from './commander-check.js';
+import { COMMANDER_SIZING, commanderCheckOn, defaultFoggedCount, foggedAttackersArg, foggedCommanderOn, foggedCommanderText, myLargestStack } from './commander-check.js';
 import { DEFAULT_FOGGED_ATTACKERS, foggedStack } from '../analysis/commander-fog.js';
 import { captureCheck, checkPlanLog } from './decision-capture.js';
 import type { CardPlayKind } from '../protocol/methods.js';
@@ -119,7 +119,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'board, `commander` says where it stands after the orders, the armies there and `needs`: the armies its ' +
           'territory needs to survive every reply tried, by the check warapp_submit_turn refuses on (each reply at the larger ' +
           'of the estimate and your income, enemy_deploy only raising it, both move orders, your Airlifts counted); when a ' +
-          'reply kills it, the summary starts with it. `commander.fogged` tests it against `fogged_attackers` (default 2) ' +
+          'reply kills it, the summary starts with it. `commander.fogged` tests it against `fogged_attackers` (default as warapp_plan_turn: 2 in a Commanders free-for-all of eight or more players under fog, else off) ' +
           'unknown opponents the fog may hide within two moves of where it ends, striking together (each a start of the ' +
           "game's starting armies, else your largest stack, plus a deploy of your income; luck-free): `safe`, `needs`, where " +
           'they may come from; the summary names it when it can fall, and it never changes `safe`. Exact with no luck and ' +
@@ -178,7 +178,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         known_income: knownIncomeArg,
         fogged_attackers: foggedAttackersArg.describe(
           `With your commander on the board: how many unknown opponents the fog may hide within two moves of where it ends ` +
-            `strike it together (default ${DEFAULT_FOGGED_ATTACKERS}; 0 skips the test). Each is taken as a player's start ` +
+            `strike it together (default ${DEFAULT_FOGGED_ATTACKERS} in a free-for-all of eight or more players under fog, as warapp_plan_turn; else 0, which skips the test). Each is taken as a player's start ` +
             "(the game's starting armies, else your largest stack) plus a deploy of your income. Reported as `commander.fogged`; " +
             'never changes `safe`.',
         ),
@@ -648,7 +648,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             settings,
             deploys,
             moves,
-            count: fogged_attackers ?? DEFAULT_FOGGED_ATTACKERS,
+            count: fogged_attackers ?? defaultFoggedCount(game),
             stack: foggedStack(game.settings?.initialPlayerArmiesPerTerritory, myLargestStack(board, me.id)),
             deploy: income,
           })

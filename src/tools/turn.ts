@@ -186,10 +186,12 @@ import { rememberBonusAttempts } from '../analysis/plan/bonus-attempts.js';
 import { rememberSiegeTurn, type SiegeMemory } from '../analysis/plan/siege.js';
 import { countsOf, fogSightings, ownersOf } from '../analysis/plan/vacated.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
+import { forgetPaceGame } from './pace.js';
 import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
 import {
   commanderCheckOn,
+  defaultFoggedCount,
   foggedAttackersArg,
   foggedCommanderOn,
   foggedCommanderText,
@@ -199,7 +201,7 @@ import {
   type CommanderCheckInput,
   type CommanderRisk,
 } from './commander-check.js';
-import { defaultFoggedAttackers, foggedStack, likelyStackAt } from '../analysis/commander-fog.js';
+import { foggedStack, likelyStackAt } from '../analysis/commander-fog.js';
 import { VACATED_FOG_ARMIES } from '../analysis/plan/vacated.js';
 import { HEADROOM_COMPACT, headroomView, headroomWarnings, keepTripwires, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
 import type { Tripwire } from '../analysis/tripwire.js';
@@ -1871,7 +1873,7 @@ export interface LivePlanArgs {
 
 /**
  * Part 5 (mega game): how many unknown opponents in the fog my commander's territory is held against
- * together — `given`, else {@link defaultFoggedAttackers} (2 in a free-for-all of eight or more players still
+ * together — `given`, else {@link defaultFoggedCount} (2 in a free-for-all of eight or more players still
  * playing, with commanders and fog; else 0, off) — and the armies a likely holder strikes with ({@link foggedStack}).
  * #529 (owner decision): on turn 1, `starts` lists the territories not mine that could be a start — the game's
  * distribution mode territories when the map carries them, else every territory but a wasteland the picking board
@@ -1891,14 +1893,7 @@ export function foggedAttackersFor(a: {
   const { game, board, me } = a;
   const s = game.settings;
   if (!s?.commanders) return undefined;
-  const count =
-    a.given ??
-    defaultFoggedAttackers({
-      commanders: true,
-      fog: s.fog !== undefined && s.fog !== 'NoFog',
-      teams: isTeamGame(game.players),
-      players: game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length,
-    });
+  const count = a.given ?? defaultFoggedCount(game);
   if (count <= 0) return undefined;
   const out: { count: number; stack: number; starts?: number[] } = { count, stack: foggedStack(s.initialPlayerArmiesPerTerritory, myLargestStack(board, me)) };
   if (a.turn === 1 && a.map) {
@@ -4527,6 +4522,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             return unconfirmed(`The orders were sent, but the game does not yet show them committed or the turn advanced. ${check}`);
           },
         });
+        // #532: the game no longer waits on me: warapp_session_status's boot warning stops naming it.
+        if (result.outcome === 'confirmed') forgetPaceGame(ctx, st.gameId);
         const withChat = st.chatReviewed ? { ...result, chatReviewed: st.chatReviewed } : result;
         const withRisk = st.commanderRisk ? { ...withChat, commanderRiskAccepted: st.commanderRisk } : withChat;
         const withExceptions = st.exceptions?.length ? { ...withRisk, exceptionsRecorded: await recordApproved(st, result.outcome === 'confirmed') } : withRisk;

@@ -21,6 +21,15 @@ export function rememberPace(owner: object, games: readonly MyGame[], at: number
   });
 }
 
+/**
+ * #532: drop one game from the kept snapshot — warapp_submit_turn calls it once war.app confirms my orders, since
+ * the game no longer waits on me and the snapshot would keep naming it until the list is read again.
+ */
+export function forgetPaceGame(owner: object, gameId: number): void {
+  const s = snapshots.get(owner);
+  if (s) snapshots.set(owner, { ...s, games: s.games.filter((g) => g.id !== gameId) });
+}
+
 /** What warapp_session_status says of the pace: absent before any game list was read in this process. */
 export interface PaceStatus {
   /** Minutes since the list was read. */

@@ -212,7 +212,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   else its usual estimate (vacated size, last sighting, picking-board neutral, else `neutralArmies`). `foggedAttackersFor`
   (`src/tools/turn.ts`, in `livePlanSetup`) turns it on with 2 only in a Commanders free-for-all of 8+ players playing under
   fog (`fogged_attackers` overrides), stack = `InitialPlayerArmiesPerTerritory`, else my largest stack. `foggedCommanderOn`
-  reports it (plan_turn's `commander.fogged`, check_plan's `fogged_attackers`, default 2, a uniform stack); never a submit
+  reports it (plan_turn's `commander.fogged`, check_plan's `fogged_attackers` — the same default, `defaultFoggedCount` in
+  `src/tools/commander-check.ts` (#531), a uniform stack); never a submit
   refusal. Golden 0 of 6253 (off by default); forced on as the tool sets it in all 252 commander boards: 34 plans changed,
   13 in orders, 9 with fewer captures, 3 with a lower next income.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
@@ -436,7 +437,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`publicSummary`). Pace: GameInfo fields 5 (boot), 19 (real time), 24 (my banked time) and 26 ("Your turn for")
   — read from the bundle's GameInfo reader and game-list renderer (its boot label is field 5 + field 24) — give
   `warapp_my_games`' `boot` (`bootView`: multi-day only; `leftMinutes` = boot + bank − turn so far, UNVERIFIED live)
-  and `bootSoon`; `fetchMyGames` keeps the clocks per context (`src/tools/pace.ts`) and `warapp_session_status`
+  and `bootSoon`; `fetchMyGames` keeps the clocks per context (`src/tools/pace.ts`; a confirmed `warapp_submit_turn` drops its game, `forgetPaceGame`, #532) and `warapp_session_status`
   reports `pace`/`bootWarning` under 6 hours from them, reading the list itself (one request, over a working direct
   session only) when none is kept yet (owner 2026-11-23; otherwise `paceUnread` says why).
 - **Chat is game information (#415, `docs/PLAN-CHAT-STRATEGY.md`): classified, advised, never sent on its own.**

@@ -1586,6 +1586,41 @@ describe('warapp_submit_turn', () => {
     expect(p.outcome).toBe('confirmed');
   });
 
+  it('#532: a confirmed submit drops the game from the pace snapshot, so session_status no longer names it', async () => {
+    const H = 3_600_000;
+    // Both games wait on me (uncommitted) with a boot about 4 hours away.
+    const near = (id: number, name: string) => ({
+      id,
+      name,
+      lastTurn: 2,
+      state: 3,
+      bootTimeMs: 36 * H,
+      bankedMs: 8 * H,
+      turnForMs: 40 * H,
+      players: [
+        { id: ANN.inGame, name: 'Ann', state: 2, committed: false },
+        { id: BOB.inGame, name: 'Bob', state: 2, committed: true },
+      ],
+    });
+    const s = ordersServer({ body: (w) => w.bool(true).bool(false) });
+    h = await liveHarness({
+      feed: [game('Playing'), game('Playing'), game('Playing', {}, { hasCommittedOrders: 'True' })],
+      pages: ME_PAGE,
+      warapp: (req, n) =>
+        req.method === Method.GetMyGames
+          ? { body: (w) => writeMyGamesReturn(w, [near(GAME, 'This'), near(GAME + 1, 'Other')]) }
+          : s.warapp(req, n),
+    });
+    await h.call('warapp_my_games');
+    const before = payload(await h.call('warapp_session_status'));
+    expect(before.bootWarning).toMatch(new RegExp(`game ${GAME} in`));
+    const p = payload(await confirmed({ game_id: GAME, orders: GOOD }));
+    expect(p).toMatchObject({ status: 'committed', outcome: 'confirmed' });
+    const after = payload(await h.call('warapp_session_status'));
+    expect(after.bootWarning).not.toMatch(new RegExp(`game ${GAME} in`));
+    expect(after.bootWarning).toMatch(new RegExp(`game ${GAME + 1} in`));
+  });
+
   it('reports unknown (never success from the reply bool) when game state shows neither', async () => {
     const s = ordersServer({ body: (w) => w.bool(true).bool(true) });
     h = await liveHarness({ feed: [game('Playing')], pages: ME_PAGE, warapp: s.warapp });
