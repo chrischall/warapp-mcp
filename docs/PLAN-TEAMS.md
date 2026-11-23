@@ -116,8 +116,8 @@ path stays soft.
 | V2 | Does GameFeed `GetChat=true` return team and private messages, and with which fields | Chat channels (A1) |
 | V3 | `SendChat`: public, private recipient, and the team channel value | Team-chat sending (A1) |
 | V4 | `GameRefresh` (39) reply `GameDetailsAndChat`: the chat message class and its fields — **public messages verified live 2026-11-14** (count, time, turn, sender, channel matched GameFeed `GetChat=true` in two games; a game with no chat reads 0); a team message verified live 2026-11-19 through RetrieveChat (#363); **private still open** (#387): on 2026-11-19 five live free-for-alls were read, four with private messaging off and one with it on, where the private history answered for every seat and returned no private message — no live private message has yet been seen to decode | Chat channels (A1) |
-| V5 | Teammate orders in `LatestGameInfo`: present before the teammate commits? | Team read (C1) |
-| V6 | `GetTerritoryPicks` with a teammate's player id | Team picks (C2) |
+| V5 | Teammate orders in `LatestGameInfo`: present before the teammate commits? — **verified live 2026-11-22** (#435): a teammate who had not committed showed the move it had entered (a 2v2 in play, read with GetMyGames' committed flags), under its in-game id; the dict carries teammates' entries only, never mine, and war.app sends it empty when no teammate has entered anything (no value names the dict then, so it reads as unknown). Still open: the pick list in an entry while distributing (no team game was distributing), and what an entry holds once the teammate commits | Team read (C1) |
+| V6 | `GetTerritoryPicks` with a teammate's player id — **verified live 2026-11-22** (#435): a teammate's id answers with that teammate's list (also after picking, in a game in play), my own id with mine; an opponent's id is refused with error 187 (`CannotGetOpponentsPicks`), and every id in an automatic-distribution game with 188 (`CannotGetPicksInAutomaticDistribution`), mine included (names from the client bundle's `EnumSerialization_ErrorTypes`). Not yet seen: a teammate who has not picked, while distributing (an absent result reads as an empty list) | Team picks (C2) |
 | V7 | What a plain move onto a teammate's territory does; `attack_teammates` (#165) | Team planner (C3) |
 | V8 | How a team's hand and its limit are keyed (#163) — **verified 2026-11-19** (#310): the standing keeps each player's cards (`PlayerCards`) under that player's id, none repeated (a live 2v2 board read two cards under me and three under my teammate); the client bundle's `GameValidateOrders` merges every teammate's entry into one hand, takes out a committed teammate's entered plays and discards, accepts a play of any card in it, and refuses (error 51) a hand still over `MaxCardsHold` only from the last of the team to commit. The refusal itself has not been drawn live (no turn was sent) | Team cards (C3, D) |
 | V9 | Gift, Diplomacy, Sanctions, Spy, Airlift play orders — **Airlift verified live 2026-11-16** (#296); **Diplomacy verified live 2026-11-18** (#369: played through `warapp_submit_turn`, in force on later boards until the turn expected); Sanctions played once 2026-11-18, effect not yet checked; the others still open | Part D |
@@ -503,7 +503,7 @@ untouched. Choices and departures:
 - Project teammate orders from the decoded `LatestGameInfo`, finding the field from the reader's
   source as `src/live.ts` does for the current standing: `BoardState.teammateOrders`, per teammate the
   deploys, moves and card plays. Tolerant: absent means unknown.
-- Teammate picks: `GetTerritoryPicks` with the teammate's id (V6); a refusal reads as unknown.
+- Teammate picks: `GetTerritoryPicks` with the teammate's id (V6, verified 2026-11-22); refusal 187 (war.app calls the player an opponent) or 188 (automatic distribution) is `refused` with an empty list, any other refusal reads as unknown.
 - Read-only `warapp_get_team`: who is on my team, human or AI, committed or not, visible income, the
   orders or picks they have entered, the team hand, unread team chat.
 
@@ -576,8 +576,10 @@ unchanged outside a team game, and the golden corpus (turn plans) is untouched.
 
 *As built (C2, coordination):* `warapp_plan_picks` reads each playing teammate's list with `readTeammatePicks`
 (`src/tools/team.ts`, shared with `warapp_get_team`): the live board's `TeammateOrders` picks (V5), else
-`GetTerritoryPicks` with the teammate's in-game id (V6); an AI seat or a refusal is unknown (`picks: null`). Both are
-UNVERIFIED live and the result's `team.coordination.notes` says so. `planPicks` takes `team.lists`; with none read, or
+`GetTerritoryPicks` with the teammate's in-game id (V6, verified live 2026-11-22); an AI seat or a refusal is unknown (`picks: null`),
+except 187/188, which never lift: `refused` (`not-teammate` / `automatic-distribution`) with an empty list, so they do not
+hold `warapp_submit_picks` (#435), and 187 is warned about (the team read may be wrong). The pick list in `TeammateOrders`
+is still UNVERIFIED live and the result's `team.coordination.notes` says so. `planPicks` takes `team.lists`; with none read, or
 only empty ones, it is the plan it was (a test pins it equal). With a list, the plan is the **split** one: each
 teammate's top (its first territory-limit pickable ids) leaves my candidates and is `friendly` in the opening
 simulation — never captured, so a bonus with one in it never completes for me and is no progress (a bonus pays one
@@ -644,8 +646,8 @@ shows it with a note. No 1v1 or FFA plan changes; the golden corpus's team board
 was being advanced (moves become plain expansion or are dropped) and every team plan with a shared bonus gains
 the `team` field.
 
-*As built (C3.4–C3.7):* every item reads my teammates' entered orders (`board.teammateOrders`, V5 — UNVERIFIED
-live) and does nothing without them, so 1v1 and FFA plans and the whole golden corpus (no input carries teammate
+*As built (C3.4–C3.7):* every item reads my teammates' entered orders (`board.teammateOrders`, V5 — verified live
+2026-11-22 for orders entered before the teammate commits) and does nothing without them, so 1v1 and FFA plans and the whole golden corpus (no input carries teammate
 orders) are byte-identical. **Focus (C3.4):** `teamFocusOf` (`src/analysis/plan/team.ts`, `PlanCtx.teamFocus`)
 maps each opponent a teammate attacks (a move that is not transfer-only into a territory the board shows a foe
 holding) to the teammates attacking it. It is a tie-break, never a score: in the balanced greedy right after

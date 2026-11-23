@@ -4,8 +4,9 @@
 // in-game player id → `warlight.shared.TeammateOrders` { a stamp (int), the orders entered (a list of
 // GameOrder, during a turn), the picks entered (a list of territory ids, while distributing) }. The client
 // shows a teammate's orders and picks from it, and counts the card plays and discards in it against the
-// team's hand. UNVERIFIED live (V5): whether war.app fills it before the teammate commits, and what it holds
-// once they have.
+// team's hand. VERIFIED live 2026-11-22 (V5, #435): war.app fills it with a teammate's entered orders before the
+// teammate commits, never with mine, and sends it empty when no teammate has entered anything (no value names
+// it then: read as unknown). Still UNVERIFIED: the pick list while distributing, and what it holds after a commit.
 //
 // Field names are minified, so the dict is found by the registered type name of its values, and an order's
 // kind by its class name. Within an order, fields are read by kind and read order, as the bundle's readers

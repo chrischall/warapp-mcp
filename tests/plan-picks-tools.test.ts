@@ -594,4 +594,20 @@ describe("warapp_plan_picks with my teammate's list (C2, coordination)", () => {
     // #435: unknown, not empty — the submit is held until it can be read.
     expect(JSON.stringify(p.warnings)).toMatch(/could not be read.*hold the submit.*without_teammate_list/);
   });
+
+  it('#435: a teammate war.app calls an opponent (187, verified live) is no unread list: no hold, a team-read warning', async () => {
+    h = await liveHarness({
+      feed: [fourSeats()],
+      pages: SIGNED_IN_ANN,
+      warapp: routes({
+        [Method.GetLatestGameInfo]: board(PICK_BOARD),
+        [Method.GetTerritoryPicks]: () => ({ error: { code: 187, message: 'CannotGetOpponentsPicks' } }),
+      }),
+    });
+    const p = payload<PlanPicksPayload & CoordView>(await h.call('warapp_plan_picks', { game_id: GAME }));
+    expect(p.team.teammates[0]!.picks).toEqual({ source: 'territory-picks', territories: [], refused: 'not-teammate' });
+    const w = JSON.stringify(p.warnings);
+    expect(w).not.toMatch(/hold the submit/);
+    expect(w).toMatch(/refused .*as an opponent's.*187/);
+  });
 });

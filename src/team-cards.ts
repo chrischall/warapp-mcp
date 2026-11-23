@@ -2,7 +2,7 @@
 // card my teammate has already entered a play or a discard of is theirs this turn: the plan never plays it
 // too, and the card advice says who plays each card.
 //
-// UNVERIFIED live: whether war.app sends a teammate's orders before they commit (V5). VERIFIED (V8, #310): how a
+// VERIFIED live 2026-11-22 (V5, #435): war.app sends a teammate's entered orders before they commit. VERIFIED (V8, #310): how a
 // team's hand and its limit are keyed (teamCardLimit). Tolerant: no teammate orders read means no claim.
 import { cardsToShed, type Card, type CardRules } from './cards.js';
 import type { TeammateOrders } from './team-orders.js';
@@ -125,7 +125,7 @@ export function claimedCardWarning(uses: readonly ClaimedCardUse[]): string | un
   const each = uses.map((u) => `${u.mine === 'play' ? 'plays' : 'discards'} the ${u.card.name} card ${u.card.id}, which player ${u.player} has already entered a ${u.theirs} of`);
   return (
     `These orders ${each.join('; ')}. A team shares one hand and must not use one card twice: leave it to them, or agree in ` +
-    'team chat who uses it before committing. Their entered orders are read from the live board (UNVERIFIED live, V5).'
+    'team chat who uses it before committing. Their entered orders are read from the live board (V5, verified live before commit).'
   );
 }
 

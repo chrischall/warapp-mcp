@@ -506,6 +506,23 @@ describe('warapp_submit_picks', () => {
     expect(JSON.stringify(preview)).toMatch(/not read/);
   });
 
+  it("#435: a teammate war.app calls an opponent (GetTerritoryPicks 187, verified live) does not hold the submit, and is named", async () => {
+    // V6 verified live 2026-11-22: 187 is CannotGetOpponentsPicks, a refusal that never lifts for that player,
+    // so it cannot hold every submit; the preview says the team read may be wrong.
+    const warapp = routes({
+      [Method.GetLatestGameInfo]: board(PICK_BOARD),
+      [Method.GetTerritoryPicks]: () => ({ error: { code: 187, message: 'CannotGetOpponentsPicks' } }),
+    });
+    const g = game('DistributingTerritories', { settings: { ...settingsOf(), TerritoryLimit: 1 } });
+    const players = (g.players as Array<Record<string, string>>).slice(0, 4).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [{ ...g, players }], warapp });
+    const preview = payload(await h.call('warapp_submit_picks', { game_id: GAME, territories: [161, 159, 135, 157] }));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    const text = JSON.stringify(preview);
+    expect(text).toMatch(/refused .*as an opponent's.*187/);
+    expect(text).not.toMatch(/without_teammate_list/);
+  });
+
   it('previews the picks by name and sends nothing until confirmed', async () => {
     const s = picksServer();
     h = await liveHarness({
