@@ -19,14 +19,17 @@ export const CHAT_BUNDLE = [
   'Gdc.Ha=function(a,b,d){null==d&&(d=243);return Gdc.rd(a,d)};',
   'Gdc.rd=function(a,b){var d=new Gdc;' +
     'd.c1=a.Ua()?P.Sd(a,function(){return a.Ua()?Gmg.Ha(a,d,b):null}):null;' +
-    'd.c2=a.Ua()?Gwl.Ha(a,d,b):null;d.c3=P.Ya(a);return d};',
+    'd.c2=a.Ua()?Gwl.Ha(a,d,b):null;d.c3=P.Ya(a);' +
+    // My mod data (a dict of mod id → XML text), fourth as in the real reader.
+    'd.c4=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return P.wc(a)}):null;return d};',
   // GameWL: 14 fields, the players (a dict of in-game id → GamePlayer) eighth (docs/WEB-PROTOCOL.md,
   // "Accepting a surrender"). The other fields are placeholders of this file's own choosing.
   'W["warlight.shared.GameWL"]=Gwl;Gwl.Ha=function(a,b,d){null==d&&(d=243);return Gwl.rd(a,d)};',
   'Gwl.rd=function(a,b){var e=new Gwl;e.g0=P.Ya(a);e.g1=P.Ya(a);e.g2=P.Td(a);e.g3=a.Ua()?new Z(P.Ya(a)):new Z;' +
     'e.g4=P.Ya(a);e.g5=P.Td(a);e.g6=a.Ua()?new Z(P.Ya(a)):new Z;' +
     'e.g7=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Gpl.Ha(a,e,b):null}):null;' +
-    'e.g8=a.Ua()?new Z(P.Ya(a)):new Z;e.g9=P.Td(a);e.g10=P.Td(a);e.g11=P.Td(a);e.g12=P.Ya(a);' +
+    // The public mod data (a dict of mod id → XML text), at 8 as in the real reader.
+    'e.g8=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return P.wc(a)}):null;e.g9=P.Td(a);e.g10=P.Td(a);e.g11=P.Td(a);e.g12=P.Ya(a);' +
     'e.g13=a.Ua()?new Z(P.Ya(a)):new Z;return e};',
   // GamePlayer: 37 fields (243 added an int at 31). Read inside a game, the record first links back to it (as the client's
   // reader does), which is not a read field. Read here: 0 the AI id (optional), 14 turned into an AI,
@@ -128,8 +131,16 @@ export function writeGamePlayer(w: Writer, s: SyntheticSeat): void {
   for (let i = 30; i <= 36; i++) w.int32(i);
 }
 
-/** One GameWL record (no present flag): `seats` `null` leaves the players dict out. */
-export function writeGameWL(w: Writer, seats: readonly SyntheticSeat[] | null): void {
+/** Mod data per mod id (XML text), as the details carry it; `null` leaves the dict out. */
+export type SyntheticModData = ReadonlyMap<number, string> | null;
+
+function writeModData(w: Writer, data: SyntheticModData | undefined): void {
+  if (!data) w.bool(false);
+  else w.bool(true).list([...data], (ww, [id, xml]) => ww.int32(id).string(xml));
+}
+
+/** One GameWL record (no present flag): `seats` `null` leaves the players dict out; `publicMods` the mods' public data. */
+export function writeGameWL(w: Writer, seats: readonly SyntheticSeat[] | null, publicMods?: SyntheticModData): void {
   const d = new Date(Date.UTC(2026, 10, 1));
   w.int32(7).int32(0).date(d).bool(false).int32(0).date(d).bool(false);
   if (seats === null) w.bool(false);
@@ -138,7 +149,8 @@ export function writeGameWL(w: Writer, seats: readonly SyntheticSeat[] | null): 
       ww.int32(s.id ?? s.aiId ?? 0).bool(true);
       writeGamePlayer(ww, s);
     });
-  w.bool(false).date(d).date(d).date(d).int32(3).bool(false);
+  writeModData(w, publicMods);
+  w.date(d).date(d).date(d).int32(3).bool(false);
 }
 
 /**
@@ -149,12 +161,14 @@ export function writeGameDetailsAndChat(
   w: Writer,
   messages: readonly SyntheticMessage[] | null,
   seats: readonly SyntheticSeat[] | null = null,
+  mods: { public?: SyntheticModData; mine?: SyntheticModData } = {},
 ): void {
   w.bool(true);
   writeMessages(w, messages);
   w.bool(true);
-  writeGameWL(w, seats);
+  writeGameWL(w, seats, mods.public);
   w.int32(0);
+  writeModData(w, mods.mine);
 }
 
 /**

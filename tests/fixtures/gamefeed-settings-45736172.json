@@ -1,0 +1,5238 @@
+{
+ "id": "45736172",
+ "state": "WaitingForPlayers",
+ "name": "Mega game (fixture)",
+ "numberOfTurns": "-1",
+ "created": "11/20/2026 00:58:55",
+ "lastTurnTime": "11/20/2026 00:58:55",
+ "players": [
+  {
+   "id": "88200011",
+   "name": "Player 1",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200111",
+   "name": "Player 2",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200211",
+   "name": "Player 3",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200311",
+   "name": "Player 4",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200411",
+   "name": "Player 5",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200511",
+   "name": "Player 6",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200611",
+   "name": "Player 7",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200711",
+   "name": "Player 8",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200811",
+   "name": "Player 9",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88200911",
+   "name": "Player 10",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201011",
+   "name": "Player 11",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201111",
+   "name": "Player 12",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201211",
+   "name": "Player 13",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201311",
+   "name": "Player 14",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201411",
+   "name": "Player 15",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201511",
+   "name": "Player 16",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201611",
+   "name": "Player 17",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201711",
+   "name": "Player 18",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201811",
+   "name": "Player 19",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88201911",
+   "name": "Player 20",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202011",
+   "name": "Player 21",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202111",
+   "name": "Player 22",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202211",
+   "name": "Player 23",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202311",
+   "name": "Player 24",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202411",
+   "name": "Player 25",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202511",
+   "name": "Player 26",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202611",
+   "name": "Player 27",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202711",
+   "name": "Player 28",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202811",
+   "name": "Player 29",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88202911",
+   "name": "Player 30",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203011",
+   "name": "Player 31",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203111",
+   "name": "Player 32",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203211",
+   "name": "Player 33",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203311",
+   "name": "Player 34",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203411",
+   "name": "Player 35",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203511",
+   "name": "Player 36",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203611",
+   "name": "Player 37",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203711",
+   "name": "Player 38",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203811",
+   "name": "Player 39",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88203911",
+   "name": "Player 40",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204011",
+   "name": "Player 41",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204111",
+   "name": "Player 42",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204211",
+   "name": "Player 43",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204311",
+   "name": "Player 44",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204411",
+   "name": "Player 45",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204511",
+   "name": "Player 46",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204611",
+   "name": "Player 47",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204711",
+   "name": "Player 48",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204811",
+   "name": "Player 49",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88204911",
+   "name": "Player 50",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205011",
+   "name": "Player 51",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205111",
+   "name": "Player 52",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205211",
+   "name": "Player 53",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205311",
+   "name": "Player 54",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205411",
+   "name": "Player 55",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205511",
+   "name": "Player 56",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205611",
+   "name": "Player 57",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205711",
+   "name": "Player 58",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205811",
+   "name": "Player 59",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88205911",
+   "name": "Player 60",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206011",
+   "name": "Player 61",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206111",
+   "name": "Player 62",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206211",
+   "name": "Player 63",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206311",
+   "name": "Player 64",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206411",
+   "name": "Player 65",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206511",
+   "name": "Player 66",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206611",
+   "name": "Player 67",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206711",
+   "name": "Player 68",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206811",
+   "name": "Player 69",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88206911",
+   "name": "Player 70",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207011",
+   "name": "Player 71",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207111",
+   "name": "Player 72",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207211",
+   "name": "Player 73",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207311",
+   "name": "Player 74",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207411",
+   "name": "Player 75",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207511",
+   "name": "Player 76",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207611",
+   "name": "Player 77",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207711",
+   "name": "Player 78",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207811",
+   "name": "Player 79",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88207911",
+   "name": "Player 80",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208011",
+   "name": "Player 81",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208111",
+   "name": "Player 82",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208211",
+   "name": "Player 83",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208311",
+   "name": "Player 84",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208411",
+   "name": "Player 85",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208511",
+   "name": "Player 86",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208611",
+   "name": "Player 87",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208711",
+   "name": "Player 88",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208811",
+   "name": "Player 89",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88208911",
+   "name": "Player 90",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88209011",
+   "name": "Player 91",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88209111",
+   "name": "Player 92",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88209211",
+   "name": "Player 93",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88209311",
+   "name": "Player 94",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88209411",
+   "name": "Player 95",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88209511",
+   "name": "Player 96",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  },
+  {
+   "id": "88209611",
+   "name": "Player 97",
+   "isAI": "False",
+   "humanTurnedIntoAI": "False",
+   "hasCommittedOrders": "False",
+   "color": "#000000",
+   "state": "Playing"
+  }
+ ],
+ "settings": {
+  "Pace": "MultiDay",
+  "DirectBoot": 2160,
+  "AutoBoot": 2160,
+  "BankingBootTimes": {
+   "BankAmount": 60,
+   "InitialBankInMinutes": 480
+  },
+  "PrivateMessaging": true,
+  "PracticeGame": true,
+  "Fog": "Foggy",
+  "MultiAttack": false,
+  "AllowPercentageAttacks": true,
+  "AllowTransferOnly": false,
+  "AllowAttackOnly": false,
+  "MoveOrder": "Cycle",
+  "InstantSurrender": "Instant",
+  "BootedPlayersTurnIntoAIs": true,
+  "SurrenderedPlayersTurnIntoAIs": true,
+  "TimesCanComeBackFromAI": 2,
+  "AIsSurrenderWhenOneHumanRemains": true,
+  "AllowVacations": false,
+  "Map": 108578,
+  "CustomScenario": "null",
+  "AutomaticTerritoryDistribution": "Manual",
+  "DistributionMode": 1,
+  "TerritoryLimit": 1,
+  "InitialPlayerArmiesPerTerritory": 250,
+  "InitialNonDistributionArmies": 5,
+  "InitialNeutralsInDistribution": 100,
+  "Wastelands": {
+   "NumberOfWastelands": 330,
+   "WastelandSize": 50
+  },
+  "Commerce": {},
+  "Commanders": true,
+  "OneArmyStandsGuard": false,
+  "MinimumArmyBonus": 15,
+  "LuckModifier": 0.5,
+  "RoundingMode": "StraightRound",
+  "BonusArmyPer": 1,
+  "ArmyCap": "null",
+  "OffensiveKillRate": 50,
+  "DefensiveKillRate": 70,
+  "LocalDeployments": true,
+  "NoSplit": false,
+  "OverriddenBonuses": [
+   {
+    "bonusID": 1,
+    "value": 0
+   },
+   {
+    "bonusID": 2,
+    "value": 0
+   },
+   {
+    "bonusID": 3,
+    "value": 0
+   },
+   {
+    "bonusID": 4,
+    "value": 0
+   },
+   {
+    "bonusID": 5,
+    "value": 0
+   },
+   {
+    "bonusID": 6,
+    "value": 0
+   },
+   {
+    "bonusID": 7,
+    "value": 0
+   },
+   {
+    "bonusID": 8,
+    "value": 0
+   },
+   {
+    "bonusID": 9,
+    "value": 0
+   },
+   {
+    "bonusID": 10,
+    "value": 0
+   },
+   {
+    "bonusID": 11,
+    "value": 0
+   },
+   {
+    "bonusID": 12,
+    "value": 0
+   },
+   {
+    "bonusID": 13,
+    "value": 0
+   },
+   {
+    "bonusID": 14,
+    "value": 0
+   },
+   {
+    "bonusID": 15,
+    "value": 0
+   },
+   {
+    "bonusID": 16,
+    "value": 0
+   },
+   {
+    "bonusID": 17,
+    "value": 0
+   },
+   {
+    "bonusID": 18,
+    "value": 0
+   },
+   {
+    "bonusID": 19,
+    "value": 0
+   },
+   {
+    "bonusID": 20,
+    "value": 0
+   },
+   {
+    "bonusID": 21,
+    "value": 0
+   },
+   {
+    "bonusID": 22,
+    "value": 0
+   },
+   {
+    "bonusID": 23,
+    "value": 0
+   },
+   {
+    "bonusID": 24,
+    "value": 0
+   },
+   {
+    "bonusID": 25,
+    "value": 0
+   },
+   {
+    "bonusID": 26,
+    "value": 0
+   },
+   {
+    "bonusID": 27,
+    "value": 0
+   },
+   {
+    "bonusID": 28,
+    "value": 0
+   },
+   {
+    "bonusID": 29,
+    "value": 0
+   },
+   {
+    "bonusID": 30,
+    "value": 0
+   },
+   {
+    "bonusID": 31,
+    "value": 0
+   },
+   {
+    "bonusID": 32,
+    "value": 0
+   },
+   {
+    "bonusID": 33,
+    "value": 0
+   },
+   {
+    "bonusID": 34,
+    "value": 0
+   },
+   {
+    "bonusID": 35,
+    "value": 0
+   },
+   {
+    "bonusID": 36,
+    "value": 0
+   },
+   {
+    "bonusID": 37,
+    "value": 0
+   },
+   {
+    "bonusID": 38,
+    "value": 0
+   },
+   {
+    "bonusID": 39,
+    "value": 0
+   },
+   {
+    "bonusID": 40,
+    "value": 0
+   },
+   {
+    "bonusID": 41,
+    "value": 0
+   },
+   {
+    "bonusID": 42,
+    "value": 0
+   },
+   {
+    "bonusID": 43,
+    "value": 0
+   },
+   {
+    "bonusID": 44,
+    "value": 0
+   },
+   {
+    "bonusID": 45,
+    "value": 0
+   },
+   {
+    "bonusID": 46,
+    "value": 0
+   },
+   {
+    "bonusID": 47,
+    "value": 0
+   },
+   {
+    "bonusID": 48,
+    "value": 0
+   },
+   {
+    "bonusID": 49,
+    "value": 0
+   },
+   {
+    "bonusID": 50,
+    "value": 0
+   },
+   {
+    "bonusID": 51,
+    "value": 0
+   },
+   {
+    "bonusID": 52,
+    "value": 0
+   },
+   {
+    "bonusID": 53,
+    "value": 0
+   },
+   {
+    "bonusID": 54,
+    "value": 0
+   },
+   {
+    "bonusID": 55,
+    "value": 0
+   },
+   {
+    "bonusID": 56,
+    "value": 0
+   },
+   {
+    "bonusID": 57,
+    "value": 0
+   },
+   {
+    "bonusID": 58,
+    "value": 0
+   },
+   {
+    "bonusID": 59,
+    "value": 0
+   },
+   {
+    "bonusID": 60,
+    "value": 0
+   },
+   {
+    "bonusID": 61,
+    "value": 0
+   },
+   {
+    "bonusID": 62,
+    "value": 0
+   },
+   {
+    "bonusID": 63,
+    "value": 0
+   },
+   {
+    "bonusID": 64,
+    "value": 0
+   },
+   {
+    "bonusID": 65,
+    "value": 0
+   },
+   {
+    "bonusID": 66,
+    "value": 0
+   },
+   {
+    "bonusID": 67,
+    "value": 0
+   },
+   {
+    "bonusID": 68,
+    "value": 0
+   },
+   {
+    "bonusID": 69,
+    "value": 0
+   },
+   {
+    "bonusID": 70,
+    "value": 0
+   },
+   {
+    "bonusID": 71,
+    "value": 0
+   },
+   {
+    "bonusID": 72,
+    "value": 0
+   },
+   {
+    "bonusID": 73,
+    "value": 0
+   },
+   {
+    "bonusID": 74,
+    "value": 0
+   },
+   {
+    "bonusID": 75,
+    "value": 0
+   },
+   {
+    "bonusID": 76,
+    "value": 100
+   },
+   {
+    "bonusID": 77,
+    "value": 10
+   },
+   {
+    "bonusID": 78,
+    "value": 10
+   },
+   {
+    "bonusID": 79,
+    "value": 10
+   },
+   {
+    "bonusID": 80,
+    "value": 10
+   },
+   {
+    "bonusID": 81,
+    "value": 10
+   },
+   {
+    "bonusID": 82,
+    "value": 10
+   },
+   {
+    "bonusID": 83,
+    "value": 10
+   },
+   {
+    "bonusID": 84,
+    "value": 10
+   },
+   {
+    "bonusID": 85,
+    "value": 10
+   },
+   {
+    "bonusID": 86,
+    "value": 0
+   },
+   {
+    "bonusID": 87,
+    "value": 0
+   },
+   {
+    "bonusID": 88,
+    "value": 0
+   },
+   {
+    "bonusID": 89,
+    "value": 0
+   },
+   {
+    "bonusID": 90,
+    "value": 0
+   },
+   {
+    "bonusID": 91,
+    "value": 0
+   },
+   {
+    "bonusID": 92,
+    "value": 0
+   },
+   {
+    "bonusID": 93,
+    "value": 0
+   },
+   {
+    "bonusID": 94,
+    "value": 0
+   },
+   {
+    "bonusID": 95,
+    "value": 0
+   },
+   {
+    "bonusID": 96,
+    "value": 0
+   },
+   {
+    "bonusID": 97,
+    "value": 0
+   },
+   {
+    "bonusID": 98,
+    "value": 0
+   },
+   {
+    "bonusID": 99,
+    "value": 0
+   },
+   {
+    "bonusID": 100,
+    "value": 0
+   },
+   {
+    "bonusID": 101,
+    "value": 0
+   },
+   {
+    "bonusID": 102,
+    "value": 0
+   },
+   {
+    "bonusID": 103,
+    "value": 0
+   },
+   {
+    "bonusID": 104,
+    "value": 0
+   },
+   {
+    "bonusID": 105,
+    "value": 0
+   },
+   {
+    "bonusID": 106,
+    "value": 0
+   },
+   {
+    "bonusID": 107,
+    "value": 0
+   },
+   {
+    "bonusID": 108,
+    "value": 0
+   },
+   {
+    "bonusID": 109,
+    "value": 0
+   },
+   {
+    "bonusID": 110,
+    "value": 0
+   },
+   {
+    "bonusID": 111,
+    "value": 0
+   },
+   {
+    "bonusID": 112,
+    "value": 0
+   },
+   {
+    "bonusID": 113,
+    "value": 0
+   },
+   {
+    "bonusID": 114,
+    "value": 0
+   },
+   {
+    "bonusID": 115,
+    "value": 0
+   },
+   {
+    "bonusID": 116,
+    "value": 0
+   },
+   {
+    "bonusID": 117,
+    "value": 0
+   },
+   {
+    "bonusID": 118,
+    "value": 0
+   },
+   {
+    "bonusID": 119,
+    "value": 0
+   },
+   {
+    "bonusID": 120,
+    "value": 0
+   },
+   {
+    "bonusID": 121,
+    "value": 0
+   },
+   {
+    "bonusID": 122,
+    "value": 0
+   },
+   {
+    "bonusID": 123,
+    "value": 0
+   },
+   {
+    "bonusID": 124,
+    "value": 0
+   },
+   {
+    "bonusID": 125,
+    "value": 0
+   },
+   {
+    "bonusID": 126,
+    "value": 0
+   },
+   {
+    "bonusID": 127,
+    "value": 0
+   },
+   {
+    "bonusID": 128,
+    "value": 0
+   },
+   {
+    "bonusID": 129,
+    "value": 0
+   },
+   {
+    "bonusID": 130,
+    "value": 0
+   },
+   {
+    "bonusID": 131,
+    "value": 0
+   },
+   {
+    "bonusID": 132,
+    "value": 0
+   },
+   {
+    "bonusID": 133,
+    "value": 0
+   },
+   {
+    "bonusID": 134,
+    "value": 0
+   },
+   {
+    "bonusID": 135,
+    "value": 0
+   },
+   {
+    "bonusID": 136,
+    "value": 0
+   },
+   {
+    "bonusID": 137,
+    "value": 0
+   },
+   {
+    "bonusID": 138,
+    "value": 0
+   },
+   {
+    "bonusID": 139,
+    "value": 0
+   },
+   {
+    "bonusID": 140,
+    "value": 0
+   },
+   {
+    "bonusID": 141,
+    "value": 0
+   },
+   {
+    "bonusID": 142,
+    "value": 0
+   },
+   {
+    "bonusID": 143,
+    "value": 0
+   },
+   {
+    "bonusID": 144,
+    "value": 0
+   },
+   {
+    "bonusID": 145,
+    "value": 0
+   },
+   {
+    "bonusID": 146,
+    "value": 0
+   },
+   {
+    "bonusID": 147,
+    "value": 0
+   },
+   {
+    "bonusID": 148,
+    "value": 0
+   },
+   {
+    "bonusID": 149,
+    "value": 0
+   },
+   {
+    "bonusID": 150,
+    "value": 0
+   },
+   {
+    "bonusID": 151,
+    "value": 0
+   },
+   {
+    "bonusID": 152,
+    "value": 0
+   },
+   {
+    "bonusID": 153,
+    "value": 0
+   },
+   {
+    "bonusID": 154,
+    "value": 0
+   },
+   {
+    "bonusID": 155,
+    "value": 0
+   },
+   {
+    "bonusID": 156,
+    "value": 0
+   },
+   {
+    "bonusID": 157,
+    "value": 0
+   },
+   {
+    "bonusID": 158,
+    "value": 0
+   },
+   {
+    "bonusID": 159,
+    "value": 0
+   },
+   {
+    "bonusID": 160,
+    "value": 0
+   },
+   {
+    "bonusID": 161,
+    "value": 0
+   },
+   {
+    "bonusID": 162,
+    "value": 0
+   },
+   {
+    "bonusID": 163,
+    "value": 0
+   },
+   {
+    "bonusID": 164,
+    "value": 0
+   },
+   {
+    "bonusID": 165,
+    "value": 0
+   },
+   {
+    "bonusID": 166,
+    "value": 0
+   },
+   {
+    "bonusID": 167,
+    "value": 0
+   },
+   {
+    "bonusID": 168,
+    "value": 0
+   },
+   {
+    "bonusID": 169,
+    "value": 0
+   },
+   {
+    "bonusID": 170,
+    "value": 20
+   },
+   {
+    "bonusID": 171,
+    "value": 20
+   },
+   {
+    "bonusID": 172,
+    "value": 20
+   },
+   {
+    "bonusID": 173,
+    "value": 10
+   },
+   {
+    "bonusID": 174,
+    "value": 20
+   },
+   {
+    "bonusID": 175,
+    "value": 20
+   },
+   {
+    "bonusID": 176,
+    "value": 0
+   },
+   {
+    "bonusID": 177,
+    "value": 0
+   },
+   {
+    "bonusID": 178,
+    "value": 0
+   },
+   {
+    "bonusID": 179,
+    "value": 0
+   },
+   {
+    "bonusID": 180,
+    "value": 0
+   },
+   {
+    "bonusID": 181,
+    "value": 0
+   },
+   {
+    "bonusID": 182,
+    "value": 0
+   },
+   {
+    "bonusID": 183,
+    "value": 0
+   },
+   {
+    "bonusID": 184,
+    "value": 0
+   },
+   {
+    "bonusID": 185,
+    "value": 0
+   },
+   {
+    "bonusID": 186,
+    "value": 0
+   },
+   {
+    "bonusID": 187,
+    "value": 0
+   },
+   {
+    "bonusID": 188,
+    "value": 0
+   },
+   {
+    "bonusID": 189,
+    "value": 0
+   },
+   {
+    "bonusID": 191,
+    "value": 0
+   },
+   {
+    "bonusID": 192,
+    "value": 0
+   },
+   {
+    "bonusID": 193,
+    "value": 0
+   },
+   {
+    "bonusID": 194,
+    "value": 0
+   },
+   {
+    "bonusID": 195,
+    "value": 0
+   },
+   {
+    "bonusID": 196,
+    "value": 0
+   },
+   {
+    "bonusID": 197,
+    "value": 0
+   },
+   {
+    "bonusID": 198,
+    "value": 0
+   },
+   {
+    "bonusID": 199,
+    "value": 0
+   },
+   {
+    "bonusID": 200,
+    "value": 0
+   },
+   {
+    "bonusID": 201,
+    "value": 0
+   },
+   {
+    "bonusID": 202,
+    "value": 0
+   },
+   {
+    "bonusID": 203,
+    "value": 0
+   },
+   {
+    "bonusID": 204,
+    "value": 0
+   },
+   {
+    "bonusID": 205,
+    "value": 0
+   },
+   {
+    "bonusID": 206,
+    "value": 0
+   },
+   {
+    "bonusID": 207,
+    "value": 0
+   },
+   {
+    "bonusID": 208,
+    "value": 0
+   },
+   {
+    "bonusID": 209,
+    "value": 0
+   },
+   {
+    "bonusID": 210,
+    "value": 0
+   },
+   {
+    "bonusID": 211,
+    "value": 0
+   },
+   {
+    "bonusID": 212,
+    "value": 0
+   },
+   {
+    "bonusID": 213,
+    "value": 0
+   },
+   {
+    "bonusID": 214,
+    "value": 0
+   },
+   {
+    "bonusID": 215,
+    "value": 0
+   },
+   {
+    "bonusID": 216,
+    "value": 0
+   },
+   {
+    "bonusID": 217,
+    "value": 0
+   },
+   {
+    "bonusID": 218,
+    "value": 0
+   },
+   {
+    "bonusID": 219,
+    "value": 0
+   },
+   {
+    "bonusID": 220,
+    "value": 0
+   },
+   {
+    "bonusID": 221,
+    "value": 0
+   },
+   {
+    "bonusID": 222,
+    "value": 0
+   },
+   {
+    "bonusID": 223,
+    "value": 0
+   },
+   {
+    "bonusID": 224,
+    "value": 0
+   },
+   {
+    "bonusID": 225,
+    "value": 0
+   },
+   {
+    "bonusID": 226,
+    "value": 0
+   },
+   {
+    "bonusID": 227,
+    "value": 0
+   },
+   {
+    "bonusID": 228,
+    "value": 0
+   },
+   {
+    "bonusID": 229,
+    "value": 0
+   },
+   {
+    "bonusID": 230,
+    "value": 0
+   },
+   {
+    "bonusID": 231,
+    "value": 0
+   },
+   {
+    "bonusID": 232,
+    "value": 0
+   },
+   {
+    "bonusID": 233,
+    "value": 0
+   },
+   {
+    "bonusID": 234,
+    "value": 0
+   },
+   {
+    "bonusID": 235,
+    "value": 0
+   },
+   {
+    "bonusID": 236,
+    "value": 0
+   },
+   {
+    "bonusID": 237,
+    "value": 0
+   },
+   {
+    "bonusID": 238,
+    "value": 0
+   },
+   {
+    "bonusID": 239,
+    "value": 0
+   },
+   {
+    "bonusID": 240,
+    "value": 0
+   },
+   {
+    "bonusID": 241,
+    "value": 0
+   },
+   {
+    "bonusID": 242,
+    "value": 0
+   },
+   {
+    "bonusID": 245,
+    "value": 0
+   },
+   {
+    "bonusID": 246,
+    "value": 0
+   },
+   {
+    "bonusID": 247,
+    "value": 0
+   },
+   {
+    "bonusID": 248,
+    "value": 0
+   },
+   {
+    "bonusID": 249,
+    "value": 0
+   },
+   {
+    "bonusID": 250,
+    "value": 0
+   },
+   {
+    "bonusID": 251,
+    "value": 0
+   },
+   {
+    "bonusID": 254,
+    "value": 0
+   },
+   {
+    "bonusID": 255,
+    "value": 0
+   },
+   {
+    "bonusID": 256,
+    "value": 0
+   },
+   {
+    "bonusID": 257,
+    "value": 0
+   },
+   {
+    "bonusID": 258,
+    "value": 0
+   },
+   {
+    "bonusID": 260,
+    "value": 0
+   },
+   {
+    "bonusID": 261,
+    "value": 0
+   },
+   {
+    "bonusID": 262,
+    "value": 0
+   },
+   {
+    "bonusID": 263,
+    "value": 0
+   },
+   {
+    "bonusID": 264,
+    "value": 0
+   },
+   {
+    "bonusID": 265,
+    "value": 0
+   },
+   {
+    "bonusID": 266,
+    "value": 0
+   },
+   {
+    "bonusID": 267,
+    "value": 0
+   },
+   {
+    "bonusID": 268,
+    "value": 0
+   },
+   {
+    "bonusID": 269,
+    "value": 0
+   },
+   {
+    "bonusID": 270,
+    "value": 0
+   },
+   {
+    "bonusID": 271,
+    "value": 0
+   },
+   {
+    "bonusID": 273,
+    "value": 0
+   },
+   {
+    "bonusID": 274,
+    "value": 0
+   },
+   {
+    "bonusID": 275,
+    "value": 0
+   },
+   {
+    "bonusID": 276,
+    "value": 0
+   },
+   {
+    "bonusID": 277,
+    "value": 0
+   },
+   {
+    "bonusID": 278,
+    "value": 0
+   },
+   {
+    "bonusID": 279,
+    "value": 0
+   },
+   {
+    "bonusID": 280,
+    "value": 0
+   },
+   {
+    "bonusID": 281,
+    "value": 0
+   },
+   {
+    "bonusID": 283,
+    "value": 0
+   },
+   {
+    "bonusID": 284,
+    "value": 0
+   },
+   {
+    "bonusID": 286,
+    "value": 0
+   },
+   {
+    "bonusID": 287,
+    "value": 0
+   },
+   {
+    "bonusID": 288,
+    "value": 25
+   },
+   {
+    "bonusID": 289,
+    "value": 25
+   },
+   {
+    "bonusID": 290,
+    "value": 25
+   },
+   {
+    "bonusID": 291,
+    "value": 25
+   },
+   {
+    "bonusID": 292,
+    "value": 0
+   },
+   {
+    "bonusID": 293,
+    "value": 0
+   },
+   {
+    "bonusID": 294,
+    "value": 100
+   },
+   {
+    "bonusID": 295,
+    "value": 0
+   },
+   {
+    "bonusID": 296,
+    "value": 0
+   },
+   {
+    "bonusID": 297,
+    "value": 0
+   },
+   {
+    "bonusID": 298,
+    "value": 0
+   },
+   {
+    "bonusID": 299,
+    "value": 0
+   },
+   {
+    "bonusID": 300,
+    "value": 0
+   },
+   {
+    "bonusID": 301,
+    "value": 0
+   },
+   {
+    "bonusID": 302,
+    "value": 0
+   },
+   {
+    "bonusID": 303,
+    "value": 0
+   },
+   {
+    "bonusID": 304,
+    "value": 0
+   },
+   {
+    "bonusID": 305,
+    "value": 0
+   },
+   {
+    "bonusID": 306,
+    "value": 0
+   },
+   {
+    "bonusID": 307,
+    "value": 0
+   },
+   {
+    "bonusID": 308,
+    "value": 0
+   },
+   {
+    "bonusID": 309,
+    "value": 0
+   },
+   {
+    "bonusID": 310,
+    "value": 0
+   },
+   {
+    "bonusID": 311,
+    "value": 0
+   },
+   {
+    "bonusID": 312,
+    "value": 0
+   },
+   {
+    "bonusID": 313,
+    "value": 0
+   },
+   {
+    "bonusID": 314,
+    "value": 0
+   },
+   {
+    "bonusID": 315,
+    "value": 0
+   },
+   {
+    "bonusID": 316,
+    "value": 0
+   },
+   {
+    "bonusID": 317,
+    "value": 0
+   },
+   {
+    "bonusID": 318,
+    "value": 0
+   },
+   {
+    "bonusID": 319,
+    "value": 0
+   },
+   {
+    "bonusID": 320,
+    "value": 0
+   },
+   {
+    "bonusID": 321,
+    "value": 0
+   },
+   {
+    "bonusID": 322,
+    "value": 0
+   },
+   {
+    "bonusID": 323,
+    "value": 0
+   },
+   {
+    "bonusID": 324,
+    "value": 0
+   },
+   {
+    "bonusID": 325,
+    "value": 0
+   },
+   {
+    "bonusID": 326,
+    "value": 0
+   },
+   {
+    "bonusID": 327,
+    "value": 0
+   },
+   {
+    "bonusID": 328,
+    "value": 0
+   },
+   {
+    "bonusID": 329,
+    "value": 0
+   },
+   {
+    "bonusID": 330,
+    "value": 0
+   },
+   {
+    "bonusID": 331,
+    "value": 0
+   },
+   {
+    "bonusID": 332,
+    "value": 0
+   },
+   {
+    "bonusID": 334,
+    "value": 250
+   },
+   {
+    "bonusID": 335,
+    "value": 0
+   },
+   {
+    "bonusID": 336,
+    "value": 0
+   },
+   {
+    "bonusID": 337,
+    "value": 0
+   },
+   {
+    "bonusID": 338,
+    "value": 0
+   },
+   {
+    "bonusID": 339,
+    "value": 0
+   },
+   {
+    "bonusID": 340,
+    "value": 0
+   },
+   {
+    "bonusID": 341,
+    "value": 0
+   },
+   {
+    "bonusID": 342,
+    "value": 0
+   },
+   {
+    "bonusID": 343,
+    "value": 0
+   },
+   {
+    "bonusID": 344,
+    "value": 0
+   },
+   {
+    "bonusID": 345,
+    "value": 0
+   },
+   {
+    "bonusID": 346,
+    "value": 0
+   },
+   {
+    "bonusID": 347,
+    "value": 0
+   },
+   {
+    "bonusID": 348,
+    "value": 0
+   },
+   {
+    "bonusID": 349,
+    "value": 0
+   },
+   {
+    "bonusID": 350,
+    "value": 0
+   },
+   {
+    "bonusID": 351,
+    "value": 0
+   },
+   {
+    "bonusID": 352,
+    "value": 0
+   },
+   {
+    "bonusID": 353,
+    "value": 0
+   },
+   {
+    "bonusID": 354,
+    "value": 0
+   },
+   {
+    "bonusID": 355,
+    "value": 0
+   },
+   {
+    "bonusID": 356,
+    "value": 0
+   },
+   {
+    "bonusID": 357,
+    "value": 0
+   },
+   {
+    "bonusID": 358,
+    "value": 0
+   },
+   {
+    "bonusID": 359,
+    "value": 0
+   },
+   {
+    "bonusID": 360,
+    "value": 0
+   },
+   {
+    "bonusID": 361,
+    "value": 0
+   },
+   {
+    "bonusID": 362,
+    "value": 0
+   },
+   {
+    "bonusID": 363,
+    "value": 0
+   },
+   {
+    "bonusID": 364,
+    "value": 0
+   },
+   {
+    "bonusID": 365,
+    "value": 0
+   },
+   {
+    "bonusID": 366,
+    "value": 0
+   },
+   {
+    "bonusID": 367,
+    "value": 0
+   },
+   {
+    "bonusID": 368,
+    "value": 0
+   },
+   {
+    "bonusID": 369,
+    "value": 0
+   },
+   {
+    "bonusID": 370,
+    "value": 0
+   },
+   {
+    "bonusID": 371,
+    "value": 0
+   },
+   {
+    "bonusID": 372,
+    "value": 0
+   },
+   {
+    "bonusID": 373,
+    "value": 0
+   },
+   {
+    "bonusID": 374,
+    "value": 0
+   },
+   {
+    "bonusID": 375,
+    "value": 0
+   },
+   {
+    "bonusID": 376,
+    "value": 0
+   },
+   {
+    "bonusID": 377,
+    "value": 0
+   },
+   {
+    "bonusID": 378,
+    "value": 0
+   },
+   {
+    "bonusID": 379,
+    "value": 0
+   },
+   {
+    "bonusID": 380,
+    "value": 0
+   },
+   {
+    "bonusID": 381,
+    "value": 0
+   },
+   {
+    "bonusID": 382,
+    "value": 0
+   },
+   {
+    "bonusID": 383,
+    "value": 0
+   },
+   {
+    "bonusID": 384,
+    "value": 0
+   },
+   {
+    "bonusID": 385,
+    "value": 0
+   },
+   {
+    "bonusID": 386,
+    "value": 0
+   },
+   {
+    "bonusID": 387,
+    "value": 0
+   },
+   {
+    "bonusID": 388,
+    "value": 0
+   },
+   {
+    "bonusID": 389,
+    "value": 0
+   },
+   {
+    "bonusID": 390,
+    "value": 0
+   },
+   {
+    "bonusID": 391,
+    "value": 0
+   },
+   {
+    "bonusID": 392,
+    "value": 0
+   },
+   {
+    "bonusID": 393,
+    "value": 0
+   },
+   {
+    "bonusID": 394,
+    "value": 0
+   },
+   {
+    "bonusID": 395,
+    "value": 0
+   },
+   {
+    "bonusID": 396,
+    "value": 0
+   },
+   {
+    "bonusID": 397,
+    "value": 0
+   },
+   {
+    "bonusID": 398,
+    "value": 0
+   },
+   {
+    "bonusID": 399,
+    "value": 0
+   },
+   {
+    "bonusID": 400,
+    "value": 0
+   },
+   {
+    "bonusID": 401,
+    "value": 0
+   },
+   {
+    "bonusID": 402,
+    "value": 0
+   },
+   {
+    "bonusID": 403,
+    "value": 0
+   },
+   {
+    "bonusID": 408,
+    "value": 0
+   },
+   {
+    "bonusID": 415,
+    "value": 0
+   },
+   {
+    "bonusID": 416,
+    "value": 0
+   },
+   {
+    "bonusID": 417,
+    "value": 0
+   },
+   {
+    "bonusID": 418,
+    "value": 0
+   },
+   {
+    "bonusID": 419,
+    "value": 0
+   },
+   {
+    "bonusID": 420,
+    "value": 0
+   },
+   {
+    "bonusID": 421,
+    "value": 0
+   },
+   {
+    "bonusID": 422,
+    "value": 0
+   },
+   {
+    "bonusID": 423,
+    "value": 0
+   },
+   {
+    "bonusID": 424,
+    "value": 0
+   },
+   {
+    "bonusID": 425,
+    "value": 0
+   },
+   {
+    "bonusID": 426,
+    "value": 0
+   },
+   {
+    "bonusID": 427,
+    "value": 0
+   },
+   {
+    "bonusID": 428,
+    "value": 0
+   },
+   {
+    "bonusID": 429,
+    "value": 0
+   },
+   {
+    "bonusID": 430,
+    "value": 0
+   },
+   {
+    "bonusID": 431,
+    "value": 0
+   },
+   {
+    "bonusID": 432,
+    "value": 0
+   },
+   {
+    "bonusID": 433,
+    "value": 0
+   },
+   {
+    "bonusID": 434,
+    "value": 0
+   },
+   {
+    "bonusID": 435,
+    "value": 0
+   },
+   {
+    "bonusID": 436,
+    "value": 0
+   },
+   {
+    "bonusID": 437,
+    "value": 0
+   },
+   {
+    "bonusID": 438,
+    "value": 0
+   },
+   {
+    "bonusID": 439,
+    "value": 0
+   },
+   {
+    "bonusID": 440,
+    "value": 0
+   },
+   {
+    "bonusID": 441,
+    "value": 0
+   },
+   {
+    "bonusID": 442,
+    "value": 0
+   },
+   {
+    "bonusID": 443,
+    "value": 0
+   },
+   {
+    "bonusID": 444,
+    "value": 0
+   },
+   {
+    "bonusID": 445,
+    "value": 0
+   },
+   {
+    "bonusID": 446,
+    "value": 0
+   },
+   {
+    "bonusID": 447,
+    "value": 0
+   },
+   {
+    "bonusID": 448,
+    "value": 0
+   },
+   {
+    "bonusID": 449,
+    "value": 0
+   },
+   {
+    "bonusID": 450,
+    "value": 0
+   },
+   {
+    "bonusID": 451,
+    "value": 0
+   },
+   {
+    "bonusID": 452,
+    "value": 0
+   },
+   {
+    "bonusID": 453,
+    "value": 0
+   },
+   {
+    "bonusID": 454,
+    "value": 0
+   },
+   {
+    "bonusID": 455,
+    "value": 0
+   },
+   {
+    "bonusID": 456,
+    "value": 0
+   },
+   {
+    "bonusID": 457,
+    "value": 0
+   },
+   {
+    "bonusID": 458,
+    "value": 0
+   },
+   {
+    "bonusID": 459,
+    "value": 0
+   },
+   {
+    "bonusID": 460,
+    "value": 0
+   },
+   {
+    "bonusID": 461,
+    "value": 0
+   },
+   {
+    "bonusID": 462,
+    "value": 0
+   },
+   {
+    "bonusID": 463,
+    "value": 0
+   },
+   {
+    "bonusID": 464,
+    "value": 0
+   },
+   {
+    "bonusID": 465,
+    "value": 0
+   },
+   {
+    "bonusID": 466,
+    "value": 0
+   },
+   {
+    "bonusID": 467,
+    "value": 0
+   },
+   {
+    "bonusID": 468,
+    "value": 0
+   },
+   {
+    "bonusID": 469,
+    "value": 0
+   },
+   {
+    "bonusID": 470,
+    "value": 0
+   },
+   {
+    "bonusID": 471,
+    "value": 0
+   },
+   {
+    "bonusID": 472,
+    "value": 0
+   },
+   {
+    "bonusID": 473,
+    "value": 0
+   },
+   {
+    "bonusID": 474,
+    "value": 0
+   },
+   {
+    "bonusID": 475,
+    "value": 0
+   },
+   {
+    "bonusID": 476,
+    "value": 0
+   },
+   {
+    "bonusID": 477,
+    "value": 0
+   },
+   {
+    "bonusID": 478,
+    "value": 0
+   },
+   {
+    "bonusID": 479,
+    "value": 0
+   },
+   {
+    "bonusID": 480,
+    "value": 0
+   },
+   {
+    "bonusID": 481,
+    "value": 0
+   },
+   {
+    "bonusID": 482,
+    "value": 0
+   },
+   {
+    "bonusID": 483,
+    "value": 0
+   },
+   {
+    "bonusID": 484,
+    "value": 0
+   },
+   {
+    "bonusID": 485,
+    "value": 0
+   },
+   {
+    "bonusID": 486,
+    "value": 0
+   },
+   {
+    "bonusID": 487,
+    "value": 0
+   },
+   {
+    "bonusID": 488,
+    "value": 0
+   },
+   {
+    "bonusID": 489,
+    "value": 0
+   },
+   {
+    "bonusID": 490,
+    "value": 0
+   },
+   {
+    "bonusID": 491,
+    "value": 0
+   },
+   {
+    "bonusID": 492,
+    "value": 0
+   },
+   {
+    "bonusID": 493,
+    "value": 0
+   },
+   {
+    "bonusID": 494,
+    "value": 0
+   },
+   {
+    "bonusID": 495,
+    "value": 0
+   },
+   {
+    "bonusID": 496,
+    "value": 0
+   },
+   {
+    "bonusID": 497,
+    "value": 0
+   },
+   {
+    "bonusID": 498,
+    "value": 0
+   },
+   {
+    "bonusID": 499,
+    "value": 0
+   },
+   {
+    "bonusID": 500,
+    "value": 0
+   },
+   {
+    "bonusID": 501,
+    "value": 0
+   },
+   {
+    "bonusID": 502,
+    "value": 0
+   },
+   {
+    "bonusID": 503,
+    "value": 0
+   },
+   {
+    "bonusID": 504,
+    "value": 0
+   },
+   {
+    "bonusID": 505,
+    "value": 0
+   },
+   {
+    "bonusID": 506,
+    "value": 0
+   },
+   {
+    "bonusID": 508,
+    "value": 0
+   },
+   {
+    "bonusID": 509,
+    "value": 0
+   },
+   {
+    "bonusID": 510,
+    "value": 0
+   },
+   {
+    "bonusID": 511,
+    "value": 0
+   },
+   {
+    "bonusID": 512,
+    "value": 0
+   },
+   {
+    "bonusID": 513,
+    "value": 0
+   },
+   {
+    "bonusID": 514,
+    "value": 0
+   },
+   {
+    "bonusID": 515,
+    "value": 0
+   },
+   {
+    "bonusID": 516,
+    "value": 0
+   },
+   {
+    "bonusID": 517,
+    "value": 0
+   },
+   {
+    "bonusID": 518,
+    "value": 0
+   },
+   {
+    "bonusID": 519,
+    "value": 0
+   },
+   {
+    "bonusID": 520,
+    "value": 80
+   },
+   {
+    "bonusID": 521,
+    "value": 40
+   },
+   {
+    "bonusID": 522,
+    "value": 40
+   },
+   {
+    "bonusID": 523,
+    "value": 40
+   },
+   {
+    "bonusID": 527,
+    "value": 0
+   },
+   {
+    "bonusID": 528,
+    "value": 0
+   },
+   {
+    "bonusID": 529,
+    "value": 0
+   },
+   {
+    "bonusID": 530,
+    "value": 0
+   },
+   {
+    "bonusID": 531,
+    "value": 0
+   },
+   {
+    "bonusID": 532,
+    "value": 0
+   },
+   {
+    "bonusID": 534,
+    "value": 0
+   },
+   {
+    "bonusID": 535,
+    "value": 0
+   },
+   {
+    "bonusID": 536,
+    "value": 0
+   },
+   {
+    "bonusID": 537,
+    "value": 0
+   },
+   {
+    "bonusID": 538,
+    "value": 0
+   },
+   {
+    "bonusID": 539,
+    "value": 0
+   },
+   {
+    "bonusID": 540,
+    "value": 0
+   },
+   {
+    "bonusID": 541,
+    "value": 0
+   },
+   {
+    "bonusID": 542,
+    "value": 0
+   },
+   {
+    "bonusID": 543,
+    "value": 0
+   },
+   {
+    "bonusID": 544,
+    "value": 0
+   },
+   {
+    "bonusID": 545,
+    "value": 0
+   },
+   {
+    "bonusID": 546,
+    "value": 0
+   },
+   {
+    "bonusID": 547,
+    "value": 0
+   },
+   {
+    "bonusID": 548,
+    "value": 0
+   },
+   {
+    "bonusID": 549,
+    "value": 0
+   },
+   {
+    "bonusID": 550,
+    "value": 0
+   },
+   {
+    "bonusID": 551,
+    "value": 0
+   },
+   {
+    "bonusID": 552,
+    "value": 0
+   },
+   {
+    "bonusID": 553,
+    "value": 0
+   },
+   {
+    "bonusID": 554,
+    "value": 0
+   },
+   {
+    "bonusID": 555,
+    "value": 0
+   },
+   {
+    "bonusID": 556,
+    "value": 0
+   },
+   {
+    "bonusID": 557,
+    "value": 0
+   },
+   {
+    "bonusID": 558,
+    "value": 150
+   },
+   {
+    "bonusID": 559,
+    "value": 0
+   },
+   {
+    "bonusID": 560,
+    "value": 0
+   },
+   {
+    "bonusID": 561,
+    "value": 0
+   },
+   {
+    "bonusID": 562,
+    "value": 0
+   },
+   {
+    "bonusID": 563,
+    "value": 0
+   },
+   {
+    "bonusID": 564,
+    "value": 0
+   },
+   {
+    "bonusID": 565,
+    "value": 0
+   },
+   {
+    "bonusID": 566,
+    "value": 0
+   },
+   {
+    "bonusID": 567,
+    "value": 0
+   },
+   {
+    "bonusID": 568,
+    "value": 0
+   },
+   {
+    "bonusID": 569,
+    "value": 0
+   },
+   {
+    "bonusID": 570,
+    "value": 0
+   },
+   {
+    "bonusID": 571,
+    "value": 0
+   },
+   {
+    "bonusID": 572,
+    "value": 0
+   },
+   {
+    "bonusID": 573,
+    "value": 0
+   },
+   {
+    "bonusID": 574,
+    "value": 0
+   },
+   {
+    "bonusID": 575,
+    "value": 0
+   },
+   {
+    "bonusID": 576,
+    "value": 0
+   },
+   {
+    "bonusID": 577,
+    "value": 0
+   },
+   {
+    "bonusID": 578,
+    "value": 0
+   },
+   {
+    "bonusID": 579,
+    "value": 0
+   },
+   {
+    "bonusID": 580,
+    "value": 0
+   },
+   {
+    "bonusID": 581,
+    "value": 0
+   },
+   {
+    "bonusID": 582,
+    "value": 0
+   },
+   {
+    "bonusID": 583,
+    "value": 0
+   },
+   {
+    "bonusID": 591,
+    "value": 40
+   },
+   {
+    "bonusID": 592,
+    "value": 40
+   },
+   {
+    "bonusID": 593,
+    "value": 40
+   },
+   {
+    "bonusID": 594,
+    "value": 40
+   },
+   {
+    "bonusID": 595,
+    "value": 40
+   },
+   {
+    "bonusID": 596,
+    "value": 40
+   },
+   {
+    "bonusID": 597,
+    "value": 40
+   },
+   {
+    "bonusID": 598,
+    "value": 40
+   },
+   {
+    "bonusID": 599,
+    "value": 100
+   },
+   {
+    "bonusID": 600,
+    "value": 20
+   },
+   {
+    "bonusID": 601,
+    "value": 40
+   },
+   {
+    "bonusID": 602,
+    "value": 40
+   },
+   {
+    "bonusID": 603,
+    "value": 40
+   },
+   {
+    "bonusID": 604,
+    "value": 40
+   },
+   {
+    "bonusID": 605,
+    "value": 40
+   },
+   {
+    "bonusID": 606,
+    "value": 40
+   },
+   {
+    "bonusID": 607,
+    "value": 40
+   },
+   {
+    "bonusID": 608,
+    "value": 100
+   },
+   {
+    "bonusID": 609,
+    "value": 40
+   },
+   {
+    "bonusID": 610,
+    "value": 80
+   },
+   {
+    "bonusID": 611,
+    "value": 20
+   },
+   {
+    "bonusID": 612,
+    "value": 40
+   },
+   {
+    "bonusID": 613,
+    "value": 40
+   },
+   {
+    "bonusID": 614,
+    "value": 40
+   },
+   {
+    "bonusID": 615,
+    "value": 40
+   },
+   {
+    "bonusID": 616,
+    "value": 100
+   },
+   {
+    "bonusID": 617,
+    "value": 100
+   },
+   {
+    "bonusID": 618,
+    "value": 100
+   },
+   {
+    "bonusID": 619,
+    "value": 40
+   },
+   {
+    "bonusID": 620,
+    "value": 20
+   },
+   {
+    "bonusID": 621,
+    "value": 40
+   },
+   {
+    "bonusID": 622,
+    "value": 40
+   },
+   {
+    "bonusID": 623,
+    "value": 40
+   },
+   {
+    "bonusID": 624,
+    "value": 40
+   },
+   {
+    "bonusID": 625,
+    "value": 40
+   },
+   {
+    "bonusID": 626,
+    "value": 40
+   },
+   {
+    "bonusID": 627,
+    "value": 40
+   },
+   {
+    "bonusID": 628,
+    "value": 40
+   },
+   {
+    "bonusID": 629,
+    "value": 40
+   },
+   {
+    "bonusID": 630,
+    "value": 40
+   },
+   {
+    "bonusID": 631,
+    "value": 40
+   },
+   {
+    "bonusID": 632,
+    "value": 40
+   },
+   {
+    "bonusID": 633,
+    "value": 40
+   },
+   {
+    "bonusID": 634,
+    "value": 40
+   },
+   {
+    "bonusID": 635,
+    "value": 40
+   },
+   {
+    "bonusID": 636,
+    "value": 40
+   },
+   {
+    "bonusID": 637,
+    "value": 40
+   },
+   {
+    "bonusID": 638,
+    "value": 40
+   },
+   {
+    "bonusID": 639,
+    "value": 80
+   },
+   {
+    "bonusID": 640,
+    "value": 80
+   },
+   {
+    "bonusID": 641,
+    "value": 20
+   },
+   {
+    "bonusID": 642,
+    "value": 40
+   },
+   {
+    "bonusID": 643,
+    "value": 40
+   },
+   {
+    "bonusID": 644,
+    "value": 40
+   },
+   {
+    "bonusID": 645,
+    "value": 40
+   },
+   {
+    "bonusID": 646,
+    "value": 20
+   },
+   {
+    "bonusID": 647,
+    "value": 40
+   },
+   {
+    "bonusID": 648,
+    "value": 40
+   },
+   {
+    "bonusID": 649,
+    "value": 40
+   },
+   {
+    "bonusID": 650,
+    "value": 40
+   },
+   {
+    "bonusID": 651,
+    "value": 40
+   },
+   {
+    "bonusID": 652,
+    "value": 40
+   },
+   {
+    "bonusID": 653,
+    "value": 40
+   },
+   {
+    "bonusID": 654,
+    "value": 80
+   },
+   {
+    "bonusID": 655,
+    "value": 40
+   },
+   {
+    "bonusID": 656,
+    "value": 40
+   },
+   {
+    "bonusID": 657,
+    "value": 40
+   },
+   {
+    "bonusID": 658,
+    "value": 40
+   },
+   {
+    "bonusID": 659,
+    "value": 40
+   },
+   {
+    "bonusID": 660,
+    "value": 40
+   },
+   {
+    "bonusID": 661,
+    "value": 40
+   },
+   {
+    "bonusID": 662,
+    "value": 80
+   },
+   {
+    "bonusID": 663,
+    "value": 100
+   },
+   {
+    "bonusID": 664,
+    "value": 40
+   },
+   {
+    "bonusID": 665,
+    "value": 80
+   },
+   {
+    "bonusID": 666,
+    "value": 40
+   },
+   {
+    "bonusID": 667,
+    "value": 40
+   },
+   {
+    "bonusID": 668,
+    "value": 40
+   },
+   {
+    "bonusID": 669,
+    "value": 40
+   },
+   {
+    "bonusID": 670,
+    "value": 40
+   },
+   {
+    "bonusID": 671,
+    "value": 0
+   },
+   {
+    "bonusID": 672,
+    "value": 80
+   },
+   {
+    "bonusID": 673,
+    "value": 40
+   },
+   {
+    "bonusID": 674,
+    "value": 40
+   },
+   {
+    "bonusID": 675,
+    "value": 40
+   },
+   {
+    "bonusID": 676,
+    "value": 20
+   },
+   {
+    "bonusID": 677,
+    "value": 40
+   },
+   {
+    "bonusID": 678,
+    "value": 40
+   },
+   {
+    "bonusID": 679,
+    "value": 40
+   },
+   {
+    "bonusID": 680,
+    "value": 40
+   },
+   {
+    "bonusID": 681,
+    "value": 40
+   },
+   {
+    "bonusID": 682,
+    "value": 40
+   },
+   {
+    "bonusID": 683,
+    "value": 40
+   },
+   {
+    "bonusID": 684,
+    "value": 40
+   },
+   {
+    "bonusID": 685,
+    "value": 80
+   },
+   {
+    "bonusID": 686,
+    "value": 100
+   },
+   {
+    "bonusID": 687,
+    "value": 40
+   },
+   {
+    "bonusID": 688,
+    "value": 80
+   },
+   {
+    "bonusID": 689,
+    "value": 40
+   },
+   {
+    "bonusID": 690,
+    "value": 20
+   },
+   {
+    "bonusID": 691,
+    "value": 40
+   },
+   {
+    "bonusID": 692,
+    "value": 20
+   },
+   {
+    "bonusID": 693,
+    "value": 40
+   },
+   {
+    "bonusID": 694,
+    "value": 40
+   },
+   {
+    "bonusID": 695,
+    "value": 40
+   },
+   {
+    "bonusID": 696,
+    "value": 40
+   },
+   {
+    "bonusID": 697,
+    "value": 40
+   },
+   {
+    "bonusID": 698,
+    "value": 40
+   },
+   {
+    "bonusID": 699,
+    "value": 20
+   },
+   {
+    "bonusID": 700,
+    "value": 40
+   },
+   {
+    "bonusID": 701,
+    "value": 40
+   },
+   {
+    "bonusID": 702,
+    "value": 60
+   },
+   {
+    "bonusID": 703,
+    "value": 80
+   },
+   {
+    "bonusID": 704,
+    "value": 0
+   },
+   {
+    "bonusID": 705,
+    "value": 80
+   },
+   {
+    "bonusID": 706,
+    "value": 80
+   },
+   {
+    "bonusID": 707,
+    "value": 20
+   },
+   {
+    "bonusID": 708,
+    "value": 100
+   },
+   {
+    "bonusID": 709,
+    "value": 20
+   },
+   {
+    "bonusID": 710,
+    "value": 40
+   },
+   {
+    "bonusID": 711,
+    "value": 40
+   },
+   {
+    "bonusID": 712,
+    "value": 40
+   },
+   {
+    "bonusID": 713,
+    "value": 40
+   },
+   {
+    "bonusID": 714,
+    "value": 40
+   },
+   {
+    "bonusID": 715,
+    "value": 40
+   },
+   {
+    "bonusID": 716,
+    "value": 40
+   },
+   {
+    "bonusID": 717,
+    "value": 40
+   },
+   {
+    "bonusID": 718,
+    "value": 40
+   },
+   {
+    "bonusID": 719,
+    "value": 40
+   },
+   {
+    "bonusID": 720,
+    "value": 40
+   },
+   {
+    "bonusID": 721,
+    "value": 20
+   },
+   {
+    "bonusID": 722,
+    "value": 0
+   },
+   {
+    "bonusID": 723,
+    "value": 0
+   },
+   {
+    "bonusID": 724,
+    "value": 40
+   },
+   {
+    "bonusID": 725,
+    "value": 40
+   },
+   {
+    "bonusID": 726,
+    "value": 80
+   },
+   {
+    "bonusID": 727,
+    "value": 40
+   },
+   {
+    "bonusID": 728,
+    "value": 0
+   },
+   {
+    "bonusID": 729,
+    "value": 40
+   },
+   {
+    "bonusID": 730,
+    "value": 40
+   },
+   {
+    "bonusID": 731,
+    "value": 40
+   },
+   {
+    "bonusID": 732,
+    "value": 20
+   },
+   {
+    "bonusID": 733,
+    "value": 40
+   },
+   {
+    "bonusID": 734,
+    "value": 40
+   },
+   {
+    "bonusID": 735,
+    "value": 80
+   },
+   {
+    "bonusID": 736,
+    "value": 100
+   },
+   {
+    "bonusID": 737,
+    "value": 40
+   },
+   {
+    "bonusID": 738,
+    "value": 80
+   },
+   {
+    "bonusID": 739,
+    "value": 40
+   },
+   {
+    "bonusID": 740,
+    "value": 40
+   },
+   {
+    "bonusID": 741,
+    "value": 40
+   },
+   {
+    "bonusID": 742,
+    "value": 100
+   },
+   {
+    "bonusID": 743,
+    "value": 40
+   },
+   {
+    "bonusID": 744,
+    "value": 40
+   },
+   {
+    "bonusID": 745,
+    "value": 40
+   },
+   {
+    "bonusID": 746,
+    "value": 40
+   },
+   {
+    "bonusID": 747,
+    "value": 40
+   },
+   {
+    "bonusID": 748,
+    "value": 40
+   },
+   {
+    "bonusID": 749,
+    "value": 40
+   },
+   {
+    "bonusID": 750,
+    "value": 40
+   },
+   {
+    "bonusID": 751,
+    "value": 100
+   },
+   {
+    "bonusID": 752,
+    "value": 40
+   },
+   {
+    "bonusID": 753,
+    "value": 40
+   },
+   {
+    "bonusID": 754,
+    "value": 40
+   },
+   {
+    "bonusID": 755,
+    "value": 40
+   },
+   {
+    "bonusID": 756,
+    "value": 40
+   },
+   {
+    "bonusID": 757,
+    "value": 80
+   },
+   {
+    "bonusID": 758,
+    "value": 40
+   },
+   {
+    "bonusID": 759,
+    "value": 40
+   },
+   {
+    "bonusID": 760,
+    "value": 40
+   },
+   {
+    "bonusID": 761,
+    "value": 40
+   },
+   {
+    "bonusID": 762,
+    "value": 40
+   },
+   {
+    "bonusID": 763,
+    "value": 20
+   },
+   {
+    "bonusID": 764,
+    "value": 40
+   },
+   {
+    "bonusID": 765,
+    "value": 40
+   },
+   {
+    "bonusID": 766,
+    "value": 40
+   },
+   {
+    "bonusID": 767,
+    "value": 40
+   },
+   {
+    "bonusID": 768,
+    "value": 40
+   },
+   {
+    "bonusID": 769,
+    "value": 40
+   },
+   {
+    "bonusID": 770,
+    "value": 80
+   },
+   {
+    "bonusID": 771,
+    "value": 40
+   },
+   {
+    "bonusID": 773,
+    "value": 40
+   },
+   {
+    "bonusID": 774,
+    "value": 40
+   },
+   {
+    "bonusID": 775,
+    "value": 20
+   },
+   {
+    "bonusID": 776,
+    "value": 20
+   },
+   {
+    "bonusID": 777,
+    "value": 40
+   },
+   {
+    "bonusID": 778,
+    "value": 40
+   },
+   {
+    "bonusID": 779,
+    "value": 40
+   },
+   {
+    "bonusID": 780,
+    "value": 40
+   },
+   {
+    "bonusID": 781,
+    "value": 50
+   },
+   {
+    "bonusID": 782,
+    "value": 80
+   },
+   {
+    "bonusID": 783,
+    "value": 100
+   },
+   {
+    "bonusID": 784,
+    "value": 40
+   },
+   {
+    "bonusID": 785,
+    "value": 40
+   },
+   {
+    "bonusID": 786,
+    "value": 40
+   },
+   {
+    "bonusID": 787,
+    "value": 40
+   },
+   {
+    "bonusID": 788,
+    "value": 40
+   },
+   {
+    "bonusID": 789,
+    "value": 40
+   },
+   {
+    "bonusID": 790,
+    "value": 0
+   },
+   {
+    "bonusID": 791,
+    "value": 40
+   },
+   {
+    "bonusID": 792,
+    "value": 40
+   },
+   {
+    "bonusID": 793,
+    "value": 40
+   },
+   {
+    "bonusID": 794,
+    "value": 40
+   },
+   {
+    "bonusID": 795,
+    "value": 40
+   },
+   {
+    "bonusID": 796,
+    "value": 40
+   },
+   {
+    "bonusID": 797,
+    "value": 40
+   },
+   {
+    "bonusID": 798,
+    "value": 40
+   },
+   {
+    "bonusID": 799,
+    "value": 40
+   },
+   {
+    "bonusID": 800,
+    "value": 40
+   },
+   {
+    "bonusID": 801,
+    "value": 40
+   },
+   {
+    "bonusID": 802,
+    "value": 40
+   },
+   {
+    "bonusID": 803,
+    "value": 40
+   },
+   {
+    "bonusID": 804,
+    "value": 40
+   },
+   {
+    "bonusID": 805,
+    "value": 80
+   },
+   {
+    "bonusID": 806,
+    "value": 80
+   },
+   {
+    "bonusID": 807,
+    "value": 20
+   },
+   {
+    "bonusID": 808,
+    "value": 40
+   },
+   {
+    "bonusID": 809,
+    "value": 40
+   },
+   {
+    "bonusID": 810,
+    "value": 40
+   },
+   {
+    "bonusID": 811,
+    "value": 40
+   },
+   {
+    "bonusID": 812,
+    "value": 40
+   },
+   {
+    "bonusID": 813,
+    "value": 40
+   },
+   {
+    "bonusID": 814,
+    "value": 40
+   },
+   {
+    "bonusID": 815,
+    "value": 60
+   },
+   {
+    "bonusID": 816,
+    "value": 20
+   },
+   {
+    "bonusID": 817,
+    "value": 40
+   },
+   {
+    "bonusID": 818,
+    "value": 40
+   },
+   {
+    "bonusID": 819,
+    "value": 40
+   },
+   {
+    "bonusID": 820,
+    "value": 40
+   },
+   {
+    "bonusID": 821,
+    "value": 40
+   },
+   {
+    "bonusID": 822,
+    "value": 40
+   },
+   {
+    "bonusID": 823,
+    "value": 40
+   },
+   {
+    "bonusID": 824,
+    "value": 60
+   },
+   {
+    "bonusID": 825,
+    "value": 60
+   },
+   {
+    "bonusID": 826,
+    "value": 40
+   },
+   {
+    "bonusID": 827,
+    "value": 40
+   },
+   {
+    "bonusID": 828,
+    "value": 40
+   },
+   {
+    "bonusID": 829,
+    "value": 20
+   },
+   {
+    "bonusID": 830,
+    "value": 40
+   },
+   {
+    "bonusID": 831,
+    "value": 40
+   },
+   {
+    "bonusID": 832,
+    "value": 40
+   },
+   {
+    "bonusID": 833,
+    "value": 80
+   },
+   {
+    "bonusID": 834,
+    "value": 40
+   },
+   {
+    "bonusID": 835,
+    "value": 40
+   },
+   {
+    "bonusID": 836,
+    "value": 40
+   },
+   {
+    "bonusID": 837,
+    "value": 40
+   },
+   {
+    "bonusID": 838,
+    "value": 40
+   },
+   {
+    "bonusID": 839,
+    "value": 40
+   },
+   {
+    "bonusID": 840,
+    "value": 40
+   },
+   {
+    "bonusID": 841,
+    "value": 40
+   },
+   {
+    "bonusID": 842,
+    "value": 40
+   },
+   {
+    "bonusID": 843,
+    "value": 40
+   },
+   {
+    "bonusID": 844,
+    "value": 80
+   },
+   {
+    "bonusID": 845,
+    "value": 40
+   },
+   {
+    "bonusID": 846,
+    "value": 40
+   },
+   {
+    "bonusID": 847,
+    "value": 40
+   },
+   {
+    "bonusID": 848,
+    "value": 40
+   },
+   {
+    "bonusID": 849,
+    "value": 40
+   },
+   {
+    "bonusID": 850,
+    "value": 40
+   },
+   {
+    "bonusID": 851,
+    "value": 60
+   },
+   {
+    "bonusID": 852,
+    "value": 80
+   },
+   {
+    "bonusID": 853,
+    "value": 40
+   },
+   {
+    "bonusID": 854,
+    "value": 20
+   },
+   {
+    "bonusID": 855,
+    "value": 40
+   },
+   {
+    "bonusID": 856,
+    "value": 40
+   },
+   {
+    "bonusID": 857,
+    "value": 40
+   },
+   {
+    "bonusID": 858,
+    "value": 40
+   },
+   {
+    "bonusID": 859,
+    "value": 40
+   },
+   {
+    "bonusID": 860,
+    "value": 40
+   },
+   {
+    "bonusID": 861,
+    "value": 40
+   },
+   {
+    "bonusID": 862,
+    "value": 40
+   },
+   {
+    "bonusID": 863,
+    "value": 40
+   },
+   {
+    "bonusID": 864,
+    "value": 40
+   },
+   {
+    "bonusID": 865,
+    "value": 60
+   },
+   {
+    "bonusID": 866,
+    "value": 20
+   },
+   {
+    "bonusID": 867,
+    "value": 20
+   },
+   {
+    "bonusID": 868,
+    "value": 20
+   },
+   {
+    "bonusID": 869,
+    "value": 100
+   },
+   {
+    "bonusID": 870,
+    "value": 140
+   },
+   {
+    "bonusID": 871,
+    "value": 60
+   },
+   {
+    "bonusID": 872,
+    "value": 60
+   },
+   {
+    "bonusID": 873,
+    "value": 40
+   },
+   {
+    "bonusID": 874,
+    "value": 20
+   },
+   {
+    "bonusID": 875,
+    "value": 100
+   },
+   {
+    "bonusID": 876,
+    "value": 100
+   },
+   {
+    "bonusID": 877,
+    "value": 40
+   },
+   {
+    "bonusID": 878,
+    "value": 120
+   },
+   {
+    "bonusID": 879,
+    "value": 40
+   },
+   {
+    "bonusID": 880,
+    "value": 40
+   },
+   {
+    "bonusID": 881,
+    "value": 40
+   },
+   {
+    "bonusID": 882,
+    "value": 40
+   },
+   {
+    "bonusID": 883,
+    "value": 80
+   },
+   {
+    "bonusID": 884,
+    "value": 50
+   },
+   {
+    "bonusID": 885,
+    "value": 40
+   },
+   {
+    "bonusID": 886,
+    "value": 40
+   },
+   {
+    "bonusID": 887,
+    "value": 50
+   },
+   {
+    "bonusID": 888,
+    "value": 40
+   },
+   {
+    "bonusID": 889,
+    "value": 140
+   },
+   {
+    "bonusID": 890,
+    "value": 40
+   },
+   {
+    "bonusID": 891,
+    "value": 20
+   },
+   {
+    "bonusID": 892,
+    "value": 30
+   },
+   {
+    "bonusID": 893,
+    "value": 150
+   },
+   {
+    "bonusID": 894,
+    "value": 0
+   },
+   {
+    "bonusID": 895,
+    "value": 0
+   },
+   {
+    "bonusID": 896,
+    "value": 20
+   },
+   {
+    "bonusID": 897,
+    "value": 0
+   },
+   {
+    "bonusID": 898,
+    "value": 0
+   },
+   {
+    "bonusID": 899,
+    "value": 0
+   },
+   {
+    "bonusID": 900,
+    "value": 0
+   },
+   {
+    "bonusID": 901,
+    "value": 0
+   },
+   {
+    "bonusID": 902,
+    "value": 0
+   },
+   {
+    "bonusID": 903,
+    "value": 0
+   },
+   {
+    "bonusID": 904,
+    "value": 0
+   },
+   {
+    "bonusID": 905,
+    "value": 0
+   },
+   {
+    "bonusID": 906,
+    "value": 0
+   },
+   {
+    "bonusID": 907,
+    "value": 0
+   },
+   {
+    "bonusID": 908,
+    "value": 0
+   },
+   {
+    "bonusID": 909,
+    "value": 0
+   },
+   {
+    "bonusID": 910,
+    "value": 0
+   },
+   {
+    "bonusID": 911,
+    "value": 0
+   },
+   {
+    "bonusID": 912,
+    "value": 0
+   },
+   {
+    "bonusID": 913,
+    "value": 0
+   },
+   {
+    "bonusID": 914,
+    "value": 0
+   },
+   {
+    "bonusID": 915,
+    "value": 0
+   },
+   {
+    "bonusID": 916,
+    "value": 0
+   },
+   {
+    "bonusID": 917,
+    "value": 0
+   },
+   {
+    "bonusID": 918,
+    "value": 0
+   },
+   {
+    "bonusID": 919,
+    "value": 0
+   },
+   {
+    "bonusID": 920,
+    "value": 0
+   },
+   {
+    "bonusID": 921,
+    "value": 0
+   },
+   {
+    "bonusID": 922,
+    "value": 0
+   },
+   {
+    "bonusID": 923,
+    "value": 0
+   },
+   {
+    "bonusID": 924,
+    "value": 0
+   },
+   {
+    "bonusID": 925,
+    "value": 0
+   },
+   {
+    "bonusID": 926,
+    "value": 0
+   },
+   {
+    "bonusID": 927,
+    "value": 0
+   },
+   {
+    "bonusID": 928,
+    "value": 0
+   },
+   {
+    "bonusID": 929,
+    "value": 0
+   },
+   {
+    "bonusID": 930,
+    "value": 0
+   },
+   {
+    "bonusID": 931,
+    "value": 0
+   },
+   {
+    "bonusID": 932,
+    "value": 0
+   },
+   {
+    "bonusID": 933,
+    "value": 0
+   },
+   {
+    "bonusID": 934,
+    "value": 0
+   },
+   {
+    "bonusID": 935,
+    "value": 0
+   },
+   {
+    "bonusID": 936,
+    "value": 0
+   },
+   {
+    "bonusID": 937,
+    "value": 0
+   },
+   {
+    "bonusID": 938,
+    "value": 0
+   },
+   {
+    "bonusID": 939,
+    "value": 0
+   },
+   {
+    "bonusID": 940,
+    "value": 0
+   },
+   {
+    "bonusID": 941,
+    "value": 0
+   },
+   {
+    "bonusID": 942,
+    "value": 0
+   },
+   {
+    "bonusID": 943,
+    "value": 0
+   },
+   {
+    "bonusID": 944,
+    "value": 0
+   },
+   {
+    "bonusID": 945,
+    "value": 0
+   },
+   {
+    "bonusID": 946,
+    "value": 0
+   },
+   {
+    "bonusID": 947,
+    "value": 0
+   },
+   {
+    "bonusID": 948,
+    "value": 0
+   },
+   {
+    "bonusID": 949,
+    "value": 0
+   },
+   {
+    "bonusID": 950,
+    "value": 0
+   },
+   {
+    "bonusID": 951,
+    "value": 0
+   },
+   {
+    "bonusID": 952,
+    "value": 0
+   },
+   {
+    "bonusID": 953,
+    "value": 0
+   },
+   {
+    "bonusID": 954,
+    "value": 0
+   },
+   {
+    "bonusID": 955,
+    "value": 0
+   },
+   {
+    "bonusID": 956,
+    "value": 0
+   },
+   {
+    "bonusID": 957,
+    "value": 0
+   },
+   {
+    "bonusID": 958,
+    "value": 0
+   },
+   {
+    "bonusID": 959,
+    "value": 0
+   },
+   {
+    "bonusID": 960,
+    "value": 0
+   },
+   {
+    "bonusID": 961,
+    "value": 0
+   },
+   {
+    "bonusID": 962,
+    "value": 0
+   },
+   {
+    "bonusID": 963,
+    "value": 0
+   },
+   {
+    "bonusID": 964,
+    "value": 0
+   },
+   {
+    "bonusID": 965,
+    "value": 0
+   },
+   {
+    "bonusID": 966,
+    "value": 0
+   },
+   {
+    "bonusID": 967,
+    "value": 0
+   },
+   {
+    "bonusID": 968,
+    "value": 0
+   },
+   {
+    "bonusID": 969,
+    "value": 0
+   },
+   {
+    "bonusID": 970,
+    "value": 0
+   },
+   {
+    "bonusID": 971,
+    "value": 0
+   },
+   {
+    "bonusID": 972,
+    "value": 0
+   },
+   {
+    "bonusID": 973,
+    "value": 0
+   },
+   {
+    "bonusID": 974,
+    "value": 0
+   },
+   {
+    "bonusID": 975,
+    "value": 0
+   },
+   {
+    "bonusID": 976,
+    "value": 0
+   },
+   {
+    "bonusID": 977,
+    "value": 0
+   },
+   {
+    "bonusID": 978,
+    "value": 0
+   },
+   {
+    "bonusID": 979,
+    "value": 0
+   },
+   {
+    "bonusID": 980,
+    "value": 0
+   },
+   {
+    "bonusID": 981,
+    "value": 0
+   },
+   {
+    "bonusID": 982,
+    "value": 0
+   },
+   {
+    "bonusID": 983,
+    "value": 0
+   },
+   {
+    "bonusID": 984,
+    "value": 0
+   },
+   {
+    "bonusID": 985,
+    "value": 0
+   },
+   {
+    "bonusID": 986,
+    "value": 0
+   },
+   {
+    "bonusID": 987,
+    "value": 0
+   },
+   {
+    "bonusID": 988,
+    "value": 0
+   },
+   {
+    "bonusID": 989,
+    "value": 0
+   },
+   {
+    "bonusID": 990,
+    "value": 0
+   },
+   {
+    "bonusID": 991,
+    "value": 0
+   },
+   {
+    "bonusID": 992,
+    "value": 0
+   },
+   {
+    "bonusID": 993,
+    "value": 0
+   },
+   {
+    "bonusID": 994,
+    "value": 0
+   },
+   {
+    "bonusID": 995,
+    "value": 0
+   },
+   {
+    "bonusID": 996,
+    "value": 0
+   },
+   {
+    "bonusID": 997,
+    "value": 0
+   },
+   {
+    "bonusID": 998,
+    "value": 0
+   },
+   {
+    "bonusID": 999,
+    "value": 0
+   },
+   {
+    "bonusID": 1000,
+    "value": 0
+   },
+   {
+    "bonusID": 1001,
+    "value": 0
+   },
+   {
+    "bonusID": 1002,
+    "value": 0
+   },
+   {
+    "bonusID": 1003,
+    "value": 0
+   },
+   {
+    "bonusID": 1004,
+    "value": 0
+   },
+   {
+    "bonusID": 1005,
+    "value": 0
+   },
+   {
+    "bonusID": 1006,
+    "value": 0
+   },
+   {
+    "bonusID": 1007,
+    "value": 0
+   },
+   {
+    "bonusID": 1008,
+    "value": 0
+   },
+   {
+    "bonusID": 1009,
+    "value": 0
+   },
+   {
+    "bonusID": 1010,
+    "value": 0
+   },
+   {
+    "bonusID": 1011,
+    "value": 0
+   },
+   {
+    "bonusID": 1012,
+    "value": 0
+   },
+   {
+    "bonusID": 1013,
+    "value": 0
+   },
+   {
+    "bonusID": 1014,
+    "value": 0
+   },
+   {
+    "bonusID": 1015,
+    "value": 0
+   },
+   {
+    "bonusID": 1016,
+    "value": 0
+   },
+   {
+    "bonusID": 1017,
+    "value": 0
+   },
+   {
+    "bonusID": 1018,
+    "value": 0
+   },
+   {
+    "bonusID": 1019,
+    "value": 40
+   },
+   {
+    "bonusID": 1020,
+    "value": 100
+   },
+   {
+    "bonusID": 1021,
+    "value": 40
+   },
+   {
+    "bonusID": 1022,
+    "value": 40
+   },
+   {
+    "bonusID": 1023,
+    "value": 40
+   },
+   {
+    "bonusID": 1024,
+    "value": 40
+   },
+   {
+    "bonusID": 1025,
+    "value": 40
+   },
+   {
+    "bonusID": 1026,
+    "value": 40
+   },
+   {
+    "bonusID": 1027,
+    "value": 40
+   },
+   {
+    "bonusID": 1028,
+    "value": 100
+   },
+   {
+    "bonusID": 1029,
+    "value": 40
+   },
+   {
+    "bonusID": 1030,
+    "value": 40
+   },
+   {
+    "bonusID": 1031,
+    "value": 40
+   },
+   {
+    "bonusID": 1032,
+    "value": 40
+   },
+   {
+    "bonusID": 1033,
+    "value": 40
+   },
+   {
+    "bonusID": 1034,
+    "value": 20
+   },
+   {
+    "bonusID": 1035,
+    "value": 20
+   },
+   {
+    "bonusID": 1036,
+    "value": 20
+   },
+   {
+    "bonusID": 1037,
+    "value": 40
+   },
+   {
+    "bonusID": 1038,
+    "value": 20
+   },
+   {
+    "bonusID": 1039,
+    "value": 100
+   },
+   {
+    "bonusID": 1040,
+    "value": 40
+   },
+   {
+    "bonusID": 1041,
+    "value": 20
+   },
+   {
+    "bonusID": 1042,
+    "value": 40
+   },
+   {
+    "bonusID": 1043,
+    "value": 20
+   },
+   {
+    "bonusID": 1044,
+    "value": 40
+   },
+   {
+    "bonusID": 1045,
+    "value": 20
+   },
+   {
+    "bonusID": 1046,
+    "value": 20
+   },
+   {
+    "bonusID": 1047,
+    "value": 20
+   },
+   {
+    "bonusID": 1048,
+    "value": 40
+   },
+   {
+    "bonusID": 1049,
+    "value": 40
+   },
+   {
+    "bonusID": 1050,
+    "value": 40
+   },
+   {
+    "bonusID": 1051,
+    "value": 20
+   },
+   {
+    "bonusID": 1052,
+    "value": 40
+   },
+   {
+    "bonusID": 1053,
+    "value": 20
+   },
+   {
+    "bonusID": 1054,
+    "value": 80
+   },
+   {
+    "bonusID": 1055,
+    "value": 80
+   },
+   {
+    "bonusID": 1056,
+    "value": 80
+   },
+   {
+    "bonusID": 1057,
+    "value": 100
+   },
+   {
+    "bonusID": 1058,
+    "value": 20
+   },
+   {
+    "bonusID": 1059,
+    "value": 100
+   },
+   {
+    "bonusID": 1060,
+    "value": 40
+   },
+   {
+    "bonusID": 1061,
+    "value": 100
+   },
+   {
+    "bonusID": 1062,
+    "value": 100
+   },
+   {
+    "bonusID": 1063,
+    "value": 40
+   },
+   {
+    "bonusID": 1064,
+    "value": 40
+   },
+   {
+    "bonusID": 1065,
+    "value": 100
+   },
+   {
+    "bonusID": 1066,
+    "value": 40
+   },
+   {
+    "bonusID": 1067,
+    "value": 100
+   },
+   {
+    "bonusID": 1068,
+    "value": 100
+   },
+   {
+    "bonusID": 1069,
+    "value": 40
+   },
+   {
+    "bonusID": 1070,
+    "value": 100
+   },
+   {
+    "bonusID": 1071,
+    "value": 40
+   },
+   {
+    "bonusID": 1072,
+    "value": 100
+   },
+   {
+    "bonusID": 1073,
+    "value": 40
+   },
+   {
+    "bonusID": 1074,
+    "value": 40
+   },
+   {
+    "bonusID": 1075,
+    "value": 100
+   },
+   {
+    "bonusID": 1076,
+    "value": 0
+   },
+   {
+    "bonusID": 1077,
+    "value": 0
+   },
+   {
+    "bonusID": 1078,
+    "value": 0
+   },
+   {
+    "bonusID": 1079,
+    "value": 0
+   },
+   {
+    "bonusID": 1080,
+    "value": 0
+   },
+   {
+    "bonusID": 1081,
+    "value": 20
+   },
+   {
+    "bonusID": 1082,
+    "value": 40
+   },
+   {
+    "bonusID": 1083,
+    "value": 0
+   },
+   {
+    "bonusID": 1085,
+    "value": 40
+   },
+   {
+    "bonusID": 1088,
+    "value": 60
+   },
+   {
+    "bonusID": 1089,
+    "value": 40
+   },
+   {
+    "bonusID": 1090,
+    "value": 100
+   },
+   {
+    "bonusID": 1091,
+    "value": 80
+   },
+   {
+    "bonusID": 1092,
+    "value": 100
+   },
+   {
+    "bonusID": 1093,
+    "value": 20
+   },
+   {
+    "bonusID": 1094,
+    "value": 20
+   },
+   {
+    "bonusID": 1095,
+    "value": 0
+   },
+   {
+    "bonusID": 1096,
+    "value": 40
+   },
+   {
+    "bonusID": 1097,
+    "value": 20
+   },
+   {
+    "bonusID": 1098,
+    "value": 20
+   },
+   {
+    "bonusID": 1099,
+    "value": 140
+   },
+   {
+    "bonusID": 1100,
+    "value": 80
+   },
+   {
+    "bonusID": 1101,
+    "value": 0
+   },
+   {
+    "bonusID": 1102,
+    "value": 80
+   },
+   {
+    "bonusID": 1103,
+    "value": 0
+   }
+  ],
+  "ReinforcementCard": "none",
+  "BlockadeCard": "none",
+  "EmergencyBlockadeCard": "none",
+  "AirliftCard": "none",
+  "GiftCard": {
+   "NumPieces": 1,
+   "InitialPieces": 5,
+   "MinimumPiecesPerTurn": 0,
+   "Weight": 1
+  },
+  "DiplomacyCard": "none",
+  "SanctionsCard": "none",
+  "SpyCard": "none",
+  "ReconnaissanceCard": {
+   "NumPieces": 5,
+   "InitialPieces": 4,
+   "MinimumPiecesPerTurn": 1,
+   "Weight": 0,
+   "Duration": 3
+  },
+  "SurveillanceCard": "none",
+  "OrderPriorityCard": "none",
+  "OrderDelayCard": "none",
+  "BombCard": "none",
+  "MaxCardsHold": 30,
+  "NumberOfCardsToReceiveEachTurn": 2,
+  "CardPlayingsFogged": true,
+  "CardsHoldingAndReceivingFogged": true,
+  "Mods": [
+   {
+    "ModID": "336",
+    "Name": "Local Deployment Helper"
+   },
+   {
+    "ModID": "191",
+    "Name": "Diplomacy 2"
+   }
+  ]
+ }
+}
