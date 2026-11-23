@@ -823,6 +823,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   ends with the shared fields GUID, owner (in-game id), so the owner is the LAST field and the
   kind comes from the registered class name. Fogged territories report no units.
   `BoardState.specialUnits` keys owners by GameFeed id like territory owners.
+- **Known mods (mega-game part 4, `src/known-mods.ts`).** `settings.modIds` (`Mods[].ModID`, the same hunk as #524) lets
+  `modsWarning` (plan_turn, check_plan, submit preview) name a mod whose published source was read and that changes no turn
+  rule — only the Local Deployment Helper (336: zeroes overlapping bonuses at creation, which arrive as `OverriddenBonuses`;
+  an auto-deploy in the web client; no turn hook) — with its note instead of "the rules may not hold"; any other id (and
+  ids that did not read) keeps the general warning. Planner untouched: golden unchanged.
 - **Commanders in the planner (#61).** A commander fights as 7 armies (bundle: attack and
   defence `+7`, dies last, no partial damage), counted in every capture cost and threat.
   My commander's territory is must-hold (never conceded; all deploys go there when the hold
@@ -2205,7 +2210,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       rates; only settings without them fall back to 60/70, with a warning.
     - **Local Deployment (#29).** With `localDeployments`, a held bonus's value is a pool
       deployable only on its own territories and only the rest of the income goes anywhere
-      (pool rules unverified, `docs/WARAPP-API.md`); `warapp_submit_turn` refuses a broken split.
+      (pool rules read from the client bundle 2026-11-23, not yet seen live: `docs/WARAPP-API.md`; a 0-value bonus has no
+      pool, base income — MinimumArmyBonus or territories ÷ BonusArmyPer — is free); `warapp_submit_turn` refuses a broken split.
       A bonus's own pool defends it (#103): its hold cost is judged net of the pool, the pool
       goes to its most threatened border and stays there, and a conceded bonus's garrisons are
       withdrawn only when one of its borders needs more than its pools plus every free army.

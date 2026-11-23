@@ -82,6 +82,7 @@ import {
 } from '../protocol/methods.js';
 import { SERVER_ERROR_MESSAGES, type WarappServerError } from '../protocol/rpc.js';
 import { inferFirstMover } from '../move-order.js';
+import { KNOWN_MODS } from '../known-mods.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from './card-effects.js';
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
@@ -560,13 +561,34 @@ function incomeRefused(e: WarappServerError, income: number, given = false): Mcp
 /** A territory in an error: its map-maker name delimited (errors are outside the untrusted envelope). */
 const label = (t: { id: number; name: string }) => `${untrustedText(t.name)} (${t.id})`;
 
-/** #165: with mods on, every plan says the rules it assumes may not hold. */
+/**
+ * #165: with mods on, every plan says the rules it assumes may not hold — except for a mod whose source was read
+ * and changes no turn rule (`KNOWN_MODS`, `src/known-mods.ts`): that one gets its own note instead. With the mod
+ * ids unread the general warning stands.
+ */
 export function modsWarning(s: GameSettings | undefined): string[] {
-  if (!s?.mods) return [];
-  const what = s.mods > 0 ? `${s.mods} mod${s.mods === 1 ? '' : 's'}` : 'mods';
+  if (!s?.mods && !s?.modIds?.length) return [];
+  const ids = s.modIds;
+  if (!ids) {
+    const what = s.mods! > 0 ? `${s.mods} mod${s.mods === 1 ? '' : 's'}` : 'mods';
+    return [
+      `This game runs ${what}: a mod can change the rules (combat, income, orders, cards, special units), so the rules ` +
+        'this plan assumes may not hold. Check the mods in the game settings.',
+    ];
+  }
+  const known = ids.flatMap((id) => {
+    const m = KNOWN_MODS.get(id);
+    return m && !m.turnRules ? [m] : [];
+  });
+  const other = ids.filter((id) => !known.some((m) => m.id === id));
   return [
-    `This game runs ${what}: a mod can change the rules (combat, income, orders, cards, special units), so the rules ` +
-      'this plan assumes may not hold. Check the mods in the game settings.',
+    ...(other.length
+      ? [
+          `This game runs ${other.length === 1 ? 'mod' : 'mods'} ${other.join(', ')}: a mod can change the rules (combat, ` +
+            'income, orders, cards, special units), so the rules this plan assumes may not hold. Check the mods in the game settings.',
+        ]
+      : []),
+    ...known.map((m) => m.note),
   ];
 }
 
@@ -948,7 +970,8 @@ export function validateTurn(args: {
         throw new McpToolError(problem, {
           hint:
             "This game uses Local Deployment: deploy each held bonus's armies on that bonus's own territories; only " +
-            'the rest of your income (base income and card armies) may go anywhere.',
+            'the rest of your income may go anywhere: the base income — MinimumArmyBonus, or territories ÷ BonusArmyPer when that is on and larger — ' +
+            'and card armies. A 0-value bonus has no pool, so its territories take free armies only.',
         });
       }
     }
@@ -3608,7 +3631,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
         'adjacent ones, no more armies than a territory has, deploys totalling exactly your income (after any Sanctions on you, ' +
         'as warapp_plan_turn plans it) plus played Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
-        'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
+        'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus (a 0-value bonus has no pool; the base income goes anywhere); under ' +
         'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
         'stack, which war.app moves anyway); under Multi-Attack, a move (not a deploy) may go on from a ' +
         'territory an earlier move in the list captures (warapp_plan_turn obeys these and the kill rates). ' +
@@ -3616,7 +3639,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'or "attack-only" (AllowAttackOnly), `percent` (AllowPercentageAttacks: `armies` is a percentage of what can ' +
         'move when it runs), `commander` (take your commander along; `armies` 0 sends it alone) and ' +
         '`attack_teammates` (team games); these are encoded as the client does but not yet verified live. ' +
-        'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ. ' +
+        'With One Army Must Stand Guard off the preview names territories left empty; with mods on it says the rules may differ (a mod known to change no turn rule, such as the Local Deployment Helper, gets its own note). ' +
         'The preview sizes each attack against the armies standing there now (`attacks`: expected kills, win chance; ' +
         'several attacks on one target in the order listed, each against what the earlier ones leave) ' +
         'and warns about one that cannot capture; it also warns (never refuses) when the orders leave a border of a bonus you hold ' +
