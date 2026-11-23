@@ -296,6 +296,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `fullDeal`) every territory is dealt, so `PlanPicksInput.fullDeal` skips the compact group search: each group and the
   fallback are the best picks by score (a warning says so). The live case plans in ~5 s, whole, not `partial`.
   `planTurn` and `stressPlan` on the same map take under 1 s (pure; the live read was not measured).
+- **Single-pick starts on a huge map (mega-game spec part 2, 2026-11-23, `src/analysis/single-pick.ts`).** `singlePickMode`:
+  `PlanPicksInput.overridden` (the tool sets it when the game overrides any bonus), territory limit 1, no team, not a full
+  deal, 3+ players, a map of `HUGE_MAP_TERRITORIES` (1,000)+ and more pickables than `SINGLE_PICK_SHOWN` (25). Then
+  `rankSingleStarts` scores each pickable alone — a `SINGLE_HORIZON` (5) turn flood opening at the game's values (pooled
+  armies, another pickable never taken, members of paying bonuses first), the income above the base over 6 turns, each
+  completed bonus discounted by `SINGLE_THREAT_LOSS` × the chance a rival starts within reach, less a safety charge in
+  starting armies (rivals within `RIVAL_RADIUS` 3, open approaches, 2-hop pocket entries, shielding wastelands credited;
+  ×2 with Commanders) — simulating at most `SINGLE_POOL` (600) by a quick score, the rest after; cached per graph
+  (4 inputs), never when `partial`. The plan's `single` (tool: `startRanking`, `page`) details 25 per page;
+  `submitPicks` is the ranking cut at `maxPicks`. Game 45736172's map (2,841 territories, 346 pickable, 97 players):
+  1.1 s → 65 ms (27 ms cached); all 2,841 pickable 1.35 s → 110 ms. Picks golden: 163 of 165 real-map plans
+  byte-identical, the 2 changed are the overridden limit-1 ones; planner golden untouched.
 - **The award of picks is read once, from my own list (#166).** The list war.app read back
   (`warapp_submit_picks`, or `warapp_get_my_picks` during distribution for the signed-in account) is kept at
   `<dataDir>/picks/<gameId>.json` (`src/pick-list.ts`, territory ids only). On turn 1 `loadAward`
