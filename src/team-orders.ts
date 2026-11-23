@@ -104,7 +104,31 @@ function teammateDict(info: unknown): Array<[unknown, Obj]> | undefined {
   return undefined;
 }
 
-function armiesOf(a: unknown): { count: number; commander: boolean } | undefined {
+/**
+ * One order as read, kept in its place in the list (my own orders, src/my-orders.ts, need the sequence; a
+ * teammate's are grouped by kind). A card play keeps its own fields (those read before its GUID, in read
+ * order) for the caller to interpret by class.
+ */
+export type DecodedOrder =
+  | { kind: 'deploy'; territoryId: number; armies: number }
+  | ({ kind: 'move' } & TeamMove)
+  | {
+      kind: 'card';
+      /** The class name after `GameOrderPlayCard` (e.g. `Gift`, `Abandon`). */
+      cls: string;
+      type: number | null;
+      name: string;
+      cardId?: string;
+      /** The card's own fields, before the GUID, in read order. */
+      own: unknown[];
+    }
+  | { kind: 'discard'; cardId?: string };
+
+/** The short class name of a decoded order (`GameOrderDeploy`), `unknown` when it has none. */
+export const orderClass = (o: unknown): string => (isObj(o) ? shortName(o.$type) : 'unknown');
+
+/** An Armies record's count and whether my commander rides in it; `undefined` when it is not one. */
+export function armiesOf(a: unknown): { count: number; commander: boolean } | undefined {
   if (!isObj(a) || a.$type !== ARMIES) return undefined;
   const f = fields(a);
   const numbers = f.filter(isInt);
@@ -113,24 +137,27 @@ function armiesOf(a: unknown): { count: number; commander: boolean } | undefined
   return { count: numbers[0]!, commander: units.some((u) => isObj(u) && u.$type === COMMANDER) };
 }
 
-/** Reads one order into `out`; false when its shape is not understood. */
-function readOrder(o: Obj, out: TeamOrders): boolean {
-  const type = String(o.$type);
+/** Decodes one GameOrder record by class and read order; `undefined` when its shape is not understood. */
+export function decodeOrder(o: unknown): DecodedOrder | undefined {
+  if (!isObj(o) || typeof o.$type !== 'string' || !o.$type.startsWith(ORDER_PREFIX)) return undefined;
+  const type = o.$type;
   const f = fields(o);
   const ints = f.filter(isInt);
   if (type === DEPLOY) {
-    if (ints.length < 2) return false;
-    out.deploys.push({ territoryId: ints[0]!, armies: ints[1]! });
-    return true;
+    if (ints.length < 2) return undefined;
+    return { kind: 'deploy', territoryId: ints[0]!, armies: ints[1]! };
   }
   if (type === ATTACK_TRANSFER) {
     // attackTeammates, mode, byPercent, from, Armies, to, then the base (player …).
     const [attackTeammates, mode, percent, from, armies, to] = f;
     const army = armiesOf(armies);
-    if (typeof attackTeammates !== 'boolean' || typeof percent !== 'boolean' || !isInt(mode) || !isInt(from) || !isInt(to) || !army) return false;
+    if (typeof attackTeammates !== 'boolean' || typeof percent !== 'boolean' || !isInt(mode) || !isInt(from) || !isInt(to) || !army) {
+      return undefined;
+    }
     const m = MODES[mode];
-    if (!m) return false;
-    out.moves.push({
+    if (!m) return undefined;
+    return {
+      kind: 'move',
       from,
       to,
       armies: army.count,
@@ -138,21 +165,37 @@ function readOrder(o: Obj, out: TeamOrders): boolean {
       ...(percent ? { percent: true as const } : {}),
       ...(attackTeammates ? { attackTeammates: true as const } : {}),
       ...(army.commander ? { commander: true as const } : {}),
-    });
-    return true;
+    };
   }
-  const cardId = f.map(normalizeGuid).find((g) => g !== undefined);
-  if (type === DISCARD) {
-    out.discards.push(cardId !== undefined ? { cardId } : {});
-    return true;
-  }
+  const at = f.findIndex((v) => normalizeGuid(v) !== undefined);
+  const cardId = at >= 0 ? normalizeGuid(f[at]) : undefined;
+  if (type === DISCARD) return { kind: 'discard', ...(cardId !== undefined ? { cardId } : {}) };
   if (type.startsWith(PLAY_CARD)) {
     const cls = type.slice(PLAY_CARD.length);
     const t = CARD_CLASS_TYPES[cls] ?? cardTypeByName(cls) ?? null;
-    out.cards.push({ ...(cardId !== undefined ? { cardId } : {}), type: t, name: t !== null ? cardTypeName(t) : cls || 'card' });
-    return true;
+    return {
+      kind: 'card',
+      cls,
+      type: t,
+      name: t !== null ? cardTypeName(t) : cls || 'card',
+      ...(cardId !== undefined ? { cardId } : {}),
+      own: at >= 0 ? f.slice(0, at) : [],
+    };
   }
-  return false;
+  return undefined;
+}
+
+/** Reads one order into `out`; false when its shape is not understood. */
+function readOrder(o: Obj, out: TeamOrders): boolean {
+  const d = decodeOrder(o);
+  if (!d) return false;
+  if (d.kind === 'deploy') out.deploys.push({ territoryId: d.territoryId, armies: d.armies });
+  else if (d.kind === 'move') {
+    const { kind: _kind, ...move } = d;
+    out.moves.push(move);
+  } else if (d.kind === 'discard') out.discards.push(d.cardId !== undefined ? { cardId: d.cardId } : {});
+  else out.cards.push({ ...(d.cardId !== undefined ? { cardId: d.cardId } : {}), type: d.type, name: d.name });
+  return true;
 }
 
 function ordersOf(list: unknown): TeamOrders | null {

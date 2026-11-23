@@ -12,12 +12,14 @@ import type { Writer } from '../../src/protocol/codec.js';
 import { REQUIRED_HELPER_DEFS } from './mini-bundle.js';
 
 /**
- * The LatestGameInfo reader: a number, the current standing, teammates' entered orders (a dict in-game id →
+ * The LatestGameInfo reader: my own orders this turn (a list of GameOrder, read through a closure as the client
+ * reads its first field), a number, the current standing, teammates' entered orders (a dict in-game id →
  * TeammateOrders, read through a closure as the client reads it), a number, then (#427) the last GameTurn
  * when present.
  */
 export const LATEST_GAME_INFO_READER =
-  'Lg.Ha=function(a,b,d){null==d&&(d=243);var e=new Lg;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;' +
+  'Lg.Ha=function(a,b,d){null==d&&(d=243);var e=new Lg;' +
+  'e.k0=a.Ua()?P.ms(a,function(){return a.Ua()?Go.Ha(a,e,d):null}):null;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;' +
   'e.k4=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Tq.Ha(a,e,d):null}):null;' +
   'e.k3=P.Ya(a);e.k5=a.Ua()?Gq.Ha(a,e,d):null;return e};';
 
@@ -39,7 +41,8 @@ export const LIVE_BUNDLE = [
   'W["warlight.shared.GameOrder"]=Go;',
   'Go.Ha=function(a,b,d){var e=a.bc();switch(e){case 1:return Ga.r(a,b,d);case 2:return Gd.r(a,b,d);' +
     'case 5:return Gr.r(a,b,d);case 9:return Gx.r(a,b,d);case 10:return Gk.r(a,b,d);case 14:return Gy.r(a,b,d);' +
-    'case 15:return Gz.r(a,b,d);case 22:return new Ge;' +
+    'case 15:return Gz.r(a,b,d);case 11:return Gl.r(a,b,d);case 12:return Gf.r(a,b,d);case 13:return Gg.r(a,b,d);' +
+    'case 18:return Gb.r(a,b,d);case 22:return new Ge;' +
     'default:throw Y.sa(new Pa("unknown order "+e))}};',
   'Go.base=function(a,b,d){b.o9=P.Ya(a);b.oa=a.Ua()?P.Ya(a):null;b.ob=a.Ua()?P.Sd(a,function(){return P.Ya(a)}):null};',
   'W["warlight.shared.GameOrderDeploy"]=Gd;',
@@ -54,6 +57,18 @@ export const LIVE_BUNDLE = [
   'W["warlight.shared.GameOrderDiscard"]=Gx;',
   'Gx.r=function(a,b,d){b=new Gx;b.o1=P.tL(a);Go.base(a,b,d);return b};',
   'W["warlight.shared.GameOrderEvent"]=Ge;',
+  // Card plays with targets, each its own fields, then the card GUID and the base: Gift (recipient, territory),
+  // Airlift (an optional Armies, from, a legacy count, to), Blockade (territory); Order Delay has none.
+  'function Gl(){}function Gf(){}function Gg(){}function Gb(){}',
+  'W["warlight.shared.GameOrderPlayCardOrderDelay"]=Gl;',
+  'Gl.r=function(a,b,d){b=new Gl;b.o1=P.tL(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderPlayCardAirlift"]=Gf;',
+  'Gf.r=function(a,b,d){b=new Gf;b.o1=a.Ua()?Am.Ha(a,b,d):null;b.o2=P.Ya(a);b.o3=P.Ya(a);b.o4=P.Ya(a);' +
+    'b.o5=P.tL(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderPlayCardGift"]=Gg;',
+  'Gg.r=function(a,b,d){b=new Gg;b.o1=P.Ya(a);b.o2=P.Ya(a);b.o3=P.tL(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderPlayCardBlockade"]=Gb;',
+  'Gb.r=function(a,b,d){b=new Gb;b.o1=P.Ya(a);b.o2=P.tL(a);Go.base(a,b,d);return b};',
   // #427: GameTurn — the turn's orders (each optional), then its 0-based number.
   'function Gq(){}',
   'W["warlight.shared.GameTurn"]=Gq;',
@@ -159,7 +174,11 @@ export type SyntheticOrder =
       attackTeammates?: boolean;
       units?: readonly SyntheticUnit[];
     }
-  | { kind: 'card'; tag: 5 | 10; card: string }
+  | { kind: 'card'; tag: 5 | 10 | 11; card: string }
+  /** Gift (13): the recipient's in-game id, then the territory. Blockade (18): the territory. */
+  | { kind: 'card'; tag: 13 | 18; card: string; ints: readonly number[] }
+  /** Airlift (12): the armies (and units), from, to. */
+  | { kind: 'card'; tag: 12; card: string; from: number; to: number; armies: number; units?: readonly SyntheticUnit[] }
   | { kind: 'discard'; card: string }
   /** An order class the projection does not read (tag 22, an event). */
   | { kind: 'event' };
@@ -184,7 +203,16 @@ function writeOrder(w: Writer, o: SyntheticOrder, player: number): void {
     w.bool(false).int32(o.armies).u8(units.length);
     for (const u of units) writeUnit(w, u);
     w.int32(o.to);
-  } else if (o.kind === 'card') w.u8(o.tag).guid(o.card);
+  } else if (o.kind === 'card') {
+    w.u8(o.tag);
+    if (o.tag === 12) {
+      const units = o.units ?? [];
+      w.bool(true).bool(false).int32(o.armies).u8(units.length);
+      for (const u of units) writeUnit(w, u);
+      w.int32(o.from).int32(0).int32(o.to);
+    } else if (o.tag === 13 || o.tag === 18) for (const n of o.ints) w.int32(n);
+    w.guid(o.card);
+  }
   else w.u8(9).guid(o.card);
   w.int32(player).bool(false).bool(false);
 }
@@ -206,8 +234,17 @@ export function writeLatestGameInfo(
   teammateOrders?: Readonly<Record<number, SyntheticTeammateOrders | null>>,
   activeCards?: readonly SyntheticActiveCard[],
   lastTurn?: SyntheticTurn,
+  /** My own orders this turn (LatestGameInfo's first field): `null` or absent, none sent. */
+  myOrders?: { player: number; orders: readonly SyntheticOrder[] } | null,
 ): void {
-  w.bool(true).int32(1);
+  w.bool(true);
+  if (!myOrders) w.bool(false);
+  else
+    w.bool(true).list(myOrders.orders, (ow, o) => {
+      ow.bool(true);
+      writeOrder(ow, o, myOrders.player);
+    });
+  w.int32(1);
   if (territories === null) {
     w.bool(false);
   } else {

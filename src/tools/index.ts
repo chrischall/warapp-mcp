@@ -34,6 +34,7 @@ import { registerAcceptSurrenderTool } from './accept-surrender.js';
 import { registerTeamTool } from './team.js';
 import { registerTeamBriefTool } from './team-brief.js';
 import { registerTurnTools } from './turn.js';
+import { registerMyOrdersTool } from './my-orders.js';
 import { registerUncommitTool } from './uncommit.js';
 import { registerLeaveGameTool } from './leave-game.js';
 import { registerWhereTool } from './where.js';
@@ -142,6 +143,8 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   // Opponent profiling, read-only: habits counted from the boards seen (on unless WARAPP_PLAYER_PROFILE=off).
   registerProfileOpponentsTool(server, live, deps.env ? { env: deps.env } : {});
   registerUncommitTool(server, live);
+  // Read-only: my own orders this turn read back from the live board, in warapp_submit_turn's shape.
+  registerMyOrdersTool(server, live);
   registerChatTools(server, live, deps.env ? { env: deps.env } : {});
   registerChatInboxTool(server, live);
   // Local and hosted: war.app's own chat read mark, confirm-gated (#311).
