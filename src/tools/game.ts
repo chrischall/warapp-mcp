@@ -93,7 +93,8 @@ export function registerGameTool(
           'lastTurnTime, whose meaning is unverified). Optional game history and chat. ' +
           'A game I lost says how (`howLost`), once finished or, while the others play on, once my seat is out (eliminated, ' +
           'booted or surrendered): a surrender or boot by my state, with the last turn played here and the last logged outlook ' +
-          '(its state, my income and armies against the strongest opponent\'s in view); an elimination from the boards ' +
+          '(its state, my income and armies against the strongest opponent\'s in view, with its tracked income, frontier read ' +
+          'and calibrated income range when logged, and the strongest on income when another opponent); an elimination from the boards ' +
           'this server cached while it played — the turn (certain only when it is the newest completed turn), my commander\'s territory ' +
           'that fell with what it held, the attackers that needed and who bordered it (at a commander walk\'s destination, ' +
           'which may instead have fallen before the walk ran), or else my last territories (inferred, never seen). ' +

@@ -60,7 +60,9 @@
 // LIKELY_LOSING_RATIO × the highest likely high (1 / OUTLOOK_RATIO once its LIKELY_INCOME_MARGIN is
 // taken back out: it counts every army received and none lost, so alone it read 0.05× in a game I
 // led) AND that is corroborated, by the main front grinding me down or by my income at most
-// BEHIND_RATIO × the most an opponent is tracked earning (the profile's "behind"); such a turn carries
+// BEHIND_RATIO × the most an opponent is tracked earning (the profile's "behind"; #522: an opponent whose
+// frontier read is thin counts at its calibrated estimate when that is higher, as `income` reads it, so a thin
+// read cannot hide being out-earned); such a turn carries
 // `lowLikely`, and so does an uncorroborated one, whose basis says why it is no loss. The front that
 // corroborates it is always forecast on the incomes read off my boards (below), never the plan's
 // (#228 review): warapp_plan_turn plans on an outlook read without the plan's front and then reports
@@ -306,8 +308,10 @@ export interface OutlookTurn {
    * #228: present when mine is at most {@link LIKELY_LOSING_RATIO} of the likely high (and neither
    * winning nor the bound's losing applies): my income, the most an opponent is tracked earning (0:
    * none measured), whether the main front grinds me down, and whether that corroborated a loss.
+   * #522: an opponent whose frontier read is thin counts at its calibrated estimate when that is higher
+   * (never below its tracked figure); `calibrated` is then `true` and `mostTracked` is that estimate.
    */
-  lowLikely?: { myIncome: number; mostTracked: number; groundDown: boolean; losing: boolean };
+  lowLikely?: { myIncome: number; mostTracked: number; calibrated?: true; groundDown: boolean; losing: boolean };
   /**
    * #283: the armies and income behind `mine` and `strongest.low`, as the board shows them (an opponent's
    * in view only: a lower bound under fog); each side's summed in a team game. Kept in the outlook log,
@@ -853,18 +857,42 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     // tracked earning (the profile's "behind").
     // PLAN-TEAMS C3: in a team game my team's income, against the most an enemy team is tracked earning.
     const myNow = mates.reduce((n, p) => n + boardIncome(g, held.get(p) ?? new Set(), rules).total, boardIncome(g, mineNow, rules).total);
-    const mostTracked = () => {
-      const by = new Map<string, number>();
-      for (const [p, tr] of trackedAll()) {
-        if (ally(p) || tr.income === null) continue;
-        const t = teamOf(p);
-        const key = t === undefined ? `p${p}` : `t${t}`;
-        by.set(key, (by.get(key) ?? 0) + tr.income);
-      }
-      let most = 0;
-      for (const v of by.values()) most = Math.max(most, v);
-      return most;
+    // #436: past games' estimate ÷ truth in a coverage band, when the band has enough samples.
+    const calibrationFor = (share: number | null) => {
+      const c = input.calibration?.[coverageBucket(share)];
+      return c && c.n >= MIN_CALIBRATION_SAMPLES && c.geoMean > 0 ? c.geoMean : undefined;
     };
+    // #522 (owner decision of 2026-11-23): an opponent whose frontier read is thin counts at its calibrated
+    // estimate (as `income` reads it: the tracked figure ÷ its band's estimate ÷ truth, capped at what it could
+    // earn), never below its tracked figure; a solid read, or no calibrated band, keeps the tracked figure.
+    let mostMemo: { most: number; calibrated: boolean } | undefined;
+    const mostEarning = () =>
+      (mostMemo ??= (() => {
+        const by = new Map<string, { n: number; calibrated: boolean }>();
+        for (const [p, tr] of trackedAll()) {
+          if (ally(p) || tr.income === null) continue;
+          let v = tr.income;
+          let calibrated = false;
+          const thin = !open && (tr.coverage === null || tr.coverage.share < LOW_COVERAGE);
+          const factor = thin ? calibrationFor(tr.coverage?.share ?? null) : undefined;
+          if (factor !== undefined) {
+            const r = rowOf(p);
+            const estimate = Math.min(Math.max(r.capIncome, v), Math.max(r.seen.income, Math.round(v / factor)));
+            if (estimate > v) {
+              v = estimate;
+              calibrated = true;
+            }
+          }
+          const t = teamOf(p);
+          const key = t === undefined ? `p${p}` : `t${t}`;
+          const side = by.get(key) ?? { n: 0, calibrated: false };
+          by.set(key, { n: side.n + v, calibrated: side.calibrated || calibrated });
+        }
+        let most = { most: 0, calibrated: false };
+        for (const v of by.values()) if (v.n > most.most) most = { most: v.n, calibrated: v.calibrated };
+        return most;
+      })());
+    const mostTracked = () => mostEarning().most;
     const lowLikely = !bound && !estimated && !lostOnBound && likely !== undefined && likely.high > 0 && likely.ratio <= LIKELY_LOSING_RATIO;
     // #228 review: on my boards' incomes, whatever the plan gave the reported front.
     const groundDown = ownOutcome === 'ground-down';
@@ -903,10 +931,6 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       ...(scope.large ? { far: { count: scope.far.length, note: OUTLOOK_FAR_NOTE } } : {}),
     };
     // #436: each opponent's income range and estimate, summed per side; the strongest side by estimate.
-    const calibrationFor = (share: number | null) => {
-      const c = input.calibration?.[coverageBucket(share)];
-      return c && c.n >= MIN_CALIBRATION_SAMPLES && c.geoMean > 0 ? c.geoMean : undefined;
-    };
     type IncomeSide = { playerId: number; team?: number; players?: number[]; low: number; high: number; estimate: number; calibrated: boolean };
     const strongestIncome = (from: readonly (typeof rows)[number][], evRows: readonly OutlookEvidenceRow[]): IncomeSide | undefined => {
     const incomeSides = new Map<string, IncomeSide>();
@@ -1051,7 +1075,17 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       ...(forecast ? { front: forecast } : {}),
       state,
       ...(claimWin || lostOnEstimate ? { estimated: true as const } : {}),
-      ...(lowLikely ? { lowLikely: { myIncome: myNow, mostTracked: mostTracked(), groundDown, losing: lostOnEstimate } } : {}),
+      ...(lowLikely
+        ? {
+            lowLikely: {
+              myIncome: myNow,
+              mostTracked: mostTracked(),
+              ...(mostEarning().calibrated ? { calibrated: true as const } : {}),
+              groundDown,
+              losing: lostOnEstimate,
+            },
+          }
+        : {}),
       evidence,
       ...(bonusesLost.length ? { bonusesLost } : {}),
       ...(income ? { income } : {}),
@@ -1299,16 +1333,19 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     const low = last.lowLikely;
     if (low) {
       const share = `mine is at most 1/${round2(1 / LIKELY_LOSING_RATIO)} (${round2(LIKELY_LOSING_RATIO)}×) of the likely high`;
+      // #522: the figure is a calibrated estimate when a thin frontier read raised it.
+      const earning = low.calibrated ? 'estimated earning' : 'tracked earning';
+      const why = low.calibrated ? ", calibrated on past games' estimate ÷ truth: its frontier read is thin" : '';
       const incomeText =
         low.mostTracked > 0
           ? teamGame
-            ? `my team's income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an enemy team is tracked earning (${low.mostTracked})`
-            : `my income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an opponent is tracked earning (${low.mostTracked})`
+            ? `my team's income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an enemy team is ${earning} (${low.mostTracked}${why})`
+            : `my income (${low.myIncome}) at most ${BEHIND_RATIO}× the most an opponent is ${earning} (${low.mostTracked}${why})`
           : '';
       const behind = low.mostTracked > 0 && low.myIncome <= BEHIND_RATIO * low.mostTracked;
       reading += low.losing
         ? ` Losing on the estimate: ${share}, corroborated by ${[low.groundDown ? 'the main front grinding me down on the incomes read off my boards' : '', behind ? incomeText : ''].filter(Boolean).join(' and ')}.`
-        : ` ${share[0]!.toUpperCase()}${share.slice(1)}, but that alone is no loss: the likely high counts every army an opponent could have received at ${LIKELY_INCOME_MARGIN}× its pace and none it lost, so it reads every fogged opponent strong. Losing on it needs the main front grinding me down on the incomes read off my boards (not the plan's, so the plan acts on the state shown) or my income at most ${BEHIND_RATIO}× the most an opponent is tracked earning${low.mostTracked > 0 ? ` (mine ${low.myIncome}, the most tracked ${low.mostTracked})` : ' (none is tracked)'}.`;
+        : ` ${share[0]!.toUpperCase()}${share.slice(1)}, but that alone is no loss: the likely high counts every army an opponent could have received at ${LIKELY_INCOME_MARGIN}× its pace and none it lost, so it reads every fogged opponent strong. Losing on it needs the main front grinding me down on the incomes read off my boards (not the plan's, so the plan acts on the state shown) or my income at most ${BEHIND_RATIO}× the most an opponent is tracked earning (its calibrated estimate when its frontier read is thin)${low.mostTracked > 0 ? ` (mine ${low.myIncome}, the most ${low.calibrated ? 'estimated' : 'tracked'} ${low.mostTracked})` : ' (none is tracked)'}.`;
     }
     if (leaning)
       reading += ` Leaning behind: even for ${leaning.turns} turns running while I lost bonuses on each (${leaning.lost.map((x) => `turn ${x.turn} +${x.value}`).join(', ')}): the strength ratio lags a slide the board already shows, so read "even" as falling behind.`;

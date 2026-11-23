@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BoardState, TerritoryState } from '../src/board.js';
 import type { Game } from '../src/normalize.js';
+import type { OutlookIncome, OutlookTurn } from '../src/analysis/outlook.js';
 import { outlookLogPath, readOutlookLog, recordLoss, recordOutlook } from '../src/outlook-log.js';
 import { lossReport } from '../src/tools/how-lost.js';
 import { myOrdersOf } from '../src/tools/turn.js';
@@ -186,6 +187,71 @@ describe('warapp_get_game: how the game was lost (#274)', () => {
     });
     // The log stays name-free.
     expect(readFileSync(outlookLogPath(dir, GAME), 'utf8')).not.toContain('Rival');
+  });
+
+  describe('#522: a fogged leader reads at its tracked and calibrated income, not the visible bonus income alone', () => {
+    const fogged = (income: OutlookIncome, extra: Partial<OutlookTurn> = {}): OutlookTurn => ({
+      turn: 29,
+      mine: 2133 + 3 * 152,
+      strongest: { playerId: OPP, low: 1619 + 3 * 10, high: null },
+      ratio: { low: 0, high: 1.6 },
+      changed: 2,
+      state: 'losing' as const,
+      figures: { mine: { armies: 2133, income: 152 }, strongest: { armies: 1619, income: 10 } },
+      evidence: {
+        incomes: null,
+        opponents: [{ playerId: OPP, income: 103, source: 'tracked' as const, coverage: 0.4, thin: true }],
+        thin: true,
+      },
+      income,
+      ...extra,
+    });
+    const calibrated = (playerId: number): OutlookIncome => ({
+      mine: 152,
+      theirs: { playerId, low: 103, high: 380, estimate: 343 },
+      ratio: { low: 0.4, high: 1.48, estimate: 0.44 },
+      calibrated: true,
+      lean: 'behind' as const,
+    });
+
+    it('the strongest gives its tracked income, frontier read and calibrated range beside the income in view', async () => {
+      const dir = await seed();
+      await recordOutlook(dir, GAME, ME, { state: 'losing', heldTurns: 3, k: 3, threshold: 2.4, basis: 'b', turns: [fogged(calibrated(OPP))] });
+      h = await liveHarness({ feed: [finished('SurrenderAccepted', '29')], dataDir: dir });
+      const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+      expect(p.howLost.outlook.strongest).toEqual({
+        id: OPP,
+        name: '⟦Rival ʺxʺ⟧',
+        armies: 1619,
+        income: 10,
+        tracked: 103,
+        coverage: 0.4,
+        estimate: { low: 103, high: 380, estimate: 343, calibrated: true },
+      });
+      expect(p.howLost.line).toContain(
+        "against ⟦Rival ʺxʺ⟧'s income 10 in view (tracked 103, 40% of its frontier read; estimated ~343, range 103–380, calibrated on past games' estimate ÷ truth) and 1619 armies in view.",
+      );
+      expect(p.howLost.outlook.incomeLeader).toBeUndefined();
+    });
+
+    it('names the strongest on income too when it is another opponent (the surrender line\'s side anywhere first)', async () => {
+      const dir = await seed();
+      const t = fogged(calibrated(OPP), { surrenderSide: { playerId: 1002, low: 120, estimate: 400, calibrated: true, near: false } });
+      await recordOutlook(dir, GAME, ME, { state: 'losing', heldTurns: 3, k: 3, threshold: 2.4, basis: 'b', turns: [t] });
+      h = await liveHarness({ feed: [finished('SurrenderAccepted', '29')], dataDir: dir });
+      const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+      expect(p.howLost.outlook.incomeLeader).toMatchObject({ id: 1002, low: 120, estimate: 400, calibrated: true, anywhere: true });
+      expect(p.howLost.line).toMatch(/The strongest on income, near or not: .*'s ~400 \(tracked 120; calibrated on past games' estimate ÷ truth\)\.$/);
+    });
+
+    it('an uncalibrated estimate equal to the tracked figure reads as tracked only', async () => {
+      const dir = await seed();
+      const plain = { ...calibrated(OPP), theirs: { playerId: OPP, low: 103, high: 103, estimate: 103 }, calibrated: false };
+      await recordOutlook(dir, GAME, ME, { state: 'losing', heldTurns: 3, k: 3, threshold: 2.4, basis: 'b', turns: [fogged(plain)] });
+      h = await liveHarness({ feed: [finished('SurrenderAccepted', '29')], dataDir: dir });
+      const p = payload(await h.call('warapp_get_game', { game_id: GAME })) as Record<string, any>;
+      expect(p.howLost.line).toContain("against ⟦Rival ʺxʺ⟧'s income 10 in view (tracked 103, 40% of its frontier read; estimated ~103, uncalibrated) and 1619 armies in view.");
+    });
   });
 
   it('#283: an outlook logged before the figures were kept still gives the turn and the state', async () => {

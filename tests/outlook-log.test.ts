@@ -75,12 +75,21 @@ describe('outlook log (#178)', () => {
     };
     await recordOutlook(dir, 7001, 1001, o);
     const log = await readOutlookLog(dir, 7001, 1001);
-    expect(log?.turns['7']?.income).toEqual({ mine: 5, low: 9, high: 14, estimate: 12, lean: 'behind', calibrated: true });
+    // #522: with the side the range is for, so a surrender report can name it.
+    expect(log?.turns['7']?.income).toEqual({ mine: 5, low: 9, high: 14, estimate: 12, lean: 'behind', calibrated: true, playerId: 2001 });
     expect(log?.latest?.surrenderLine).toEqual({ crossed: true, turnsBelow: 3, line: 8 });
     // #454: the state keeps its four values; the income reading is the additive `lean`, per turn and on the latest.
     expect(log?.turns['7']).toMatchObject({ state: 'even', lean: 'behind' });
     expect(log?.latest).toMatchObject({ state: 'even', lean: 'behind' });
     expect(finalOutlookOf(log!)).toMatchObject({ state: 'even', lean: 'behind' });
+  });
+
+  it('#522: keeps the strongest side anywhere the surrender line judges against, in a large game (name-free)', async () => {
+    const o = outlook(7, 'even');
+    o.turns[0] = { ...o.turns[0]!, surrenderSide: { playerId: 2002, low: 103, estimate: 343, calibrated: true, near: false } };
+    await recordOutlook(dir, 7001, 1001, o);
+    const log = await readOutlookLog(dir, 7001, 1001);
+    expect(log?.turns['7']?.surrender).toEqual({ playerId: 2002, low: 103, estimate: 343, calibrated: true });
   });
 
   it('#454: reads a log written with ahead, behind or unknown as the state (#453, a few hours) as even with that lean', async () => {
