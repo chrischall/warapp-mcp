@@ -150,6 +150,37 @@ interface CheckPayload {
 const check = async (args: Record<string, unknown>) => payload<CheckPayload>(await h!.call('warapp_check_plan', { game_id: GAME, player: 'Ann', ...args }));
 
 describe('warapp_check_plan', () => {
+  it('scale: a large game lists only the opponents near my land and sums the rest; a small one has no scale block', async () => {
+    h = await live(at(20, 20, 3));
+    const small = await check({ orders: [] });
+    expect(small).not.toHaveProperty('scale');
+    expect(small).not.toHaveProperty('unseenOpponentsMore');
+    await h.harness.close();
+    // Ten more seats with nothing in view: 18 opponents, past LARGE_GAME_OPPONENTS (16).
+    const g = game();
+    const extra = Array.from({ length: 10 }, (_, i) => ({
+      id: `10${200000 + i}10`,
+      name: `Extra ${i}`,
+      isAI: 'False',
+      humanTurnedIntoAI: 'False',
+      hasCommittedOrders: 'False',
+      color: '#00FF00',
+      state: 'Playing',
+    }));
+    h = await liveHarness({
+      feed: [{ ...g, players: [...(g.players as unknown[]), ...extra] }],
+      warapp: () => ({ body: (w) => writeLatestGameInfo(w, at(20, 20, 3), [ANN.inGame]) }),
+    });
+    const big = (await check({ orders: [] })) as CheckPayload & {
+      scale?: { opponents: number; near: number; far: { count: number; note: string } };
+      unseenOpponents: unknown[];
+      unseenOpponentsMore?: number;
+    };
+    expect(big.scale).toMatchObject({ opponents: 18, near: 1, far: { count: 17 } });
+    expect(big.unseenOpponents).toEqual([]);
+    expect(big.unseenOpponentsMore).toBe(17);
+  });
+
   it('is a read-only tool', async () => {
     h = await live(at(20, 20, 3));
     const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_check_plan')!;

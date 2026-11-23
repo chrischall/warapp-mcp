@@ -411,6 +411,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `shown()` decodes tokens for `warapp_get_chat`, `warapp_chat_inbox` and the plan's chat (`links`; name from the
   cached map, `null` and the raw token kept when unknown). The interpreter's registration
   scan allows whitespace after `=` (the real bundle wraps `GameMessage`'s with CRLF).
+- **Mega games: scale and pace (2026-11-23, game 45736172's 97 seats).** Above `LARGE_GAME_OPPONENTS` (16) opponents
+  still playing (`src/analysis/scale.ts`, `opponentScope`) only the opponents near me — holding land within `NEAR_STEPS`
+  (2) of mine, or (under fog) any in view — get their own rows: the outlook's rows, comparison and evidence (the rest
+  counted in `evidence.far`; owner 2026-11-23: the surrender line alone still judges the strongest opponent anywhere,
+  `OutlookTurn.surrenderSide`), plan_turn's `reads`/`enemyDeployDetail`, check_plan's `unseenOpponents`
+  (`unseenOpponentsMore`); both tools add `scale` (`farSummary`: count, summed estimate, biggest). The planner is not
+  scoped (golden: 6253 plans byte-identical); at or under the threshold nothing changes. The inbox's `only:
+  "mentionsMe"` (`src/analysis/chat-mentions.ts`: my name or a territory I hold, whole word or `<a t=id>` link; held
+  land from GameFeed's standing else the newest cached board, no request) and `public_chat: "summary"`
+  (`publicSummary`). Pace: GameInfo fields 5 (boot), 19 (real time), 24 (my banked time) and 26 ("Your turn for")
+  — read from the bundle's GameInfo reader and game-list renderer (its boot label is field 5 + field 24) — give
+  `warapp_my_games`' `boot` (`bootView`: multi-day only; `leftMinutes` = boot + bank − turn so far, UNVERIFIED live)
+  and `bootSoon`; `fetchMyGames` keeps the clocks per context (`src/tools/pace.ts`) and `warapp_session_status`
+  reports `pace`/`bootWarning` under 6 hours from them, reading the list itself (one request, over a working direct
+  session only) when none is kept yet (owner 2026-11-23; otherwise `paceUnread` says why).
 - **Chat is game information (#415, `docs/PLAN-CHAT-STRATEGY.md`): classified, advised, never sent on its own.**
   `src/analysis/chat-intent.ts` (`classifyMessage`, pure, pattern-based, never throws) labels another player's
   message with `INTENTS` (income/position checks, truce proposal/accept/decline/end notice, coordination asks,

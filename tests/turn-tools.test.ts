@@ -271,6 +271,31 @@ describe('warapp_plan_turn', () => {
     expect(bad.isError).toBe(true);
   });
 
+  it('scale: a game of more than 16 opponents reports the far ones summed; a small one has no scale block', async () => {
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const small = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(small).not.toHaveProperty('scale');
+    await h.harness.close();
+    const g = game('Playing');
+    const extra = Array.from({ length: 10 }, (_, i) => ({
+      id: `10${200000 + i}10`,
+      name: `Extra ${i}`,
+      isAI: 'False',
+      humanTurnedIntoAI: 'False',
+      hasCommittedOrders: 'False',
+      color: '#00FF00',
+      state: 'Playing',
+    }));
+    h = await liveHarness({ feed: [{ ...g, players: [...(g.players as unknown[]), ...extra] }], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const big = payload<PlanPayload & { scale?: { opponents: number; near: number; far: { count: number; estimatedDeploy: number | null; note: string } } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(big.scale).toMatchObject({ opponents: 18, near: 1, far: { count: 17 } });
+    expect(big.scale!.far.note).toMatch(/large game/);
+    // The orders are the planner's own: the scale block is a report.
+    expect(big.deploys).toEqual(small.deploys);
+  });
+
   it('plans from the live board: deploys and moves by name and id, expected bonuses, and submit-shaped orders', async () => {
     h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     // R3: completing bonus 118 leaves all three members facing Bob's ~11 with a next income

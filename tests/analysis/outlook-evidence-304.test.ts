@@ -85,4 +85,55 @@ describe('outlook evidence (#304)', () => {
     expect(ev.opponents.map((r) => r.playerId)).toEqual([FOE, FOE2]);
     expect(ev.incomes!.playerId).toBe(o.turns.at(-1)!.strongest!.playerId);
   });
+
+  it('in a large game compares only the opponents near my land and counts the rest (scale)', () => {
+    // 20 opponents on a 24-territory line, me on 1–2: only the ones within two steps (on 3 and 4) are rows.
+    const big = buildGraph(line(24));
+    const ids = Array.from({ length: 20 }, (_, i) => 100 + i);
+    const b = (a: number) => board([mine(1, a), mine(2, a), ...ids.map((p, i) => foe(3 + i, 3, p)), neutral(23, 2), neutral(24, 2)]);
+    const players = { players: [{ id: ME }, ...ids.map((id) => ({ id }))] };
+    const o = gameOutlook({ graph: big, me: ME, boards: turns(4, [b(10), b(11), b(12)]), game: players });
+    const ev = o.turns.at(-1)!.evidence!;
+    expect(ev.opponents.map((r) => r.playerId)).toEqual([100, 101]);
+    expect(ev.far?.count).toBe(18);
+    expect(o.basis).toMatch(/18 more opponents are not near your land/);
+    // At or under the threshold nothing is left out, and no `far` is reported.
+    const few = ids.slice(0, 16);
+    const s = (a: number) => board([mine(1, a), mine(2, a), ...few.map((p, i) => foe(3 + i, 3, p)), neutral(19, 2)]);
+    const small = gameOutlook({ graph: buildGraph(line(19)), me: ME, boards: turns(4, [s(10), s(11), s(12)]), game: { players: [{ id: ME }, ...few.map((id) => ({ id }))] } });
+    expect(small.turns.at(-1)!.evidence!.opponents).toHaveLength(16);
+    expect(small.turns.at(-1)!.evidence!.far).toBeUndefined();
+  });
+
+  it('in a large game the surrender line still judges the strongest opponent anywhere (owner decision 2026-11-23)', () => {
+    // 20 opponents on a 60-territory line, me on 1–2; the last opponent, far away, holds 31–60 and a +50 bonus there.
+    const n = 60;
+    const ids = Array.from({ length: n }, (_, i) => i + 1);
+    const map: GameMap = {
+      ...line(n),
+      bonuses: [{ id: 900, name: 'Far', value: 50, territoryIds: ids.filter((x) => x > 30), bonusIds: [] }],
+    };
+    const big = buildGraph(map);
+    const foes = Array.from({ length: 20 }, (_, i) => 100 + i);
+    const runaway = foes.at(-1)!;
+    const b = () =>
+      board([
+        mine(1, 5),
+        mine(2, 5),
+        ...foes.slice(0, -1).map((p, i) => foe(3 + i, 3, p)),
+        ...ids.filter((x) => x > 21 && x <= 30).map((x) => neutral(x, 2)),
+        ...ids.filter((x) => x > 30).map((x) => foe(x, 3, runaway)),
+      ]);
+    const players = { players: [{ id: ME }, ...foes.map((id) => ({ id }))] };
+    const o = gameOutlook({ graph: big, me: ME, boards: turns(4, [b(), b(), b()]), game: players });
+    const last = o.turns.at(-1)!;
+    // The outlook itself compares the nearby players only…
+    expect(last.evidence!.opponents.map((r) => r.playerId)).toEqual([100, 101]);
+    expect(last.income!.theirs.playerId).not.toBe(runaway);
+    // …while the surrender line reads the runaway leader far away.
+    expect(last.surrenderSide).toMatchObject({ playerId: runaway, near: false });
+    expect(o.surrenderLine).toMatchObject({ playerId: runaway, crossed: true });
+    expect(o.surrenderLine!.advice).toMatch(/strongest of every opponent, near or not — this one is not near your land/);
+    expect(o.basis).toMatch(/surrender line still judges the strongest opponent anywhere/);
+  });
 });
