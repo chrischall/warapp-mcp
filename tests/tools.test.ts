@@ -201,6 +201,55 @@ describe('warapp_get_map', () => {
     expect((p.bonuses as Array<{ value: number }>)[0]!.value).toBe(9);
   });
 
+  it('income_map: only the bonuses that pay under the game\'s overrides, each with its size and members, and the base income', async () => {
+    const f = lobbyFixture();
+    h = await harnessFor({
+      ...f,
+      settings: {
+        ...(f.settings as Record<string, unknown>),
+        MinimumArmyBonus: 15,
+        // Broken Branch (118, +2 on the map) is worth nothing in this game; 119 is worth 40.
+        OverriddenBonuses: [
+          { bonusID: 118, value: 0 },
+          { bonusID: 119, value: 40 },
+        ],
+      },
+    });
+    const p = payload(await h.call('warapp_get_map', { game_id: GAME, income_map: true }));
+    const im = p.incomeMap as {
+      baseIncome: number;
+      paying: number;
+      notPaying: number;
+      bonuses: Array<{ bonusId: number; name: string; value: number; size: number; territories: Array<{ id: number; name: string }> }>;
+    };
+    expect(im.baseIncome).toBe(15);
+    // 316 positive on the map, one of them overridden to 0.
+    expect(im.paying).toBe(315);
+    expect(im.notPaying).toBe(372 - 315);
+    expect(im.bonuses).toHaveLength(315);
+    expect(im.bonuses.some((b) => b.bonusId === 118)).toBe(false);
+    expect(im.bonuses.every((b) => b.value > 0 && b.size === b.territories.length)).toBe(true);
+    // Highest value first.
+    expect(im.bonuses[0]!.bonusId).toBe(119);
+    expect(im.bonuses[0]!.value).toBe(40);
+    const values = im.bonuses.map((b) => b.value);
+    expect([...values].sort((a, b) => b - a)).toEqual(values);
+    expect(p).not.toHaveProperty('chokepoints');
+  });
+
+  it('income_map honours limit and the bonus filter, and never lists a zero bonus the filter names', async () => {
+    const f = lobbyFixture();
+    h = await harnessFor({
+      ...f,
+      settings: { ...(f.settings as Record<string, unknown>), OverriddenBonuses: [{ bonusID: 118, value: 0 }] },
+    });
+    const p = payload(await h.call('warapp_get_map', { game_id: GAME, income_map: true, limit: 3 }));
+    expect((p.incomeMap as { bonuses: unknown[] }).bonuses).toHaveLength(3);
+    expect((p.incomeMap as { bonusesShown: string }).bonusesShown).toBe('3 of 315');
+    const q = payload(await h.call('warapp_get_map', { game_id: GAME, income_map: true, bonus: 'broken branch' }));
+    expect((q.incomeMap as { bonuses: unknown[] }).bonuses).toEqual([]);
+  });
+
   it('sort: value orders by value desc; limit caps rows', async () => {
     h = await harnessFor();
     const p = payload(await h.call('warapp_get_map', { game_id: GAME, sort: 'value', limit: 5 }));
