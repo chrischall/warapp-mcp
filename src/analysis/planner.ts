@@ -17,6 +17,7 @@
 //   4h. the army cap prices idle armies (#253) .................. plan/cap-spend.ts
 //   5. the leftover deploy, 3b's short borders (#121) ........... plan/leftover.ts
 //   5b. a neutral the leftover pays for (#218) ................. plan/after-leftover.ts
+//   #319's bind (#416): other expansion waits for the nearest bonus .. plan/spread-bind.ts
 //   6. transfers, #125 staging ................................. plan/transfers.ts
 //   #277: a held bonus funded from a second sure sizing ......... plan/second-sizing.ts
 //   7. move order, rule 1s's Order Priority ..................... plan/move-order.ts
@@ -1227,6 +1228,16 @@
 //     at least TWO_MOVE_MIN_VALUE two moves away through a visible neutral is a two-turn completion
 //     (cost: that neutral plus the territory); the neutral in between is a `stage` candidate under
 //     `balanced` (net over both costs, ranked as an advance), else taken before the advances.
+//     #319 binds (#416, owner 2026-11-22; plan/spread-bind.ts): while #319's opening warning fires, pass-3
+//     plain expansion and advances into other bonuses may not spend deploys, or armies on a territory beside the
+//     nearest bonus's missing members, until that bonus's reachable steps are funded. Holds keep their places.
+//     The nearest bonus is the one the warning names; its reachable steps are its missing members that are
+//     capture targets beside a territory of mine; funded = captured by this plan, after which the rest flows
+//     as before (a step refused for another reason keeps the bind for the turn: the leftover saves toward it).
+//     A stack beside two bonuses' missing members is the nearest bonus's. Bound: other bonuses' advances (pass
+//     2, the `balanced` advance slots, #439's stage), pass 3 and rule 5b; never the bonus's own members, a
+//     focused bonus, completions, holds, breaks, counters, the 1v1 race, strikes, rule 4e, 4g or 4h. What is
+//     bound may still attack with the armies on my other territories. A "#319 binds the deploys" line says so.
 //  3b. One surplus per territory (#121). A border that holds at the start of the turn (its armies
 //     beat its visible threat, rule 1) and is not conceded keeps what holds it, as my commander's
 //     territory does (rule 1k): a capture from it spends only its armies above that, plus deploys
@@ -1688,6 +1699,7 @@ import { threatsPhase } from './plan/threats.js';
 import { applyShortGates } from './plan/horizon.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
+import { spreadBind } from './plan/spread-bind.js';
 import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { contestedBonuses } from './plan/stockpile.js';
@@ -2098,6 +2110,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const { strikes, worstCase, defendersAt, tryCapture, snapshot, complete, tryExpand, advance } = caps;
   /** #439: single-territory bonuses two moves away, each with its neutral in between. */
   const stages = twoMoveStages(pc, tgt);
+  /** #416 part 4: while #319 fires, other advances and pass 3 wait for the nearest bonus's steps (plan/spread-bind.ts). */
+  const bind = spreadBind(pc, ps, tgt);
+  const bound = <T>(exempt: boolean, f: () => T): T => (bind ? bind.bound(exempt, f) : f());
+  const otherBonus = (p: { bonusId: number; focus: boolean }) => p.focus || p.bonusId === bind?.bonusId;
 
   // ---- 1e. finish off an opponent, 1s. strike an enemy commander, #165 guard-off breaks (plan/strike.ts) ----
   const { struck } = strikesPhase(pc, ps, book, threats, hd, tgt, caps);
@@ -2273,12 +2289,12 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       worthOf.set(p.bonusId, p.net === p.value ? `+${p.value}` : `+${p.value}, net +${p.net}`);
       if (p.completable)
         candidates.push({ kind: 'complete', score, cost: p.cost, id: p.bonusId, value: p.net, focus: p.focus, borders: p.borders, run: spend(() => complete(p)) });
-      candidates.push({ kind: 'advance', score, cost: p.cost, id: p.bonusId, value: p.net, focus: p.focus, borders: p.borders, run: spend(() => advance(p)) });
+      candidates.push({ kind: 'advance', score, cost: p.cost, id: p.bonusId, value: p.net, focus: p.focus, borders: p.borders, run: spend(() => bound(otherBonus(p), () => advance(p))) });
     }
     // #439: a single-territory bonus two moves away is a two-turn completion: its neutral in between
     // competes as an advance does, on the income per army of both captures.
     for (const st of stages)
-      candidates.push({ kind: 'stage', score: st.net / st.cost, cost: st.cost, id: st.bonusId, value: st.net, focus: false, borders: 0, target: st.via, run: spend(() => stageTwoMove(pc, ps, st, gainWith, tryExpand)) });
+      candidates.push({ kind: 'stage', score: st.net / st.cost, cost: st.cost, id: st.bonusId, value: st.net, focus: false, borders: 0, target: st.via, run: spend(() => bound(st.bonusId === bind?.bonusId, () => stageTwoMove(pc, ps, st, gainWith, tryExpand))) });
     // #417, the 1v1 race: while a static seat's land is still untaken, its cheap captures rank ahead of
     // rule 0p.1's "expansion last" (`ahead` below); held-bonus gates and my commander's hold go first.
     const races = oneVsOne ? raceTargets(pc, targets, captured) : [];
@@ -2891,11 +2907,11 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     // #439: the neutral in between toward a single-territory bonus two moves away, before any advance.
     if (goal !== 'complete-bonus')
       for (const st of stages) {
-        stageTwoMove(pc, ps, st, gainWith, tryExpand);
+        bound(st.bonusId === bind?.bonusId, () => stageTwoMove(pc, ps, st, gainWith, tryExpand));
         garrisonCompleted();
       }
     for (const p of byCloseness) {
-      advance(p);
+      bound(otherBonus(p), () => advance(p));
       garrisonCompleted();
     }
     // #285: as under `balanced`.
@@ -2929,13 +2945,15 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const plainScore = plainOrderCosts(pc, tgt, eligible.map((t) => t.id));
     const rest = eligible.sort((a, b) => plainScore.get(a.id)! - plainScore.get(b.id)! || a.cost - b.cost || a.id - b.id);
     // Rule 4c: plain expansion never lowers income (a capture completing a negative bonus).
-    for (const t of rest) {
+    // #416: the nearest bonus's own members are its steps; everything else waits under #319's bind.
+    const nearestTs = bind ? new Set(bonusTs.get(bind.bonusId)) : undefined;
+    for (const t of rest) bound(nearestTs?.has(t.id) ?? true, () => {
       const gain = gainWith([t.id]);
-      if (gain < 0 && !inFocus(t.id)) continue;
+      if (gain < 0 && !inFocus(t.id)) return;
       if (tgt.emptyEnemies.has(t.id)) {
         // #281: never one lowering income, focused or not; sized for its owner's deploy (#120).
         if (gain >= 0) tryEmptyEnemy(pc, ps, book, tgt, caps, t.id);
-        continue;
+        return;
       }
       // #125: its own economy test. A member of an economic bonus is judged by that bonus; any
       // other capture pays for the armies it loses with the income it adds within PAYBACK_TURNS,
@@ -2951,7 +2969,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
                 ? `Do not expand into ${label(t.id)}: it adds +${worth} a turn and loses ~${lost} armies, more than ${pc.capturePaybackTurns} turns of it pay back.`
                 : `Do not expand into ${label(t.id)}: it adds no income and loses ~${lost} armies (more than ${PLAIN_EXPANSION_LOSS}), in no bonus worth completing.`,
             );
-          continue;
+          return;
         }
       }
       // #281 × #282: a denial is never sourced from the territory my commander walks from (its transit hold).
@@ -2961,7 +2979,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
         : 'expands territory';
       if (tgt.denials.has(t.id)) withoutTransit(pc, tgt, t.id, () => tryExpand(t.id, reason));
       else tryExpand(t.id, reason);
-    }
+    });
     dropEmptyEnemyTargets(ps, tgt, empties);
   }
 
@@ -3155,7 +3173,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- 5b. a neutral the leftover pays for (#218) (plan/after-leftover.ts) ----
   // The strike stack concentrates for its strike, and a step's source saves toward it: neither spends.
   const keepWhole = new Set([...(strikeStack ? [strikeStack.id] : []), ...(staging ? [staging.from] : [])]);
-  const takenAfter = afterLeftoverCaptures(pc, ps, book, threats, hd, tgt, caps, beforeLeftover, keepWhole, poolDeployed);
+  // #416: rule 5b is plain expansion too: under #319's bind it leaves the stacks beside the nearest bonus alone.
+  const takenAfter = bound(false, () => afterLeftoverCaptures(pc, ps, book, threats, hd, tgt, caps, beforeLeftover, keepWhole, poolDeployed));
   // #288: the rest of the leftover offered to another capture rides the expansion stack's attacks
   // after all when rule 5b took nothing from where it was offered.
   if (offered && !moves.some((m) => m.kind === 'attack' && m.from === offered.at && takenAfter.includes(m.to))) offered.revert();

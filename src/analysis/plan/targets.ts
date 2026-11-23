@@ -1078,9 +1078,12 @@ export function closestBonus(
   }
   // #319: in the opening (turns 2–6), many territories on an income near base means the captures are
   // spread over bonuses and none completed (six lost games held 11–20 territories on 8 or less after
-  // turn 4). A warning only, naming rule 4f's nearest bonus with its armies and turns: no order changes.
+  // turn 4). The warning names rule 4f's nearest bonus with its armies and turns; #416 (owner 2026-11-22) binds
+  // the deploys to it (plan/spread-bind.ts).
   const turnNow = pc.game.turn ?? null;
   const base = Math.max(0, Math.floor(input.settings?.baseIncome ?? DEFAULT_BASE_INCOME));
+  /** #416 part 4: the nearest bonus #319 names, whose reachable steps the deploys are bound to (plan/spread-bind.ts). */
+  let spreadNearest: BonusPlan | undefined;
   if (
     turnNow !== null &&
     turnNow >= 2 &&
@@ -1090,6 +1093,7 @@ export function closestBonus(
     income <= base + SPREAD_INCOME_SLACK
   ) {
     const nearest = committing ? byCloseness.find((p) => !p.focus) ?? byCloseness[0] : undefined;
+    spreadNearest = nearest;
     ps.warnings.push(
       `${mine.length} territories, ${noBonusText}: the captures are spread (income ${income}, base ${base}). ` +
         (nearest
@@ -1110,5 +1114,5 @@ export function closestBonus(
       ? `${label(t)} can be retaken after it breaks ${bonusName(bonusId)}: ${survivors} survivors need ${take} to take, against ~${counter} next turn.`
       : undefined;
   };
-  return { holdsBonus, neutralsInReach, committing, advancedLast, fromMine, depthOf, turnsOf, scoreRank, byCloseness, turnsText, retakeChecks, retakeWarning };
+  return { holdsBonus, neutralsInReach, committing, advancedLast, fromMine, depthOf, turnsOf, scoreRank, byCloseness, turnsText, spreadNearest, retakeChecks, retakeWarning };
 }

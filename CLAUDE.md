@@ -1755,7 +1755,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     (plan/vacated.ts) over my board history gives each fogged territory's newest sighting (owner, and armies when
     shown — never from a GameFeed history board, unverified in play: those give the owner only); `foggedLastSeen` is its owners, `lastSeen` its counts. Golden: unchanged (no corpus input carries either); with a neutral size of 2 on every input 1017 of 6253 plans, 722
     orders, captures +21/−2, next income lower on 1; with sightings from each input's previous board, 51 plans, 34 orders,
-    captures +1. #416 (draft, owner approval pending): turns to finish count the armies already standing beside a
+    captures +1. #416 (merged in #484): turns to finish count the armies already standing beside a
     bonus — each territory of mine next to a missing member, once, beyond the guard and what holds it (`keepFor`) —
     before the income (the rationale's "(N standing beside it)"). Golden: 603 of 6253 plans, 19 in their orders. Ties
     at the same turns and income per army (#438) then go to fewer armies to finish, then fewer fogged members, before
@@ -1763,7 +1763,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     bonus held in full ends the commitment (and #319's warning) only when worth `HOLDS_BONUS_MIN_VALUE` (2) or more: a
     +1 is "no bonus worth more than +1". Golden: 79 plans, 6 in their orders (captures unchanged). #319: on turns 2–`SPREAD_LAST_TURN` (6), with at least `SPREAD_TERRITORIES` (10)
     territories, no bonus held and my income at most `SPREAD_INCOME_SLACK` (3) above base, a warning says the captures
-    are spread and names this rule's nearest bonus with its armies and turns; no order changes (golden unchanged). An FFA lead step into it (an enemy member, #203) is sized to land
+    are spread and names this rule's nearest bonus with its armies and turns. **#319 binds (#416, owner 2026-11-22,
+    `plan/spread-bind.ts`):** while it fires, pass-3 plain expansion and advances into other bonuses may not spend
+    deploys, or armies on a territory beside the nearest bonus's missing members, until that bonus's reachable steps
+    are funded; holds keep their places. Reachable steps: its missing members that are capture targets beside a
+    territory of mine; funded: captured by this plan, then the rest flows as before (a step refused for another reason
+    — rule 4d, R3, income — keeps the bind for the turn, and the leftover saves toward it). A stack beside two bonuses'
+    missing members is the nearest bonus's. Bound: other bonuses' advances (pass 2, `balanced`'s advance slots, #439's
+    stage), pass 3 and rule 5b's leftover expansion; never its own members, a focused bonus, completions, holds, breaks,
+    counters, strikes, the 1v1 race, rule 4e, 4g or 4h; my other territories' own armies still attack. A "#319 binds
+    the deploys (#416)" line names the steps and stacks. Golden: 0 of 6253 plans changed (#319 fires on 2, both
+    completing the nearest bonus first); every corpus input on turns 2–6: 75 fire, 5 bind, 0 orders changed. An FFA lead step into it (an enemy member, #203) is sized to land
     even if its owner deploys there first; when the turn cannot fund that for the closest bonus or
     a completion, it is taken at the bare cost that ranking used (#214), after every sibling's
     sure try, with #120's warning — only while rule 4f commits to the closest bonus, and never

@@ -339,6 +339,11 @@ export function captureHelper(
     const need = b ? Math.max(0, holdArmies(b.threat) - unitsAt(x)) : 0;
     return Math.max(need - (stayAt(x) - avail.get(x)!), keepOf(x, t));
   };
+  /**
+   * #416: under #319's bind (plan/spread-bind.ts), `x` beside the nearest bonus's missing members may not attack
+   * `t` unless `t` is a member of that bonus.
+   */
+  const barred = (x: number, t: number) => ps.bind !== undefined && ps.bind.from.has(x) && !ps.bind.members.has(t);
   /** Enemy commanders' territories attacked as a commander strike (rule 1s): exempt from R3. */
   const strikes = new Set<number>();
   /** #272: captures out of a conceded border into a bonus (plan/conceded-out.ts), which R3 does not refuse. */
@@ -477,6 +482,8 @@ export function captureHelper(
             ? avail.get(x)! - holdKeep(x, t)
             : movableFor(x, t);
     if (force && orderOf(force.from)) return false;
+    // #416: under #319's bind, never from beside the nearest bonus's missing members (plan/spread-bind.ts).
+    if (force && barred(force.from, t)) return false;
     /** No-Split: why `x` must hold instead (it would send at least the capture's cost). */
     const held = (x: number) => mustHold(x, t, Math.max(avail.get(x)!, tg.cost));
     if (force) {
@@ -490,7 +497,7 @@ export function captureHelper(
     const open = (x: number) =>
       (!locked.has(x) || (!force && holdSource(x, t))) && (!conceded.has(x) || x === fromConceded || concededSource(x, t, tg.cost));
     // No-Split (#124): a covered exit (#179) issues no order — it would send its whole stack.
-    const usable = (x: number) => open(x) && !held(x) && !(noSplit && coverOf(x) > 0);
+    const usable = (x: number) => open(x) && !held(x) && !(noSplit && coverOf(x) > 0) && !barred(x, t);
     const sources = force
       ? [force.from]
       : tg.sources.filter((x) => usable(x) && !orderOf(x)).sort((a, b) => avail.get(b)! - avail.get(a)! || a - b);
@@ -637,6 +644,7 @@ export function captureHelper(
           !locked.has(x) &&
           !conceded.has(x) &&
           !myCommanders.has(x) &&
+          !barred(x, t) &&
           avail.get(x)! > 0 &&
           !orderOf(x) &&
           !(noSplit && coverOf(x) > 0) &&

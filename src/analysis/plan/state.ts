@@ -316,6 +316,12 @@ export interface PlanState {
    */
   spendKeeps: boolean;
   /**
+   * #416 (owner 2026-11-22): set only while #319's bind holds a capture back (plan/spread-bind.ts): my
+   * territories beside the nearest bonus's missing members (`from`), which a capture of anything but that
+   * bonus's own members (`members`) may not attack from.
+   */
+  bind?: { from: ReadonlySet<number>; members: ReadonlySet<number> };
+  /**
    * #215 review: why the leftover's worse-order step (plan/leftover.ts) made no deploy on a border
    * that holds only with the armies withdrawn into it — `budget` (it could not afford it whole),
    * `room` (Local Deployment), `order` (No-Split: it issues an order, which its deploys would leave with) or `closed` (conceded) — so
