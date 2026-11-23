@@ -22,6 +22,7 @@ import { withTeammateOrders } from '../team-orders.js';
 import { assumedWarning, awardView, loadAward, openingThreat } from './award.js';
 import { readLedger } from '../relations-store.js';
 import { resolveIntel } from '../analysis/intel.js';
+import { allyAttackLine, attacksOnAllies, modAllianceWarnings } from './mod-alliances.js';
 import { avoidPlayersArg, avoidTerritoriesArg, gameIdArg, graphOf, knownIncomeArg, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
@@ -133,6 +134,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'against a break too — each reply that attacks a territory a truce covers is marked `breaksTruce`, and ' +
           '`safeIfTruceHolds` is the verdict over the other replies (null when every reply is a break); a partner-approved ' +
           'truce exception on this turn opens its territories (no break) and is listed under `relations`. ' +
+          'In a game running the Diplomacy 2 mod, an ally is such a truce too, and a warning names any order that attacks ' +
+          'a territory an ally holds (the game skips it; its armies sit idle). ' +
           `Refuses outside a turn phase. ${BRIDGE_NOTE} Read-only on ` +
           'war.app; it never submits orders.',
       ),
@@ -363,9 +366,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // `income` is the board's, card armies out — the same figure warapp_plan_turn passes.
       // PLAN-TEAMS D3: a Diplomacy card in effect that the decoder is sure of is a truce here in any format
       // (T9: the game enforces it). Its player stays among the opponents too: the decoder is unverified.
-      const truces =
-        (await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks, diplomacy: effect.diplomacy }))
-          ?.relations ?? [];
+      // T9 too: a Diplomacy 2 mod alliance (read only in a game that runs the mod) is a truce the game enforces.
+      const resolvedTruces = await truceRelations(ctx, { game, me, turn, graph, board: seen, boards: history.boards, myIncome: income, tracks, diplomacy: effect.diplomacy });
+      const truces = resolvedTruces?.relations ?? [];
+      const modRead = resolvedTruces?.mod;
       const binding = truces.filter(
         (r) =>
           !friend(r.player) &&
@@ -637,6 +641,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         const o = board.territories.find((t) => t.territoryId === id)?.owner;
         return o?.kind === 'player' ? o.playerId : undefined;
       };
+      // A Diplomacy 2 ally's territory (owner at the start of the turn): the game skips the attack, its armies sit idle.
+      const allyHits = modRead ? attacksOnAllies(modRead, moves, ownerOf) : [];
       const avoidedHits = [...new Set(moves.map((m) => m.to))].filter(
         (to) => !mine.has(to) && (avoidT.has(to) || avoidP.has(ownerOf(to) ?? Number.NaN)),
       );
@@ -647,6 +653,13 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(avoidedHits.length
           ? [`These orders attack ${avoidedHits.map((t) => name(t)).join(', ')}, which you asked to avoid (avoid_territories / avoid_players).`]
           : []),
+        ...(allyHits.length
+          ? [
+              `These orders attack a Diplomacy 2 ally — ${allyHits.map((a) => allyAttackLine(a, (t) => name(t).name)).join('; ')}: ` +
+                'the game skips each such attack and its armies sit idle this turn (warapp_submit_turn refuses it unless attack_ally is true).',
+            ]
+          : []),
+        ...(modRead ? modAllianceWarnings(modRead) : []),
         // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
         ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, (w) => untrustedOf.get(w.player) ?? untrustedDeploy(w, income), (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
         ...(award ? assumedWarning(award) : []),

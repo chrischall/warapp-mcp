@@ -666,6 +666,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   owed). Each read costs one GameRefresh; nothing is cached (a surrender can come any moment). A GameFeed id and
   an in-game id are never one field: results carry `player` (GameFeed id or `null`) beside `inGameId`, and the
   in-game id of a GameFeed player comes from one helper, `inGameOf` (`src/live.ts`).
+- **Diplomacy 2 mod alliances (mod 191; `src/mod-data.ts`, `src/mod-alliances.ts`, `src/tools/mod-alliances.ts`; UNVERIFIED
+  live).** Mod data rides the same GameRefresh `nonChat` read: `GameWL` field 8 is every mod's `PublicGameData` and
+  `GameDetailsAndChat` field 3 my `PlayerGameData` (dicts of mod id → the client's mod-table XML; location and XML format
+  VERIFIED on a lobby 2026-11-23, mod 336's table). The mod (FizzerWL/ExampleMods `Diplomacy2Mod`) keeps public `Alliances`
+  `{ID, PlayerOne=proposer, PlayerTwo}` (in-game ids, no turn) and my `PendingProposals`/`Alerts`; it skips attacks between
+  allies by start-of-turn owners and applies a break (a `GameOrderCustom` `Diplomacy2_BreakAlliance_<id>` in the breaker's
+  orders) at the end of that turn. Only a game whose settings' `modIds` include 191 is read (others: no request, goldens
+  unchanged). `truceRelations` passes allies as `modAllies` → enforced T9 relations (`mod: 'Diplomacy 2'`, `ruleOnly` when no
+  agreement) with `enforcedUntil` turn + 1 (an unseen break this turn frees the ally next turn); check_plan warns and
+  submit_turn refuses an attack on an ally unless `attack_ally`; get_relations / advise_diplomacy carry `modAlliances`
+  (mismatches, notices). Propose/accept/decline go through `SendGameCustomMessage` and a break is a custom order this
+  server cannot encode: mod diplomacy is manual only, no tool sends it.
 - **Accepting another player's surrender is `AcceptSurrender` (69) via `warapp_accept_surrender`, confirm-gated**
   (#317; encoder read from the bundle's writer, golden-pinned, UNVERIFIED live). `player` names the surrendering
   player (optional with one pending). The plan reads the game details and refuses a finished game, a lobby, a game

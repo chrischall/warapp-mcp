@@ -619,6 +619,11 @@ export interface PlanRelation {
   enforcedUntil?: number;
   /** D3: a relation that is only a card in effect (no agreement in the ledger). */
   card?: 'Diplomacy';
+  /**
+   * T9: the Diplomacy 2 mod's alliance enforces it (src/mod-alliances.ts). With no `agreement`, a relation that is
+   * only the alliance (every territory of each side covered), ended with it like a card.
+   */
+  mod?: 'Diplomacy 2';
   /** The ledger's agreement id, for the report. */
   agreement?: string;
   /** In notice: who gave it. */
@@ -631,6 +636,10 @@ export interface PlanRelation {
    */
   exceptions?: readonly { direction: 'mine' | 'theirs'; territories: readonly number[] }[];
 }
+
+/** A relation that is only a game rule — a Diplomacy card, or a Diplomacy 2 alliance with no agreement recorded. */
+export const ruleOnly = (r: Pick<PlanRelation, 'card' | 'mod' | 'agreement'>): boolean =>
+  r.card !== undefined || (r.mod !== undefined && r.agreement === undefined);
 
 /** B2: one truce as the plan reports it. */
 export interface PlanRelationView {
@@ -645,6 +654,8 @@ export interface PlanRelationView {
   enforcedUntil?: number;
   /** D3: only a card in effect, no agreement. */
   card?: 'Diplomacy';
+  /** T9: the Diplomacy 2 mod's alliance enforces it. */
+  mod?: 'Diplomacy 2';
   trust: 'clear' | 'watch';
   flags: TruceWatchReason[];
   endsTurn?: number;

@@ -25,6 +25,7 @@ import { registerPickTools } from './picks.js';
 import { registerPushTools } from './push.js';
 import { registerRelationsTools } from './relations.js';
 import { registerDiplomacyTool } from './diplomacy.js';
+import { registerModAlliancesTool } from './mod-alliances.js';
 import { registerRouteTool } from './route.js';
 import { registerScoutTool } from './scout.js';
 import { registerSessionTools } from './session.js';
@@ -158,6 +159,7 @@ export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
   registerRelationsTools(server, live, deps.env ? { env: deps.env } : {});
   // B3: truce advice (read-only): prices a deal by planning with and without it; reads no chat.
   registerDiplomacyTool(server, live, deps.env ? { env: deps.env } : {});
+  registerModAlliancesTool(server, live);
   // One push socket per process: keyed on the shared fetchproxy bridge so
   // connections share it, with requests routed through the direct-first bridge.
   // While the direct leg is active the push rides a direct WebSocket (the

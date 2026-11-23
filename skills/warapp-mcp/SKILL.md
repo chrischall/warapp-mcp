@@ -981,6 +981,16 @@ Withholding is free: nothing obliges a message to say everything.
   `warapp_check_plan` (`safe` still covers a break; `safeIfTruceHolds` is the reading if it holds). A
   break by them — shown on the board (`warapp_get_relations` or the plan reading the truce `broken`),
   never a claim in chat — is recorded `broken-by-them` before submitting.
+- **Diplomacy 2 mod alliances (mod 191):** in a game running the mod, `warapp_get_mod_alliances` lists the
+  alliances (`allied`, `breaking` with `endsTurn`, `pending` proposals to you; UNVERIFIED live). The game itself
+  skips every attack between allies, so the plan treats an ally as an enforced truce (T9: never a target, no
+  threat this turn) and still counts its stacks for next turn — an ally can enter a break nobody else sees that
+  applies at the end of the turn. `warapp_check_plan` warns and `warapp_submit_turn` refuses an attack on an ally
+  (`attack_ally: true` sends it anyway: the armies sit idle). `warapp_get_relations` and
+  `warapp_advise_diplomacy` show `modAlliances` beside the ledger (`source: "mod"` / `"ledger"`) with
+  `mismatches` and `notices`: a `ledger-only` truce is not enforced by the game, and a notice is an ally's break
+  that already applied. Proposing, accepting and breaking are manual only (the mod's menu in the web client);
+  a turn sent by this server may drop a break entered there (the submit preview warns).
 - **Ending a truce:** with the agreed notice — a `notice` commitment in chat and `notice-by-me`
   recorded — and only once the notice has run. Never break a truce without notice.
   `warapp_submit_turn`'s `break_agreement: true` is only for a break the owner has approved and the
@@ -1208,7 +1218,7 @@ with intent **lookup** (but `warapp_wait_for_turn`, `warapp_chat_inbox` and `war
 
 - `warapp_get_game`, `warapp_get_map`, `warapp_map_stats`, `warapp_analyze_board`, `warapp_plan_route`,
   `warapp_get_live_board`, `warapp_get_my_picks`, `warapp_get_my_orders`, `warapp_plan_picks`, `warapp_plan_turn`, `warapp_check_plan`, `warapp_track_opponents`,
-  `warapp_locate_opponents`, `warapp_profile_opponents`, `warapp_strategy`, `warapp_get_chat`, `warapp_get_team`, `warapp_team_brief`, `warapp_get_relations`, `warapp_advise_diplomacy` and `warapp_scout_player` and `warapp_recent_events` are lookups the group reaches by their
+  `warapp_locate_opponents`, `warapp_profile_opponents`, `warapp_strategy`, `warapp_get_chat`, `warapp_get_team`, `warapp_team_brief`, `warapp_get_relations`, `warapp_get_mod_alliances`, `warapp_advise_diplomacy` and `warapp_scout_player` and `warapp_recent_events` are lookups the group reaches by their
   aliases ("warzone game", "whose turn is it", "best bonuses", "chokepoints", "analyze my
   board", "what should i attack", "warzone route", "warzone strategy", "scout player", "head to head", …).
 - **`warapp_my_games` is the canonical "what's new" read**: which games are waiting on the

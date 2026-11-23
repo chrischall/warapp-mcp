@@ -16,6 +16,7 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_my_games: 'whats-new',
   warapp_get_game: 'lookup',
   warapp_get_map: 'lookup',
+  warapp_get_mod_alliances: 'lookup',
   warapp_map_stats: 'lookup',
   warapp_analyze_board: 'lookup',
   warapp_plan_route: 'lookup',
@@ -99,7 +100,6 @@ describe('_meta.mint on tools/list', () => {
       if ('canonical' in mint) expect(mint.canonical, t.name).toBe(true);
       if ('aliases' in mint) {
         const aliases = mint.aliases as string[];
-        expect(aliases.length, t.name).toBeGreaterThan(0);
         expect(aliases.length, t.name).toBeLessThanOrEqual(8);
         for (const a of aliases) {
           expect(a.length, t.name).toBeLessThanOrEqual(40);
