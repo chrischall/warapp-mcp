@@ -476,9 +476,9 @@ describe("opponentReinforcement (#164): an opponent's Reinforcement card on the 
   it('gives the first turn one can be in hand, its armies, and the capturing turns each further card takes', () => {
     expect(opponentReinforcement(fixed, [])).toEqual({ firstTurn: 5, armies: 8, turnsPerCard: 4 });
   });
-  it('a progressive card is valued at the one in my hand, else unknown', () => {
-    expect(opponentReinforcement(progressive, [rein(12)])).toEqual({ firstTurn: 5, armies: 12, turnsPerCard: 4 });
-    expect(opponentReinforcement(progressive, [])).toBeUndefined();
+  it('a progressive card carries its formula (each opponent valued by it), the card in my hand as the fallback', () => {
+    expect(opponentReinforcement(progressive, [rein(12)])).toEqual({ firstTurn: 5, armies: 12, turnsPerCard: 4, progressive: { by: 'territories', percentage: 0.1 } });
+    expect(opponentReinforcement(progressive, [])).toEqual({ firstTurn: 5, armies: 0, turnsPerCard: 4, progressive: { by: 'territories', percentage: 0.1 } });
     expect(opponentReinforcement(undefined, [])).toBeUndefined();
     expect(opponentReinforcement(settings(), [])).toBeUndefined();
   });

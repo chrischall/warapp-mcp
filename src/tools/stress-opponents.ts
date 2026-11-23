@@ -3,7 +3,7 @@
 // check (#274), so both size a reply alike.
 import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart, type PlannerSettings } from '../analysis/index.js';
 import type { MapGraph } from '../analysis/graph.js';
-import type { FogPace } from '../analysis/plan/shared.js';
+import type { EnemyDeployEstimate, FogPace } from '../analysis/plan/shared.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import type { BoardState } from '../board.js';
@@ -38,8 +38,25 @@ export interface StressOpponentsInput {
   mapPace?: FogPace;
   /** Overrides every estimate. */
   enemyDeploy?: number;
+  /**
+   * Whether an opponent's Reinforcement card the clock says it may hold is added to its deploy (`clock`, the
+   * default) or left out (`none`, to see which risks rest on a guessed card). Shown apart as `cardBonus` either way.
+   */
+  assumeCards?: AssumeEnemyCards;
   /** #368/#444: the stated incomes applied (`known_income`): each replaces its player's estimate and scales the others' prior. */
   known?: readonly { player: number; income: number }[];
+}
+
+/** check_plan's `assume_enemy_cards`: the clock's card on top of each estimate, or none. */
+export type AssumeEnemyCards = 'none' | 'clock';
+
+/**
+ * An opponent's deploy for the stress test and its card apart: the estimate (its card on top) under `clock`,
+ * the estimate without the card under `none`; `cardBonus` the card's armies, absent with no card.
+ */
+export function opponentDeploy(e: Pick<EnemyDeployEstimate, 'estimate' | 'card'>, assume: AssumeEnemyCards): { deploy: number; cardBonus?: number } {
+  const card = e.card?.armies ?? 0;
+  return { deploy: assume === 'none' ? e.estimate - card : e.estimate, ...(card > 0 ? { cardBonus: card } : {}) };
 }
 
 export function stressOpponents(input: StressOpponentsInput) {
@@ -103,13 +120,24 @@ export function stressOpponents(input: StressOpponentsInput) {
   const onBoard = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' ? [t.owner.playerId] : [])));
   const stillIn = game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').map((p) => p.id);
   const base = settings.baseIncome ?? 0;
-  const estimateOf = (id: number) => estimates.find((x) => x.playerId === id)?.estimate ?? base;
+  const estimateOf = (id: number) => {
+    const e = estimates.find((x) => x.playerId === id);
+    return e ? opponentDeploy(e, input.assumeCards ?? 'clock').deploy : base;
+  };
   const opponents = [...new Set([...onBoard, ...stillIn])]
     .filter((id) => !friend(id))
     .sort((a, b) => a - b)
     .map((id) => {
       const e = estimates.find((x) => x.playerId === id);
-      return { id, deploy: input.enemyDeploy ?? e?.estimate ?? base, base: e?.base ?? base, ...(e?.card ? { card: e.card.armies } : {}) };
+      const sized = e ? opponentDeploy(e, input.assumeCards ?? 'clock') : { deploy: base };
+      return {
+        id,
+        deploy: input.enemyDeploy ?? sized.deploy,
+        base: e?.base ?? base,
+        ...(e?.card ? { card: e.card.armies } : {}),
+        ...(sized.cardBonus !== undefined ? { cardBonus: sized.cardBonus } : {}),
+        ...(e?.sanctioned ? { sanctioned: e.sanctioned } : {}),
+      };
     });
   const teams = new Map<number, number>();
   for (const p of game.players) if (carriesTeam(p.team)) teams.set(p.id, p.team);

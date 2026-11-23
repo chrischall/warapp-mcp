@@ -10,7 +10,7 @@ import { bonusTerritories } from '../bonuses.js';
 import { neighborsOf, type MapGraph } from '../graph.js';
 import { armyCapIncome, boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome, type ArmyCapIncome } from '../player.js';
 import { byNum } from './util.js';
-import { LOW_COVERAGE, MIN_ENEMY_DEPLOY, OWNERS_SHOWN_FOG, PRIOR_EVIDENCE_TURNS, TRACKED_MIN_TURNS, bombPossibleOn, fogPaceIncome, localFreeOn } from './shared.js';
+import { LOW_COVERAGE, MIN_ENEMY_DEPLOY, OWNERS_SHOWN_FOG, PRIOR_EVIDENCE_TURNS, TRACKED_MIN_TURNS, bombPossibleOn, fogPaceIncome, localFreeOn, reinforcementArmiesFor } from './shared.js';
 import type { EnemyDeployEstimate, EnemyIncomePrior, PlannerSettings, ReinforcementClock, ReinforcementPlays } from './shared.js';
 import { observeDeploy, ownerShown, trackCoverage, visibleState } from './observe.js';
 
@@ -155,6 +155,8 @@ export function enemyDeployEstimates(
     const theirs = new Set<number>();
     for (const [t, p] of owner) if (p === playerId) theirs.add(t);
     const held = theirs.size;
+    // A Reinforcement card of its: a flat card's armies, a progressive one by the game's formula (its territories in view, or the turn).
+    const cardArmies = when.reinforcement ? reinforcementArmiesFor(when.reinforcement, { territories: held, turn: when.turn ?? 0 }) : 0;
     const base = territoryIncome(held, minimum, per);
     // The one income rule (#85) over what it visibly holds; `bonusIncome` is what it adds to the base.
     const bonusIncome = boardIncome(g, theirs, { base: minimum, per }).total - base;
@@ -230,14 +232,14 @@ export function enemyDeployEstimates(
     // #164: a Reinforcement card play is seen as a deploy (its low reading) above the income that turn:
     // exactly, when every owner shows; under fog only a jump of the card's armies over its visible income
     // counts (a smaller excess may be a bonus the fog hides — and the tracked income then carries the jump).
-    const above = (low: number, income: number) => (exact !== null ? low > income : low >= income + when.reinforcement!.armies);
+    const above = (low: number, income: number) => (exact !== null ? low > income : low >= income + cardArmies);
     let tracked = usable ? usable.income : null;
     // #427: the tracker reads every deploy as income, so a card play it saw set its figure (the most it was
     // seen to deploy) and was then carried, while the clock adds the next card on top: one card counted
     // twice, every turn. When the turns that set the figure are all plays counted as cards, it is read
     // again with each play's card armies out (never below its visible income, never above the figure).
     let cardInTrack: EnemyDeployEstimate['cardInTrack'] = null;
-    if (usable && tracked !== null && when.reinforcement && when.reinforcement.armies > 0 && when.turn !== null && when.turn !== undefined) {
+    if (usable && tracked !== null && when.reinforcement && cardArmies > 0 && when.turn !== null && when.turn !== undefined) {
       const r = when.reinforcement;
       const read = playsOf(usable.turns.filter((x) => above(x.low, x.visibleIncome)).map((x) => x.from), playerId, when.plays);
       const plays = new Set(cardsCounted(read.turns, r, when.turn, read.seen).counted);
@@ -245,10 +247,10 @@ export function enemyDeployEstimates(
       if (top.length && top.every((x) => plays.has(x.from))) {
         const without = Math.max(
           usable.visibleIncome,
-          ...usable.turns.map((x) => (plays.has(x.from) ? Math.min(x.cap, Math.max(0, x.raw - r.armies)) : x.observed)),
+          ...usable.turns.map((x) => (plays.has(x.from) ? Math.min(x.cap, Math.max(0, x.raw - cardArmies)) : x.observed)),
         );
         if (without < tracked) {
-          cardInTrack = { was: tracked, income: without, armies: r.armies, turns: top.map((x) => x.from).sort(byNum) };
+          cardInTrack = { was: tracked, income: without, armies: cardArmies, turns: top.map((x) => x.from).sort(byNum) };
           tracked = without;
         }
       }
@@ -435,7 +437,7 @@ export function enemyDeployEstimates(
       const { counted, due } = cardsCounted(read.turns, r, when.turn, read.seen);
       cardPlayed = counted.at(-1) ?? null;
       cardSeen = cardPlayed !== null && read.seen.has(cardPlayed);
-      if (when.turn >= due && r.armies > 0) card = { armies: r.armies, due };
+      if (when.turn >= due && cardArmies > 0) card = { armies: cardArmies, due };
     }
     const estimate = income + (card?.armies ?? 0);
     return {

@@ -3023,8 +3023,33 @@ describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)'
     expect(p.cardsInEffect).toMatchObject({ sanctionsOnMe: [{ percentage: 0.6, untilTurn: 4 }], incomeBefore: 5, incomeAfter: 2, verified: false });
     const w = p.warnings.join('\n');
     expect(w).toMatch(/Sanctions are on you \(60%, until turn 4\): the plan's income is 2, not 5/);
-    expect(w).toMatch(/Income 2 may be off: the Sanctions on you by 60% are applied as read from the board by an unverified decoder/);
+    // Owner spec 2026-11-23: the cut is modelled, so the income is no longer called off for it.
+    expect(w).not.toMatch(/Income \d+ may be off: .*Sanctions/);
     expect(w).not.toMatch(/the modelled income does not apply/);
+  });
+
+  it("warapp_submit_turn checks the deploys against the Sanctions on me, so the cut total needs no error-11 retry", async () => {
+    h = await liveHarness({ feed: [game('Playing'), game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([san(3)]) }) });
+    const ok = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 161, armies: 2 }] });
+    expect(ok.isError).toBeFalsy();
+    const text = JSON.stringify(payload(ok));
+    expect(text).toMatch(/Sanctions are on you \(60%, until turn 4\)/);
+    expect(text).not.toMatch(/modelled income is/);
+    const full = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'deploy', territory: 161, armies: 5 }] });
+    expect(JSON.stringify(full.isError ? textOf(full) : payload(full))).toMatch(/income is 2 this turn/);
+  });
+
+  it('warapp_check_plan reports sanctionApplied and the card clock apart, under assume_enemy_cards', async () => {
+    const onBob: SyntheticActiveCard = { card: 'Sanctions', target: BOB.inGame, by: ANN.inGame, guid: G2, expiresAfterTurn: 3 };
+    h = await liveHarness({ feed: [game('Playing'), game('Playing')], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: withActive([onBob]) }) });
+    type Check = { assumeEnemyCards: string; enemyDeploy: Array<{ player: { id: number }; deploy: number; sanctionApplied?: Record<string, number> }> };
+    const p = payload<Check>(await h.call('warapp_check_plan', { game_id: GAME, orders: [{ kind: 'deploy', territory: 161, armies: 5 }] }));
+    expect(p.assumeEnemyCards).toBe('clock');
+    const bob = p.enemyDeploy.find((e) => e.player.id === Number(BOB.feed))!;
+    expect(bob.sanctionApplied).toEqual({ player: Number(BOB.feed), percentage: 0.6, before: 5, after: 2 });
+    expect(bob.deploy).toBe(2);
+    const none = payload<Check>(await h.call('warapp_check_plan', { game_id: GAME, orders: [{ kind: 'deploy', territory: 161, armies: 5 }], assume_enemy_cards: 'none' }));
+    expect(none.assumeEnemyCards).toBe('none');
   });
 
   it('G2: Sanctions on an opponent show in cardsInEffect and cut its estimate read off the board', async () => {
@@ -3038,6 +3063,9 @@ describe('cards in effect in the turn tools (PLAN-TEAMS D3, unverified decoder)'
     expect(p.cardsInEffect).not.toHaveProperty('sanctionsOnMe');
     expect(p.income).toBe(5);
     expect(p.warnings.join('\n')).toMatch(/Player 7176543229 is under Sanctions \(60%, until turn 4, .*\): its estimate is cut from ~5 to ~2/);
+    expect((p as unknown as { enemyDeployDetail: unknown[] }).enemyDeployDetail).toEqual([
+      expect.objectContaining({ deploy: 2, sanctionApplied: { player: Number(BOB.feed), percentage: 0.6, before: 5, after: 2 } }),
+    ]);
   });
 
   it('with no card in effect the plan is the one made without the decoder', async () => {

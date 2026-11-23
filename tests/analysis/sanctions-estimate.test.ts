@@ -51,12 +51,12 @@ describe('G2: Sanctions on another player in the estimates', () => {
     expect(p.warnings.join('\n')).not.toMatch(/Sanctions/);
   });
 
-  it('leave an observed, tracked or prior figure whole, marked not applied; a card stays on top of a cut', () => {
+  it('cut an observed, tracked or prior figure too (owner spec 2026-11-23); a card stays on top of a cut', () => {
     const base = { playerId: FOE, estimate: 15, card: null } as unknown as EnemyDeployEstimate;
     const s = [{ player: FOE, percentage: 0.5, untilTurn: 7 }];
     for (const source of ['observed', 'tracked', 'prior'] as const) {
       const [e] = applySanctions([{ ...base, source }], s);
-      expect(e).toMatchObject({ estimate: 15, sanctioned: { applied: false, before: 15, percentages: [0.5] } });
+      expect(e).toMatchObject({ estimate: 8, sanctioned: { applied: true, before: 15, after: 8, percentages: [0.5] } });
     }
     const [carded] = applySanctions([{ ...base, source: 'visible', estimate: 20, card: { armies: 5, due: 4 } }], s);
     expect(carded).toMatchObject({ estimate: 13, sanctioned: { applied: true, before: 15 } });

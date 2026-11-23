@@ -1097,14 +1097,15 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           );
         // #164: the income behind the estimate; a card the clock adds is named on top of it.
         const income = e.estimate - (e.card?.armies ?? 0);
-        // G2 (D3): Sanctions on it the decoder is sure of — applied to a figure read off the board only.
+        // G2 (D3): Sanctions on it the decoder is sure of — every income figure cut, unless read from deploys under the card.
         if (e.sanctioned) {
           const z = e.sanctioned;
           const pct = z.percentages.map((x) => `${Math.round(x * 100)}%`).join(' then ');
+          const range = z.applied && e.thinEvidence ? ` (its range ~${e.thinEvidence.lower}–${e.thinEvidence.upper})` : '';
           warnings.push(
             z.applied
-              ? `Player ${p} is under Sanctions (${pct}, until turn ${z.untilTurn}, read from the board by an unverified decoder): its estimate is cut from ~${z.before} to ~${income} by the client's rule.`
-              : `Player ${p} is under Sanctions (${pct}, until turn ${z.untilTurn}, read from the board by an unverified decoder), but its estimate ~${income} is not cut: ${e.source === 'prior' ? 'it is a prior, a floor guessed from what it could earn, not its income' : `it is ${e.source} from its deploys, which may already carry the cut`}.`,
+              ? `Player ${p} is under Sanctions (${pct}, until turn ${z.untilTurn}, read from the board by an unverified decoder): its estimate is cut from ~${z.before} to ~${income}${range} by the client's rule.`
+              : `Player ${p} is under Sanctions (${pct}, until turn ${z.untilTurn}, read from the board by an unverified decoder): its estimate ~${income} is not cut again, since it was read from deploys made under the card${z.fromTurn !== undefined ? ` (from turn ${z.fromTurn})` : ''}, which already carry the cut.`,
           );
         }
         // #332: a commerce game's rising army price, applied to a figure read off the board.

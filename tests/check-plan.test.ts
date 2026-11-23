@@ -160,14 +160,14 @@ describe('warapp_check_plan', () => {
   it("#164: passes the fog setting and an opponent's Reinforcement clock to the estimates", async () => {
     const spy = vi.mocked(analysis.planEnemyEstimates);
     const orders = [{ kind: 'deploy', territory: 159, armies: 5 }];
-    // The fixture's Reinforcement card is progressive with none in hand: what it adds is unknown.
+    // The fixture's Reinforcement card is progressive (Mode 1, 10%) with none in hand: each opponent's is valued
+    // by the game's formula (its territories in view × 10%), not by a card of mine.
     h = await live(at(20, 20, 3));
     spy.mockClear();
     const plain = await check({ orders });
     // Its own call, then the default plan's (#275 pattern 3: `belowPlan`); the first is the stress test's.
     expect(spy).toHaveBeenCalledTimes(2);
-    expect(spy.mock.calls[0]![0].game).toMatchObject({ fog: 'Foggy' });
-    expect(spy.mock.calls[0]![0].game).not.toHaveProperty('reinforcement');
+    expect(spy.mock.calls[0]![0].game).toMatchObject({ fog: 'Foggy', reinforcement: { armies: 0, progressive: { by: 'territories', percentage: 0.1 } } });
     await h.harness.close();
     // A fixed 20-army card, in a hand from the start: Bob's deploy carries it.
     const fixed = { ReinforcementCard: { NumPieces: 1, InitialPieces: 1, MinimumPiecesPerTurn: 1, Weight: 1.0, FixedArmies: 20 } };

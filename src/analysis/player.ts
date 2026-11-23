@@ -185,7 +185,7 @@ export function incomeRules(settings: Pick<GameSettings, 'minimumArmyBonus' | 'b
  * flagged when the card is merely enabled: the live board's active-card decoder is
  * unverified (#163), so the model cannot be sure whether I am sanctioned this turn
  * (docs/WARAPP-API.md, the trade-off). With `sanctionsApplied` (PLAN-TEAMS D3: the
- * income already carries the Sanctions read on me) the reason says so instead. An army cap is
+ * income already carries the Sanctions read on me) it is left out: the cut is modelled. An army cap is
  * modelled ({@link armyCapIncome}, #253) and verified by six live cases, yet stays listed (where the
  * card armies and Local Deployment's pools fall is not verified): with
  * `armyCap` (the figure the caller applied) the reason states its arithmetic.
@@ -209,14 +209,12 @@ export function incomeUncertainties(
   }
   // Overrides that were read are applied to the map (applyBonusOverrides), so only unreadable ones make income uncertain.
   if (settings?.overriddenBonusesUnparsed) out.push(OVERRIDES_UNPARSED);
-  if (settings?.cards.includes('Sanctions')) {
+  // Owner spec 2026-11-23: once the Sanctions on me are modelled (`sanctionsApplied`), the deploy check matches
+  // them, so they are no reason to doubt the income; only a game with the card and none read on me is.
+  if (settings?.cards.includes('Sanctions') && !opts.sanctionsApplied) {
     const pct = settings.raw?.SanctionsCard;
     const p = isRecord(pct) && typeof pct.Percentage === 'number' ? ` by ${Math.round(pct.Percentage * 100)}%` : '';
-    out.push(
-      opts.sanctionsApplied
-        ? `the Sanctions on you${p} are applied as read from the board by an unverified decoder (#163).`
-        : `This game has the Sanctions card, which cuts a sanctioned player's income${p}; the model does not apply it.`,
-    );
+    out.push(`This game has the Sanctions card, which cuts a sanctioned player's income${p}; the model does not apply it.`);
   }
   return out;
 }
