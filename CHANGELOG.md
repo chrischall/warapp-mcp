@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.12.0](https://github.com/chrischall/warapp-mcp/compare/v0.11.0...v0.12.0) (2026-11-23)
+
+
+### Features
+
+* **cards:** Gift verified live; a completing gift goes into the orders ([#435](https://github.com/chrischall/warapp-mcp/issues/435)) ([#534](https://github.com/chrischall/warapp-mcp/issues/534)) ([549301e](https://github.com/chrischall/warapp-mcp/commit/549301ec345c0a0d2689a78b84608f5ce98e0b76))
+* **cards:** model Sanctions on every income and a card clock that resets on seen plays ([#516](https://github.com/chrischall/warapp-mcp/issues/516)) ([27ab81a](https://github.com/chrischall/warapp-mcp/commit/27ab81addbe5400055403ffe12da06f3e0c8f2ac))
+* **commander:** keep a one-territory commander safe against fogged neighbours ([#529](https://github.com/chrischall/warapp-mcp/issues/529)) ([2568f11](https://github.com/chrischall/warapp-mcp/commit/2568f11b35eb2ba1f91954b041772f0ade7d1963))
+* **deploy:** Local Deployment limits for zero-value bonuses and the helper mod ([#527](https://github.com/chrischall/warapp-mcp/issues/527)) ([9d2dbae](https://github.com/chrischall/warapp-mcp/commit/9d2dbae678428be41a6cb681eeca8b3f125e33b7))
+* **end-of-game:** per-player stats and closing out a finished game ([#528](https://github.com/chrischall/warapp-mcp/issues/528)) ([55edbee](https://github.com/chrischall/warapp-mcp/commit/55edbeeb2231ab6d434b39fa07991deaab729daa))
+* **picks:** rank single-pick starts on huge maps ([#525](https://github.com/chrischall/warapp-mcp/issues/525)) ([113fcb9](https://github.com/chrischall/warapp-mcp/commit/113fcb9d151eb3770a3cc9847c0bb85f4015f41c))
+* **relations:** Diplomacy 2 mod alliances as enforced truces ([#524](https://github.com/chrischall/warapp-mcp/issues/524)) ([7af7953](https://github.com/chrischall/warapp-mcp/commit/7af79536e4a8cb75936689893a30e248b7bb385f))
+* **scale:** ~100-opponent games, mention-aware chat and boot-time pace ([#530](https://github.com/chrischall/warapp-mcp/issues/530)) ([7d8ca32](https://github.com/chrischall/warapp-mcp/commit/7d8ca326c6d6fe7379864f23deb00e18acbe867c))
+
+
+### Bug Fixes
+
+* address auto-review follow-ups for [#529](https://github.com/chrischall/warapp-mcp/issues/529) and [#530](https://github.com/chrischall/warapp-mcp/issues/530) ([#535](https://github.com/chrischall/warapp-mcp/issues/535)) ([219af5e](https://github.com/chrischall/warapp-mcp/commit/219af5eb805c8d79993044e36ef8561ed20848ce))
+* **bonuses:** use the game's overridden bonus values and minimum army bonus everywhere ([#518](https://github.com/chrischall/warapp-mcp/issues/518)) ([89a78ca](https://github.com/chrischall/warapp-mcp/commit/89a78ca906716fdea473595f36484ba09c1c4af3))
+* **cards:** value opponents' progressive Reinforcement cards correctly and drop a stale Sanctions warning ([#521](https://github.com/chrischall/warapp-mcp/issues/521)) ([9173722](https://github.com/chrischall/warapp-mcp/commit/917372294c904779fb29741edee91d3ff0b38537))
+* **commander:** count only likely starts as fogged attackers ([#533](https://github.com/chrischall/warapp-mcp/issues/533)) ([62fe11e](https://github.com/chrischall/warapp-mcp/commit/62fe11e5f90fb1d5744af6cd7480c543e6448720))
+* **outlook:** use calibrated income for fogged leaders in howLost and the surrender check ([#537](https://github.com/chrischall/warapp-mcp/issues/537)) ([d30d2c9](https://github.com/chrischall/warapp-mcp/commit/d30d2c9a7e46fa2dc322bcf08d751d736a271100))
+
+
+### Documentation
+
+* **end-of-game:** warapp_close_finished_game verified live ([#536](https://github.com/chrischall/warapp-mcp/issues/536)) ([e7aa390](https://github.com/chrischall/warapp-mcp/commit/e7aa39073d059b46216457618ef3fee57b44e3d6))
+
 ## [0.11.0](https://github.com/chrischall/warapp-mcp/compare/v0.10.0...v0.11.0) (2026-11-23)
 
 
