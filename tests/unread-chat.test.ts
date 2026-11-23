@@ -194,6 +194,20 @@ describe('warapp_chat_inbox: every page, filters and both read states', () => {
   });
 });
 
+describe('only + mark_seen (#511)', () => {
+  it('a game the filter leaves out is not marked seen: a later call still shows its messages', async () => {
+    const chats = { 402: [{ id: 1, date: at(1), from: BOB.inGame, text: 'only public', turn: 1 }] };
+    const fake = warapp([listed(402)], chats);
+    h = await liveHarness({ feed: [feedGame(402), feedGame(402)], pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { only: 'toMe', mark_seen: true }));
+    expect(p.games).toEqual([]);
+    expect(p.filtered).toEqual([402]);
+    const q = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    expect(q.games.map((g) => g.id)).toEqual([402]);
+    expect(q.games[0]!.messages[0]).toMatchObject({ new: true });
+  });
+});
+
 describe('read-state drift between war.app and this machine', () => {
   const CHAT = { 501: [{ id: 7, date: at(1), from: BOB.inGame, text: 'truce?', turn: 1 }] };
 

@@ -197,7 +197,9 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
           const byInGame = playersByInGameId(game.players);
           const freshAt = read.lines.map((_, i) => i).filter((i) => fresh[i]);
           const fresh_ = freshAt.map((i) => read.lines[i]!);
-          const marked = mark_seen ? await markChatSeen(ctx, game.id, me, read, seen, channels) : undefined;
+          // #511: marked only once the game is listed — a game `only` filters out stays unread here, so a later
+          // call (or warapp_get_chat) still shows it.
+          const markSeen = () => (mark_seen ? markChatSeen(ctx, game.id, me, read, seen, channels) : Promise.resolve(undefined));
           // war.app's own flags for the game (from the list; null when the list was not read or left it out).
           const flags: UnreadChatFlags | undefined = list ? unreadChatOf(list.games, game.id) : undefined;
           // A channel war.app shows unread while this machine has seen all of it: its newest message from another player.
@@ -216,6 +218,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
           newPrivateToMe += toMe;
           if (fresh_.length) gamesWithNew++;
           if (!fresh_.length && !warappOnlyAt.length && !(flags && channels.some((c) => flags[CHANNEL_FLAG[c]]))) {
+            await markSeen();
             quiet.push(id);
             continue;
           }
@@ -233,6 +236,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
             filtered.push(id);
             continue;
           }
+          const marked = await markSeen();
           const messages = shownAt.map((i) => ({
             ...shown(read.lines[i]!, fresh[i]!, game.players, byInGame, me),
             ...readingFields(reading(i, fresh[i]!)),
