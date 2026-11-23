@@ -1,7 +1,8 @@
 // Local Deployment (GameFeed `LocalDeployments`): armies earned from a bonus may
 // only be deployed on that bonus's territories; the rest of the income (base
-// income, per-territory income, card armies) may go anywhere. Which income is
-// "anywhere" is UNVERIFIED beyond the bonus rule itself — see docs/WARAPP-API.md.
+// income — MinimumArmyBonus, or floor(territories / BonusArmyPer) when larger — card
+// armies, cities) may go anywhere; a 0-value bonus makes no pool. Read from the client
+// bundle's income and deploy check (docs/WARAPP-API.md), not yet seen live.
 // Pure and deterministic.
 
 import { bonusTerritories } from './bonuses.js';

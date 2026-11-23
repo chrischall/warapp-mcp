@@ -255,7 +255,7 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   read in full make both warn instead of refuse (war.app enforces both) and `warapp_plan_turn` notes
   it.
 
-## Local Deployment — key verified, pool rules UNVERIFIED
+## Local Deployment — key verified, pool rules read from the bundle
 
 - `settings.LocalDeployments` (boolean, `GetSettings=true`) is read into
   `GameSettings.localDeployments` (verified key: the lobby fixture sends `false`).
@@ -272,6 +272,25 @@ game `2147483647`, and `ServerGameKeyNotFound` from that request shows the crede
   exact matching (a maximum flow from deployed territories to the pools that contain them), so a
   valid split is never refused — whether the bonuses nest (superbonuses) or overlap without
   nesting. war.app's own refusal of a broken split has not been observed.
+- **Read from the client bundle (2026-11-23, build 639306194258107789; not yet seen live).** The
+  income code (`hAb`) adds floor(territories ÷ BonusArmyPer) to the free armies and tops them up to
+  `MinimumArmyBonus`; under `LocalDeployments` each held bonus's value goes to a pool keyed by the bonus
+  (`Oac`, which skips a value of 0: **a 0-value bonus has no pool**), else to the free armies; cities and
+  a mod's income modification without a bonus are free too (one naming a bonus the player holds in full
+  joins that pool). The deploy check (`IKa`) charges a deploy to the pools of the territory's bonuses,
+  fewest territories first, then to the free armies; what neither covers is error 415
+  `ArmiesNotDeployedLocally` (11 without Local Deployment). Creating a Local Deployment game whose bonuses
+  of non-zero value overlap is refused (416 `CannotUseLocalDeploymentsWithOverlappingBonuses`; 0-value
+  bonuses are left out of that check), so the superbonus case above cannot arise in a real game and the
+  greedy charge equals `chargeDeploys`' maximum flow. So the first and third assumptions above hold.
+- **The Local Deployment Helper mod (336; JustMe003/WarzoneMods, source read 2026-11-23, version 3.0)**
+  makes a map fit that rule: at creation it sets to 0 every bonus on a territory that is in more than one
+  non-zero bonus, except the one with fewest territories (the zeros arrive as `OverriddenBonuses`), and turns
+  `LocalDeployments` (and optionally `AllowPercentageAttacks`) on. It has no turn hook: during play it only
+  adds orders in the web client (its auto-deploy fills an empty order list with last turn's orders) and
+  removes its own `[LDH_V3]` marker order before a commit. Game 45736172 (Huge Westeros): 1,067 overrides,
+  670 to 0, 397 positive and none overlapping; 412 of 2,841 territories are in a pool, the rest take free
+  armies only.
 
 ## No-Split — key and whole-stack rule verified, the guard UNVERIFIED
 
