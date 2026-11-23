@@ -1,6 +1,6 @@
 // #523 close-out: warapp_close_finished_game sends GetEndGameWindowData (85) — what the client sends when it shows a
 // finished game's end-of-game window, and what sets SeenEndGameWindow, which drops the game from the app's My Games
-// (the Default list). Synthetic answers only; UNVERIFIED live.
+// (the Default list). Synthetic answers only (the call itself was verified live 2026-11-23).
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
@@ -69,7 +69,7 @@ describe('warapp_close_finished_game (#523)', () => {
     const tool = (await h.harness.client.listTools()).tools.find((t) => t.name === 'warapp_close_finished_game')!;
     expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: true });
     expect(tool.description).toMatch(/GetEndGameWindowData/);
-    expect(tool.description).toMatch(/UNVERIFIED/);
+    expect(tool.description).toMatch(/Verified live/);
   });
 
   it('previews by id, sends nothing until confirmed', async () => {

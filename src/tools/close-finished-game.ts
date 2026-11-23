@@ -4,7 +4,7 @@
 // only server call there, so the one that records the flag. The app's My Games is GetMyGames' Default list, which
 // (read live 2026-11-23, read-only) holds finished games only while that flag is clear: of 37 finished games in the
 // All list, the 18 unseen were all in Default and the 19 seen none. Parameters as UnCommit's (auth, int32 game id),
-// from the bundle's writer; whether the call itself sets the flag is UNVERIFIED live.
+// from the bundle's writer; VERIFIED live 2026-11-23 (a finished game closed: confirmed by the games-list read-back; a second call refused it as already closed, nothing sent).
 //
 // It reaches no other player. Read back from GetMyGames (All): GameInfo field 20, `seenEndGame` (`closed`, confirmed);
 // still clear or not listed is `unconfirmed`; no answer `unknown`, never resent.
@@ -52,7 +52,7 @@ export function registerCloseFinishedGameTool(server: McpServer, ctx: LiveContex
         'My Games lists a finished game only while that is clear). Reaches no other player and changes nothing in the ' +
         'game. Refuses a game not finished, one you did not play, and one already closed out. Reported `closed` only once ' +
         'your games list shows it seen; `unconfirmed` otherwise, `unknown` when war.app did not answer (never resend ' +
-        `blindly). UNVERIFIED live: the request's shape is read from the client bundle. ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
+        `blindly). Verified live: closing a finished game was confirmed by the games-list read-back. ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Close out a finished war.app game',
         readOnly: false,
@@ -89,7 +89,7 @@ export function registerCloseFinishedGameTool(server: McpServer, ctx: LiveContex
               note: 'Reaches no other player and changes nothing in the game; the game stays readable (warapp_get_game, its history).',
               account: shownAccount(seat.name, seat.id),
               game: { id: game.id, state: game.state, myState: seat.state ?? null },
-              verification: 'UNVERIFIED live: the request is read from the client bundle.',
+              verification: 'Verified live (2026-11-23).',
             },
           },
           state: { gameId: game.id, me: seat.id } satisfies CloseState,
