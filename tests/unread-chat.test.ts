@@ -194,6 +194,48 @@ describe('warapp_chat_inbox: every page, filters and both read states', () => {
   });
 });
 
+describe('mentionsMe and the public summary (scale)', () => {
+  const chats = () => ({
+    601: [
+      { id: 1, date: at(1), from: BOB.inGame, text: 'anyone up for a truce', turn: 1 },
+      { id: 2, date: at(2), from: BOB.inGame, text: 'ANN is getting big, hit her', turn: 1 },
+      { id: 3, date: at(3), from: BOB.inGame, text: 'annoying map', turn: 1 },
+      { id: 4, date: at(4), from: BOB.inGame, text: 'psst', privateTo: ANN.inGame, turn: 1 },
+    ],
+    602: [{ id: 1, date: at(1), from: BOB.inGame, text: 'nothing about anyone', turn: 1 }],
+  });
+
+  it('only: "mentionsMe" shows private messages to me and any naming me (whole word), marked; the rest are filtered', async () => {
+    const fake = warapp([listed(601), listed(602)], chats());
+    h = await liveHarness({ feed: [feedGame(601), feedGame(602)], pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { only: 'mentionsMe' }));
+    expect(p.games.map((g) => g.id)).toEqual([601]);
+    expect(p.games[0]!.messages.map((m) => m.mentionsMe ?? false)).toEqual([true, false]);
+    expect(p.games[0]!.messages.map((m) => m.channel)).toEqual(['public', 'private']);
+    expect(p.filtered).toEqual([602]);
+  });
+
+  it('public_chat: "summary" keeps only the public mentions and sums the rest per game', async () => {
+    const fake = warapp([listed(601), listed(602)], chats());
+    h = await liveHarness({ feed: [feedGame(601), feedGame(602)], pages: SIGNED_IN_ANN, warapp: fake.handler });
+    const p = payload<Inbox>(await h.call('warapp_chat_inbox', { public_chat: 'summary' }));
+    const g601 = p.games.find((g) => g.id === 601)! as InboxGame & { publicSummary?: Record<string, unknown> };
+    expect(g601.messages.map((m) => m.channel)).toEqual(['public', 'private']);
+    expect(g601.publicSummary).toMatchObject({ newMessages: 3, mentionsShown: 1, senders: 1 });
+    const g602 = p.games.find((g) => g.id === 602)! as InboxGame & { publicSummary?: Record<string, unknown> };
+    expect(g602.messages).toEqual([]);
+    expect(g602.publicSummary).toMatchObject({ newMessages: 1, mentionsShown: 0 });
+    // Without the option nothing changes: every message, no summary.
+    h && (await h.harness.close());
+    const fake2 = warapp([listed(601)], chats());
+    h = await liveHarness({ feed: [feedGame(601)], pages: SIGNED_IN_ANN, warapp: fake2.handler });
+    const q = payload<Inbox>(await h.call('warapp_chat_inbox'));
+    expect(q.games[0]!.messages).toHaveLength(4);
+    expect(q.games[0]).not.toHaveProperty('publicSummary');
+    expect(q.games[0]!.messages.some((m) => 'mentionsMe' in m)).toBe(false);
+  });
+});
+
 describe('only + mark_seen (#511)', () => {
   it('a game the filter leaves out is not marked seen: a later call still shows its messages', async () => {
     const chats = { 402: [{ id: 1, date: at(1), from: BOB.inGame, text: 'only public', turn: 1 }] };

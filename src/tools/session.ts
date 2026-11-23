@@ -20,6 +20,7 @@
 //
 // SECURITY: the AuthToken is a full-account credential. Neither tool returns,
 // logs, or previews it; the status output carries only `capturedAt`/`host`/age.
+import { paceWarning, type PaceStatus } from './pace.js';
 import { CONFIRM_INJECTION_RULE, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -61,6 +62,11 @@ export interface SessionToolsDeps {
   decoder?: () => DecoderReport | undefined;
   /** Clock for age. Defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * Pace: the boot clocks the last game list read in this process saw; with none yet it reads the list itself (one
+   * war.app request). A read that fails gives `{ error }`.
+   */
+  pace?: (now: number, mayRead: boolean) => Promise<PaceStatus | { error: string } | undefined>;
   /** A hosted child: no link tool, status reports the bridge. Defaults to {@link isHosted} of `env`. */
   hosted?: boolean;
   /** Hosted: whether mcp-host captured a usable session token. Defaults to {@link hostedTokenState} of `env`. */
@@ -134,7 +140,7 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
     {
       title: 'war.app direct-transport session status',
       description: untrustedDescription(
-        hosted && hostToken === 'ok'
+        (hosted && hostToken === 'ok'
           ? 'Report which transport serves war.app calls on this hosted server (direct to war.app with the session ' +
               'mcp-host captured at sign-in, or the browser bridge after that session stops working) and which ' +
               'transport the turn-notification push socket rides (websocket or xhr-polling) once it has run, and, once ' +
@@ -151,13 +157,27 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
               'which transport the turn-notification push socket rides (websocket or xhr-polling) once it has run, ' +
               'and, once a live board has been read, which client bundle decodes boards (a cached stand-in or not) and ' +
               'which of its reader helpers were verified. ' +
-              'Never shows the session cookie. Read-only; use warapp_link_session to link or relink.',
+              'Never shows the session cookie. Read-only; use warapp_link_session to link or relink.') +
+          ' `pace` lists the multi-day games waiting on you whose boot is under 6 hours away (boot time plus your banked ' +
+          'time, less your turn so far), and `bootWarning` names them: from the game list this server last read ' +
+          '(warapp_my_games, the chat inbox), else it reads the list itself (one war.app request, over a working direct ' +
+          'session only — never by waiting on the browser bridge); `paceUnread` says why when it could not.',
       ),
       _meta: lookupMeta(['war.app session', 'is war.app linked', 'direct transport status']),
       annotations: readAnnotations('war.app session status'),
       inputSchema: z.object({}),
     },
     async () => {
+      // Pace: a boot close by in a multi-day game, from the last game list read; with none kept, the list is read now
+      // (one request) — only over a direct session that works, never by waiting on the browser bridge.
+      const session = hosted ? undefined : await read();
+      const direct =
+        deps.transport.activeLeg() === 'direct' && !deps.transport.sessionStale() && (hosted ? hostToken === 'ok' : session !== undefined);
+      const activeTransport = deps.transport.activeLeg();
+      const pace = await deps.pace?.(now(), direct);
+      const paceRead = pace && !('error' in pace) ? pace : undefined;
+      const bootWarning = paceWarning(paceRead);
+      const paceFields = paceRead ? { pace: paceRead, ...(bootWarning ? { bootWarning } : {}) } : pace && 'error' in pace ? { paceUnread: pace.error } : {};
       if (hosted && hostToken === 'ok') {
         const pt = deps.pushTransport?.();
         const wall = deps.transport.wall?.() ?? null;
@@ -165,10 +185,11 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
           hosted: true,
           linked: true,
           linkedBy: 'host' as const,
-          activeTransport: deps.transport.activeLeg(),
+          activeTransport,
           ...(wall ? { wall } : {}),
           ...(pt ? { pushTransport: pt } : {}),
           ...decoderView(),
+          ...paceFields,
           hostedNote: NOTE_HOSTED_DIRECT,
         };
         return respond(undefined, ['compact'], () =>
@@ -183,13 +204,12 @@ export function registerSessionTools(server: McpServer, deps: SessionToolsDeps):
           activeTransport: 'fetchproxy' as const,
           ...(pt ? { pushTransport: pt } : {}),
           ...decoderView(),
+          ...paceFields,
           hostedNote: hostToken === 'malformed' ? NOTE_HOSTED_MALFORMED : NOTE_HOSTED,
         }));
       }
-      const session = await read();
-      const activeTransport = deps.transport.activeLeg();
       const pt = deps.pushTransport?.();
-      const push = { ...(pt ? { pushTransport: pt } : {}), ...decoderView() };
+      const push = { ...(pt ? { pushTransport: pt } : {}), ...decoderView(), ...paceFields };
       return respond(undefined, ['compact'], () => {
         if (!session) return { linked: false, activeTransport, ...push, hint: HINT_NOT_LINKED };
         const ageSeconds = Math.max(0, Math.round((now() - Date.parse(session.capturedAt)) / 1000));

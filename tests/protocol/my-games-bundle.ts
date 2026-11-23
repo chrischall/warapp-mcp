@@ -123,6 +123,10 @@ export interface SyntheticGame {
   unread?: { group?: boolean; private?: boolean; public?: boolean; team?: boolean };
   /** A tournament game's tournament id (GameInfoTournament, field 25; #423); absent: none. */
   tournament?: number;
+  /** My banked boot time (field 24), TimeSpan milliseconds; default 0. */
+  bankedMs?: number;
+  /** How long my turn has run (field 26, the client's "Your turn for"), TimeSpan milliseconds; default 0. */
+  turnForMs?: number;
 }
 
 function writePlayer(w: Writer, p: SyntheticGamePlayer): void {
@@ -167,10 +171,10 @@ export function writeGameInfo(w: Writer, g: SyntheticGame): void {
   w.bool(u.private ?? false).bool(u.public ?? false).bool(g.realTime ?? false).bool(false);
   if (g.settings === null) w.bool(false);
   else writeSettings(w.bool(true), g.settings ?? {});
-  w.u8(g.state).bool(u.team ?? false).float64(0);
+  w.u8(g.state).bool(u.team ?? false).float64(g.bankedMs ?? 0);
   if (g.tournament === undefined) w.bool(false);
   else w.bool(true).bool(false).int32(1).int32(g.tournament);
-  w.float64(0);
+  w.float64(g.turnForMs ?? 0);
 }
 
 /** The result of GetMyGames (present flag first), as the synthetic bundle reads it. */

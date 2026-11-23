@@ -52,6 +52,7 @@ import { COMMANDER_SIZING, commanderCheckOn, foggedAttackersArg, foggedCommander
 import { DEFAULT_FOGGED_ATTACKERS, foggedStack } from '../analysis/commander-fog.js';
 import { captureCheck, checkPlanLog } from './decision-capture.js';
 import type { CardPlayKind } from '../protocol/methods.js';
+import { farSummary, opponentScope } from '../analysis/scale.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -90,7 +91,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
     {
       title: 'Stress-test a planned turn in a war.app game',
       description: untrustedDescription(
-        'Stress-test a list of orders for your turn in an in-progress war.app (Warzone) game before you submit it: ' +
+        'Stress-test a list of orders for your turn in an in-progress war.app (Warzone) game before you submit it ' +
+          '(in a game of more than 16 opponents, `unseenOpponents` lists only those near your land — `unseenOpponentsMore` ' +
+          'counts the rest — and `scale` sums the opponents not in view or within 2 steps of your land): ' +
           'the orders (the `orders` array warapp_plan_turn returns, or your own edit of it) are carried out on the ' +
           'live board, turn rules included (deploys first, then attacks and transfers interleaved in the zigzag move ' +
           'order; each order an attack or a transfer by who holds its target when it runs; kill rates, the guard ' +
@@ -743,7 +746,20 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       ];
       const atRiskList = <T>(rows: readonly T[]) => rows.slice(0, LIST_MAX);
 
+      // Scale: a large game (more than LARGE_GAME_OPPONENTS opponents) lists only the opponents near my land and
+      // sums the rest in `scale`; every other game is unchanged.
+      const scope = opponentScope(graph, seen, me.id, opponents.map((o) => o.id));
+      const inScope = (p: number) => !scope.large || scope.near.includes(p);
       return respond(view, VIEWS, (rung) => ({
+        ...(scope.large
+          ? {
+              scale: {
+                opponents: scope.near.length + scope.far.length,
+                near: scope.near.length,
+                far: farSummary(scope.far, (p) => opponents.find((o) => o.id === p)?.deploy),
+              },
+            }
+          : {}),
         game: { id: game.id, name: game.name ?? null, turn },
         player: { id: me.id, name: me.name },
         safe: report.safe,
@@ -807,7 +823,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         assumeEnemyCards: assumeCards,
         // #180: in a free-for-all, whether you lead (any two opponents are then tried together).
         leader,
-        unseenOpponents: opponents.filter((o) => !inView.has(o.id)).map((o) => ({ id: o.id, name: playerName.get(o.id) ?? String(o.id) })),
+        unseenOpponents: opponents.filter((o) => !inView.has(o.id) && inScope(o.id)).map((o) => ({ id: o.id, name: playerName.get(o.id) ?? String(o.id) })),
+        ...(scope.large ? { unseenOpponentsMore: opponents.filter((o) => !inView.has(o.id) && !inScope(o.id)).length } : {}),
         plan: {
           captures: report.baseline.captured.map(name),
           failedAttacks: report.baseline.failed.map(name),

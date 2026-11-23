@@ -149,6 +149,7 @@ import {
 } from '../trend.js';
 import { writeGameRecord } from '../replay.js';
 import { gameOutlook } from '../analysis/outlook.js';
+import { farSummary, opponentScope } from '../analysis/scale.js';
 import { coalitionAdvice } from '../analysis/coalition.js';
 import { holdsSeat } from '../player-states.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
@@ -2486,7 +2487,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       title: 'Plan my turn in a war.app game',
       description: untrustedDescription(
         'Plan one turn for you in an in-progress war.app (Warzone) game from the live board, the map and the ' +
-          "game's settings: your income, deploys and attacks/transfers by territory name and id (each attack with " +
+          "game's settings (in a game of more than 16 opponents — a mega game — the per-opponent rows and the outlook " +
+          'keep only the opponents in view or holding land within 2 steps of yours, and `scale` sums the rest: their count, ' +
+          'summed deploy estimate and the biggest; the orders are planned as before): your income, deploys and attacks/transfers by territory name and id (each attack with ' +
           '`winChance`, its exact capture probability), the expected captures, completed bonuses and next income ' +
           '(with `nextIncomeIfConcededFall` and `bonusesAtRisk` when the plan concedes borders of a bonus you hold), ' +
           'the borders given up (`conceded`), the `frontier` budget, `incomeTrend` (my income over the last five turns, its slope per turn and whether it is flat; #303), in a 1v1 the `gates` (every border facing the opponent against its one floating deploy: what they need, what stands on them, the shortfall), your cards (plays and discards when you must), ' +
@@ -3160,9 +3163,30 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #412: the decision log keeps the chat read this turn, ids and labels only.
       if (chatView?.logged.length && turn !== null) await captureChat(ctx, game.id, me.id, turn, withBlocks(chatView.logged, blocks));
 
+      // Scale: in a large game (more than LARGE_GAME_OPPONENTS opponents) the per-opponent rows keep only the
+      // opponents near my land; the rest are summed in `scale`. Every other game: nothing changes.
+      const scaleAllies = new Set(teammatesOf(game.players, me).map((p) => p.id));
+      const scope = opponentScope(
+        graph,
+        seen,
+        me.id,
+        [...new Set([...estimates.map((e) => e.playerId), ...game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').map((p) => p.id)])].filter(
+          (p) => p !== me.id && !scaleAllies.has(p),
+        ),
+      );
+      const inScope = (p: number) => !scope.large || scope.near.includes(p);
       return respond(view, VIEWS, (rung) => ({
         game: { id: game.id, name: game.name ?? null, turn: currentTurn(game) },
         player: { id: me.id, name: me.name },
+        ...(scope.large
+          ? {
+              scale: {
+                opponents: scope.near.length + scope.far.length,
+                near: scope.near.length,
+                far: farSummary(scope.far, (p) => estimates.find((e) => e.playerId === p)?.estimate),
+              },
+            }
+          : {}),
         // Part A1: messages not yet marked seen (warapp_get_chat reads them); absent when no chat can be read.
         ...(chat
           ? {
@@ -3224,9 +3248,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 ...(outlook.surrenderLine ? { surrenderLine: outlook.surrenderLine } : {}),
               },
         // Part D: the opponent reads (reported only, never planned on); absent when none is at the bar.
-        ...(reads?.length
+        ...(reads?.filter((r) => inScope(r.id)).length
           ? {
-              reads: reads.map((r) => ({
+              reads: reads.filter((r) => inScope(r.id)).map((r) => ({
                 player: playerRef(r.id),
                 labels: r.labels,
                 // #264: when it last attacked me (null: no observed turn shows it), beside the labels.
@@ -3250,7 +3274,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(() => {
           const allies = new Set(teammatesOf(game.players, me).map((p) => p.id));
           const rows = estimates
-            .filter((e) => e.playerId !== me.id && !allies.has(e.playerId) && (e.card || e.sanctioned?.applied))
+            .filter((e) => e.playerId !== me.id && !allies.has(e.playerId) && inScope(e.playerId) && (e.card || e.sanctioned?.applied))
             .map((e) => ({
               player: playerRef(e.playerId),
               deploy: e.estimate,
