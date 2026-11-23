@@ -7,9 +7,15 @@ import type { BoardState, TerritoryState } from '../../src/board.js';
 import {
   aggregateBenchmarks,
   aggregateEstimates,
+  benchmarkByEra,
   estimateSamples,
+  OPENING_WINDOW,
   openingBenchmark,
+  openingEra,
+  openingFlags,
   overlayHistory,
+  PRE_RULE_4F_AT,
+  PRE_RULE_4F_GAME_ID,
   ratioSummary,
 } from '../../src/analysis/calibrate.js';
 import { buildGraph } from '../../src/analysis/graph.js';
@@ -204,7 +210,7 @@ describe('openingBenchmark (#318 b)', () => {
     ]);
     expect(agg.games).toBe(2);
     expect(agg.inexact).toBe(1);
-    expect(agg.byTurn[0]).toEqual({ afterTurn: 4, n: 2, replay: 10, real: 7, winner: 15, replayAhead: 1, replayBehind: 0 });
+    expect(agg.byTurn[0]).toEqual({ afterTurn: 4, n: 2, replay: 10, real: 7, winner: 15, winners: 2, median: { replay: 10, real: 7, winner: 15 }, replayAhead: 1, replayBehind: 0 });
     expect(agg.landWithoutBonuses).toEqual({ replay: 1, real: 2 });
     expect(agg.outpaced).toEqual({ replay: 1, real: 2 });
   });
@@ -292,5 +298,79 @@ describe('the harness edges (#318)', () => {
       opponents: [FOE, OTHER],
     });
     expect(samples.map((s) => [s.opponent, s.truth, s.prior])).toEqual([[FOE, 5, null]]);
+  });
+});
+
+describe('the opening benchmark by era (#503)', () => {
+  it('reads the era off the turn-1 time where it is known, else off the game id; a game with neither is pre-tool', () => {
+    expect(openingEra({ planned: true, turn1At: '2026-11-13T08:23:59Z', gameId: 45_700_000 })).toEqual({ era: 'pre-rule-4f', basis: 'turn-1 time' });
+    expect(openingEra({ planned: true, turn1At: PRE_RULE_4F_AT, gameId: 45_600_000 })).toEqual({ era: 'current', basis: 'turn-1 time' });
+    expect(openingEra({ planned: true, gameId: PRE_RULE_4F_GAME_ID - 1 })).toEqual({ era: 'pre-rule-4f', basis: 'game id' });
+    expect(openingEra({ planned: true, gameId: PRE_RULE_4F_GAME_ID })).toEqual({ era: 'current', basis: 'game id' });
+    // A record kept before the outlook line existed is still read by its id.
+    expect(openingEra({ planned: false, gameId: 45_800_000 })).toEqual({ era: 'current', basis: 'game id' });
+    expect(openingEra({ planned: true })).toEqual({ era: 'pre-tool', basis: 'no game id' });
+    expect(openingEra({ planned: false })).toEqual({ era: 'pre-tool', basis: 'not planned' });
+  });
+
+  // I hold 1 (5 armies) on board 0. Turn 1: I take 2. Turn 2: only my armies grow (deploys, no capture or
+  // attack: read as no orders, as a missed turn's board looks). Turn 3: FOE wears 1 down and I take nothing.
+  // Turn 4: I take 3.
+  const b0 = board(t(1, ME, 5), t(2, 'neutral', 2), t(3, 'neutral', 2), t(6, FOE, 5));
+  const b1 = board(t(1, ME, 3), t(2, ME, 4), t(3, 'neutral', 2), t(6, FOE, 5));
+  const b2 = board(t(1, ME, 8), t(2, ME, 4), t(3, 'neutral', 2), t(6, FOE, 5));
+  const b3 = board(t(1, ME, 5), t(2, ME, 4), t(3, 'neutral', 2), t(6, FOE, 5));
+  const b4 = board(t(1, ME, 3), t(2, ME, 4), t(3, ME, 4), t(6, FOE, 5));
+  const hist = [b0, b1, b2, b3, b4].map((b, turn) => ({ turn, board: b }));
+
+  it('flags the opening turns the history shows no orders of mine on, and a boot in the window', () => {
+    expect(openingFlags({ me: ME, history: hist })).toEqual({ noOrderTurns: [2, 3], bootedTurn: null });
+    // A failed attack or orders this server sent that turn are orders, whatever the board shows.
+    expect(openingFlags({ me: ME, history: hist, sentTurns: [2], failedAttackTurns: [3] })).toEqual({ noOrderTurns: [], bootedTurn: null });
+    // A boot in the window; one after it is not an opening flag; the window bounds the turns read.
+    expect(openingFlags({ me: ME, history: hist, booted: { turn: 3 } })).toEqual({ noOrderTurns: [2, 3], bootedTurn: 3 });
+    expect(openingFlags({ me: ME, history: hist, booted: { turn: 9 } })).toEqual({ noOrderTurns: [2, 3], bootedTurn: null });
+    expect(openingFlags({ me: ME, history: hist, window: 2 })).toEqual({ noOrderTurns: [2], bootedTurn: null });
+    // A turn I start with no land, or one the history lacks, is not read.
+    expect(openingFlags({ me: 9999, history: hist })).toEqual({ noOrderTurns: [], bootedTurn: null });
+    expect(OPENING_WINDOW).toBe(4);
+  });
+
+  it('reports medians beside means, with the games each figure rests on', () => {
+    const turn = (replay: number, real: number, winner: number | null) => ({
+      afterTurn: 3,
+      replay: { income: replay, territories: 3 },
+      real: { income: real, territories: 3 },
+      winner,
+      bestOpponent: winner ?? 0,
+    });
+    const agg = aggregateBenchmarks([
+      { turns: [turn(9, 5, 10)], exact: true },
+      { turns: [turn(12, 8, null)], exact: true },
+      { turns: [turn(110, 30, 160)], exact: true },
+    ]);
+    expect(agg.byTurn[0]).toMatchObject({ afterTurn: 3, n: 3, replay: 43.667, real: 14.333, winner: 85, winners: 2 });
+    expect(agg.byTurn[0]!.median).toEqual({ replay: 12, real: 8, winner: 85 });
+  });
+
+  it('groups the benchmarks by era and format, keeps flagged games apart, and counts the bases and the large maps', () => {
+    const bench = (income: number) => ({ turns: [{ afterTurn: 1, replay: { income, territories: 2 }, real: { income, territories: 2 }, winner: income, bestOpponent: income }], exact: true });
+    const none = { noOrderTurns: [], bootedTurn: null };
+    const r = benchmarkByEra([
+      { era: 'current', basis: 'game id', format: '1v1', territories: 40, flags: none, bench: bench(5) },
+      { era: 'current', basis: 'game id', format: 'ffa', territories: 50, flags: none, bench: bench(7) },
+      { era: 'current', basis: 'game id', format: 'ffa', territories: 2770, flags: none, bench: bench(9) },
+      { era: 'current', basis: 'game id', format: '1v1', territories: 40, flags: { noOrderTurns: [2], bootedTurn: null }, bench: bench(1) },
+      { era: 'pre-tool', basis: 'no game id', format: '1v1', territories: 40, flags: { noOrderTurns: [2, 3], bootedTurn: 2 }, bench: bench(2) },
+    ]);
+    expect(r.basis).toEqual({ 'game id': 4, 'no game id': 1 });
+    expect(r.eras.current!.all.games).toBe(3);
+    expect(r.eras.current!.byFormat.ffa!.games).toBe(2);
+    expect(r.eras.current!.largeMaps).toBe(1);
+    expect(r.eras.current!.flagged).toMatchObject({ games: 1, noOrderTurns: 1, boots: 0 });
+    expect(r.eras.current!.flagged.benchmark!.byTurn[0]!.real).toBe(1);
+    expect(r.eras['pre-tool']!.all.games).toBe(0);
+    expect(r.eras['pre-tool']!.flagged).toMatchObject({ games: 1, noOrderTurns: 2, boots: 1 });
+    expect(r.eras['pre-rule-4f']).toBeUndefined();
   });
 });

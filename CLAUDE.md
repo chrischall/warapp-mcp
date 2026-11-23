@@ -2633,6 +2633,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   pass (its triggers above); then run the harness. With `WARAPP_PLAYER_PROFILE=off` it reads nothing. Until a pass
   has run there is no truth and the harness says so (no number). No planner decision reads any of it (P1). How to run:
   `docs/PLAN-PROFILES.md` "Calibration and the opening benchmark".
+  #503: the opening benchmark is split by era (`openingEra`: turn-1 time, else game id vs `PRE_RULE_4F_GAME_ID`;
+  pre-tool when nothing local names the game), with medians beside means and `n` per figure; games with a turn 1–4
+  without orders or a boot (`openingFlags`) are reported apart (`benchmarkByEra`).
 
 ## Commands
 

@@ -50,6 +50,7 @@ export async function calibrate(dir, opts = {}) {
   const counts = { histories: src.statuses, skipped: src.skipped, scored: 0, recordOnly: 0, benchmarked: 0, samples: 0 };
   const byFormat = {};
   const benchByFormat = {};
+  const eraEntries = [];
   for (const input of src.inputs) {
     const { history: h, settings, map, cached } = input;
     if (input.source === 'record-only') counts.recordOnly++;
@@ -92,6 +93,18 @@ export async function calibrate(dir, opts = {}) {
     if (bench.turns.length) {
       counts.benchmarked++;
       (benchByFormat[format] ??= []).push(bench);
+      // #503: the era (turn-1 time where known — no record keeps one yet — else the game id) and the
+      // opening window's flags (turns with no orders of mine, a boot of my seat).
+      const o = input.opening;
+      const { era, basis } = cal.openingEra({ planned: o.planned, ...(o.gameId !== undefined ? { gameId: o.gameId } : {}) });
+      const flags = cal.openingFlags({
+        me,
+        history: h.boards,
+        sentTurns: o.sentTurns,
+        failedAttackTurns: o.failedAttackTurns,
+        booted: { turn: o.bootedTurn },
+      });
+      eraEntries.push({ era, basis, format, territories: graph.territoryById.size, flags, bench });
     }
   }
   const calibration = {};
@@ -101,13 +114,19 @@ export async function calibrate(dir, opts = {}) {
   const benchmark = {};
   for (const [format, list] of Object.entries(benchByFormat)) benchmark[format] = cal.aggregateBenchmarks(list);
   benchmark.all = cal.aggregateBenchmarks(Object.values(benchByFormat).flat());
-  return { counts, calibration, benchmark };
+  const byEra = cal.benchmarkByEra(eraEntries);
+  return { counts, calibration, benchmark, byEra };
 }
 
 const APPROX = [
   'Opening benchmark approximations: the planner sees the whole board (no fog); opponents never attack me —',
   'they hold the land and armies the history shows, except land I hold in the replay; card plays are left out;',
   'with luck or weighted rounding a battle is resolved at its expectation (counted as inexact).',
+  'Eras (#503): pre-tool = never planned by this server, or no local cache names the game; pre-rule-4f = turn 1',
+  'before 2026-11-13 08:24Z by its turn-1 time where known, else game id below 45690000 (ids are assigned at creation,',
+  'so the id boundary approximates the time); current = the rest. A game with a turn with no orders of mine (read off',
+  'the history boards: no capture, no failed attack, no orders cached; army growth alone is not orders) or a boot of my seat in turns',
+  '1-4 is reported apart, never averaged in.',
 ];
 
 const NO_TRUTH = [
@@ -147,11 +166,25 @@ function print(r) {
     for (const [k, bands] of Object.entries(ests))
       for (const [band, s] of Object.entries(bands))
         if (s) out.push(`  ${format.padEnd(5)} ${k.padEnd(8)} ${band.padEnd(9)} n=${s.n} mean=${s.mean} geo=${s.geoMean} sd=${s.sd} low=${s.under} high=${s.over}`);
-  out.push('', '(b) opening benchmark: mean income after N turns, replayed / real / winner; games where the replay was ahead / behind');
-  for (const [format, b] of Object.entries(r.benchmark)) {
-    out.push(`  ${format}: ${b.games} games (${b.inexact} inexact)`);
-    for (const t of b.byTurn) out.push(`    after ${t.afterTurn}: n=${t.n} replay=${t.replay} real=${t.real} winner=${t.winner ?? '-'} ahead=${t.replayAhead} behind=${t.replayBehind}`);
-    out.push(`    after turn 4: land without bonuses replay=${b.landWithoutBonuses.replay} real=${b.landWithoutBonuses.real}; an opponent at 1.5x my income replay=${b.outpaced.replay} real=${b.outpaced.real}`);
+  out.push('', '(b) opening benchmark by era: income after N turns, replayed / real / winner as mean (median), n = games per figure;');
+  out.push('    games where the replay was ahead / behind. Era read from: ' + JSON.stringify(r.byEra.basis));
+  const bench = (label, b, pad) => {
+    out.push(`${pad}${label}: ${b.games} games (${b.inexact} inexact)`);
+    for (const t of b.byTurn)
+      out.push(
+        `${pad}  after ${t.afterTurn}: n=${t.n} replay=${t.replay} (${t.median.replay}) real=${t.real} (${t.median.real}) winner=${t.winner ?? '-'} (${t.median.winner ?? '-'}, n=${t.winners}) ahead=${t.replayAhead} behind=${t.replayBehind}`,
+      );
+    if (b.games)
+      out.push(`${pad}  after turn 4: land without bonuses replay=${b.landWithoutBonuses.replay} real=${b.landWithoutBonuses.real}; an opponent at 1.5x my income replay=${b.outpaced.replay} real=${b.outpaced.real}`);
+  };
+  for (const [era, e] of Object.entries(r.byEra.eras)) {
+    out.push(`  ${era}:`);
+    bench('all formats', e.all, '    ');
+    if (Object.keys(e.byFormat).length > 1) for (const [format, b] of Object.entries(e.byFormat)) bench(format, b, '    ');
+    if (e.largeMaps) out.push(`    ${e.largeMaps} of these on a map 5x the median map's territories or more (kept in: read the medians)`);
+    const f = e.flagged;
+    out.push(`    apart: ${f.games} game(s) with turns 1-4 flagged (${f.noOrderTurns} turn(s) with no orders, ${f.boots} boot(s))`);
+    if (f.benchmark) bench('flagged', f.benchmark, '      ');
   }
   out.push('', ...APPROX, ...skippedLines(r.counts));
   if (!r.counts.histories.captured) out.push('', ...NO_TRUTH);

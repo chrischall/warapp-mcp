@@ -12,7 +12,7 @@ import { writeStoredMap } from '../src/map-store.js';
 import { normalizeMap, type Game } from '../src/normalize.js';
 import { playerSaltForWrite } from '../src/player-record-store.js';
 import { gameRecordPath, nameFreeSettings, writeGameRecord } from '../src/replay.js';
-import { writeBoardCache } from '../src/trend.js';
+import { writeBoardCache, writeOrdersCache } from '../src/trend.js';
 
 const ANN = 4412345677;
 const BOB = 7176543229;
@@ -106,5 +106,32 @@ describe('calibrationSources (#318)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-calsrc-'));
     await writeGameRecord(dir, game(701));
     expect(await calibrationSources(dir)).toEqual({ inputs: [], statuses: { missing: 1 }, skipped: {} });
+  });
+
+  it('#503: recovers a record-only game id from a local cache of it, and reads whether it was planned, my boot turn, failed attacks and sent turns', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-calsrc-'));
+    const salt = (await playerSaltForWrite(dir))!;
+    await writeStoredMap(dir, MAP);
+    const g = game(45_700_001);
+    const base = finishedRecordOf({ salt, me: ANN, status: 'captured', game: g, settings: nameFreeSettings(g), mapId: 77, boards: [{ turn: 0, board: board(BOB) }, { turn: 1, board: board(ANN) }] });
+    // Planned (an outlook line), my seat booted on turn 3, a failed attack on turn 2.
+    await writeFinishedRecord(dir, finishedPath(dir, salt, ANN, 45_700_001), {
+      ...base,
+      outlook: { turn: 3, state: 'even', heldTurns: 1 },
+      outcome: { result: 'booted', turn: 5, outTurn: 3, leftTurn: 3, winners: [] },
+      failedAttacks: [{ turn: 2, to: 2, from: [1], sent: 3, before: { owner: 'neutral', armies: 2 }, after: { owner: 'neutral', armies: 1 } }],
+    });
+    // No settings record, but the board cache (with the orders sent on turn 1) still names the game.
+    await writeBoardCache(dir, 45_700_001, ANN, 1, board(BOB));
+    await writeOrdersCache(dir, 45_700_001, ANN, 1, { deploys: [{ territoryId: 1, armies: 5 }], moves: [] });
+    // A record nothing local names: no id.
+    const g2 = game(45_700_002);
+    await writeFinishedRecord(dir, finishedPath(dir, salt, ANN, 45_700_002), finishedRecordOf({ salt, me: ANN, status: 'captured', game: g2, settings: nameFreeSettings(g2), mapId: 77, boards: [{ turn: 0, board: board(BOB) }] }));
+    const r = await calibrationSources(dir);
+    const named = r.inputs.find((i) => i.opening.gameId !== undefined)!;
+    expect(named.source).toBe('record-only');
+    expect(named.opening).toEqual({ gameId: 45_700_001, planned: true, bootedTurn: 3, failedAttackTurns: [2], sentTurns: [1] });
+    const anon = r.inputs.find((i) => i.opening.gameId === undefined)!;
+    expect(anon.opening).toEqual({ planned: false, bootedTurn: null, failedAttackTurns: [], sentTurns: [] });
   });
 });
