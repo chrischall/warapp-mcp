@@ -3,6 +3,7 @@
 // opponent could make with its estimated deploy, and the replies that cost something are
 // reported, worst first (src/analysis/stress.ts, on the turn resolver src/analysis/turn-sim.ts).
 // Read-only on war.app, and it writes nothing but its verdict to the decision log (#437): not the board cache.
+import { bonusDelayWarning } from '../analysis/bonus-delay.js';
 import { gameBaseIncome } from '../analysis/player.js';
 import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -675,6 +676,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           ? [`These orders use ${[...refused].join(', ')}: war.app would refuse them in this game, and warapp_submit_turn does; the test ran them anyway.`]
           : []),
         ...sanction.warnings,
+        // #505: orders that delay the nearest bonus say by how many turns (advice only).
+        ...[bonusDelayWarning(belowPlan?.bonusDelay)].filter((w): w is string => w !== undefined),
         ...effect.unsure,
         ...[claimedCardWarning(claimedCardUses(uses, claimed))].filter((w): w is string => w !== undefined),
         ...unsimulatedCards,
@@ -785,6 +788,17 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
                 .map((r) => ({ territory: name(r.territory), planLeaves: r.planLeaves, left: r.left, short: r.short })),
               ...(belowPlan.rows.length > LIST_MAX ? { belowPlanMore: belowPlan.rows.length - LIST_MAX } : {}),
               belowPlanAgainst: belowPlan.against,
+              ...(belowPlan.bonusDelay
+                ? {
+                    bonusDelay: {
+                      bonus: belowPlan.bonusDelay.bonus,
+                      bonusId: belowPlan.bonusDelay.bonusId,
+                      dropped: belowPlan.bonusDelay.dropped.map((t) => name(t)),
+                      plannedTurn: belowPlan.bonusDelay.plannedTurn,
+                      givenTurn: belowPlan.bonusDelay.givenTurn,
+                    },
+                  }
+                : {}),
               ...(rung === 'full' ? { belowPlanBasis: BELOW_PLAN_BASIS } : {}),
             }
           : {}),

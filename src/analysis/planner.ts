@@ -1972,6 +1972,24 @@ function planAttempts(input: PlanInput): TurnPlan {
 /** #421: per plan, the strike share its pass held out of captures (absent when none). */
 const shareOutcome = new WeakMap<TurnPlan, number>();
 
+/** #505: rule 4f's view of the bonuses beside a plan (kept off the plan itself, so its output is unchanged). */
+export interface PlanCloseness {
+  /** Rule 4f's nearest bonus (the first not focused, by closeness), while it commits; else absent. */
+  nearest?: number;
+  /** Whether #319's opening warning fired (its nearest bonus is then `nearest`'s). */
+  spread: boolean;
+  /** Each bonus plan's turns to finish at this income (rule 4f's `turnsOf`). */
+  turns: ReadonlyMap<number, number>;
+  /** Each bonus plan's missing members on the board planned. */
+  remaining: ReadonlyMap<number, readonly number[]>;
+}
+const closenessOutcome = new WeakMap<TurnPlan, PlanCloseness>();
+
+/** #505: rule 4f's nearest bonus and turns to finish for a plan `planTurn` made; `undefined` for any other object. */
+export function planCloseness(plan: TurnPlan): PlanCloseness | undefined {
+  return closenessOutcome.get(plan);
+}
+
 /**
  * #421 (owner decision, 2026-11-20): the strike share is held out of captures, ahead of comfort margins,
  * but never at the cost of next income — when the plan without it earns more next turn (a completion the
@@ -3513,6 +3531,16 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
   if (tgt.allInTries.size) allInOutcome.set(plan, tgt.allInTries);
   if (pc.strikeShare > 0) shareOutcome.set(plan, pc.strikeShare);
+  {
+    const nearest = tgt.committing ? (tgt.byCloseness.find((p) => !p.focus) ?? tgt.byCloseness[0]) : undefined;
+    const near = tgt.spreadNearest ?? nearest;
+    closenessOutcome.set(plan, {
+      ...(near ? { nearest: near.bonusId } : {}),
+      spread: tgt.spreadNearest !== undefined || plan.warnings.some((w) => w.endsWith('(#319).')),
+      turns: new Map(tgt.plans.map((p) => [p.bonusId, tgt.turnsOf(p)])),
+      remaining: new Map(tgt.plans.map((p) => [p.bonusId, [...p.remaining].sort((a, b) => a - b)])),
+    });
+  }
   // #421: on a stockpile, the contested bonuses this plan does not complete that an all-in push could (planPushed).
   if (pc.pile && !input.stockpileAllIn) {
     const done = new Set(plan.expected.bonusesCompleted);

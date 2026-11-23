@@ -213,7 +213,8 @@ describe('warapp_check_plan', () => {
     expect(p.summary).toMatch(/^None of the 2 replies tried costs you/);
     expect(p.income).toBe(5);
     expect(p.deployed).toBe(5);
-    expect(p.warnings).toEqual([]);
+    // #505: a deploy-only turn drops the default plan's capture of 157, which finishes its bonus a turn later: advice only.
+    expect(p.warnings).toEqual([expect.stringMatching(/^These orders finish bonus .+ on turn 4 instead of turn 3 \(#505\): .*territory 157/)]);
     expect(p.enemyDeploy).toEqual([{ player: { id: Number(BOB.feed), name: 'Bob' }, deploy: 5, source: 'estimate' }]);
     // The fixture's other players hold nothing in view: named, since no reply could be tried for them.
     expect(p.unseenOpponents.length).toBeGreaterThan(0);
