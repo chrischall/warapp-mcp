@@ -9,6 +9,7 @@ import {
   advisedOrderPriority,
   adviseOrderDelay,
   readActiveCards,
+  readTurnReinforcementPlays,
   playRequired,
   handReadable,
   readHand,
@@ -516,5 +517,43 @@ describe('readActiveCards (#163, unverified live)', () => {
   it('is empty, never throwing, on odd or missing shapes', () => {
     expect(readActiveCards(null)).toEqual([]);
     expect(readActiveCards(info([active(null, 1), { $type: 'warlight.shared.ActiveCard' }]))).toEqual([]);
+  });
+});
+
+describe("readTurnReinforcementPlays (#427, the last turn's orders — VERIFIED live 2026-11-22)", () => {
+  // The shape a live LatestGameInfo showed (field names minified, made-up ids): the info carries the
+  // last GameTurn { a null, the turn's order list, its 0-based turn number, a date }. A card play is
+  // GameOrderPlayCard<X> { the card GUID, the player (in-game id), its result (which points back at the
+  // order: a cycle), a null }; a Reinforcement play carries no armies.
+  const GZ = 'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+  const play = (kind: string, player: number) => {
+    const o: Record<string, unknown> = { $type: `warlight.shared.GameOrderPlayCard${kind}`, fe: GZ, $a: player, Yg: null };
+    o.Sf = { $type: `warlight.shared.GameOrderPlayCard${kind}Result`, Tc: o };
+    return o;
+  };
+  const deploy = (player: number) => ({ $type: 'warlight.shared.GameOrderDeploy', t: 7, n: 5, $a: player, Sf: null, Yg: null });
+  const receive = (player: number) => ({ $type: 'warlight.shared.GameOrderReceiveCard', ox: [[12, 1]], LF: [], $a: player, Sf: null, Yg: null });
+  const turn = (orders: unknown[], index = 17) => ({ $type: 'warlight.shared.GameTurn', Li: null, ac: orders, vh: index, zY: '2026-11-22T00:00:00.000Z' });
+  const info = (t: unknown) => ({
+    $type: 'warlight.shared.LatestGameInfo',
+    PN: [play('Reinforcement', ME)],
+    qf: { $type: 'warlight.shared.GameStanding', a: [] },
+    lE: t,
+    CA: { $type: 'warlight.shared.GameStanding', a: [] },
+    vh: 18,
+  });
+
+  it('reads who played a Reinforcement card in the last turn, and that turn (1-based)', () => {
+    const seen = readTurnReinforcementPlays(info(turn([deploy(ME), play('Reinforcement', OTHER), play('Reinforcement', ME), play('OrderPriority', 99), receive(ME)])));
+    expect(seen).toEqual({ turn: 18, players: [OTHER, ME] });
+  });
+  it("never reads my pending orders (the info's own order list) as the turn's", () => {
+    expect(readTurnReinforcementPlays(info(turn([deploy(OTHER)])))).toEqual({ turn: 18, players: [] });
+  });
+  it('is undefined with no GameTurn, or one whose turn number is not one integer', () => {
+    expect(readTurnReinforcementPlays(info(null))).toBeUndefined();
+    expect(readTurnReinforcementPlays(null)).toBeUndefined();
+    expect(readTurnReinforcementPlays(info({ ...turn([]), vh: 'x' }))).toBeUndefined();
+    expect(readTurnReinforcementPlays(info({ ...turn([]), ac: 'x' }))).toBeUndefined();
   });
 });

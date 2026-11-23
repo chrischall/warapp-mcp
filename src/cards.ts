@@ -530,3 +530,37 @@ export function readActiveCards(info: unknown): ActiveCard[] {
   if (standing) walk(standing, 0);
   return out;
 }
+
+const GAME_TURN = /\.GameTurn$/;
+const REINFORCEMENT_PLAY = /\.GameOrderPlayCardReinforcement$/;
+
+/**
+ * #427: who played a Reinforcement card in the last turn, from a decoded LatestGameInfo's `GameTurn` — the
+ * turn just resolved: its order list, every player's orders in it that this player may see — and that
+ * turn's number (1-based: the GameTurn carries it 0-based). In-game player ids, in order; `undefined` when
+ * the info carries no readable GameTurn. Never walks my pending orders (the info's own order list).
+ *
+ * VERIFIED live 2026-11-22 (read-only GetLatestGameInfo on games in progress): the info carries one
+ * `warlight.shared.GameTurn` { null, the order list, int32 turn (0-based: one less than the turns
+ * completed), a date }; a card play there is `GameOrderPlayCard<X>` { its own fields, the card GUID, the
+ * player (in-game id), its result (pointing back at the order), null } — a Reinforcement play has no own
+ * field and no armies. In a game with `CardPlayingsFogged` false an opponent's Reinforcement play showed
+ * though none of its deploys were in view. Whether a fogged game hides them was not seen; callers read
+ * this only when the game does not fog card plays.
+ */
+export function readTurnReinforcementPlays(info: unknown): { turn: number; players: number[] } | undefined {
+  if (!isObj(info)) return undefined;
+  const turn = fields(info).find((v): v is DecodedRecord => isObj(v) && typeof v.$type === 'string' && GAME_TURN.test(v.$type));
+  if (!turn) return undefined;
+  const own = fields(turn);
+  const ints = own.filter((v): v is number => typeof v === 'number' && Number.isInteger(v));
+  const orders = own.find((v): v is unknown[] => Array.isArray(v));
+  if (ints.length !== 1 || !orders) return undefined;
+  const players: number[] = [];
+  for (const o of orders) {
+    if (!isObj(o) || typeof o.$type !== 'string' || !REINFORCEMENT_PLAY.test(o.$type)) continue;
+    const player = fields(o).filter((v): v is number => typeof v === 'number' && Number.isInteger(v)).at(-1);
+    if (player !== undefined) players.push(player);
+  }
+  return { turn: ints[0]! + 1, players };
+}

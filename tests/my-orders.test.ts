@@ -33,6 +33,7 @@ function info(orders: readonly SyntheticOrder[] | null | undefined, opts: { mate
     {},
     opts.mates ? { [MATE.inGame]: { orders: [{ kind: 'deploy', territory: 9, armies: 1 }] } } : undefined,
     undefined,
+    undefined,
     orders === undefined ? undefined : orders === null ? null : { player: ME.inGame, orders },
   );
   return readLatestGameInfo(bundle, new Reader(w.bytes()));

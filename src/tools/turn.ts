@@ -83,7 +83,7 @@ import { inferFirstMover } from '../move-order.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from './card-effects.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
-import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
+import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, lastTurnPlays, opponentCanHold, opponentReinforcement, reinforcementPlaysShown, seenReinforcementPlays, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   turnsCompleted,
@@ -134,8 +134,10 @@ import {
   readBoardHistory,
   readCachedOrders,
   readExpectedIncome,
+  readSeenPlays,
   writeBoardCache,
   writeOrdersCache,
+  writeSeenPlays,
   type TrendSource,
 } from '../trend.js';
 import { writeGameRecord } from '../replay.js';
@@ -1939,6 +1941,13 @@ export async function livePlanSetup(
   const picking = ctx.dataDir ? await readPickRecord(ctx.dataDir, game.id, me.id) : undefined;
   // Players still in the game besides me (a break is worth less when the bonus's loss is shared).
   const opponents = game.players.filter((p) => p.id !== me.id && (p.state ?? 'Playing') === 'Playing').length;
+  // #427: who played a Reinforcement card in the last turn's orders, and the turns kept before it — read
+  // only when the game does not fog card plays (else every play would not show).
+  const lastPlays = lastTurnPlays(info, game.players, turn);
+  const playsShown = reinforcementPlaysShown(game.settings);
+  const keptPlays = playsShown && ctx.dataDir ? await readSeenPlays(ctx.dataDir, game.id, me.id) : new Map<number, number[]>();
+  if (lastPlays) keptPlays.set(lastPlays.turn, lastPlays.players);
+  const reinforcementPlays = seenReinforcementPlays(game.settings, keptPlays);
   // #419: the pace past winners set on this map (else in this format) at this turn: thin evidence's upper bound.
   const mapPace = await fogPaceFor(
     ctx.dataDir,
@@ -1974,6 +1983,8 @@ export async function livePlanSetup(
     ...(mapPace ? { mapPace } : {}),
     // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
     ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
+    // #427: the Reinforcement plays seen in the turns' orders (card plays not fogged): a play restarts the clock.
+    ...(reinforcementPlays ? { reinforcementPlays } : {}),
   };
   // B2: the truces in force, from the agreement ledger (warapp_record_agreement) and my board
   // history, and the tacit truces (reported, never planned on).
@@ -2103,6 +2114,8 @@ export async function livePlanSetup(
     graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
     effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true, estimates, trip, teams, commerce,
+    // #427: the last turn's Reinforcement plays, for warapp_plan_turn to keep (only when plays show).
+    seenPlays: playsShown ? lastPlays : undefined,
   };
 }
 
@@ -2656,6 +2669,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const whatIf = goal !== undefined || enemy_deploy !== undefined;
       if (ctx.dataDir && turn !== null)
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
+      // #427: the Reinforcement plays the last turn's orders showed (a fact, kept on a what-if plan too).
+      if (ctx.dataDir && setup.seenPlays) await writeSeenPlays(ctx.dataDir, game.id, me.id, setup.seenPlays.turn, setup.seenPlays.players);
       // #275 (b): this turn's estimates and the untrusted marks, for the next turns' tripwire. Kept on a
       // what-if plan too, unlike its neighbours: both come from the boards alone — the estimates are the
       // default ones (planEnemyEstimates never reads enemy_deploy or goal) and a mark is an observation —

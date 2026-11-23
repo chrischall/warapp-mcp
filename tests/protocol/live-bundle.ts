@@ -14,13 +14,14 @@ import { REQUIRED_HELPER_DEFS } from './mini-bundle.js';
 /**
  * The LatestGameInfo reader: my own orders this turn (a list of GameOrder, read through a closure as the client
  * reads its first field), a number, the current standing, teammates' entered orders (a dict in-game id →
- * TeammateOrders, read through a closure as the client reads it), a number.
+ * TeammateOrders, read through a closure as the client reads it), a number, then (#427) the last GameTurn
+ * when present.
  */
 export const LATEST_GAME_INFO_READER =
   'Lg.Ha=function(a,b,d){null==d&&(d=243);var e=new Lg;' +
   'e.k0=a.Ua()?P.ms(a,function(){return a.Ua()?Go.Ha(a,e,d):null}):null;e.k1=P.Ya(a);e.k2=a.Ua()?Gs.Ha(a,e,d):null;' +
   'e.k4=a.Ua()?P.ef(a,function(){return P.Ya(a)},function(){return a.Ua()?Tq.Ha(a,e,d):null}):null;' +
-  'e.k3=P.Ya(a);return e};';
+  'e.k3=P.Ya(a);e.k5=a.Ua()?Gq.Ha(a,e,d):null;return e};';
 
 export const LIVE_BUNDLE = [
   'var W={};',
@@ -68,6 +69,10 @@ export const LIVE_BUNDLE = [
   'Gg.r=function(a,b,d){b=new Gg;b.o1=P.Ya(a);b.o2=P.Ya(a);b.o3=P.tL(a);Go.base(a,b,d);return b};',
   'W["warlight.shared.GameOrderPlayCardBlockade"]=Gb;',
   'Gb.r=function(a,b,d){b=new Gb;b.o1=P.Ya(a);b.o2=P.tL(a);Go.base(a,b,d);return b};',
+  // #427: GameTurn — the turn's orders (each optional), then its 0-based number.
+  'function Gq(){}',
+  'W["warlight.shared.GameTurn"]=Gq;',
+  'Gq.Ha=function(a,b,d){var e=new Gq;e.t1=a.Ua()?P.Sd(a,function(){return a.Ua()?Go.Ha(a,e,d):null}):null;e.t2=P.Ya(a);return e};',
   // PLAN-TEAMS D3: the play orders an ActiveCard carries. Diplomacy reads its two players, Sanctions its
   // target, then the card GUID and the base (the player who played it).
   'function Gy(){}function Gz(){}function Ac(){}',
@@ -228,6 +233,7 @@ export function writeLatestGameInfo(
   hands: Readonly<Record<number, readonly SyntheticCard[]>> = {},
   teammateOrders?: Readonly<Record<number, SyntheticTeammateOrders | null>>,
   activeCards?: readonly SyntheticActiveCard[],
+  lastTurn?: SyntheticTurn,
   /** My own orders this turn (LatestGameInfo's first field): `null` or absent, none sent. */
   myOrders?: { player: number; orders: readonly SyntheticOrder[] } | null,
 ): void {
@@ -296,4 +302,18 @@ export function writeLatestGameInfo(
     });
   }
   w.int32(2);
+  if (lastTurn === undefined) w.bool(false);
+  else {
+    w.bool(true).bool(true).list(lastTurn.orders, (ow, { player, order }) => {
+      ow.bool(true);
+      writeOrder(ow, order, player);
+    });
+    w.int32(lastTurn.index);
+  }
+}
+
+/** #427: the last GameTurn a LatestGameInfo carries: its orders (each with its player's in-game id) and 0-based number. */
+export interface SyntheticTurn {
+  index: number;
+  orders: readonly { player: number; order: SyntheticOrder }[];
 }

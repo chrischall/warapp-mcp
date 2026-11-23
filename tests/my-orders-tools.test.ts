@@ -62,7 +62,7 @@ const latest = (orders: readonly SyntheticOrder[] | null) => (req: DecodedReques
   if (req.method !== Method.GetLatestGameInfo) throw new Error(`unexpected method ${req.method}`);
   return {
     body: (w) =>
-      writeLatestGameInfo(w, BOARD, [ME.inGame, MATE.inGame], {}, undefined, undefined, orders ? { player: ME.inGame, orders } : null),
+      writeLatestGameInfo(w, BOARD, [ME.inGame, MATE.inGame], {}, undefined, undefined, undefined, orders ? { player: ME.inGame, orders } : null),
   };
 };
 
