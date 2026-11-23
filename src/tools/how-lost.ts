@@ -104,6 +104,33 @@ function seatOut(
       ? `team ${s.team}`
       : untrustedText(game.players.find((p) => p.id === s.playerId)?.name ?? s.playerId)
     : undefined;
+  // #522: the incomes behind the visible bonus income — under fog a leader's in-view income can sit at the base
+  // while it earns several times that. Its tracked income and frontier read (#304's evidence), and the
+  // calibrated range when the outlook's income side (#436) is the same side.
+  const nameOf = (side: { playerId: number; team?: number }) =>
+    side.team !== undefined ? `team ${side.team}` : untrustedText(game.players.find((p) => p.id === side.playerId)?.name ?? side.playerId);
+  const sameSide = (a: { playerId: number; team?: number }, b: { playerId?: number; team?: number }) =>
+    a.team !== undefined ? a.team === b.team : a.playerId === b.playerId && b.team === undefined;
+  const members = s ? (s.team !== undefined ? game.players.filter((p) => p.team === s.team).map((p) => p.id) : [s.playerId]) : [];
+  const trackedRows = (entry.evidence?.opponents ?? []).filter((r) => members.includes(r.playerId) && r.source === 'tracked');
+  const tracked = trackedRows.length ? trackedRows.reduce((n, r) => n + r.income, 0) : undefined;
+  const coverage = s?.team === undefined && trackedRows.length === 1 ? trackedRows[0]!.coverage : undefined;
+  const inc = entry.income;
+  const estimate =
+    s && inc && inc.playerId !== undefined && sameSide(s, inc)
+      ? { low: inc.low, high: inc.high, estimate: inc.estimate, calibrated: inc.calibrated }
+      : undefined;
+  // The strongest on income when it is another side: the surrender line's side anywhere (large games), else the outlook's own.
+  const leaderOf = (): { playerId: number; team?: number; low: number; high?: number; estimate: number; calibrated: boolean; anywhere?: true } | undefined => {
+    const sur = entry.surrender;
+    if (sur) return { ...sur, anywhere: true };
+    if (inc && inc.playerId !== undefined)
+      return { playerId: inc.playerId, ...(inc.team !== undefined ? { team: inc.team } : {}), low: inc.low, high: inc.high, estimate: inc.estimate, calibrated: inc.calibrated };
+    return undefined;
+  };
+  const leaderSide = leaderOf();
+  const leader = leaderSide && !(s && sameSide(s, leaderSide)) ? leaderSide : undefined;
+  const calText = (calibrated: boolean) => (calibrated ? "calibrated on past games' estimate ÷ truth" : 'uncalibrated');
   const outlook = {
     turn: loggedTurn,
     state: entry.state,
@@ -111,13 +138,51 @@ function seatOut(
     ...(entry.lean ? { lean: entry.lean } : {}),
     ...(held ? { held } : {}),
     ...(f ? { mine: f.mine } : {}),
-    ...(s ? { strongest: { id: s.playerId, ...(s.team !== undefined ? { team: s.team } : {}), name: who, armies: s.armies, income: s.income } } : {}),
+    ...(s
+      ? {
+          strongest: {
+            id: s.playerId,
+            ...(s.team !== undefined ? { team: s.team } : {}),
+            name: who,
+            armies: s.armies,
+            income: s.income,
+            ...(tracked !== undefined ? { tracked } : {}),
+            ...(coverage !== undefined ? { coverage } : {}),
+            ...(estimate ? { estimate } : {}),
+          },
+        }
+      : {}),
+    ...(leader
+      ? {
+          incomeLeader: {
+            id: leader.playerId,
+            ...(leader.team !== undefined ? { team: leader.team } : {}),
+            name: nameOf(leader),
+            low: leader.low,
+            ...(leader.high !== undefined ? { high: leader.high } : {}),
+            estimate: leader.estimate,
+            calibrated: leader.calibrated,
+            ...(leader.anywhere ? { anywhere: true } : {}),
+          },
+        }
+      : {}),
   };
   const read = `${loggedTurn === turn ? 'its outlook' : `the last outlook logged (turn ${loggedTurn})`} read ${entry.lean ? `${entry.state}, leaning ${entry.lean} on the incomes` : entry.state}${held ? ` (held ${held.turns} turn${held.turns === 1 ? '' : 's'})` : ''}`;
-  const figures = !f
-    ? ' (the armies and income behind it were not logged then)'
-    : `: my income ${f.mine.income} and ${f.mine.armies} armies${s ? ` against ${who}'s ${s.income} and ${s.armies} in view` : ', no opponent in view'}`;
-  return { result, ...byState, turn, outlook, line: `${head}; ${read}${figures}.` };
+  const range = (low: number, high: number | undefined) => (high !== undefined && high > low ? `, range ${low}–${high}` : '');
+  const behind = [
+    tracked !== undefined ? `tracked ${tracked}${coverage != null ? `, ${Math.round(coverage * 100)}% of its frontier read` : ''}` : '',
+    estimate ? `estimated ~${estimate.estimate}${range(estimate.low, estimate.high)}, ${calText(estimate.calibrated)}` : '',
+  ].filter(Boolean);
+  const against = !s
+    ? ', no opponent in view'
+    : behind.length
+      ? ` against ${who}'s income ${s.income} in view (${behind.join('; ')}) and ${s.armies} armies in view`
+      : ` against ${who}'s ${s.income} and ${s.armies} in view`;
+  const figures = !f ? ' (the armies and income behind it were not logged then)' : `: my income ${f.mine.income} and ${f.mine.armies} armies${against}`;
+  const leaderText = leader
+    ? ` The strongest on income${leader.anywhere ? ', near or not' : ''}: ${nameOf(leader)}'s ~${leader.estimate} (tracked ${leader.low}${range(leader.low, leader.high)}; ${calText(leader.calibrated)}).`
+    : '';
+  return { result, ...byState, turn, outlook, line: `${head}; ${read}${figures}.${leaderText}` };
 }
 
 /**

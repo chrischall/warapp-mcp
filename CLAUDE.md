@@ -2438,7 +2438,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   played here: the newest cached board where it held land, or logged outlook) and `outlook`, the newest
   logged one up to then (its state, `held` when the log's latest state held, and `mine` / `strongest`:
   armies and board income, the strongest side's in view, from the log's per-turn `figures` —
-  `OutlookTurn.figures`, absent on turns logged before #283), all in its `line`; an elimination from the newest
+  `OutlookTurn.figures`, absent on turns logged before #283), all in its `line`. #522 (owner decision
+  2026-11-23): under fog the strongest's board income can sit at the base while it earns several times that,
+  so `strongest` adds its `tracked` income and frontier `coverage` (the logged #304 evidence) and, when the
+  logged #436 income side is the same side (the log's `income.playerId`/`team`, kept since #522), its calibrated
+  range (`estimate`: `low`/`high`/`estimate`/`calibrated`); `incomeLeader` names the strongest on income when it is
+  another side — the surrender line's side anywhere in a large game (the log's `surrender`, #530), else the
+  outlook's income side; an elimination from the newest
   cached board where it held a territory (the turn, `turnCertain` only when it is the game's newest
   completed turn): my commander there → its territory fell
   (inferred), with what stood there after my cached orders (`low` after my moves out, `high` after my
@@ -2463,7 +2469,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   #228: the likely high is generous to the opponent (every army received, none lost: a game I lead read
   0.05×), so `losing` on it needs mine at most `LIKELY_LOSING_RATIO` (1/(2.4 × 2)) of it AND
   corroboration — the main front grinding me down, or my income at most `BEHIND_RATIO` × the most an
-  opponent is tracked earning; the turn carries `estimated: true` and `lowLikely`, and the basis says
+  opponent is tracked earning (#522, owner decision 2026-11-23: an opponent whose frontier read is thin counts
+  at its #436 calibrated estimate when that is higher — capped at what it could earn, never below its tracked
+  figure — and `lowLikely.calibrated` says so; a solid read or no calibrated band keeps the tracked figure; the
+  surrender line keeps #436's rule that calibration never creates a deficit alone); the turn carries `estimated: true` and `lowLikely`, and the basis says
   which (or, uncorroborated, why it is no loss). That front is always forecast on the incomes read off
   my boards, never the plan's (#228 review): the planner reads the outlook before it plans, and the
   reported one is re-read with the plan's front, so the losing state the plan acts on (rule 3d's decided

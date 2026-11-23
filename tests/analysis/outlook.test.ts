@@ -632,6 +632,44 @@ describe('gameOutlook (#178)', () => {
         expect(o.basis).toMatch(/mine 10, the most tracked 10/);
       });
 
+      describe('#522: the income corroboration reads a thin frontier read at its calibrated estimate', () => {
+        // Past games read every coverage band at 0.3× the truth (enough samples to calibrate).
+        const cal = Object.fromEntries(['none', 'under-25', '25-50', '50-75', '75-up'].map((b) => [b, { geoMean: 0.3, n: 20 }]));
+        /** As `small`, with the neutrals beside the foe's stack fogged: a third of its frontier is read. */
+        const thin = (foeArmies: number) =>
+          board(small(foeArmies).territories.map((t) => (t.territoryId === 53 || t.territoryId === 55 ? fogged(t.territoryId) : t)));
+        const quiet = turns(7, [thin(5), thin(15), thin(25), thin(35)]);
+
+        it('a fogged leader tracked at my income but estimated well above it corroborates the loss', () => {
+          const o = gameOutlook({ graph: big, me: ME, boards: quiet, game: ffa4, calibration: cal });
+          const last = o.turns.at(-1)!;
+          expect(last.evidence!.opponents.find((r) => r.playerId === FOE)).toMatchObject({ income: 10, thin: true });
+          // Tracked 10 ÷ 0.3 = 33: my 10 is at most 0.8× of it.
+          expect(last.lowLikely).toEqual({ myIncome: 10, mostTracked: 33, calibrated: true, groundDown: false, losing: true });
+          expect(last.state).toBe('losing');
+          expect(last.estimated).toBe(true);
+          expect(o.basis).toMatch(/the most an opponent is estimated earning \(33, calibrated on past games' estimate ÷ truth: its frontier read is thin\)/);
+          // The surrender line keeps #436's rule: calibration deepens a deficit the tracked figure shows, never creates one.
+          expect(o.surrenderLine).toBeUndefined();
+        });
+
+        it('without a calibrated band the tracked figure stands, as before', () => {
+          const o = gameOutlook({ graph: big, me: ME, boards: quiet, game: ffa4 });
+          const last = o.turns.at(-1)!;
+          expect(last.lowLikely).toEqual({ myIncome: 10, mostTracked: 10, groundDown: false, losing: false });
+          expect(last.state).toBe('even');
+        });
+
+        it('a solid frontier read keeps the tracked figure, calibration or not', () => {
+          const o = gameOutlook({ graph: big, me: ME, boards: turns(7, [small(5), small(15), small(25), small(35)]), game: ffa4, calibration: cal });
+          const last = o.turns.at(-1)!;
+          expect(last.evidence!.opponents.find((r) => r.playerId === FOE)).toMatchObject({ thin: false });
+          expect(last.lowLikely).toEqual({ myIncome: 10, mostTracked: 10, groundDown: false, losing: false });
+          expect(last.state).toBe('even');
+          expect(o.basis).toMatch(/mine 10, the most tracked 10/);
+        });
+      });
+
       it('the same ratio beside a front that grinds me down reads losing (#218 item 2)', () => {
         // The foe's stack stands next to mine (#5 beside #4) and grows by its income, 10 a turn.
         const beside = (foeArmies: number) =>

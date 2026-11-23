@@ -49,7 +49,22 @@ export interface OutlookLogTurn {
    * #436: my income against the strongest opponent's (its range and estimate), the lean, and whether the
    * estimate was calibrated. Absent on turns logged before #436.
    */
-  income?: { mine: number; low: number; high: number; estimate: number; lean: string; calibrated: boolean };
+  income?: {
+    mine: number;
+    low: number;
+    high: number;
+    estimate: number;
+    lean: string;
+    calibrated: boolean;
+    /** #522: the side the range is for (its lowest player id; `team` in a team game). Absent on turns logged before #522. */
+    playerId?: number;
+    team?: number;
+  };
+  /**
+   * #522: in a large game, the strongest opponent side ANYWHERE by estimate, which the surrender line judges
+   * against when it is not the outlook's own (nearby) side. Absent otherwise.
+   */
+  surrender?: { playerId: number; team?: number; low: number; estimate: number; calibrated: boolean };
 }
 
 /** #304: {@link OutlookEvidence} as logged: name-free, without the words. */
@@ -163,6 +178,19 @@ export async function recordOutlook(dir: string, gameId: number, playerId: numbe
                 estimate: t.income.theirs.estimate,
                 lean: t.income.lean,
                 calibrated: t.income.calibrated,
+                playerId: t.income.theirs.playerId,
+                ...(t.income.theirs.team !== undefined ? { team: t.income.theirs.team } : {}),
+              },
+            }
+          : {}),
+        ...(t.surrenderSide
+          ? {
+              surrender: {
+                playerId: t.surrenderSide.playerId,
+                ...(t.surrenderSide.team !== undefined ? { team: t.surrenderSide.team } : {}),
+                low: t.surrenderSide.low,
+                estimate: t.surrenderSide.estimate,
+                calibrated: t.surrenderSide.calibrated,
               },
             }
           : {}),
