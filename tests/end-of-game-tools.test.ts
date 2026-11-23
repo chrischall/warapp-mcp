@@ -206,6 +206,79 @@ describe('the end-of-game pass', () => {
     expect(await record(dir)).toMatchObject({ status: 'captured' });
   });
 
+  // #523: the history's orders (in-game ids: Ann 123456, Bob 765432) give every player's end-of-game stats.
+  const withOrders = () =>
+    finished({
+      standing0: [terr(1, ANN, 5), terr(2, 'Neutral', 2), terr(5, 'Neutral', 2), terr(6, BOB, 5)],
+      turn0: {
+        orders: [
+          { type: 'GameOrderDeploy', playerID: 123456, armies: '5', deployOn: '1' },
+          { type: 'GameOrderDeploy', playerID: 765432, armies: '5', deployOn: '6' },
+          { type: 'GameOrderAttackTransfer', playerID: 123456, from: '1', to: '2', result: { isAttack: 'True', isSuccessful: 'True', attackingArmiesKilled: '1', defendingArmiesKilled: '2' } },
+          { type: 'GameOrderAttackTransfer', playerID: 765432, from: '6', to: '5', result: { isAttack: 'True', isSuccessful: 'True', attackingArmiesKilled: '1', defendingArmiesKilled: '2' } },
+        ],
+      },
+      standing1: [terr(1, ANN, 4), terr(2, ANN, 3), terr(5, BOB, 4), terr(6, BOB, 4)],
+      turn1: {
+        orders: [
+          { type: 'GameOrderDeploy', playerID: 765432, armies: '9', deployOn: '5' },
+          { type: 'GameOrderAttackTransfer', playerID: 765432, from: '5', to: '2', result: { isAttack: 'True', isSuccessful: 'True', attackingArmiesKilled: '2', defendingArmiesKilled: '3' } },
+        ],
+      },
+      standing2: [terr(1, BOB, 6), terr(2, BOB, 1), terr(5, BOB, 4), terr(6, BOB, 1)],
+    });
+  const zeros = [0, 0, 0];
+  const annStats = {
+    produced: 5, lost: 1 + 3, killed: 2 + 2, killedNeutral: 2, cardsPlayed: 0, cardsReceived: 0, highestIncome: 8,
+    series: { armies: [5, 7, 0], territories: [1, 2, 0], income: [5, 8, 0], deployed: [5, 0], luck: zeros, offensiveLuck: zeros, defensiveLuck: zeros },
+  };
+  const bobStats = {
+    produced: 14, lost: 1 + 2, killed: 2 + 3, killedNeutral: 2, cardsPlayed: 0, cardsReceived: 0, highestIncome: 12,
+    series: { armies: [5, 8, 12], territories: [1, 2, 4], income: [5, 9, 12], deployed: [5, 9], luck: zeros, offensiveLuck: zeros, defensiveLuck: zeros },
+  };
+
+  it('#523: every player\'s end-of-game stats are kept name-free and shown by id, then shown from the record', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    h = await liveHarness({ feed: [finished(), withOrders(), finished()], dataDir: dir, pages: SIGNED_IN });
+    const r = payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(r.endOfGame).toMatchObject({ status: 'captured' });
+    expect((r.endOfGame as { stats: unknown }).stats).toMatchObject({ turnsRead: 2, players: [{ playerId: ANN, me: true, ...annStats }, { playerId: BOB, ...bobStats }] });
+    const salt = (await playerRecordSalt(dir))!;
+    const rec = await record(dir);
+    expect(rec.stats).toEqual({ turnsRead: 2, players: { [playerKey(salt, ANN)]: annStats, [playerKey(salt, BOB)]: bobStats } });
+    const text = readFileSync(finishedPath(dir, salt, ANN, GAME), 'utf8');
+    for (const x of [String(ANN), String(BOB), '123456', '765432', 'Ann', 'Bob']) expect(text).not.toContain(x);
+
+    const again = payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(again.endOfGame).toMatchObject({ status: 'already-processed', stats: { players: [{ playerId: ANN, me: true, produced: 5 }, { playerId: BOB }] } });
+    expect(again.endOfGame).not.toHaveProperty('backfilled');
+    expect(historyCalls(h)).toBe(1);
+  });
+
+  it('#523: a record kept before the stats is backfilled by include_history only, re-running nothing else', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    h = await liveHarness({ feed: [finished(), withHistory(), finished(), withOrders(), withOrders()], dataDir: dir, pages: SIGNED_IN });
+    payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(await record(dir)).not.toHaveProperty('stats');
+    const lessonsBefore = readFileSync(lessonsPath(dir), 'utf8');
+    const profilesBefore = readFileSync(profilePlayersPath(dir), 'utf8');
+
+    // A plain read neither reads the history nor backfills.
+    const plain = payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(plain.endOfGame).toEqual({ status: 'already-processed' });
+
+    const back = payload(await h.call('warapp_get_game', { game_id: GAME, include_history: true }));
+    expect(back.endOfGame).toMatchObject({ status: 'already-processed', backfilled: 'stats', stats: { players: [{ playerId: ANN, ...annStats }, { playerId: BOB, ...bobStats }] } });
+    expect(await record(dir)).toMatchObject({ status: 'captured', stats: { turnsRead: 2 } });
+    expect(readFileSync(lessonsPath(dir), 'utf8')).toBe(lessonsBefore);
+    expect(readFileSync(profilePlayersPath(dir), 'utf8')).toBe(profilesBefore);
+
+    // Once there, a second include_history shows them without writing again.
+    const twice = payload(await h.call('warapp_get_game', { game_id: GAME, include_history: true }));
+    expect(twice.endOfGame).toMatchObject({ status: 'already-processed', stats: { turnsRead: 2 } });
+    expect(twice.endOfGame).not.toHaveProperty('backfilled');
+  });
+
   it('an unreadable history is recorded with its reason', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
     h = await liveHarness({ feed: [finished(), finished({ history: 'not json' })], dataDir: dir, pages: SIGNED_IN });

@@ -62,8 +62,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the war.app sign-in that captures the hosted direct leg's token (#333, below). Its
   egress is `war.app` and `warappcdn.com` (the bundle); `state.dataDir` keeps the fetchproxy
   identity and the bundle cache across cold starts.
-- **Fourteen tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
-  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_delete_notification` (deletes war.app notifications, for good; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing), `warapp_import_state` (hosted only: this server's own state; below) and `warapp_link_session` (local only:
+- **Fifteen tools write, all confirm-gated:** `warapp_submit_picks`, `warapp_submit_turn`,
+  `warapp_send_chat`, `warapp_join_game`, `warapp_leave_game`, `warapp_close_finished_game` (below), `warapp_surrender`, `warapp_accept_surrender`, `warapp_begin_turn`, `warapp_uncommit_turn`, `warapp_dismiss_notification` (marks war.app notifications read; reaches no other player), `warapp_delete_notification` (deletes war.app notifications, for good; reaches no other player), `warapp_mark_chat_read` (marks a game's chat read on war.app; reaches no other player, posts nothing), `warapp_import_state` (hosted only: this server's own state; below) and `warapp_link_session` (local only:
   it stores a session cookie on this machine and is not registered hosted), registered with mcp-utils' `defineWrite` / `registerWrite`
   (`confirmWrite`: elicitation, or a preview + single-use `confirmToken` per
   `MCP_CONFIRM_MODE`). Each gate binds the signed-in account read fresh in `plan` (`writeAccount`), the
@@ -106,8 +106,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `MAX_EXPORT_DECISION_BYTES`, the rest counted in `leftOut.decisionLogs`). Never credentials, the bundle cache, the guess salt, chat cursors, maps or stats. The account is
   `--account`, else the one the board caches' `playerId` names, else the one the per-account file names name.
   The CLI prints counts and sizes only. Hosted (only with mcp-host's blob store, `blobStoreFromEnv`),
-  `warapp_upload_slots` mints a signed PUT (`mintUploadSlot`) and `warapp_import_state` (confirm-gated, the
-  fourteenth write) reads it back (`resolveUploadSource`), verifies every file (`decodeBundle`: paths, the
+  `warapp_upload_slots` mints a signed PUT (`mintUploadSlot`) and `warapp_import_state` (confirm-gated, a
+  write) reads it back (`resolveUploadSource`), verifies every file (`decodeBundle`: paths, the
   account of per-account files, size, sha256, JSON, a salt; never echoing contents), refuses another account
   and a different or malformed salt unless `replace`, which moves `relations/`, `profiles/`, `finished/`,
   `maps-record/` and `lessons.json` into `state-backups/<time>/` (0700, never deleted). Without `replace` a file
@@ -766,6 +766,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   unreadable — the failure's own words would change the hashed preview between preview and confirm) and returns
   them as `withdrawnOrders` in every result, so a withdrawn turn is never lost; both tools' and the submit's
   descriptions point to the read.
+- **End-of-game stats and closing out a finished game (#523).** The pass keeps every player's end-of-game screen in the
+  finished record (`stats`, by key; `src/analysis/end-game-stats.ts`): produced = deploys, lost/killed = each attack's
+  `attackingArmiesKilled`/`defendingArmiesKilled` both ways (defender = the owner when the attack runs), highest income =
+  the board income — all four matched the client's Defeat screen for 45682542 — and the client's All Graphs series
+  (`warlight.unity.live.Statistics` metrics 0–6: armies, territories, income per board, stopping when a seat left;
+  deployed per turn; cumulative luck). A captured record without them is backfilled only by `include_history`
+  (`backfilled: 'stats'`, nothing else re-run). The app's My Games is GetMyGames' Default list, which holds a finished
+  game only while GameInfo field 20 (SeenEndGameWindow) is clear (read live 2026-11-23); the client sets it by asking
+  GetEndGameWindowData (85) when it shows the Victory / Defeat window, which `warapp_close_finished_game` sends
+  (confirm-gated, UNVERIFIED live; read back from that flag).
 - **Leaving a lobby is `DeclineGame` (65) via `warapp_leave_game`, confirm-gated** (#217): the lobby's
   Decline button, also how a seated player leaves a game still `WaitingForPlayers`. Its parameters
   (the int32 game id, then a "mod hooks the decline" bool sent false) are read from the bundle's writer

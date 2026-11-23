@@ -26,7 +26,7 @@ const WRITES = [
 ];
 const LOCAL_WRITES = ['warapp_backfill_history', 'warapp_link_session', 'warapp_record_agreement', 'warapp_record_intel'];
 /** Writes to war.app that change only the account's own state (marking notifications and chat read, #311). */
-const ACCOUNT_WRITES = ['warapp_dismiss_notification', 'warapp_mark_chat_read'];
+const ACCOUNT_WRITES = ['warapp_close_finished_game', 'warapp_dismiss_notification', 'warapp_mark_chat_read'];
 /** Writes to war.app that destroy only the account's own data (deleting notifications, #311). */
 const ACCOUNT_DELETES = ['warapp_delete_notification'];
 
@@ -60,6 +60,7 @@ describe('tool annotations', () => {
       'warapp_begin_turn',
       'warapp_chat_inbox',
       'warapp_check_plan',
+      'warapp_close_finished_game',
       'warapp_delete_notification',
       'warapp_dismiss_notification',
       'warapp_get_chat',

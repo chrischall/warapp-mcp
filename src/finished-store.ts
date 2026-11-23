@@ -33,6 +33,7 @@
 import { readdir, readFile, stat, unlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FinishedCapture, FinishedOutcome, GameKind, PlayerTurn } from './analysis/finished-game.js';
+import { highestIncomes, type EndGameStatsResult, type PlayerEndStats } from './analysis/end-game-stats.js';
 import { profileFormatOf, type ProfileFormat } from './analysis/opponent-profile.js';
 import { writeJsonAtomic } from './map-store.js';
 import type { Game } from './normalize.js';
@@ -121,6 +122,31 @@ export interface FinishedRecord {
   boards?: { turn: number; d?: true; t: StoredTerritory[] }[];
   /** The history boards left out between the opening and the closing ones kept (absent: none). */
   boardsOmitted?: number;
+  /**
+   * #523: every player's end-of-game stats, by key, as the client's end-of-game screen shows them (absent on records
+   * kept before them, and when the history's orders did not read): see {@link StoredEndStats}.
+   */
+  stats?: { turnsRead: number; players: Record<string, StoredEndStats> };
+}
+
+/**
+ * #523: one player's end-of-game stats as stored: the totals (`endGameStats`, src/analysis/end-game-stats.ts), its
+ * highest income, and every series the client's end-of-game "All Graphs" offers (`warlight.unity.live.Statistics`):
+ * per history board in `turns` order (after `afterTurn` completed turns, up to the board before its seat left, as
+ * the client stops a line) its `armies` (metric 0, armies controlled), `territories` (1) and `income` (2); per turn
+ * read its `deployed` armies (3); and its cumulative `luck`, `offensiveLuck`, `defensiveLuck` (4–6) from 0.
+ */
+export interface StoredEndStats extends Omit<PlayerEndStats, 'deployed' | 'luck' | 'offensiveLuck' | 'defensiveLuck'> {
+  highestIncome: number;
+  series: {
+    armies: (number | null)[];
+    territories: number[];
+    income: number[];
+    deployed: number[];
+    luck: number[];
+    offensiveLuck: number[];
+    defensiveLuck: number[];
+  };
 }
 
 /** A history board's territory as stored: `[territory id, owner, armies]`, then a fog level other than `Visible`. */
@@ -272,6 +298,8 @@ export interface RecordParts {
   boards?: readonly { turn: number; board: BoardState }[] | undefined;
   /** #437: the game's kinds. */
   kinds?: GameKind[] | undefined;
+  /** #523: the stats read off the history's orders (captured only). */
+  stats?: EndGameStatsResult | undefined;
 }
 
 /** The stored record: every player id replaced by its `playerKey`. Pure. */
@@ -325,7 +353,37 @@ export function finishedRecordOf(p: RecordParts): FinishedRecord {
       : {}),
     ...(stored ?? {}),
     ...(kept?.omitted ? { boardsOmitted: kept.omitted } : {}),
+    ...(h && p.stats ? { stats: storedStats(p.stats, h, key) } : {}),
   };
+}
+
+/** #523: the stats as stored: by key, each with its highest income and its armies and territories by history board. Pure. */
+export function storedStats(stats: EndGameStatsResult, c: FinishedCapture, key: (id: number) => string): NonNullable<FinishedRecord['stats']> {
+  const highest = highestIncomes(c.turns);
+  const players: Record<string, StoredEndStats> = {};
+  for (const [id, st] of stats.players) {
+    const { deployed, luck, offensiveLuck, defensiveLuck, ...totals } = st;
+    // The client stops a line once the seat is out: the boards before the turn it left.
+    const kept = c.turns.filter((t) => !totals.left || t.afterTurn < totals.left.turn);
+    const at = (t: (typeof c.turns)[number]) => t.players.get(id);
+    players[key(id)] = {
+      ...totals,
+      highestIncome: highest.get(id) ?? 0,
+      series: {
+        armies: kept.map((t) => {
+          const pt = at(t);
+          return pt ? pt.armies : 0;
+        }),
+        territories: kept.map((t) => at(t)?.territories ?? 0),
+        income: kept.map((t) => at(t)?.income ?? 0),
+        deployed,
+        luck,
+        offensiveLuck,
+        defensiveLuck,
+      },
+    };
+  }
+  return { turnsRead: stats.turnsRead, players };
 }
 
 /** The opening and closing boards a record keeps, and how many between them it leaves out. Pure. */

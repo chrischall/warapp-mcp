@@ -500,6 +500,7 @@ describe('methods', () => {
       GetTerritoryPicks: 81,
       UnCommit: 82,
       GetTurns: 83,
+      GetEndGameWindowData: 85,
       Subscribe: 242,
       GameUpdated: 245,
       GetInAppNotifications: 323,

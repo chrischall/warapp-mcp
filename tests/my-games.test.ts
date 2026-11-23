@@ -508,6 +508,15 @@ describe('readMyGames / summarizeMyGames', () => {
     expect(readMyGames(stub(ordered(MY_GAMES_RETURN, [null, 0])), reader(true))).toEqual([]);
   });
 
+  it('reads GameInfo field 20, the seen-end-game-window flag (#523), only when set and a boolean', () => {
+    const [seen] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 20: true, 22: 4 })], 0])), reader(true));
+    expect(seen!.seenEndGame).toBe(true);
+    const [unseen] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 20: false, 22: 4 })], 0])), reader(true));
+    expect(unseen).not.toHaveProperty('seenEndGame');
+    const [odd] = readMyGames(stub(ordered(MY_GAMES_RETURN, [[info({ 20: 1, 22: 4 })], 0])), reader(true));
+    expect(odd).not.toHaveProperty('seenEndGame');
+  });
+
   it('skips null list items and names unknown codes by number', () => {
     const games = readMyGames(
       stub(ordered(MY_GAMES_RETURN, [[null, info({ 22: 42, 16: [null, player('Zed', 9, 77, false)] })], 0])),
