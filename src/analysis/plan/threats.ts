@@ -6,6 +6,7 @@
 import { carriesTeam } from '../../teams.js';
 import { searchChains } from '../chains.js';
 import { guaranteedKills } from '../combat.js';
+import { FOG_PLAYER, foggedAttacks, foggedTakes } from '../commander-fog.js';
 import { bfsDistances, neighborsOf } from '../graph.js';
 import { couldHoldBonusPools, enemyDeployReaching, freeIncome } from '../local-deploy.js';
 import { incomeBasis, LOST_STACK_TURNS } from '../opponents.js';
@@ -82,6 +83,12 @@ export interface Border extends Force {
    * plus every stack of theirs within two moves. Its parts, for the rationale.
    */
   commanderWorst?: { deploy: number; stacks: number; players: number[] };
+  /**
+   * Part 5: my commander's territory, sized for the fog's attackers above the visible threat (`PlanOptions.
+   * foggedAttackers`): how many strike together, from which fogged territories, each `stack` + `deploy`.
+   * `player` is {@link FOG_PLAYER} when no visible opponent faces it.
+   */
+  fogWorst?: { attackers: number; territories: number[]; stack: number; deploy: number };
 }
 
 /** The threats phase's helpers, for the phases after it. */
@@ -93,7 +100,7 @@ export type ThreatForces = ReturnType<typeof threatForces>;
 export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput, valueOf: (t: number) => number) {
   const src = threatSources(pc, ps, input);
   const forces = threatForces(pc, ps, src, valueOf);
-  const { borders, facing, borderAt, safeAtStart } = borderThreats(pc, ps, input, src, forces);
+  const { borders, facing, borderAt, visibleBorderAt, safeAtStart } = borderThreats(pc, ps, input, src, forces);
   const {
     growthOf, deployReaching, reinforcementAt, holdArmies, bombSized, hiddenFoe, hiddenMovable, hiddenPool,
   } = src;
@@ -135,6 +142,7 @@ export function threatsPhase(pc: PlanCtx, ps: PlanState, input: PlanInput, value
     borders,
     facing,
     borderAt,
+    visibleBorderAt,
     safeAtStart,
   };
 }
@@ -771,7 +779,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     armiesOf, unitsAt, uncounted, uncountedKind, bombOn, toTake, turnNow, holdPasses, myCommanders, s, baseIncome, rates,
   } = pc;
   const { warnings, rationale } = ps;
-  const { growthOf, holdArmies, hiddenFoe, lostAt, teamOf, deployReaching, bombSized } = src;
+  const { growthOf, holdArmies, hiddenFoe, lostAt, teamOf, deployReaching, bombSized, killsOf, takesAlone } = src;
   /** #226: the game pays per territory (BonusArmyPer). */
   const perTerritory = (s.bonusArmyPer ?? 0) > 0;
   /** #226: what the bonuses it could still hold add to what it could earn (its territories' pay aside). */
@@ -821,7 +829,45 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     }
     return worst;
   };
+  /**
+   * Part 5 (mega game, `PlanOptions.foggedAttackers`): my commander's territory `t` against the fog's
+   * attackers ({@link foggedAttacks}): the `count` strongest fogged territories within two moves of it, each
+   * hiding a player with `stack` armies and my whole income (a what-if `enemyDeploy` as given), striking in
+   * turn (#201's separate-attack arithmetic). `undefined` when off or with no fogged territory in reach.
+   */
+  const fogWorstAt = (t: number, gone: (n: number) => boolean): { threat: number; fog: NonNullable<Border['fogWorst']> } | undefined => {
+    const fa = pc.opts.foggedAttackers;
+    if (!fa || fa.count <= 0) return undefined;
+    const view = {
+      mine: (x: number) => mineSet.has(x),
+      fogged: (x: number) => {
+        const st = state.get(x);
+        if (!st || st.owner.kind === 'unknown') return true;
+        if (st.armies !== null) return false;
+        return st.owner.kind !== 'player' || foe(st.owner.playerId);
+      },
+      armies: (x: number) => {
+        const st = state.get(x);
+        return st && st.owner.kind !== 'unknown' ? st.armies : null;
+      },
+    };
+    const deploy = custom ? (enemyDeploy ?? 0) : Math.max(0, pc.income - pc.cardArmies);
+    const all = foggedAttacks(g, view, t, { stack: fa.stack, deploy, defensiveKillRate: rates.defensiveKillRate }, gone);
+    if (!all.length) return undefined;
+    const used = all.slice(0, fa.count);
+    const joint = used.length > 1 ? (toTake(foggedTakes(used.map((a) => a.armies), used.length, killsOf, takesAlone)) ?? used[0]!.armies) : used[0]!.armies;
+    const threat = bombSized(t, Math.max(used[0]!.armies, joint));
+    return { threat, fog: { attackers: used.length, territories: used.map((a) => a.territory), stack: fa.stack, deploy } };
+  };
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
+    const b = visibleBorderAt(t, gone);
+    if (!myCommanders.has(t)) return b;
+    const fw = fogWorstAt(t, gone);
+    if (!fw || (b && b.threat >= fw.threat)) return b;
+    if (b) return { ...b, threat: fw.threat, fogWorst: fw.fog };
+    return { id: t, player: FOG_PLAYER, movable: 0, growth: 0, deploy: fw.fog.deploy, threat: fw.threat, fogWorst: fw.fog };
+  };
+  const visibleBorderAt = (t: number, gone: (n: number) => boolean): Border | null => {
     // #235: a leader's border whose joint hold does not pay is sized for each opponent alone.
     const solo = ps.soloHeld.has(t);
     const f = forceAt(t, gone, { trend: true, allPlayers: true, solo });
@@ -872,6 +918,12 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     for (const l of lostAt.get(t) ?? []) if (estimates.has(l.player)) facing.add(l.player);
     const b = borderAt(t, () => false);
     if (b) borders.set(t, b);
+    if (b?.fogWorst) {
+      const w = b.fogWorst;
+      rationale.push(
+        `My commander's territory ${label(t)} is held against the fog too (mega game, part 5), ~${b.threat}: ${w.attackers} unknown opponent${w.attackers === 1 ? '' : 's'} the fog may hide on ${w.territories.map(label).join(', ')} (within two moves of it) striking ${w.attackers === 1 ? 'it' : 'it together'}, each taken as ${w.stack} armies plus a whole deploy of ~${w.deploy}.`,
+      );
+    }
     if (b?.commanderWorst) {
       const w = b.commanderWorst;
       rationale.push(
@@ -1230,6 +1282,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     borders,
     facing,
     borderAt,
+    visibleBorderAt,
     safeAtStart,
   };
 }

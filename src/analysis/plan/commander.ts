@@ -169,7 +169,7 @@ export function commanderTransit(
   pc: PlanCtx,
   ps: PlanState,
   book: Pick<DeployBook, 'deploy' | 'roomAt' | 'guardAt'>,
-  threats: Pick<Threats, 'deployReaching' | 'bombSized' | 'borderAt'>,
+  threats: Pick<Threats, 'deployReaching' | 'bombSized' | 'visibleBorderAt'>,
   gone: (n: number) => boolean = () => false,
 ): void {
   const r = pc.commanderAt?.retreat;
@@ -230,8 +230,9 @@ export function commanderTransit(
       const left = d - soft.reduce((a, n) => a + kills(n), 0);
       return left > 0 && (pc.toTake(left) ?? Infinity) > threats.bombSized(r.from, last);
     });
-  // Where it walks to holds it for the rest of the turn (rule 1k there): its hold comes first.
-  const dest = threats.borderAt(r.to, gone);
+  // Where it walks to holds it for the rest of the turn (rule 1k there): its hold against what is in view comes
+  // first; a hold against the fog's attackers there (part 5) is rule 1k's, after this transit hold.
+  const dest = threats.visibleBorderAt(r.to, gone);
   let reserve = 0;
   if (dest) {
     const there = ps.avail.get(r.to)! + book.guardAt(r.to) + pc.unitsAt(r.to);

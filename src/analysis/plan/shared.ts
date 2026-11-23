@@ -283,6 +283,12 @@ export interface PlanOptions {
    */
   commanderWalks?: boolean;
   /**
+   * Part 5 (mega game): my commander's territory is also held against `count` unknown opponents in the fog
+   * striking it together, each `stack` armies plus my whole income (`src/analysis/commander-fog.ts`): every
+   * fogged territory within two moves of it may hide one. Absent or `count` 0: off (the default).
+   */
+  foggedAttackers?: { count: number; stack: number };
+  /**
    * #420: `false` turns the total hold cap off (plain holds take whatever they need, as before it). Default:
    * plain holds take at most half my income, 70% when behind. Tests of earlier hold rules use it.
    */

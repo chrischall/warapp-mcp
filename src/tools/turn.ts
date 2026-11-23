@@ -187,7 +187,18 @@ import { countsOf, fogSightings, ownersOf } from '../analysis/plan/vacated.js';
 import { resolveTeams, resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { myCommanderTerritory } from '../analysis/commander-safety.js';
-import { commanderCheckOn, guessKeepsCommander, type CommanderCheck, type CommanderCheckInput, type CommanderRisk } from './commander-check.js';
+import {
+  commanderCheckOn,
+  foggedAttackersArg,
+  foggedCommanderOn,
+  foggedCommanderText,
+  guessKeepsCommander,
+  myLargestStack,
+  type CommanderCheck,
+  type CommanderCheckInput,
+  type CommanderRisk,
+} from './commander-check.js';
+import { defaultFoggedAttackers, foggedStack } from '../analysis/commander-fog.js';
 import { HEADROOM_COMPACT, headroomView, headroomWarnings, keepTripwires, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
 import type { Tripwire } from '../analysis/tripwire.js';
 
@@ -1852,6 +1863,28 @@ export interface LivePlanArgs {
   jabs?: boolean;
   /** #382: the siege's memory kept for this game (src/siege-store.ts). */
   siegeMemory?: SiegeMemory;
+  /** Part 5 (`fogged_attackers`): fogged opponents my commander is held against together; default {@link foggedAttackersFor}. */
+  foggedAttackers?: number;
+}
+
+/**
+ * Part 5 (mega game): how many unknown opponents in the fog my commander's territory is held against
+ * together — `given`, else {@link defaultFoggedAttackers} (2 in a free-for-all of eight or more players still
+ * playing, with commanders and fog; else 0, off) — and each one's stack ({@link foggedStack}). Undefined when
+ * off or in a game without commanders.
+ */
+export function foggedAttackersFor(game: Game, board: BoardState, me: number, given?: number): { count: number; stack: number } | undefined {
+  const s = game.settings;
+  if (!s?.commanders) return undefined;
+  const count =
+    given ??
+    defaultFoggedAttackers({
+      commanders: true,
+      fog: s.fog !== undefined && s.fog !== 'NoFog',
+      teams: isTeamGame(game.players),
+      players: game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length,
+    });
+  return count > 0 ? { count, stack: foggedStack(s.initialPlayerArmiesPerTerritory, myLargestStack(board, me)) } : undefined;
 }
 
 /**
@@ -2135,6 +2168,8 @@ export async function livePlanSetup(
       ...(a.args?.avoid ? { avoid: a.args.avoid } : {}),
       ...(a.args?.siegeTarget !== undefined ? { siegeTarget: a.args.siegeTarget } : {}),
       ...(a.args?.jabs !== undefined ? { jabs: a.args.jabs } : {}),
+      // Part 5: in a big free-for-all, my commander held against unknown opponents in the fog striking together.
+      ...((fa) => (fa ? { foggedAttackers: fa } : {}))(foggedAttackersFor(game, board, me.id, a.args?.foggedAttackers)),
       // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
       ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
       // #215 review: from the award (unverified), the schedule and card advice use it, holds do not.
@@ -2506,7 +2541,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'orders (not without Commanders in the settings, nor when only an `enemy_deploy` what-if makes it unsafe). ' +
           'Within three moves of an enemy or the fog, with a safer territory of yours reachable, your commander walks one ' +
           'step a turn toward safety: a move in `orders` with `commander: true` (encoding not yet verified live), said in ' +
-          'the first warning. ' +
+          'the first warning. In a free-for-all of eight or more players under fog (or with `fogged_attackers`), the ' +
+          "commander's territory is also held against unknown opponents the fog may hide within two moves of it striking it " +
+          'together (2 by default; each the game\'s starting armies, else your largest stack, plus a deploy of your income), ' +
+          'from turn 1, and the block reports `fogged` (`safe`, `needs`; a warning when the plan cannot fund it, which the ' +
+          'submit does not refuse on). ' +
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
           "turn's plan expected (kept per game, from a plan without `goal` or `enemy_deploy`: a what-if plan keeps no figure), " +
           'and the bonuses broken and territories lost since the previous board, and each capture that plan expected and did ' +
@@ -2629,6 +2668,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               'Default: on under goal siege, off otherwise.',
           ),
         known_income: knownIncomeArg,
+        fogged_attackers: foggedAttackersArg.describe(
+          "(Commanders games) How many unknown opponents the fog may hide within two moves of my commander's territory are " +
+            'assumed to strike it together; its hold is sized for them (each the game\'s starting armies, else my largest ' +
+            'stack, plus a deploy of my income) and the commander block reports `fogged`. Default: 2 in a free-for-all of ' +
+            'eight or more players still playing under fog, else 0 (off). 0 turns it off.',
+        ),
         avoid_territories: avoidTerritoriesArg,
         avoid_players: avoidPlayersArg,
         first_mover: z
@@ -2650,7 +2695,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ),
       }),
     },
-    async ({ game_id, player, goal, siege_target, jabs, focus, reserve, enemy_deploy, known_income, avoid_territories, avoid_players, min_win_chance, first_mover, view }) => {
+    async ({ game_id, player, goal, siege_target, jabs, focus, reserve, enemy_deploy, known_income, fogged_attackers, avoid_territories, avoid_players, min_win_chance, first_mover, view }) => {
       // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
       const feed = await ctx.client.getGame(game_id, { settings: true, chat: true });
       requireTurnPhase(feed);
@@ -2694,6 +2739,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ...(goal !== undefined ? { goal } : {}),
           ...(goal === 'siege' && siege_target !== undefined ? { siegeTarget: siege_target } : {}),
           ...(jabs !== undefined ? { jabs } : {}),
+          ...(fogged_attackers !== undefined ? { foggedAttackers: fogged_attackers } : {}),
           ...(siegeMemory ? { siegeMemory } : {}),
           focusBonusIds,
           ...(reserve !== undefined ? { reserve } : {}),
@@ -2930,6 +2976,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       });
       const guard = checked?.safety;
       const replyDeploy = checked?.replyDeploy ?? 0;
+      // Part 5: the plan's orders against the fog's attackers its hold was sized for (report only).
+      const fogSized = setup.input.options?.foggedAttackers;
+      const fogged =
+        guard && fogSized
+          ? foggedCommanderOn({
+              graph: setup.graph,
+              board: setup.board,
+              me: me.id,
+              settings: setup.settings,
+              deploys: plan.deploys,
+              moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+              count: fogSized.count,
+              stack: fogSized.stack,
+              deploy: setup.boardIncome,
+            })
+          : undefined;
       const commanderLine = guard
         ? `Your commander on territory ${guard.territory}: ${guard.armies} armies there after the plan, ${
             guard.distance === null ? 'no enemy or fog on the map' : `${guard.distance} move${guard.distance === 1 ? '' : 's'} from the nearest enemy or fog`
@@ -2972,6 +3034,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         }
         warnings.unshift(`${commanderLine} ${checked.text} ${submit}`);
       }
+      // Part 5: the plan could not fund the fog's hold (a warning only: warapp_submit_turn does not refuse on it).
+      if (fogged && !fogged.safe) warnings.push(`${foggedCommanderText(fogged)} (warapp_submit_turn does not refuse on this.)`);
       const guessed = planBorderGuess(setup, plan, me, guessSeed(game.id, turn, await guessSalt(ctx.dataDir)), enemy_deploy);
       let guess = guessed.kind === 'guess' ? guessed : undefined;
       let guessSkip: { reason: string; message: string } | undefined = guessed.kind === 'skipped' ? { reason: guessed.reason, message: guessed.message } : undefined;
@@ -3224,6 +3288,20 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 safe: guard.killers === 0 && !guard.lostUnanswered,
                 needs: guard.needs,
                 replyDeploy,
+                // Part 5: against unknown opponents in the fog within two moves, striking together.
+                ...(fogged
+                  ? {
+                      fogged: {
+                        text: foggedCommanderText(fogged),
+                        safe: fogged.safe,
+                        needs: fogged.needs,
+                        attackers: fogged.attackers,
+                        from: fogged.from.map((f) => name(f.territory)),
+                        stack: fogged.stack,
+                        deploy: fogged.deploy,
+                      },
+                    }
+                  : {}),
               },
             }
           : {}),
