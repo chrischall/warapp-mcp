@@ -175,6 +175,12 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           'On a very large map (over 400 pickable territories) only the territories that score best alone are ranked, 400 at the default budget and more with a larger one (`candidates` says how many); ' +
           'the plan has a time budget (20 s; `WARAPP_PICKS_BUDGET_MS` sets it, 0 for none) and, when it runs out, answers `partial: true` with a valid list; ' +
           'the compact view caps its reasons, threats, coverage and warning lists (counts say what was cut; `submitPicks` is never cut). ' +
+          'In a game that overrides bonus values, with a territory limit of 1 on a huge map (1,000+ territories, 3+ players, not a team game) it ranks single starts instead of groups: ' +
+          '`startRanking` shows 25 starts per `page`, each scored on income at the game\'s bonus values (overrides applied; a bonus worth 0 ' +
+          'is crossed, never counted) over a 5-turn flood opening, the turn its income first exceeds the base income, the nearest paying bonus, ' +
+          'wastelands within 2 hops (blocking a paying bonus or shielding an approach) and commander safety (open approaches, entries into its ' +
+          '2-hop pocket, the nearest other start and the rival starts expected within 3 hops), with reasons; `submitPicks` is the ranking in ' +
+          'priority order, cut at the client\'s max (players × 1). The ranking is cached per map, so the next page costs nothing. ' +
           'In a team game only the players off your team are threats, `team` names your teammates, and the list is judged by both award ' +
           "orders that fit (`award.orders`; a team game's is unverified). When a teammate's pick list can be read (unverified), each " +
           "teammate carries `picks`, and `team.coordination` reports the overlap with your list, the bonuses their top picks into " +
@@ -194,6 +200,16 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           VIEWS,
           'compact (default) gives the ranked picks with reasons, the groups and submitPicks (and the first start bonuses of `mapRecord`); "full" adds the settings the plan assumed and every start bonus.',
         ),
+        page: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            'Single-pick ranking only (a territory limit of 1 on a huge map): the page of 25 ranked starts to detail (default 1). ' +
+              'The submit list is the same on every page.',
+          ),
         spread: z
           .boolean()
           .optional()
@@ -203,7 +219,7 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
           ),
       }),
     },
-    async ({ game_id, view, spread }) => {
+    async ({ game_id, view, spread, page }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requirePickPhase(feed);
       const { territories, info } = await loadLiveGame(ctx, feed);
@@ -269,6 +285,8 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
         ...(team ? { team: { teammates: team.length, ...(lists.some((l) => l.length) ? { lists } : {}) } } : {}),
         ...(budgetMs !== undefined ? { budgetMs } : {}),
         ...(limitRead.fullDeal ? { fullDeal: true } : {}),
+        ...(page !== undefined ? { singlePage: page } : {}),
+        ...((game.settings?.overriddenBonuses?.size ?? 0) > 0 ? { overridden: true } : {}),
       });
       } catch (e) {
         // A failure inside the advisor is a tool error with a reason, never a silent host failure.
@@ -426,6 +444,30 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
         },
         ...(plan.partial ? { partial: true } : {}),
         ...(plan.candidates ? { candidates: plan.candidates } : {}),
+        ...(plan.single
+          ? {
+              // Mega-game spec part 2: the ranked single starts of a huge map, one page at a time.
+              startRanking: {
+                shown: plan.single.shown,
+                page: plan.single.page,
+                pages: plan.single.pages,
+                simulated: plan.single.simulated,
+                payingBonuses: plan.single.paying,
+                ...(plan.single.cached ? { cached: true } : {}),
+                starts: plan.single.starts.map((x, i) => ({
+                  rank: plan.single!.shown.from + i,
+                  territory: name(x.territoryId),
+                  score: x.score,
+                  firstIncomeTurn: x.firstIncomeTurn,
+                  nearestPayingBonus: x.nearestPaying ? { ...bonusName(x.nearestPaying.bonusId), value: x.nearestPaying.value, hops: x.nearestPaying.hops } : null,
+                  bonuses: x.bonuses.map((b) => ({ ...bonusName(b.bonusId), value: b.value, turn: b.turn, contest: b.contest })),
+                  wastelands: { blocking: x.wastelands.blocking.map(name), shielding: x.wastelands.shielding.map(name) },
+                  safety: x.safety,
+                  reasons: x.reasons ?? [],
+                })),
+              },
+            }
+          : {}),
         ...cappedLines('warnings', [...warnings, ...plan.warnings], !lean(rung)),
         ...cappedLines('rationale', plan.rationale, !lean(rung)),
         submitPicks: { game_id: game.id, territories: plan.picks.map((p) => p.territoryId) },
