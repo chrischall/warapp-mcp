@@ -185,6 +185,10 @@
       "description": "Your submitted territory picks in priority order"
     },
     {
+      "name": "warapp_get_my_orders",
+      "description": "Your orders for the current turn read back from war.app, in warapp_submit_turn's shape, to resubmit after uncommitting"
+    },
+    {
       "name": "warapp_plan_turn",
       "description": "Plan your turn from the live board: deploys and moves by name, expected bonuses, and submit-ready orders"
     },

@@ -3,7 +3,8 @@
 // "Modify orders" — gated on the user's confirmation. The game is read from
 // GameFeed first (refused outside a turn phase, for a game the account is not
 // playing, or when nothing is committed), and the outcome is read back from
-// GameFeed afterwards: UnCommit's reply carries no result.
+// GameFeed afterwards: UnCommit's reply carries no result. The orders being withdrawn are read back first
+// (warapp_get_my_orders' read) and carried in the preview and the result, so they are never lost.
 import { CONFIRM_INJECTION_RULE, toolAnnotations } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -14,6 +15,8 @@ import { readLedger } from '../relations-store.js';
 import { dropOrdersCache } from '../trend.js';
 import { gameIdArg, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta } from './hints.js';
+import type { MyOrder } from '../my-orders.js';
+import { readMyOrders, shownOrders } from './my-orders.js';
 import { requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE } from './live.js';
 import { currentTurn, requireTurnPhase } from './turn.js';
@@ -33,6 +36,8 @@ interface UncommitState {
   me: number;
   turnsBefore: number | null;
   turn: number | null;
+  /** The orders withdrawn, in warapp_submit_turn's shape; `null` when they could not be read. */
+  withdrawnOrders: MyOrder[] | null;
 }
 
 /** The signed-in account's seat in `game`, refused unless it has orders committed this turn. */
@@ -65,7 +70,9 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
         'committed. The game then waits on you again, so recommit before the boot timer runs out. Always as the ' +
         'signed-in war.app account; the outcome is read back from GameFeed (`uncommitted`, `unconfirmed`, or ' +
         `\`unknown\` when war.app did not answer — never resend blindly). A truce recorded broken-by-me on that ` +
-        `turn stays recorded (\`agreementsStillBroken\`). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
+        `turn stays recorded (\`agreementsStillBroken\`). The orders being withdrawn are read back first and carried in ` +
+        'the preview and the result (`withdrawnOrders`, in warapp_submit_turn\'s shape; null when unreadable), and ' +
+        `warapp_get_my_orders reads them any time. ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Withdraw committed war.app orders',
         readOnly: false,
@@ -82,6 +89,21 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
         const name = game.name ?? `game ${game.id}`;
         const turn = currentTurn(game);
         const turnLabel = turn === null ? 'this turn' : `turn ${turn}`;
+        const mine = await readMyOrders(ctx, game);
+        const withdrawn = mine.read
+          ? {
+              orders: mine.read.orders,
+              shown: shownOrders(mine.read.orders, game),
+              ...(mine.read.unread.length ? { unread: mine.read.unread } : {}),
+              note: 'Your committed orders as war.app holds them: pass `orders` to warapp_submit_turn to resubmit them.',
+            }
+          : {
+              orders: null,
+              // The failure's own words stay out: the preview is what the user approves, and a retry's wording may differ.
+              note: mine.failure
+                ? 'Your committed orders could not be read (the live board did not answer): note them in the web client before withdrawing.'
+                : 'war.app sent no list of your committed orders, so they are unknown: note them in the web client before withdrawing.',
+            };
         return {
           gate: {
             action: 'warapp.uncommit_turn',
@@ -99,6 +121,7 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
                 'may be booted.',
               account: shownAccount(seat.name, seat.id),
               game: { id: game.id, name: game.name === undefined ? null : untrustedText(game.name), turn },
+              withdrawnOrders: withdrawn,
               untrusted: UNTRUSTED_PREVIEW_NOTE,
             },
           },
@@ -108,12 +131,13 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
             me: seat.id,
             turnsBefore: game.numberOfTurns ?? null,
             turn,
+            withdrawnOrders: mine.read?.orders ?? null,
           } satisfies UncommitState,
         };
       },
-      async execute({ gameId, name, me, turnsBefore, turn }: UncommitState) {
+      async execute({ gameId, name, me, turnsBefore, turn, withdrawnOrders }: UncommitState) {
         await requireApprovedAccount(ctx, writeAccount(me));
-        const base = { game: { id: gameId, name }, turn };
+        const base = { game: { id: gameId, name }, turn, withdrawnOrders };
         const check = 'Check warapp_get_game (your committed flag, the turn count) before doing anything else.';
         const unconfirmed = (warning: string) => ({ status: 'unconfirmed' as const, outcome: 'unconfirmed' as const, ...base, warning });
         return sendAndVerify({
@@ -164,7 +188,8 @@ export function registerUncommitTool(server: McpServer, ctx: LiveContext): void 
                 ...base,
                 detail:
                   'Your orders are withdrawn and the game is waiting on you again: submit corrected orders with ' +
-                  'warapp_submit_turn (e.g. from warapp_plan_turn) before the boot timer runs out.',
+                  'warapp_submit_turn before the boot timer runs out — `withdrawnOrders` as they were (or edited), or a ' +
+                  'new plan from warapp_plan_turn.',
                 ...(stillBroken.length
                   ? {
                       agreementsStillBroken: stillBroken,

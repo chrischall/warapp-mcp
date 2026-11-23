@@ -401,7 +401,7 @@ standings, `LatestGameInfo` carries a dict in-game player id → `warlight.share
 `{ int32 stamp, list<GameOrder> orders (a turn), list<int32> picks (while distributing) }`, each list
 behind its present flag. The client renders a teammate's picks from the int list when present, else
 its orders, and counts the `GameOrderPlayCard*` and `GameOrderDiscard` orders in it against the team's
-hand. My own pending orders and picks are separate fields of `LatestGameInfo`. `src/team-orders.ts`
+hand. My own orders and picks are separate fields of `LatestGameInfo` (below). `src/team-orders.ts`
 finds the dict by the type name of its values (the reader fills it through a closure, which
 `fieldsReadAs` does not follow) and reads each order by its class and read order: `GameOrderDeploy`
 (territory, free flag, armies), `GameOrderAttackTransfer` (attack-teammates flag, mode byte, by-percent
@@ -411,6 +411,29 @@ flag, from, `Armies`, to), a card play (its own fields, the card GUID; the card 
 dict, or no entry for a teammate, is unknown — not "nothing entered". Whether war.app fills it before
 the teammate commits is the open question (V5). `warapp_get_team` reports it; the planner does not
 use it yet.
+
+**My own orders this turn — VERIFIED live 2026-11-22 for committed turns.** `LatestGameInfo`'s reader
+(6.08.0.2) reads, in order: `list<GameOrder>` my active orders, `list<int32>` my picks, the current
+`GameStanding`, the last `GameTurn`, the previous `GameStanding`, `list<GameMessage>`, the
+`TeammateOrders` dict, `Toasts`, `int32` turn number (0-based) — each but the last behind a present flag.
+The server builds the first two from the game's `ActiveTurnOrders` / `ActiveTerritoryPicks` entry for the
+asking player only (the orders while the game is played, state 3; the picks while distributing, state 5);
+the client writes the same list on a commit ("EndCommit Wrote N active orders") and shows it again in its
+ShowCommittedTurn state, which is the web client's "Modify orders". `src/my-orders.ts` finds the list by
+its values (the one field of the info that is a non-empty list of `GameOrder` records; the reader fills it
+through a closure, which `fieldsReadAs` does not follow — an empty list or none is unknown), decodes each
+order with the teammate reader's `decodeOrder` and projects it into `warapp_submit_turn`'s input: a card
+play's own fields are read by class in the writer's order (Gift: recipient, territory; Diplomacy: two
+players; Spy, Sanctions: the player; Surveillance: the bonus; Blockade, Emergency Blockade, Bomb,
+Reconnaissance: the territory; Airlift: `Armies`, from, a legacy 0, to), players mapped to GameFeed ids, an
+Order Delay given `before` from its place among the moves. Checked live 2026-11-22 (direct transport,
+read-only): a 2v2 turn committed by hand read back exactly — two deploys, a Gift card play (recipient the
+teammate, the territory) and six moves, in the order deploys, card, moves — and five other committed games
+read their deploys, moves and an Order Priority play; a game still distributing sent the picks list (200
+ids) and no orders. Still UNVERIFIED: what the list holds while my orders are entered but not committed
+(teammates' entered orders do appear in `ActiveTurnOrders` before they commit, V5), and the picks list
+(not read by this server; `warapp_get_my_picks` asks `GetTerritoryPicks`). `warapp_get_my_orders` reports
+it, and `warapp_uncommit_turn` carries it in its preview and result (`withdrawnOrders`).
 
 **An unreadable hand (#130) — unverified.** The hand sits under a per-player entry keyed by the
 in-game id. When cards are in play and the current standing has no entry for my id,

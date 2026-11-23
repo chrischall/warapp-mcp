@@ -667,6 +667,22 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   golden-pinned, NOT yet verified live. It refuses outside a turn phase and when `hasCommittedOrders`
   is false, and reads the outcome from GameFeed (`uncommitted` / `unconfirmed`); a transport failure
   is `unknown`, never retried. `warapp_submit_turn`'s "already committed" refusal points to it.
+- **My own orders this turn are read back by `warapp_get_my_orders` (read-only; `src/my-orders.ts`,
+  `src/tools/my-orders.ts`).** They live in `LatestGameInfo`'s FIRST field, a list of `GameOrder` (the client's
+  "active orders", from the game's `ActiveTurnOrders` entry for the asking player only — the list "Modify orders"
+  shows again; the second field is my picks while distributing), found by its values (the one non-empty list of
+  `GameOrder` records directly in the info; an empty list or none is unknown, `null`, never "none") and decoded
+  with `decodeOrder` (`src/team-orders.ts`, shared with the teammate reader). **VERIFIED live 2026-11-22** (direct
+  transport, read-only): a hand-committed 2v2 turn read back exactly (two deploys, a Gift to the teammate, six
+  moves) and five other committed games read their deploys, moves and an Order Priority play. UNVERIFIED: what it
+  holds for orders entered but not committed (the note says so when `committed` is false). `orders` is exactly
+  `warapp_submit_turn`'s input (card GUIDs and targets read by class in the writer's field order, players as
+  GameFeed ids — a card naming a player not in the game is `unread`, never resent with a wrong id — move options,
+  Order Delay `before` from its place among the moves); `cardType` and `shown` are display only (zod strips
+  `cardType`). `warapp_uncommit_turn` reads them in `plan` (the preview's `withdrawnOrders`, with a fixed note when
+  unreadable — the failure's own words would change the hashed preview between preview and confirm) and returns
+  them as `withdrawnOrders` in every result, so a withdrawn turn is never lost; both tools' and the submit's
+  descriptions point to the read.
 - **Leaving a lobby is `DeclineGame` (65) via `warapp_leave_game`, confirm-gated** (#217): the lobby's
   Decline button, also how a seated player leaves a game still `WaitingForPlayers`. Its parameters
   (the int32 game id, then a "mod hooks the decline" bool sent false) are read from the bundle's writer

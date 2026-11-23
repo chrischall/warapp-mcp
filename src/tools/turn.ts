@@ -3513,7 +3513,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'of a territory your commander stands on before or after the orders, unless `accept_commander_risk` ' +
         'is true (the result then records `commanderRiskAccepted`). The orders sent are kept in this server\'s decision log ' +
         'beside the turn\'s plan; when they differ from it, `override_reason` (and `override_by`) say why. Always sent as ' +
-        'the signed-in war.app account; refuses if you have already committed this turn. Success is confirmed from ' +
+        'the signed-in war.app account; refuses if you have already committed this turn (to change committed orders: ' +
+        'warapp_get_my_orders reads them back in this shape, warapp_uncommit_turn withdraws them, then resubmit). Success is confirmed from ' +
         `game state (turn advanced, or your orders marked committed). ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Submit a war.app turn',

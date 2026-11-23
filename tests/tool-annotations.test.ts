@@ -66,6 +66,7 @@ describe('tool annotations', () => {
       'warapp_get_game',
       'warapp_get_live_board',
       'warapp_get_map',
+      'warapp_get_my_orders',
       'warapp_get_my_picks',
       'warapp_get_notifications',
       'warapp_get_relations',

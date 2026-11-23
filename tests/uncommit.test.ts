@@ -239,8 +239,9 @@ describe('warapp_uncommit_turn', () => {
 
   it('a transport failure is reported as unknown and never retried', async () => {
     let calls = 0;
-    h = await harness([COMMITTED], () => {
-      calls += 1;
+    // Every call goes unanswered; the orders read before the withdrawal (GetLatestGameInfo) fails too and is not counted.
+    h = await harness([COMMITTED], (req) => {
+      if (req.method === Method.UnCommit) calls += 1;
       return { msgNum: 999 };
     });
     const p = payload(await confirmed({ game_id: GAME_ID }));
