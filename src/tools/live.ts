@@ -348,7 +348,8 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
         'Submit your territory picks for a war.app (Warzone) game in manual distribution, in priority order — ' +
         'they replace any picks you submitted before. Every territory must be pickable on the live board; a list ' +
         "longer than war.app's client allows (players × territories per player) or shorter than the territories " +
-        'each player is granted is warned about in the preview. After sending, the picks are read back and ' +
+        'each player is granted is warned about in the preview. In a team game it is refused while a teammate\'s pick ' +
+        'list cannot be read (unknown, not empty) unless `without_teammate_list: true` is passed (#435). After sending, the picks are read back and ' +
         `reported verified only if they match exactly. ${BRIDGE_NOTE} ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Submit war.app picks',
