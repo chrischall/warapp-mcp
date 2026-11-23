@@ -1278,6 +1278,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   warns (never refuses). Orders warapp_plan_turn made with options (goal, focus, reserve, enemy_deploy,
   first_mover) differ from the default plan by design. Report only: no plan reads it, so the golden corpus is
   unchanged.
+  #505 (`src/analysis/bonus-delay.ts`): on turns 1–4 or while #319 fires, the same default plan also gives
+  `bonusDelay` when the given orders drop a capture it makes toward rule 4f's nearest bonus and so finish it later
+  (each finish turn is rule 4f's `turnsOf` on the next plan after each set of orders, read through `planCloseness`, a
+  side table off the plan's JSON); check_plan and the submit preview warn, never refuse. Golden unchanged.
 - **A hollow interior with the guard off (#275, pattern 2).** `src/analysis/breach.ts` (pure, `breachBehind`):
   a border's breach is my territories within two steps behind it (through my holdings) that face no enemy or
   fog, that no other front of mine reaches within two steps (so nothing is counted twice), and that are hollow

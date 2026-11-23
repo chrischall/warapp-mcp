@@ -62,6 +62,7 @@ import {
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH, type CombatSettings, luckFraction, straightKills } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
+import { bonusDelay, bonusDelayWarning, type BonusDelay } from '../analysis/bonus-delay.js';
 import { BELOW_PLAN_MIN_SHORT, holdsBelowPlan, type HoldOrders, type HoldShortfall } from '../analysis/hold-diff.js';
 import { guardCase } from '../analysis/profile.js';
 import { boardStateFromLive, inGameId, playersByInGameId, type LiveTerritory } from '../live.js';
@@ -2259,6 +2260,11 @@ export interface BelowPlan {
    * history — the plan compared with may then differ from its plan. Absent when none.
    */
   historyGap?: number[];
+  /**
+   * #505: on turns 1–4 or while #319 fires, the nearest bonus the given orders finish later than the default
+   * plan does, by dropping a capture it makes toward it (advice only); absent when none.
+   */
+  bonusDelay?: BonusDelay;
 }
 
 /** The same deploys, merged per territory (order and splitting ignored). */
@@ -2332,7 +2338,14 @@ export async function bordersBelowPlan(
             .filter((k) => !held.has(k))
             .sort((x, y) => x - y)
         : [];
-    return { rows, against: guess ? 'guess' : 'plan', ...(historyGap.length ? { historyGap } : {}) };
+    // #505: the same default plan, compared for the nearest bonus's finish turn (one more plan per order set, only when a capture toward it is dropped).
+    let delay: BonusDelay | undefined;
+    try {
+      delay = bonusDelay({ input: setup.input, plan, given });
+    } catch {
+      delay = undefined;
+    }
+    return { rows, against: guess ? 'guess' : 'plan', ...(historyGap.length ? { historyGap } : {}), ...(delay ? { bonusDelay: delay } : {}) };
   } catch {
     return undefined;
   }
@@ -3983,6 +3996,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         });
         const belowPlan = belowPlanWarning(belowRows);
         if (belowPlan) warnings.push(belowPlan);
+        // #505: orders that delay the nearest bonus say by how many turns (advice only, never a refusal).
+        const delayLine = bonusDelayWarning(belowRows?.bonusDelay);
+        if (delayLine) warnings.push(delayLine);
         // #437: what was checked on these orders, for the decision log (ids and numbers only).
         const checks = submitChecksLog({
           commander: commanderChecked ? { ...commanderChecked, ...(commanderRisk && accept_commander_risk === true ? { accepted: true } : {}) } : undefined,
