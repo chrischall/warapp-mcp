@@ -776,7 +776,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`backfilled: 'stats'`, nothing else re-run). The app's My Games is GetMyGames' Default list, which holds a finished
   game only while GameInfo field 20 (SeenEndGameWindow) is clear (read live 2026-11-23); the client sets it by asking
   GetEndGameWindowData (85) when it shows the Victory / Defeat window, which `warapp_close_finished_game` sends
-  (confirm-gated, UNVERIFIED live; read back from that flag).
+  (confirm-gated; read back from that flag; **verified live 2026-11-23**: a finished game closed and read back seen,
+  and a second call refused it as already closed with nothing sent).
 - **Leaving a lobby is `DeclineGame` (65) via `warapp_leave_game`, confirm-gated** (#217): the lobby's
   Decline button, also how a seated player leaves a game still `WaitingForPlayers`. Its parameters
   (the int32 game id, then a "mod hooks the decline" bool sent false) are read from the bundle's writer

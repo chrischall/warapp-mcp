@@ -51,7 +51,7 @@ const NEVER_MS = 922_336_666_814_565;
 export const GAME_INFO_FIELDS = 27;
 /**
  * #523: GameInfo field 20, the client's `SeenEndGameWindow` for my seat (the GameInfo reader's 21st read; GamePlayer
- * names the same minified field `SeenEndGameWindow`). Read from the bundle, UNVERIFIED live: the read-back of
+ * names the same minified field `SeenEndGameWindow`). Read from the bundle; VERIFIED live 2026-11-23 as the read-back of
  * warapp_close_finished_game.
  */
 const GI_SEEN_END = 20;
