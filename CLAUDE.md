@@ -389,8 +389,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   is the client's `chat` flag: `chatActivity` in `warapp_wait_for_turn`.
   **Chat links (`src/chat-links.ts`, docs/WEB-PROTOCOL.md "Territory and bonus links in chat").** The client sends a
   link as the bare token `<a t=<territoryId>>` / `<a b=<bonusId>>` in the text (its editor span and name are dropped
-  before posting) and renders the name from the map: territory links VERIFIED live (owner, 2026-11-23, GameRefresh
-  read-back), bonus links read from the client bundle, UNVERIFIED live. `warapp_send_chat` resolves
+  before posting) and renders the name from the map: territory and bonus links VERIFIED live (owner, 2026-11-23:
+  sent and read back through GameRefresh; the bonus check, a private message with `<a t=1>` and `<a b=1>` read back as
+  both links with the text rendered by name). `warapp_send_chat` resolves
   `[[t:…]]` / `[[b:…]]` markers (id first, else the one case-insensitive exact name; unknown or shared names refused
   before any send, listing ids) and, with `link_territories`, every whole-word territory name (longest first; never
   inside a marker or token; a shared name refused); the map is read only then, and a message with nothing to link

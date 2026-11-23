@@ -761,8 +761,9 @@ with the auth block first; field orders are the client writers' and readers' rea
 
 ### Territory and bonus links in chat
 
-**Territory links VERIFIED live** (owner, 2026-11-23: a sent message read back through GameRefresh); **bonus links
-read from the client bundle, UNVERIFIED live** until one confirmation send.
+**Territory and bonus links VERIFIED live** (owner, 2026-11-23): territory links by a sent message read back through
+GameRefresh; bonus links by a private message carrying `<a t=1>` and `<a b=1>`, confirmed sent through
+`warapp_send_chat` and read back through GameRefresh as `links` [territory 1, bonus 1] with the text rendered by name.
 
 - The editor shows a link as `<span class="ujsChatLink" contenteditable="false" data-link="t_<id>">Name</span>`
   (`b_<id>` for a bonus; `data-link` must match `^[tb]_[0-9]+$` when pasted HTML is rebuilt). The client inserts

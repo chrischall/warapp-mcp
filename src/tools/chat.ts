@@ -70,7 +70,7 @@ const MAX_CHAT_LENGTH = 2000;
 /** The send preview's note on links: what goes out, and what is verified. */
 const LINKS_NOTE =
   'Each link goes out as the client\'s token (`<a t=ID>` territory, `<a b=ID>` bonus) and players see the name from ' +
-  'the map. Territory links are verified live; bonus links are read from the client and UNVERIFIED live.';
+  'the map. Territory and bonus links are verified live (2026-11-23).';
 
 /**
  * Which read answered: the web client or GameFeed. A web read that GameFeed's chat filled (#313) is still

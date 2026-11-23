@@ -1,12 +1,12 @@
-// Territory and bonus links in chat (docs/WEB-PROTOCOL.md "Chat links").
+// Territory and bonus links in chat (docs/WEB-PROTOCOL.md "Territory and bonus links in chat").
 //
 // war.app's chat editor shows a link as <span class="ujsChatLink" data-link="t_<id>">Name</span>
 // (`b_<id>` for a bonus). Before posting, the client serializes the editor to `<a t_<id>>Name</a>` and
 // rewrites that (ChatTab's send) to the bare token `<a t=<id>>` — the name and `</a>` are dropped — and the
 // receiving client (ChatChunk's parser) splits a message on `<a t=…>` / `<a b=…>` and renders the id
-// through the map: the territory's or bonus's name, "(???)" for an id the map lacks. The territory token is
-// VERIFIED live (owner, 2026-11-23: a sent message read back through GameRefresh); the bonus token is read
-// from the client bundle and UNVERIFIED live.
+// through the map: the territory's or bonus's name, "(???)" for an id the map lacks. The territory token
+// and the bonus token are VERIFIED live (owner, 2026-11-23: sent messages read back through GameRefresh, the
+// links decoded and the text rendered by name).
 //
 // A caller writes `[[t:<id or name>]]` / `[[b:<id or name>]]` in a message; `link_territories` also links
 // every whole-word mention of a territory name. Names are other players' maps' words: callers delimit them.
