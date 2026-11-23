@@ -420,7 +420,8 @@ delays the orders listed after it; under No-Split the whole stack moves).
   takes the territory with an order set to treat teammates as enemies (no card piece): set
   `attack_teammates` on the move in `warapp_submit_turn` (#165; the option is UNVERIFIED live); a plain order there is a
   transfer. **Advice only**; with a Gift card in hand, `cards.advice.gift` (D2) gives the
-  teammate who is nearer the members that complete its bonus. Source:
+  teammate who is nearer the members that complete its bonus, and (#435, Gift verified live
+  2026-11-23) `warapp_plan_turn` puts that gift into its orders. Source:
   <https://war.app/wiki/Team_Games>
 - `teams-transfer-not-deploy` — You may transfer armies onto a teammate's territory but never
   deploy there. Pass idle armies across a shared border to the teammate nearer the fight: they

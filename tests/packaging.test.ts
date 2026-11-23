@@ -721,19 +721,23 @@ describe('card plays verified live (#296)', () => {
   const teams = doc('../docs/PLAN-TEAMS.md');
   const row = (card: string) => protocol.split('\n').find((l) => l.startsWith(`| ${card} |`)) ?? '';
 
-  it('WEB-PROTOCOL.md marks the Airlift and Blockade plays verified live 2026-11-16, the other targeted cards not', () => {
+  it('WEB-PROTOCOL.md marks the Airlift and Blockade plays verified live 2026-11-16 (Diplomacy 2026-11-18, Gift 2026-11-23), the other targeted cards not', () => {
     expect(row('Airlift')).toMatch(/verified live 2026-11-16/);
     expect(row('Airlift')).not.toMatch(/UNVERIFIED/);
     expect(row('Blockade')).toMatch(/verified live 2026-11-16/);
     // #369: Diplomacy played live 2026-11-18 and read in force on later boards.
     expect(row('Diplomacy')).toMatch(/verified live 2026-11-18/);
     expect(row('Diplomacy')).not.toMatch(/UNVERIFIED/);
-    for (const card of ['Spy, Surveillance', 'Gift', 'Sanctions']) {
+    // #435: Gift played live 2026-11-23 to a teammate; the territory changed hands and the card left the hand.
+    expect(row('Gift')).toMatch(/verified live 2026-11-23/);
+    expect(row('Gift')).not.toMatch(/UNVERIFIED/);
+    for (const card of ['Spy, Surveillance', 'Sanctions']) {
       expect(row(card), card).toMatch(/UNVERIFIED live/);
     }
     const layout = protocol.slice(protocol.indexOf('PlayCard*'), protocol.indexOf('Discard         byte 09'));
     expect(layout).toMatch(/12 Airlift[^;]*;\s*UNVERIFIED live:/);
     expect(layout.slice(layout.indexOf('UNVERIFIED live:'))).not.toContain('Airlift');
+    expect(layout.slice(layout.indexOf('UNVERIFIED live:'))).not.toContain('Gift');
     const targeted = protocol.slice(protocol.indexOf('**Targeted card plays'), protocol.indexOf('**The hold limit'));
     expect(targeted).toMatch(/Airlift[^.]*verified live 2026-11-16/);
     expect(targeted).toMatch(/Bomb[^.]*Emergency Blockade[^.]*UNVERIFIED/);

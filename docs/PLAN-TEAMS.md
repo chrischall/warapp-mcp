@@ -120,7 +120,7 @@ path stays soft.
 | V6 | `GetTerritoryPicks` with a teammate's player id — **verified live 2026-11-22** (#435): a teammate's id answers with that teammate's list (also after picking, in a game in play), my own id with mine; an opponent's id is refused with error 187 (`CannotGetOpponentsPicks`), and every id in an automatic-distribution game with 188 (`CannotGetPicksInAutomaticDistribution`), mine included (names from the client bundle's `EnumSerialization_ErrorTypes`). Not yet seen: a teammate who has not picked, while distributing (an absent result reads as an empty list) | Team picks (C2) |
 | V7 | What a plain move onto a teammate's territory does; `attack_teammates` (#165) | Team planner (C3) |
 | V8 | How a team's hand and its limit are keyed (#163) — **verified 2026-11-19** (#310): the standing keeps each player's cards (`PlayerCards`) under that player's id, none repeated (a live 2v2 board read two cards under me and three under my teammate); the client bundle's `GameValidateOrders` merges every teammate's entry into one hand, takes out a committed teammate's entered plays and discards, accepts a play of any card in it, and refuses (error 51) a hand still over `MaxCardsHold` only from the last of the team to commit. The refusal itself has not been drawn live (no turn was sent) | Team cards (C3, D) |
-| V9 | Gift, Diplomacy, Sanctions, Spy, Airlift play orders — **Airlift verified live 2026-11-16** (#296); **Diplomacy verified live 2026-11-18** (#369: played through `warapp_submit_turn`, in force on later boards until the turn expected); Sanctions played once 2026-11-18, effect not yet checked; the others still open | Part D |
+| V9 | Gift, Diplomacy, Sanctions, Spy, Airlift play orders — **Airlift verified live 2026-11-16** (#296); **Diplomacy verified live 2026-11-18** (#369: played through `warapp_submit_turn`, in force on later boards until the turn expected); **Gift verified live 2026-11-23** (#435: played through `warapp_submit_turn` to a teammate; after the turn the territory was the teammate's and the card had left the team hand); Sanctions played once 2026-11-18, effect not yet checked; the others still open | Part D |
 | V10 | Which pushed method, if any, announces a chat message | Chat push (A1) |
 
 The play session's saved game settings already show a `PrivateMessaging` boolean.
@@ -729,7 +729,9 @@ existing notes already state these.
 
 *As built (D2):* `src/analysis/card-support.ts` (pure) and `src/tools/card-support-advice.ts` add
 `cards.advice.diplomacy`, `.sanctions`, `.airlift` and `.gift` to `warapp_plan_turn`, each with the
-`order` to pass to `warapp_submit_turn`; none is put in `orders`. "Hitting me hardest" is read as the
+`order` to pass to `warapp_submit_turn`; none is put in `orders`, save (#435, once Gift was verified live
+2026-11-23) a completing gift: `warapp_plan_turn` puts its card plays into `orders` and drops the transfers out of
+or into the gifted members. "Hitting me hardest" is read as the
 armies my borders (after the plan) keep against that opponent alone; a truce partner the truce covers is
 passed over unless the truce is in notice or leaves a border it presses uncovered, and the warning says
 which. The leader is the profile's FFA ranking, else visible armies + 3 × visible income. Airlift targets

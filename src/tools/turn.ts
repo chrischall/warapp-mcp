@@ -478,7 +478,7 @@ interface TurnState {
   incomeGiven?: boolean;
   /** How to read back an Order Delay placed among the moves (#186, unverified live), when one was. */
   orderDelayCheck?: string;
-  /** How to read back a targeted card play still unverified live (PLAN-TEAMS part D, V9; Airlift and Diplomacy verified, #296, #369), when one was sent. */
+  /** How to read back a targeted card play still unverified live (PLAN-TEAMS part D, V9; Airlift, Diplomacy, Reconnaissance and Gift verified, #296, #369, #443, #435), when one was sent. */
   cardPlayCheck?: string;
   /** B2: the agreements these orders break (`break_agreement: true`), recorded broken-by-me once committed. */
   breaks?: string[];
@@ -1280,7 +1280,7 @@ const PLAYABLE: Readonly<Record<number, CardPlayKind>> = {
   [CARD_ORDER_PRIORITY]: 'OrderPriority',
   [CARD_ORDER_DELAY]: 'OrderDelay',
   [CARD_BLOCKADE]: 'Blockade',
-  // PLAN-TEAMS part D: encoded from the bundle's writers, UNVERIFIED live (V9) save Airlift (#296) and Diplomacy (#369).
+  // PLAN-TEAMS part D: encoded from the bundle's writers, UNVERIFIED live (V9) save Airlift (#296), Diplomacy (#369), Reconnaissance (#443) and Gift (#435).
   2: 'Spy',
   6: 'Airlift',
   7: 'Gift',
@@ -2557,7 +2557,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           "Emergency Blockade wall on a conceded border that shields a bonus or your commander behind it, or kills more than it gives up, never where the stack can go around; Diplomacy on the opponent pressing you hardest when two or more do, Sanctions on the leader, an Airlift onto a " +
           "border of yours or a teammate's that falls without it, a Gift that completes a teammate's bonus, Spy, Reconnaissance or Surveillance " +
           'where the fog hides what the plan needs (never with fog off) — each with an `order` to pass to ' +
-          "warapp_submit_turn, never added to the orders), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
+          "warapp_submit_turn, never added to the orders — save a completing Gift (verified live; the transfers it would strand are dropped) and a Reconnaissance, which go into `orders`), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
           "order to send them (both players' orders interleave). The full rule list is in the planner's header and the warapp-mcp skill. " +
           'When this server kept your pick list (warapp_submit_picks or warapp_get_my_picks during distribution), ' +
           '`award` says what the award of picks showed: the territories of your list that are another player\'s ' +
@@ -2874,7 +2874,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       };
       // #163: Order Delay's place, my Bomb and Emergency Blockade, the opponents' when they can hold one,
       // and the cards in effect; D2: my Diplomacy, Sanctions, Airlift and Gift. Advice only: the orders
-      // below are the plan's (and the advised Order Delay, and #434 a spy card whose play is verified live).
+      // below are the plan's (and the advised Order Delay, #434 a spy card whose play is verified live, and
+      // #435 a completing Gift, verified live 2026-11-23).
       // D3: a relation that is only a Diplomacy card is no truce to the card advice (it reads the card itself).
       const inForce = (truces?.relations ?? []).filter((r) => (r.state === 'active' || r.state === 'notice') && !r.card);
       const advice = rules.inPlay.length
@@ -2973,7 +2974,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         // #434: a spy card advised in heavy fog whose play is verified live (none yet: all are UNVERIFIED_CARD_PLAYS).
         ...intelOrders(advice.view),
-        // #435: a completing Gift whose play is verified live (Gift is not yet), with the transfers it drops left out.
+        // #435: a completing Gift (its play verified live 2026-11-23), with the transfers it drops left out.
         ...gift.cards,
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
         // #274: my commander's walk takes it along (the #165 option, encoding unverified live).
@@ -3769,7 +3770,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         '(`target`), Surveillance (`bonus`), Airlift (`from` yours, `to` yours or a teammate\'s, `armies`, optional ' +
         '`commander`), Gift (`target` yours, `player`), Diplomacy (`players`: two), Sanctions (`player`), Bomb (`target` ' +
         "next to yours, not yours or a teammate's) and Emergency Blockade (`target` yours, never your commander's), encoded " +
-        'as the client does (the Airlift and Diplomacy verified live; the others not yet), each refused where war.app would refuse it (a commander is never ' +
+        'as the client does (the Airlift, Diplomacy and Gift verified live, Reconnaissance accepted live; the others not yet), each refused where war.app would refuse it (a commander is never ' +
         'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
         'when your hand is over the hold limit and the orders do not play or discard enough cards; in a team game warns ' +

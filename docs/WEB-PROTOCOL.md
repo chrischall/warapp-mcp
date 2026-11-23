@@ -216,7 +216,7 @@ AttackTransfer  byte 01, bool attackTeammates, byte mode (1 Attack, 2 Transfer,
                 Armies { bool fogged, int32 count, byte specialUnitCount, units… },
                 int32 to, base
 PlayCard*       byte <card tag> (5 Reinforcement, 10 Order Priority, 11 Order Delay,
-                18 Blockade, 12 Airlift, 14 Diplomacy; UNVERIFIED live: 6 Spy, 13 Gift,
+                18 Blockade, 12 Airlift, 14 Diplomacy, 13 Gift; UNVERIFIED live: 6 Spy,
                 15 Sanctions, 16 Reconnaissance, 17 Surveillance, 20 Bomb,
                 8 Emergency Blockade), card fields,
                 GUID cardInstanceId, base
@@ -269,7 +269,7 @@ advanced).
 | Spy, Surveillance | 6, 17 | 15 — bundle, **UNVERIFIED live** |
 | Reconnaissance | 16 | 15 — bundle; a turn with the play committed live 2026-11-20 with no error and was then withdrawn, so the reveal itself is not yet seen (#443) |
 | Airlift | 12 | 43 — bundle, verified live 2026-11-16 (card by name, `from`, `to`, `armies`): the source lost the armies, the target gained them, the card left the hand |
-| Gift | 13 | 47 — bundle, **UNVERIFIED live** |
+| Gift | 13 | 47 — bundle, verified live 2026-11-23 (card by GUID, `target`, `player`: a teammate): played through `warapp_submit_turn`; after the turn resolved the territory was the teammate's and the card had left the team hand (#435) |
 | Diplomacy | 14 | 75 — bundle, verified live 2026-11-18 (card by name, `players`): played through `warapp_submit_turn`, it was in force on the later boards (the planner's cards in effect read it) until the turn expected |
 | Sanctions | 15 | 80 — bundle, **UNVERIFIED live** |
 
@@ -317,8 +317,10 @@ phase method gives the phase. Golden tests pin the bytes. An Airlift (card by na
 had lost the armies, the target had gained them, and the card had left the hand. A Diplomacy (card by name,
 `players`) was committed live 2026-11-18 and was in force on the later boards — the planner's cards in effect
 read it — until the turn expected (#369). A Sanctions was committed once (2026-11-18) but its effect is not
-yet checked, so it stays unverified. A Reconnaissance was accepted live 2026-11-20 (committed with no error, then withdrawn; #443). No commit carrying any other card in this table (Spy,
-Surveillance, Gift, Bomb, Emergency Blockade) has been sent: those, and Sanctions, stay UNVERIFIED live.
+yet checked, so it stays unverified. A Reconnaissance was accepted live 2026-11-20 (committed with no error, then withdrawn; #443). A Gift to a teammate
+was committed live 2026-11-23 through `warapp_submit_turn` and resolved: the territory became the teammate's and the
+card left the team hand (#435). No commit carrying any other card in this table (Spy,
+Surveillance, Bomb, Emergency Blockade) has been sent: those, and Sanctions, stay UNVERIFIED live.
 
 | Card (class) | Tag | Fields after the tag, in write order | Phase |
 |---|---|---|---|

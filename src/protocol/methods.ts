@@ -655,9 +655,11 @@ export const TARGETED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set([
  * and the result carries `cardPlayCheck`. Airlift left it once verified live 2026-11-16 (#296), Diplomacy
  * once verified live 2026-11-18 (#369: played through warapp_submit_turn, read in force on later boards),
  * Reconnaissance once war.app accepted it live 2026-11-20 (#443: a turn with the play committed, no error;
- * withdrawn before it resolved, so the reveal itself is not yet seen).
+ * withdrawn before it resolved, so the reveal itself is not yet seen), and Gift once verified live 2026-11-23
+ * (#435: played through warapp_submit_turn to a teammate; after the turn resolved the territory was the
+ * teammate's and the card had left the team hand).
  */
-const VERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set<CardPlayKind>(['Airlift', 'Diplomacy', 'Reconnaissance']);
+const VERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set<CardPlayKind>(['Airlift', 'Diplomacy', 'Reconnaissance', 'Gift']);
 export const UNVERIFIED_CARD_PLAYS: ReadonlySet<CardPlayKind> = new Set(
   [...TARGETED_CARD_PLAYS].filter((kind) => !VERIFIED_CARD_PLAYS.has(kind)),
 );

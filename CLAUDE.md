@@ -914,10 +914,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `GameOrderPlayCard<X>` writer (docs/WEB-PROTOCOL.md). The Airlift play (card by name, `from`, `to`, `armies`) was
   verified live 2026-11-16 (the source lost the armies, the target gained them, the card left the hand), and the
   Diplomacy play (card by name, `players`) verified live 2026-11-18 (played through `warapp_submit_turn`, in force on
-  later boards until the turn expected, #369); every other targeted card is UNVERIFIED live (Sanctions was played
+  later boards until the turn expected, #369), and the Gift play (card, `target`, `player`: a teammate) verified live
+  2026-11-23 (#435: after the turn resolved the territory was the teammate's and the card had left the team hand);
+  every other targeted card is UNVERIFIED live (Sanctions was played
   once 2026-11-18, its effect not yet checked). `TARGETED_CARD_PLAYS` (`src/protocol/methods.ts`) is the set whose
   targets are resolved; `UNVERIFIED_CARD_PLAYS` (the preview's encoding warning and the result's `cardPlayCheck`) is
-  it without Airlift (#296), Diplomacy (#369) and Reconnaissance (#443: accepted live 2026-11-20 — a turn with the play committed with no error, then withdrawn, so the reveal itself is not yet seen; an advised Reconnaissance now goes into `warapp_plan_turn`'s `orders`, #434). `warapp_submit_turn` takes their targets
+  it without Airlift (#296), Diplomacy (#369), Gift (#435) and Reconnaissance (#443: accepted live 2026-11-20 — a turn with the play committed with no error, then withdrawn, so the reveal itself is not yet seen; an advised Reconnaissance now goes into `warapp_plan_turn`'s `orders`, #434). `warapp_submit_turn` takes their targets
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
   never gifted or airlifted to a teammate; no Spy on me or a teammate, nor on the neutral — target 0 — unless
   the game's `SpyCard.CanSpyOnNeutral`; no Diplomacy between teammates, nor naming a player out — the
@@ -947,8 +949,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   thinnest border), a
   Gift of the members that complete a teammate's nearer bonus (#435: judged before the idle transfers — a transfer
   out of or into a gifted member no longer hides it but is listed in `gift.drop`, since the Gift, phase 47, lands before the
-  moves; an attack from it still does; once Gift leaves `UNVERIFIED_CARD_PLAYS` the gift is `inOrders` and plan_turn's
-  `orders` carry it with `drop` taken out, `giftInOrders`), and (#434, `blockadeOffer` in `card-threats.ts`) a
+  moves; an attack from it still does; Gift left `UNVERIFIED_CARD_PLAYS` 2026-11-23, so the gift is `inOrders` and
+  plan_turn's `orders` carry it with `drop` taken out, `giftInOrders` — the same guards as the advice: only a gift that
+  completes a teammate's bonus, never a member with a special unit (my commander) or one an attack leaves from), and (#434, `blockadeOffer` in `card-threats.ts`) a
   Blockade (`cards.advice.blockade`) on a border the plan concedes that is the one way into held bonuses or my commander
   (`opensBehind`, #291), when its armies after the plan × `BlockadeCard.MultiplyAmount` stop the stack beside it —
   never on a member of a bonus I hold (it breaks the bonus) or my commander's territory. **The spy cards (G2, `intelAdvice`)** only
