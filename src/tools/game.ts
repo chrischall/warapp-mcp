@@ -58,7 +58,8 @@ function compact(game: Game) {
       players: booted.map(({ playerId, ...rest }) => ({ id: playerId, name: game.players.find((p) => p.id === playerId)?.name ?? null, ...rest })),
       unverified: l.unverified,
     };
-  if (game.history !== undefined) out.history = game.history;
+  // The raw history stays out of compact: it is every board and order of every turn (3.6 MB for a 29-turn game on a
+  // 2,000-territory map; a longer one overflows a hosted reply). Compact reports `historyRead`; view "full" carries it.
   if (game.chat !== undefined) out.chat = game.chat;
   return out;
 }
@@ -120,7 +121,8 @@ export function registerGameTool(
           .describe(
             'Also fetch past turns (GetHistory; war.app documents it for finished games). The result then says ' +
               'whether the history read (`historyRead`: boards, first and last turn, layout) or why not ' +
-              '(`historyUnreadable`: reason and the reply\'s top-level key names). Default false.',
+              '(`historyUnreadable`: reason and the reply\'s top-level key names); the raw turns themselves only in ' +
+              'view "full" or "raw" (they can run to megabytes). Default false.',
           ),
         include_chat: z.boolean().optional().describe('Also fetch the game chat (GetChat). Default false.'),
         view: viewArg(

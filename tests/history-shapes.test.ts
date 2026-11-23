@@ -286,4 +286,16 @@ describe('warapp_get_game says why the history did not read (#302)', () => {
     expect(c.historyRead).toEqual({ turns: 3, first: 0, last: 2, layout: 'standing-keys+1+distribution' });
     expect(c.historyUnreadable).toBeUndefined();
   });
+
+  it('compact leaves the raw history out (a long game overflows a hosted reply); full still carries it', async () => {
+    const f = finished();
+    const id = String((f.players as Array<{ id: string }>)[0]!.id);
+    const st = [{ terrID: '1', ownedBy: id, armies: '2' }];
+    h = await harnessFor({ ...f, distributionStanding: st, standing0: st, standing1: st });
+    const c = payload(await h.call('warapp_get_game', { game_id: 12345678, include_history: true }));
+    expect(c.historyRead).toBeDefined();
+    expect(c.history).toBeUndefined();
+    const full = payload(await h.call('warapp_get_game', { game_id: 12345678, include_history: true, view: 'full' }));
+    expect((full.game as Record<string, unknown>).history).toBeDefined();
+  });
 });
