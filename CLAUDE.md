@@ -203,15 +203,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   moves — under Multi-Attack even with no enemy beside it (a chain through my land). `PlanOptions.commanderWalks:
   false` keeps it where it is (the #61 tests use it). Golden: every commander board changed, no other.
 - **The fog's attackers (mega-game part 5, `src/analysis/commander-fog.ts`, pure).** `PlanOptions.foggedAttackers`
-  `{count, stack}` adds to rule 1k's threat on my commander's territory (`borderAt`; `visibleBorderAt` is the old one,
-  which `commanderTransit`'s step reserve keeps, so the transit hold against what is in view comes first): every fogged
-  territory beside it, or one step past a territory not mine whose armies show (less what taking that costs), may hide
-  a player of `stack` + my income; the `count` strongest strike in turn (#201's arithmetic; `FOG_PLAYER` -1 when no visible
-  opponent faces it). `foggedAttackersFor` (`src/tools/turn.ts`, in `livePlanSetup`, so every default plan has it) turns it
-  on with 2 only in a Commanders free-for-all of 8+ players playing under fog (`fogged_attackers` overrides), stack = the
-  game's `InitialPlayerArmiesPerTerritory`, else my largest stack. `foggedCommanderOn` reports it (plan_turn's
-  `commander.fogged`, check_plan's `fogged_attackers`, default 2); never a submit refusal. Golden 0 of 6253 (off by
-  default); forced on in all 252 commander boards: 42 plans changed, 20 in orders, 17 with fewer captures.
+  `{count, stack, starts?}` adds to rule 1k's threat on my commander's territory (`borderAt`; `visibleBorderAt` is the old
+  one, which `commanderTransit`'s step reserve keeps, so the transit hold against what is in view comes first): every
+  fogged territory beside it, or one step past a territory not mine whose armies show (less what taking that costs), may
+  hide a player with a deploy of my income; the `count` strongest strike in turn (#201's arithmetic; `FOG_PLAYER` -1 when no
+  visible opponent faces it). #529 (owner): it holds `stack` only as a likely holder — in `starts` (turn 1: the distribution
+  mode's territories, else every territory but a picking-board wasteland), an opponent shown, or a player in `lastSeen` —
+  else its usual estimate (vacated size, last sighting, picking-board neutral, else `neutralArmies`). `foggedAttackersFor`
+  (`src/tools/turn.ts`, in `livePlanSetup`) turns it on with 2 only in a Commanders free-for-all of 8+ players playing under
+  fog (`fogged_attackers` overrides), stack = `InitialPlayerArmiesPerTerritory`, else my largest stack. `foggedCommanderOn`
+  reports it (plan_turn's `commander.fogged`, check_plan's `fogged_attackers`, default 2, a uniform stack); never a submit
+  refusal. Golden 0 of 6253 (off by default); forced on as the tool sets it in all 252 commander boards: 34 plans changed,
+  13 in orders, 9 with fewer captures, 3 with a lower next income.
 - **Strategy notes are data in `src/strategy/notes.ts`**, served by the read-only `warapp_strategy` and the
   `warapp://strategy` resources: each in our own words (at most 340 characters) with one source link from the
   researched pages — the war.app wiki and forum, or a community guide the wiki links to — marked `source` or

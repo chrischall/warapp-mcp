@@ -129,6 +129,8 @@ describe('warapp_plan_turn fogged_attackers (part 5)', () => {
     h = await liveHarness({ feed: [feedGame(CMD)], pages: ME_PAGE, warapp: s.warapp });
     const on = payload<{ commander: { fogged?: Fogged } }>(await h.call('warapp_plan_turn', { game_id: GAME }));
     expect(on.commander.fogged).toMatchObject({ attackers: 2 });
+    // #529: read as the planner sizes it — a start's armies only on a likely holder.
+    expect(on.commander.fogged!.text).toMatch(/where a start could be or a player was last seen, else the territory's usual estimate/);
   });
 });
 
@@ -139,19 +141,41 @@ describe('foggedAttackersFor (the mega game, 45736172)', () => {
 
   it("holds my commander against two hidden starts of the game's 250 armies by default", () => {
     expect(game.players.length).toBe(97);
-    expect(foggedAttackersFor(game, board, 88200011)).toEqual({ count: 2, stack: 250 });
-    expect(foggedAttackersFor(game, board, 88200011, 3)).toEqual({ count: 3, stack: 250 });
-    expect(foggedAttackersFor(game, board, 88200011, 0)).toBeUndefined();
+    expect(foggedAttackersFor({ game, board, me: 88200011 })).toEqual({ count: 2, stack: 250 });
+    expect(foggedAttackersFor({ game, board, me: 88200011, given: 3 })).toEqual({ count: 3, stack: 250 });
+    expect(foggedAttackersFor({ game, board, me: 88200011, given: 0 })).toBeUndefined();
   });
 
   it('is off without commanders, with teams, without fog or with fewer than eight players playing', () => {
-    expect(foggedAttackersFor({ ...game, settings: { ...game.settings!, commanders: false } }, board, 88200011)).toBeUndefined();
-    expect(foggedAttackersFor({ ...game, settings: { ...game.settings!, fog: 'NoFog' } }, board, 88200011)).toBeUndefined();
-    expect(foggedAttackersFor({ ...game, players: game.players.map((p, i) => ({ ...p, team: i % 2 })) }, board, 88200011)).toBeUndefined();
-    expect(foggedAttackersFor({ ...game, players: game.players.slice(0, 7) }, board, 88200011)).toBeUndefined();
-    expect(foggedAttackersFor({ ...game, players: game.players.map((p, i) => (i >= 7 ? { ...p, state: 'Eliminated' } : p)) }, board, 88200011)).toBeUndefined();
+    expect(foggedAttackersFor({ game: { ...game, settings: { ...game.settings!, commanders: false } }, board, me: 88200011 })).toBeUndefined();
+    expect(foggedAttackersFor({ game: { ...game, settings: { ...game.settings!, fog: 'NoFog' } }, board, me: 88200011 })).toBeUndefined();
+    expect(foggedAttackersFor({ game: { ...game, players: game.players.map((p, i) => ({ ...p, team: i % 2 })) }, board, me: 88200011 })).toBeUndefined();
+    expect(foggedAttackersFor({ game: { ...game, players: game.players.slice(0, 7) }, board, me: 88200011 })).toBeUndefined();
+    expect(foggedAttackersFor({ game: { ...game, players: game.players.map((p, i) => (i >= 7 ? { ...p, state: 'Eliminated' } : p)) }, board, me: 88200011 })).toBeUndefined();
     // Without a starting army count, as strong as my largest stack.
     const { initialPlayerArmiesPerTerritory: _, ...rest } = game.settings!;
-    expect(foggedAttackersFor({ ...game, settings: rest }, board, 88200011)).toEqual({ count: 2, stack: 265 });
+    expect(foggedAttackersFor({ game: { ...game, settings: rest }, board, me: 88200011 })).toEqual({ count: 2, stack: 265 });
+  });
+
+  // A small map: T1 mine, T2–T5 fogged; T5 was a wasteland of 50 on the picking board.
+  const map = {
+    id: 1,
+    name: 'M',
+    territories: [1, 2, 3, 4, 5].map((id) => ({ id, name: `T${id}`, connectedTo: [] })),
+    bonuses: [],
+    distributionModes: [{ id: 1, name: 'Mode', territories: [2, 4] }],
+  };
+  const mega = { ...game, settings: { ...game.settings!, distributionMode: 1, wastelands: { count: 330, size: 50 } } };
+
+  it('#529: on turn 1 the likely holders are the starts: the distribution mode territories when the map carries them', () => {
+    expect(foggedAttackersFor({ game: mega, board, me: 88200011, map, turn: 1 })).toEqual({ count: 2, stack: 250, starts: [2, 4] });
+    // Later turns have no start list: only sightings and shown owners count (the planner reads those).
+    expect(foggedAttackersFor({ game: mega, board, me: 88200011, map, turn: 2 })).toEqual({ count: 2, stack: 250 });
+  });
+
+  it('#529: else every territory not mine but a wasteland the picking board showed', () => {
+    const plain = { ...map, distributionModes: [{ id: 1, name: 'Mode' }] };
+    const neutrals = new Map([[3, 5], [5, 50]]);
+    expect(foggedAttackersFor({ game: mega, board, me: 88200011, map: plain, turn: 1, pickingNeutrals: neutrals })).toEqual({ count: 2, stack: 250, starts: [2, 3, 4] });
   });
 });

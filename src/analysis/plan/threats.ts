@@ -6,7 +6,7 @@
 import { carriesTeam } from '../../teams.js';
 import { searchChains } from '../chains.js';
 import { guaranteedKills } from '../combat.js';
-import { FOG_PLAYER, foggedAttacks, foggedTakes } from '../commander-fog.js';
+import { FOG_PLAYER, foggedAttacks, foggedTakes, likelyStackAt } from '../commander-fog.js';
 import { bfsDistances, neighborsOf } from '../graph.js';
 import { couldHoldBonusPools, enemyDeployReaching, freeIncome } from '../local-deploy.js';
 import { incomeBasis, LOST_STACK_TURNS } from '../opponents.js';
@@ -24,6 +24,7 @@ import {
 } from './shared.js';
 import { gameBaseIncome, territoryIncome } from '../player.js';
 import { simTerritories } from '../turn-sim.js';
+import { VACATED_FOG_ARMIES } from './vacated.js';
 import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
 
@@ -88,7 +89,7 @@ export interface Border extends Force {
    * foggedAttackers`): how many strike together, from which fogged territories, each `stack` + `deploy`.
    * `player` is {@link FOG_PLAYER} when no visible opponent faces it.
    */
-  fogWorst?: { attackers: number; territories: number[]; stack: number; deploy: number };
+  fogWorst?: { attackers: number; territories: number[]; stacks: number[]; stack: number; deploy: number };
 }
 
 /** The threats phase's helpers, for the phases after it. */
@@ -852,12 +853,27 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
       },
     };
     const deploy = custom ? (enemyDeploy ?? 0) : Math.max(0, pc.income - pc.cardArmies);
-    const all = foggedAttacks(g, view, t, { stack: fa.stack, deploy, defensiveKillRate: rates.defensiveKillRate }, gone);
+    /** #529: a start's armies only on a likely holder; elsewhere the fogged territory's usual estimate. */
+    const stackAt = likelyStackAt({
+      stack: fa.stack,
+      me: pc.me,
+      starts: new Set(fa.starts ?? []),
+      shownPlayer: (x) => {
+        const o = state.get(x)?.owner;
+        return o?.kind === 'player' ? o.playerId : undefined;
+      },
+      lastSeen: pc.opts.lastSeen,
+      vacated: pc.vacated,
+      vacatedArmies: VACATED_FOG_ARMIES,
+      rememberedNeutrals: pc.opts.rememberedNeutrals,
+      neutralArmies: s.neutralArmies,
+    });
+    const all = foggedAttacks(g, view, t, { stack: stackAt, deploy, defensiveKillRate: rates.defensiveKillRate }, gone);
     if (!all.length) return undefined;
     const used = all.slice(0, fa.count);
     const joint = used.length > 1 ? (toTake(foggedTakes(used.map((a) => a.armies), used.length, killsOf, takesAlone)) ?? used[0]!.armies) : used[0]!.armies;
     const threat = bombSized(t, Math.max(used[0]!.armies, joint));
-    return { threat, fog: { attackers: used.length, territories: used.map((a) => a.territory), stack: fa.stack, deploy } };
+    return { threat, fog: { attackers: used.length, territories: used.map((a) => a.territory), stacks: used.map((a) => stackAt(a.territory)), stack: fa.stack, deploy } };
   };
   const borderAt = (t: number, gone: (n: number) => boolean): Border | null => {
     const b = visibleBorderAt(t, gone);
@@ -921,7 +937,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
     if (b?.fogWorst) {
       const w = b.fogWorst;
       rationale.push(
-        `My commander's territory ${label(t)} is held against the fog too (mega game, part 5), ~${b.threat}: ${w.attackers} unknown opponent${w.attackers === 1 ? '' : 's'} the fog may hide on ${w.territories.map(label).join(', ')} (within two moves of it) striking ${w.attackers === 1 ? 'it' : 'it together'}, each taken as ${w.stack} armies plus a whole deploy of ~${w.deploy}.`,
+        `My commander's territory ${label(t)} is held against the fog too (mega game, part 5), ~${b.threat}: ${w.attackers} unknown opponent${w.attackers === 1 ? '' : 's'} the fog may hide on ${w.territories.map((x, i) => `${label(x)} (${w.stacks[i]})`).join(', ')} (within two moves of it; in brackets the armies each may hold — a start's ${w.stack} only where a start could be or a player was last seen, #529) striking ${w.attackers === 1 ? 'it' : 'it together'}, each plus a whole deploy of ~${w.deploy}.`,
       );
     }
     if (b?.commanderWorst) {

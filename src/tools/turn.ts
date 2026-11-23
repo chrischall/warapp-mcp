@@ -198,7 +198,8 @@ import {
   type CommanderCheckInput,
   type CommanderRisk,
 } from './commander-check.js';
-import { defaultFoggedAttackers, foggedStack } from '../analysis/commander-fog.js';
+import { defaultFoggedAttackers, foggedStack, likelyStackAt } from '../analysis/commander-fog.js';
+import { VACATED_FOG_ARMIES } from '../analysis/plan/vacated.js';
 import { HEADROOM_COMPACT, headroomView, headroomWarnings, keepTripwires, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
 import type { Tripwire } from '../analysis/tripwire.js';
 
@@ -1870,21 +1871,43 @@ export interface LivePlanArgs {
 /**
  * Part 5 (mega game): how many unknown opponents in the fog my commander's territory is held against
  * together — `given`, else {@link defaultFoggedAttackers} (2 in a free-for-all of eight or more players still
- * playing, with commanders and fog; else 0, off) — and each one's stack ({@link foggedStack}). Undefined when
- * off or in a game without commanders.
+ * playing, with commanders and fog; else 0, off) — and the armies a likely holder strikes with ({@link foggedStack}).
+ * #529 (owner decision): on turn 1, `starts` lists the territories not mine that could be a start — the game's
+ * distribution mode territories when the map carries them, else every territory but a wasteland the picking board
+ * showed — and only those (or a player's sighting, which the planner reads) get that stack. Undefined when off or in a
+ * game without commanders.
  */
-export function foggedAttackersFor(game: Game, board: BoardState, me: number, given?: number): { count: number; stack: number } | undefined {
+export function foggedAttackersFor(a: {
+  game: Game;
+  board: BoardState;
+  me: number;
+  given?: number | undefined;
+  map?: GameMap;
+  turn?: number | null;
+  /** The picking board's neutrals (territory → armies), to leave its wastelands out of the starts. */
+  pickingNeutrals?: ReadonlyMap<number, number> | undefined;
+}): { count: number; stack: number; starts?: number[] } | undefined {
+  const { game, board, me } = a;
   const s = game.settings;
   if (!s?.commanders) return undefined;
   const count =
-    given ??
+    a.given ??
     defaultFoggedAttackers({
       commanders: true,
       fog: s.fog !== undefined && s.fog !== 'NoFog',
       teams: isTeamGame(game.players),
       players: game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length,
     });
-  return count > 0 ? { count, stack: foggedStack(s.initialPlayerArmiesPerTerritory, myLargestStack(board, me)) } : undefined;
+  if (count <= 0) return undefined;
+  const out: { count: number; stack: number; starts?: number[] } = { count, stack: foggedStack(s.initialPlayerArmiesPerTerritory, myLargestStack(board, me)) };
+  if (a.turn === 1 && a.map) {
+    const mineIds = new Set(board.territories.filter((t) => t.owner.kind === 'player' && t.owner.playerId === me).map((t) => t.territoryId));
+    const mode = a.map.distributionModes.find((d) => d.id === s.distributionMode)?.territories;
+    const waste = s.wastelands?.size;
+    const eligible = mode ?? a.map.territories.map((t) => t.id).filter((id) => waste === undefined || a.pickingNeutrals?.get(id) !== waste);
+    out.starts = [...new Set(eligible)].filter((id) => !mineIds.has(id)).sort((x, y) => x - y);
+  }
+  return out;
 }
 
 /**
@@ -2169,7 +2192,17 @@ export async function livePlanSetup(
       ...(a.args?.siegeTarget !== undefined ? { siegeTarget: a.args.siegeTarget } : {}),
       ...(a.args?.jabs !== undefined ? { jabs: a.args.jabs } : {}),
       // Part 5: in a big free-for-all, my commander held against unknown opponents in the fog striking together.
-      ...((fa) => (fa ? { foggedAttackers: fa } : {}))(foggedAttackersFor(game, board, me.id, a.args?.foggedAttackers)),
+      ...((fa) => (fa ? { foggedAttackers: fa } : {}))(
+        foggedAttackersFor({
+          game,
+          board,
+          me: me.id,
+          given: a.args?.foggedAttackers,
+          map,
+          turn,
+          pickingNeutrals: picking?.neutrals ? new Map(picking.neutrals) : undefined,
+        }),
+      ),
       // #127/#179: who moves first (firstMoverFor: first_mover, else the remembered turn, else the award).
       ...(mover.firstMover !== undefined ? { movesFirst: mover.firstMover === 'me' } : {}),
       // #215 review: from the award (unverified), the schedule and card advice use it, holds do not.
@@ -2543,7 +2576,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'step a turn toward safety: a move in `orders` with `commander: true` (encoding not yet verified live), said in ' +
           'the first warning. In a free-for-all of eight or more players under fog (or with `fogged_attackers`), the ' +
           "commander's territory is also held against unknown opponents the fog may hide within two moves of it striking it " +
-          'together (2 by default; each the game\'s starting armies, else your largest stack, plus a deploy of your income), ' +
+          'together (2 by default; each a deploy of your income plus, where a start could be on turn 1 or a player\'s stack ' +
+          'was last seen, a start\'s armies — the game\'s starting armies, else your largest stack — and elsewhere that ' +
+          'territory\'s usual estimate), ' +
           'from turn 1, and the block reports `fogged` (`safe`, `needs`; a warning when the plan cannot fund it, which the ' +
           'submit does not refuse on). ' +
           '`sinceLastTurn` is one line: this turn\'s income (cards aside) against the next income the previous ' +
@@ -2670,8 +2705,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         known_income: knownIncomeArg,
         fogged_attackers: foggedAttackersArg.describe(
           "(Commanders games) How many unknown opponents the fog may hide within two moves of my commander's territory are " +
-            'assumed to strike it together; its hold is sized for them (each the game\'s starting armies, else my largest ' +
-            'stack, plus a deploy of my income) and the commander block reports `fogged`. Default: 2 in a free-for-all of ' +
+            'assumed to strike it together; its hold is sized for them (each a deploy of my income plus, on a likely holder — ' +
+            'a possible start on turn 1, or where a player\'s stack was last seen — the game\'s starting armies, else my largest ' +
+            'stack; elsewhere the territory\'s usual estimate) and the commander block reports `fogged`. Default: 2 in a free-for-all of ' +
             'eight or more players still playing under fog, else 0 (off). 0 turns it off.',
         ),
         avoid_territories: avoidTerritoriesArg,
@@ -2989,6 +3025,21 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               moves: plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
               count: fogSized.count,
               stack: fogSized.stack,
+              // #529: the planner's reading — a start's armies only on a likely holder.
+              stackAt: likelyStackAt({
+                stack: fogSized.stack,
+                me: me.id,
+                starts: new Set(fogSized.starts ?? []),
+                shownPlayer: (t) => {
+                  const o = setup.board.territories.find((x) => x.territoryId === t)?.owner;
+                  return o?.kind === 'player' ? o.playerId : undefined;
+                },
+                lastSeen: setup.input.options?.lastSeen,
+                vacated: setup.input.vacated,
+                vacatedArmies: VACATED_FOG_ARMIES,
+                rememberedNeutrals: setup.input.options?.rememberedNeutrals,
+                neutralArmies: setup.settings.neutralArmies,
+              }),
               deploy: setup.boardIncome,
             })
           : undefined;

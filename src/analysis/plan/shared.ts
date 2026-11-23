@@ -287,7 +287,18 @@ export interface PlanOptions {
    * striking it together, each `stack` armies plus my whole income (`src/analysis/commander-fog.ts`): every
    * fogged territory within two moves of it may hide one. Absent or `count` 0: off (the default).
    */
-  foggedAttackers?: { count: number; stack: number };
+  foggedAttackers?: {
+    count: number;
+    /** A start's armies (the game's starting armies, else my largest stack): what a likely holder strikes with. */
+    stack: number;
+    /**
+     * #529 (owner decision): the territories that could be a player's start this turn (turn 1 only; absent after).
+     * A fogged territory gets `stack` only when it is one of these, its owner shows as an opponent, or a player's
+     * stack was last seen there (`lastSeen`); any other one its usual estimate (#417's vacated size, its last
+     * sighting, the picking board's neutral, else the game's neutral size).
+     */
+    starts?: readonly number[];
+  };
   /**
    * #420: `false` turns the total hold cap off (plain holds take whatever they need, as before it). Default:
    * plain holds take at most half my income, 70% when behind. Tests of earlier hold rules use it.

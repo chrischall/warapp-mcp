@@ -185,8 +185,10 @@ export function foggedCommanderOn(a: {
   moves: readonly SimOrder[];
   count: number;
   stack: number;
+  /** #529: per fogged territory, the armies a hidden player there may hold (default `stack` everywhere). */
+  stackAt?: (t: number) => number;
   deploy: number;
-}): (FoggedCommanderCheck & { stack: number; deploy: number }) | undefined {
+}): FoggedReport | undefined {
   if (a.count <= 0 || myCommanderTerritory(a.board, a.me) === undefined) return undefined;
   const after = simulateTurn({
     graph: a.graph,
@@ -212,20 +214,26 @@ export function foggedCommanderOn(a: {
   };
   const c = foggedCommanderCheck(a.graph, view, at, after.get(at)!.armies, {
     count: a.count,
-    stack: a.stack,
+    stack: a.stackAt ?? a.stack,
     deploy: a.deploy,
     offensiveKillRate: a.settings.offensiveKillRate ?? DEFAULT_OFFENSIVE_KILL_RATE,
     defensiveKillRate: a.settings.defensiveKillRate ?? DEFAULT_DEFENSIVE_KILL_RATE,
   });
-  return c ? { ...c, stack: a.stack, deploy: a.deploy } : undefined;
+  return c ? { ...c, stack: a.stack, deploy: a.deploy, ...(a.stackAt ? { likelyOnly: true as const } : {}) } : undefined;
 }
 
+/** {@link foggedCommanderOn}'s answer: the check, the stack and deploy it assumed, and `likelyOnly` when the stack was per territory (#529). */
+export type FoggedReport = FoggedCommanderCheck & { stack: number; deploy: number; likelyOnly?: true };
+
 /** The fogged check in one sentence (check_plan's summary and the plan's warning). */
-export function foggedCommanderText(c: FoggedCommanderCheck & { stack: number; deploy: number }): string {
+export function foggedCommanderText(c: FoggedReport): string {
   const n = c.attackers;
+  const each = c.likelyOnly
+    ? `each a deploy of ${c.deploy} plus ${c.stack} armies where a start could be or a player was last seen, else the territory's usual estimate`
+    : `each ${c.stack} armies plus a deploy of ${c.deploy}`;
   return c.safe
-    ? `Your commander on territory ${c.territory} holds against ${n} unknown opponent${n === 1 ? '' : 's'} the fog may hide within two moves (each ${c.stack} armies plus a deploy of ${c.deploy}) striking together.`
-    : `Your commander on territory ${c.territory} (${c.armies} armies after your orders) could fall to ${n} unknown opponent${n === 1 ? '' : 's'} the fog may hide within two moves (territories ${c.from.map((f) => f.territory).join(', ')}; each ${c.stack} armies plus a deploy of ${c.deploy}) striking together: it needs ${c.needs} there.`;
+    ? `Your commander on territory ${c.territory} holds against ${n} unknown opponent${n === 1 ? '' : 's'} the fog may hide within two moves (${each}) striking together.`
+    : `Your commander on territory ${c.territory} (${c.armies} armies after your orders) could fall to ${n} unknown opponent${n === 1 ? '' : 's'} the fog may hide within two moves (territories ${c.from.map((f) => f.territory).join(', ')}; ${each}) striking together: it needs ${c.needs} there.`;
 }
 
 /** The `fogged_attackers` argument of warapp_plan_turn and warapp_check_plan (each tool describes its default). */

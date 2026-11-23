@@ -5,7 +5,8 @@
 // territory may hide one: beside it, it strikes this turn; one step beyond a territory not mine whose
 // armies show, it takes that territory this turn and strikes next turn (my next deploy and its next
 // deploy cancel out, so it is sized as one turn's: what taking the territory in between costs it comes
-// off). Each is assumed a player as strong as the caller says — `stack` armies plus a whole `deploy` —
+// off). Each is assumed a player as strong as the caller says — `stack` armies (one figure, or per fogged
+// territory: the planner gives a start's armies only to a likely holder, #529) plus a whole `deploy` —
 // and the `count` strongest strike in turn: every one but the last softens (its luck-free kills come off),
 // and the last must not take what is left.
 
@@ -53,10 +54,12 @@ export function foggedAttacks(
   g: MapGraph,
   view: FogView,
   t: number,
-  strength: { stack: number; deploy: number; defensiveKillRate: number },
+  strength: { stack: number | ((t: number) => number); deploy: number; defensiveKillRate: number },
   gone: (n: number) => boolean = () => false,
 ): FogAttack[] {
-  const full = Math.max(0, strength.stack) + Math.max(0, strength.deploy);
+  const { stack } = strength;
+  /** What a player hidden on fogged `m` strikes with: its stack (`stack`, or the caller's per-territory reading) and a deploy. */
+  const fullAt = (m: number) => Math.max(0, typeof stack === 'number' ? stack : stack(m)) + Math.max(0, strength.deploy);
   const best = new Map<number, FogAttack>();
   const offer = (a: FogAttack) => {
     const was = best.get(a.territory);
@@ -65,7 +68,7 @@ export function foggedAttacks(
   for (const n of neighborsOf(g, t)) {
     if (gone(n) || view.mine(n)) continue;
     if (view.fogged(n)) {
-      offer({ territory: n, armies: full });
+      offer({ territory: n, armies: fullAt(n) });
       continue;
     }
     const there = view.armies(n);
@@ -74,7 +77,7 @@ export function foggedAttacks(
     const cost = straightKills(there, strength.defensiveKillRate);
     for (const m of neighborsOf(g, n)) {
       if (m === t || gone(m) || view.mine(m) || !view.fogged(m)) continue;
-      offer({ territory: m, via: n, armies: full - cost });
+      offer({ territory: m, via: n, armies: fullAt(m) - cost });
     }
   }
   return [...best.values()].sort((a, b) => b.armies - a.armies || a.territory - b.territory);
@@ -135,7 +138,7 @@ export function foggedCommanderCheck(
   view: FogView,
   territory: number,
   armies: number,
-  a: { count: number; stack: number; deploy: number; offensiveKillRate: number; defensiveKillRate: number },
+  a: { count: number; stack: number | ((t: number) => number); deploy: number; offensiveKillRate: number; defensiveKillRate: number },
 ): FoggedCommanderCheck | undefined {
   if (a.count <= 0) return undefined;
   const from = foggedAttacks(g, view, territory, a);
@@ -155,4 +158,33 @@ export function foggedCommanderCheck(
     while (needs > 0 && survives(needs - 1)) needs--;
   }
   return { territory, armies, attackers: used.length, from: used, safe: survives(armies), needs };
+}
+
+/**
+ * #529 (owner decision): the armies a player hidden on fogged `t` may hold. A start's `stack` only on a likely
+ * holder — a possible start this turn (`starts`), a territory whose owner shows as another player, or one where a
+ * player's stack was last seen (`lastSeen`) — else the territory's usual estimate: the vacated size (#417), its last
+ * sighting (#428), the picking board's neutral (#201), else the game's neutral size (0 when unknown). One reading for
+ * the planner's hold and warapp_plan_turn's `commander.fogged`.
+ */
+export function likelyStackAt(a: {
+  stack: number;
+  me: number;
+  starts?: ReadonlySet<number> | undefined;
+  /** The player the board shows holding `t` (owner shown), if any. */
+  shownPlayer: (t: number) => number | undefined;
+  lastSeen?: ReadonlyMap<number, { armies: number; owner: number | null }> | undefined;
+  vacated?: { has(t: number): boolean } | undefined;
+  vacatedArmies: number;
+  rememberedNeutrals?: ReadonlyMap<number, number> | undefined;
+  neutralArmies?: number | undefined;
+}): (t: number) => number {
+  return (t) => {
+    const seen = a.lastSeen?.get(t);
+    const shown = a.shownPlayer(t);
+    if ((shown !== undefined && shown !== a.me) || a.starts?.has(t) || (seen && seen.owner !== null && seen.owner !== a.me)) return a.stack;
+    if (a.vacated?.has(t)) return a.vacatedArmies;
+    if (seen) return seen.armies;
+    return a.rememberedNeutrals?.get(t) ?? a.neutralArmies ?? 0;
+  };
 }

@@ -8,6 +8,7 @@ import {
   foggedCommanderCheck,
   foggedStack,
   foggedTakes,
+  likelyStackAt,
   type FogView,
 } from '../../src/analysis/commander-fog.js';
 import { simulateTurn } from '../../src/analysis/turn-sim.js';
@@ -80,6 +81,30 @@ describe('foggedAttacks', () => {
   });
 });
 
+describe('likelyStackAt (#529)', () => {
+  it("gives a start's armies only to a likely holder, else the territory's usual estimate", () => {
+    const at = likelyStackAt({
+      stack: 250,
+      me: 10,
+      starts: new Set([1]),
+      shownPlayer: (t) => (t === 2 ? 30 : t === 9 ? 10 : undefined),
+      lastSeen: new Map([
+        [3, { armies: 40, owner: 20 }],
+        [4, { armies: 12, owner: null }],
+      ]),
+      vacated: new Set([5]),
+      vacatedArmies: 2,
+      rememberedNeutrals: new Map([[6, 50]]),
+      neutralArmies: 5,
+    });
+    // A possible start, an opponent shown, a player's stack last seen.
+    expect([at(1), at(2), at(3)]).toEqual([250, 250, 250]);
+    // A neutral last seen, vacated land, the picking board's wasteland, else the game's neutral size.
+    expect([at(4), at(5), at(6), at(7)]).toEqual([12, 2, 50, 5]);
+    expect(likelyStackAt({ stack: 250, me: 10, shownPlayer: () => undefined, vacatedArmies: 2 })(7)).toBe(0);
+  });
+});
+
 describe('defaults', () => {
   it('is on only in a big free-for-all with commanders and fog', () => {
     expect(defaultFoggedAttackers({ commanders: true, fog: true, teams: false, players: 97 })).toBe(2);
@@ -119,14 +144,16 @@ describe('foggedCommanderCheck', () => {
 });
 
 describe('planTurn: foggedAttackers (part 5)', () => {
-  const input = (foggedAttackers?: { count: number; stack: number }) => ({
+  type Fa = { count: number; stack: number; starts?: readonly number[] };
+  const input = (foggedAttackers?: Fa, extra: Record<string, unknown> = {}) => ({
     graph: start,
     board: startBoard(),
     me: ME,
     income: 15,
-    settings: MEGA,
+    // The mega game's neutral size: a fogged territory no start and no sighting is read at that.
+    settings: { ...MEGA, neutralArmies: 5 },
     turn: 1,
-    options: { ...(foggedAttackers ? { foggedAttackers } : {}) },
+    options: { ...(foggedAttackers ? { foggedAttackers } : {}), ...extra },
   });
   /** What stands on my commander's territory once the plan's orders run, nobody answering. */
   const leftOnStart = (p: ReturnType<typeof planTurn>) =>
@@ -147,10 +174,35 @@ describe('planTurn: foggedAttackers (part 5)', () => {
 
   it('keeps enough on a one-territory start to survive two hidden starts striking together', () => {
     const off = planTurn(input());
-    const on = planTurn(input({ count: 2, stack: 250 }));
+    // T5 and T6 could be starts on turn 1: each may hide a start of 250.
+    const on = planTurn(input({ count: 2, stack: 250, starts: [5, 6] }));
     // Without it the start's stack goes out to expand; with it, what stays holds against both.
     expect(leftOnStart(off)).toBeLessThan(256);
     expect(leftOnStart(on)).toBeGreaterThanOrEqual(256);
-    expect(on.rationale.join('\n')).toMatch(/held against the fog too .*2 unknown opponents .* each taken as 250 armies plus a whole deploy of ~15/);
+    expect(on.rationale.join('\n')).toMatch(/held against the fog too .*2 unknown opponents .*T5 \(#5\) \(250\), T6 \(#6\) \(250\).* plus a whole deploy of ~15/);
+  });
+
+  it('#529: reads a fogged territory that is no start and shows no sighting at its usual estimate, not a start', () => {
+    // Nothing past the neutrals could be a start: each is read as the game's neutral of 5 (plus a deploy).
+    const none = planTurn(input({ count: 2, stack: 250, starts: [] }));
+    // The start's stack expands as it does with the test off.
+    expect(leftOnStart(none)).toBe(leftOnStart(planTurn(input())));
+    expect(none.rationale.join('\n')).toMatch(/held against the fog too .*T5 \(#5\) \(5\)/);
+  });
+
+  it('#529: a player stack last seen on a fogged territory is a likely holder on later turns', () => {
+    const later = (lastSeen?: Map<number, { armies: number; owner: number | null }>) =>
+      planTurn({ ...input({ count: 2, stack: 250 }, lastSeen ? { lastSeen } : {}), turn: 5 });
+    const fogLine = (p: ReturnType<typeof planTurn>) => p.rationale.find((l) => l.includes('held against the fog too'))!;
+    const threatOf = (p: ReturnType<typeof planTurn>) => Number(/, ~(\d+):/.exec(fogLine(p))![1]);
+    // No start list after turn 1 and no sighting: the usual estimate everywhere (the game's neutral of 5).
+    const plain = later();
+    expect(fogLine(plain)).toMatch(/T5 \(#5\) \(5\), T6 \(#6\) \(5\)/);
+    // A player's stack last seen on T5: it may strike with a start's 250; T6 keeps its usual estimate.
+    const seen = later(new Map([[5, { armies: 40, owner: 99 }]]));
+    expect(fogLine(seen)).toMatch(/T5 \(#5\) \(250\), T6 \(#6\) \(5\)/);
+    expect(threatOf(seen)).toBeGreaterThan(threatOf(plain));
+    // A neutral last seen there is its sighting, not a start.
+    expect(fogLine(later(new Map([[5, { armies: 40, owner: null }]])))).toMatch(/T5 \(#5\) \(40\)/);
   });
 });
