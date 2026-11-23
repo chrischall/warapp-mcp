@@ -369,6 +369,20 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   so the extra reads stay bounded. Each inbox entry carries `game: { id, name, state }` as warapp_get_chat does, beside the
   older top-level `id`/`name`/`state` (#323). warapp_mark_chat_read's GameFeed-only refusal carries no frozen-tab hint (no tab
   state changes it, #323): it says to read the game with warapp_get_chat and mark once its `source` is `web`.
+  **Unread chat in one place (2026-11-23).** `warapp_my_games` reports the list's flags per game (`unreadChat`, booleans —
+  the list carries no count; `toMe` = the private flag: a private conversation in my list is mine, my messages are never
+  unread), sorts unread-private games after the ones waiting on me and counts them (`unreadPrivateGames`); brief appends
+  " — unread private" / " — unread <channels>". The inbox's `all: true` walks every page under `INBOX_TIME_BUDGET_MS`
+  (`inboxClock`, injectable; `partial` + `next` when it runs out), `only` filters shown messages (`filtered` lists games
+  left out), `summary` totals new and new-private-to-me, and unread is the union of the list's flags and the cursor
+  (`readState`; a channel only war.app flags shows its newest message `seenLocally`; with `game_ids` no list is read, so
+  `warapp: null`). `warapp_mark_chat_read`'s `scope` (`both` default) writes the cursor over the same lines the war.app
+  mark covers; `both` on a game the list shows read marks locally instead of refusing (`already-read`), read in both
+  previews `nothingToDo` (no refusal: the gate has no immediate-result path); `game_ids` (≤ `MAX_MARK_GAMES`) plans each
+  game, skipping (with the reason) what one game would refuse, and a war.app refusal on one is `refused` there.
+  `warapp_plan_turn` leads its warnings with `privateToMeWarning` (sender + 80 chars, `untrustedText`/`untrustedBody`):
+  from GameFeed's lines when they name a recipient, else ONE GameRefresh (chat only) when GameFeed has unread lines of
+  others with no channel — the one request the plan's chat block adds (asserted in turn-tools).
   `warapp_send_chat` takes `channel: 'team'` (the channel value is my GameFeed `team`; refused without
   one) and refuses `to` when `PrivateMessaging` is false; it reads the reply's message list back
   (`confirmed` / `unconfirmed`, `accepted` when unreadable). `GameUpdated`'s first bool after the game id

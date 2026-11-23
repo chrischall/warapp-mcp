@@ -1090,9 +1090,16 @@ describe('warapp_plan_turn — threat trend', () => {
     expect(p.chat.adviceNote).toBe(CHAT_ADVICE_NOTE);
     expect(textOf(res)).not.toContain('gl hf');
     expect(h.calls[0]!.url).toContain('GetChat=true');
-    // No extra request for it: the game's own read carried the chat. (The game list is asked for the teams:
-    // nine seats, none with a team from GameFeed; GameRefresh is the game details for a pending surrender, #317.)
-    expect(h.exchanges.map((e) => e.request.method).sort((a, b) => a - b)).toEqual([Method.GameRefresh, Method.GetLatestGameInfo, Method.GetMyGames]);
+    // The counts and messages need no extra request: the game's own read carried the chat. (The game list is asked
+    // for the teams: nine seats, none with a team from GameFeed; one GameRefresh is the game details for a pending
+    // surrender, #317.) The other GameRefresh is the web chat read for the unread-private-to-me warning: GameFeed's
+    // unread message names no channel, so only the web read can tell whether it is private to me.
+    expect(h.exchanges.map((e) => e.request.method).sort((a, b) => a - b)).toEqual([
+      Method.GameRefresh,
+      Method.GameRefresh,
+      Method.GetLatestGameInfo,
+      Method.GetMyGames,
+    ]);
 
     // The full view gives the whole advice.
     const full = payload<{ chat: { messages: Array<{ advice: Record<string, unknown> }> } }>(

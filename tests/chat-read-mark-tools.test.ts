@@ -245,7 +245,9 @@ describe('warapp_mark_chat_read (#311)', () => {
 
     const read = warapp({ unread: {} });
     h = await liveHarness({ feed: [feedGame()], pages: SIGNED_IN_ANN, warapp: read.handler });
-    const already = await h.call('warapp_mark_chat_read', { game_id: GAME });
+    // With `scope: "warapp"` a chat war.app already shows read is refused; the default "both" marks this machine
+    // instead (tests/unread-chat.test.ts).
+    const already = await h.call('warapp_mark_chat_read', { game_id: GAME, scope: 'warapp' });
     expect(already.isError).toBe(true);
     expect(textOf(already)).toMatch(/already shows/);
     expect(read.marks).toEqual([]);

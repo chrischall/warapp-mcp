@@ -167,6 +167,10 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
           'the game details (unverified live; null when not read or unreadable, never "none"; empty without a read ' +
           'for a lobby, a finished game or a game you no longer play in, where none can wait on you); the top-level ' +
           'surrenderPending counts the games where one waits on you, and those games come first too. ' +
+          'Each game also carries unreadChat, from the game list itself (no extra request): whether war.app shows unread ' +
+          'chat per channel (public, team, private, group) and toMe (unread private chat is addressed to you) — flags, ' +
+          'not counts; null when they did not read. Games with unread private chat come right after the ones waiting on ' +
+          'you, and the top-level unreadPrivateGames counts them; read them with warapp_chat_inbox. ' +
           'Finished games are left out unless ' +
           '`include_finished` (`finishedLeftOut` counts them). `listed` is how many games war.app returned and ' +
           '`complete` false (with a `warning`) means the list may be partial. Use the id with the other warapp tools. ' +
@@ -182,7 +186,8 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
           .optional()
           .describe(
             '"compact" (default): the games as described. "brief": one line per game — name — "turn N" (or the ' +
-              'state when not being played) — "waiting on you" or "waiting on others", inside the untrusted-data ' +
+              'state when not being played) — "waiting on you" or "waiting on others", then " — unread private" and ' +
+              '" — unread public, team, group" when war.app shows unread chat there, inside the untrusted-data ' +
               'envelope as data: string[]; "-- none" when there are no games, and a last "-- the list may be ' +
               'partial…" line when it may be. Brief reads no game details, so it says nothing of pending surrenders.',
           ),
@@ -215,6 +220,7 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
         games,
         count: games.length,
         waitingOnYou: games.filter((g) => g.waitingOnYou).length,
+        unreadPrivateGames: games.filter((g) => g.unreadChat?.private === true).length,
         surrenderPending: games.filter((g) => surrenderOwed(g.surrenderPending)).length,
         surrenderNote:
           SURRENDER_PENDING_NOTE +
