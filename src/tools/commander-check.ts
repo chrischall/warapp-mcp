@@ -7,7 +7,9 @@
 import { z } from 'zod';
 import type { BoardState } from '../board.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE } from '../analysis/combat.js';
-import { foggedCommanderCheck, type FoggedCommanderCheck } from '../analysis/commander-fog.js';
+import { defaultFoggedAttackers, foggedCommanderCheck, type FoggedCommanderCheck } from '../analysis/commander-fog.js';
+import type { Game } from '../normalize.js';
+import { isTeamGame } from '../teams.js';
 
 /** The most fogged attackers a caller may ask for. */
 const MAX_FOGGED_ATTACKERS = 8;
@@ -238,6 +240,21 @@ export function foggedCommanderText(c: FoggedReport): string {
 
 /** The `fogged_attackers` argument of warapp_plan_turn and warapp_check_plan (each tool describes its default). */
 export const foggedAttackersArg = z.coerce.number().int().min(0).max(MAX_FOGGED_ATTACKERS).optional();
+
+/**
+ * The default `fogged_attackers` of warapp_plan_turn and warapp_check_plan, one rule for both (#531):
+ * {@link defaultFoggedAttackers} on the game — 2 in a Commanders free-for-all of eight or more players
+ * still playing under fog, else 0 (off).
+ */
+export function defaultFoggedCount(game: Pick<Game, 'settings' | 'players'>): number {
+  const s = game.settings;
+  return defaultFoggedAttackers({
+    commanders: !!s?.commanders,
+    fog: s?.fog !== undefined && s.fog !== 'NoFog',
+    teams: isTeamGame(game.players),
+    players: game.players.filter((p) => (p.state ?? 'Playing') === 'Playing').length,
+  });
+}
 
 /** The most armies on one territory of mine on `board` (0 with none). */
 export function myLargestStack(board: BoardState, me: number): number {

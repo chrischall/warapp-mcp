@@ -99,6 +99,17 @@ describe('warapp_check_plan fogged_attackers (part 5)', () => {
     expect(r.summary).not.toMatch(/unknown opponent/);
   });
 
+  it('#531: uses warapp_plan_turn\'s default — off in a small free-for-all, on when asked', async () => {
+    const s = server(FFA_BOARD, { ffa: true });
+    const ffa = () => feedGame(CMD, {}, { ffa: true });
+    h = await liveHarness({ feed: [ffa(), ffa()], pages: ME_PAGE, warapp: s.warapp });
+    const off = payload<Report>(await h.call('warapp_check_plan', { game_id: GAME, orders: HOME }));
+    expect(off.commander?.fogged).toBeUndefined();
+    expect(off.summary).not.toMatch(/unknown opponent/);
+    const on = payload<Report>(await h.call('warapp_check_plan', { game_id: GAME, orders: HOME, fogged_attackers: 2 }));
+    expect(on.commander?.fogged).toMatchObject({ attackers: 2 });
+  });
+
   it('names a commander the fog can take in the summary, never changing `safe`', async () => {
     const s = server(BOARD());
     h = await liveHarness({ feed: [feedGame(CMD), feedGame(CMD)], pages: ME_PAGE, warapp: s.warapp });
