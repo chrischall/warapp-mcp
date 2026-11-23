@@ -45,6 +45,7 @@ import {
 } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
+import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
 import { COMMANDER_SIZING, commanderCheckOn } from './commander-check.js';
 import { captureCheck, checkPlanLog } from './decision-capture.js';
@@ -122,7 +123,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           '`headroom` lists, weakest first, each border of yours with the smallest single deploy by a neighbouring opponent that ' +
           'takes it after these orders, and what falls with it (the bonuses it breaks, the territories behind it and their bonus ' +
           'income). An opponent whose estimate one observation broke (see warapp_plan_turn) is tried at the larger of what it ' +
-          'implied and your own income (`enemyDeploy` source `untrusted`), said in the first warning. ' +
+          'implied and your own income (`enemyDeploy` source `untrusted`), said in the first warning. Each `enemyDeploy` entry ' +
+          "shows the Reinforcement card the clock says it may hold apart as `cardBonus` (in `deploy` unless `assume_enemy_cards` is " +
+          '"none") and, under Sanctions, `sanctionApplied` (its income before and after the cut). ' +
           '`belowPlan` compares these orders with the default plan made now on the same board (warapp_plan_turn with no ' +
           'options, the award of picks read as it reads it), or with its border guess when the deploys given are the ' +
           "guess's (`belowPlanAgainst`: plan or guess): each border they leave below what that plan leaves standing there, " +
@@ -172,6 +175,14 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             'Who moves first this turn, when you know (under cyclic move order it alternates every turn). Omit to ' +
               'try both.',
           ),
+        assume_enemy_cards: z
+          .enum(['none', 'clock'])
+          .optional()
+          .describe(
+            '"clock" (default): each opponent the Reinforcement card clock says may hold a card (one due, none of its plays ' +
+              'seen since) deploys that card on top of its estimate; "none": the replies are sized without it. Each ' +
+              "`enemyDeploy` entry shows the card apart as `cardBonus`, so run both to see which risks rest on a guessed card.",
+          ),
         view: viewArg(
           VIEWS,
           `compact (default) gives the verdict, the worst reply and up to ${COMPACT_OTHERS} more; "full" adds every ` +
@@ -179,7 +190,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ),
       }),
     },
-    async ({ game_id, player, orders, enemy_deploy, known_income, avoid_territories, avoid_players, first_mover, view }) => {
+    async ({ game_id, player, orders, enemy_deploy, known_income, avoid_territories, avoid_players, first_mover, assume_enemy_cards, view }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(feed);
       const map = mapOf(feed);
@@ -303,7 +314,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         }
       }
 
-      // The same per-opponent estimates warapp_plan_turn works from (stress-opponents.ts).
+      // The same per-opponent estimates warapp_plan_turn works from (stress-opponents.ts); an opponent's
+      // Reinforcement card the clock adds is on top unless `assume_enemy_cards` is "none".
+      const assumeCards = assume_enemy_cards ?? 'clock';
       const so = stressOpponents({
         graph,
         map,
@@ -320,6 +333,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(opening ? { opening } : {}),
         ...(mapPace ? { mapPace } : {}),
         ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
+        assumeCards,
         // #444: the stated incomes scale the other opponents' prior, as warapp_plan_turn has them.
         ...(intel.knownIncome?.length ? { known: intel.knownIncome } : {}),
       });
@@ -350,7 +364,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const knownOf = new Map((enemy_deploy === undefined ? (intel.knownIncome ?? []) : []).map((k) => [k.player, k.income]));
       const opponents = so.opponents.map((o) => {
         const known = knownOf.get(o.id);
-        if (known !== undefined) return { ...o, deploy: known + (o.card ?? 0) };
+        if (known !== undefined) return { ...o, deploy: known + (assumeCards === 'none' ? 0 : (o.card ?? 0)) };
         const untrusted = untrustedOf.get(o.id);
         return enemy_deploy !== undefined || untrusted === undefined ? o : { ...o, deploy: Math.max(untrusted, o.deploy) };
       });
@@ -742,7 +756,15 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             player: { id: o.id, name: playerName.get(o.id) ?? String(o.id) },
             deploy: o.deploy,
             source: enemy_deploy !== undefined ? 'enemy_deploy' : knownOf.has(o.id) ? 'known_income' : untrustedOf.has(o.id) ? 'untrusted' : 'estimate',
+            // The Reinforcement card the clock says it may hold, apart: in `deploy` under assume_enemy_cards "clock" only.
+            ...(o.cardBonus !== undefined && enemy_deploy === undefined ? { cardBonus: o.cardBonus } : {}),
+            // Sanctions on it: its estimate's income before and after the cut (the card left out).
+            ...(o.sanctioned?.applied && o.sanctioned.after !== undefined
+              ? { sanctionApplied: { player: o.id, percentage: sanctionPercentage(o.sanctioned.percentages), before: o.sanctioned.before, after: o.sanctioned.after } }
+              : {}),
           })),
+        // Whether the replies carry the card the clock adds (default "clock").
+        assumeEnemyCards: assumeCards,
         // #180: in a free-for-all, whether you lead (any two opponents are then tried together).
         leader,
         unseenOpponents: opponents.filter((o) => !inView.has(o.id)).map((o) => ({ id: o.id, name: playerName.get(o.id) ?? String(o.id) })),

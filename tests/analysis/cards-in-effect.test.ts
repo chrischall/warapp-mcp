@@ -80,14 +80,14 @@ describe('cardsInEffect: Diplomacy (PLAN-TEAMS D3, T9)', () => {
 describe('cardsInEffect: Sanctions (PLAN-TEAMS D3)', () => {
   it('is sure of Sanctions on me in effect this turn, with the percentage the settings give', () => {
     const r = run([sanctions(11, 6)]);
-    expect(r.sanctionsOnMe).toEqual([{ player: ME, percentage: 0.5, untilTurn: 6 }]);
+    expect(r.sanctionsOnMe).toEqual([{ player: ME, percentage: 0.5, untilTurn: 6, fromTurn: 5 }]);
     expect(r.sanctionsOnOthers).toEqual([]);
   });
 
-  it('lists Sanctions on another player apart, never applied to an estimate', () => {
+  it('lists Sanctions on another player apart, with the first turn they cut its income', () => {
     const r = run([sanctions(22, 6)]);
     expect(r.sanctionsOnMe).toEqual([]);
-    expect(r.sanctionsOnOthers).toEqual([{ player: FOE, percentage: 0.5, untilTurn: 6 }]);
+    expect(r.sanctionsOnOthers).toEqual([{ player: FOE, percentage: 0.5, untilTurn: 6, fromTurn: 5 }]);
   });
 
   it('is not sure without a readable percentage, or past the duration', () => {

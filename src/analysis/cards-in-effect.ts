@@ -56,6 +56,12 @@ export interface SureSanction {
   player: number;
   percentage: number;
   untilTurn: number;
+  /**
+   * The first turn its income is cut: the turn after the card was played (`untilTurn` − Duration, the
+   * bundle's ExpiresAfterTurn arithmetic). A deploy on this turn or later already carries the cut.
+   * Absent where the caller built the card by hand: then every figure is read as uncut.
+   */
+  fromTurn?: number;
 }
 
 export interface CardsInEffect {
@@ -64,8 +70,8 @@ export interface CardsInEffect {
   /** Sanctions on me (one entry per card: they compound). */
   sanctionsOnMe: SureSanction[];
   /**
-   * Sanctions on another player (G2): reported, and applied to its estimate only where the figure is read
-   * off the board (`applySanctions`, plan/estimates.ts) — an observed deploy may already carry the cut.
+   * Sanctions on another player (G2): reported, and applied to every income figure of its estimate
+   * (`applySanctions`, plan/estimates.ts) but one read from deploys made under the card (`fromTurn` on).
    */
   sanctionsOnOthers: SureSanction[];
   /** Why a Diplomacy with me, or Sanctions on me, was read but not relied on. */
@@ -89,6 +95,11 @@ export function sanctionedIncome(income: number, percentages: readonly number[])
     out = r < 0 || r > SANCTIONED_INCOME_CAP ? SANCTIONED_INCOME_CAP : r;
   }
   return out;
+}
+
+/** The percentage several Sanctions cards come to together (they compound): 1 − Π(1 − p), to 4 places. */
+export function sanctionPercentage(percentages: readonly number[]): number {
+  return Math.round((1 - percentages.reduce((f, p) => f * (1 - p), 1)) * 10000) / 10000;
 }
 
 function cardSettings(settings: GameSettings | undefined, card: 'Diplomacy' | 'Sanctions'): Record<string, unknown> | undefined {
@@ -168,7 +179,12 @@ export function cardsInEffect(input: CardsInEffectInput): CardsInEffect {
         if (onMe) unsure.push(`Sanctions on you were read from the board, but the plan's income does not apply them: ${doubt}.`);
         continue;
       }
-      const s: SureSanction = { player: target!.id, percentage: pct as number, untilTurn: a.untilTurn! };
+      const s: SureSanction = {
+        player: target!.id,
+        percentage: pct as number,
+        untilTurn: a.untilTurn!,
+        fromTurn: a.untilTurn! - durationOf(sanSettings)!,
+      };
       (onMe ? sanctionsOnMe : sanctionsOnOthers).push(s);
     }
   }

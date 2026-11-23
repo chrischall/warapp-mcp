@@ -83,6 +83,7 @@ import { SERVER_ERROR_MESSAGES, type WarappServerError } from '../protocol/rpc.j
 import { inferFirstMover } from '../move-order.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from './card-effects.js';
+import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
 import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, lastTurnPlays, opponentCanHold, opponentReinforcement, reinforcementPlaysShown, seenReinforcementPlays, TEAM_HAND } from './card-advice.js';
 import {
@@ -360,8 +361,9 @@ export function plannerSettings(s: GameSettings | undefined): PlannerSettings {
   if (bombFrom !== undefined && bombFrom !== null) out.bombFrom = bombFrom;
   // #293 review: an opponent's fixed Reinforcement card on the clock (no hand here: a progressive one
   // is unknown), which the observed deploy counts in its free income under Local Deployment.
+  // A progressive card is valued per opponent by the game clock (`PlanGameContext.reinforcement`), not here.
   const reinforcement = opponentReinforcement(s, []);
-  if (reinforcement) out.opponentReinforcement = reinforcement;
+  if (reinforcement && !reinforcement.progressive) out.opponentReinforcement = reinforcement;
   // AllowTransferOnly is deliberately not mapped: it toggles the per-order
   // "transfer only" mode, while every planned move is sent as AttackTransfer
   // (mode 3), which transfers between my own territories in any game. The
@@ -2442,7 +2444,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'territory too costly blocks the pressure on all of them. Threats assume each enemy deploys `enemy_deploy` (default per opponent: ' +
           'base income plus its visible bonuses, or its observed deploy when larger — its tracked income, carried across turns, once ' +
           'warapp_track_opponents has 2+ turns of it — and in an even-start 1v1 at least your income when it borders the fog; ' +
-          'exact where the fog shows every owner (No, Light, Dense fog); plus its Reinforcement card from the turn the card clock says it can hold one; ' +
+          'exact where the fog shows every owner (No, Light, Dense fog); every one of these figures, the fog prior and the thin-evidence range included, cut by ' +
+          'Sanctions on it from the turn after the card was played (a figure read from deploys already under the card is left whole); ' +
+          "plus its Reinforcement card — the game's value, flat or progressive — from the turn the card clock says one can be due until a play of it is seen, " +
+          'shown apart per opponent in `enemyDeployDetail` (`cardBonus`, `sanctionApplied`); ' +
           'a neighbour whose armies the fog hides counts its unaccounted armies (at most two turns of its income), and a large stack that left view counts where it can reach, with a warning a turn ahead where it can stand beside a border next turn; ' +
           'growth beside the fog beyond twice what it was expected to deploy reads as a move out of the fog, not a deploy). Obeys the kill rates, luck, rounding, Local ' +
           'Deployment, No-Split (one order per territory, with its whole stack) and commanders; plays Reinforcement (in a team ' +
@@ -3138,6 +3143,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #332: a commerce game's gold and what it buys (the deploy total is `armies`, card armies on top).
         ...(setup.commerce ? { commerce: { ...setup.commerce, ...cityAdviceOf(game.settings, setup.graph, setup.seen, me.id, setup.commerce.gold) } } : {}),
         enemyDeploy: plan.enemyDeploy,
+        // Per opponent with a Reinforcement card on the clock or Sanctions on it: its deploy estimate (the card
+        // included, as the threats size it), the card apart (`cardBonus`) and the Sanctions cut (`sanctionApplied`).
+        ...(() => {
+          const allies = new Set(teammatesOf(game.players, me).map((p) => p.id));
+          const rows = estimates
+            .filter((e) => e.playerId !== me.id && !allies.has(e.playerId) && (e.card || e.sanctioned?.applied))
+            .map((e) => ({
+              player: playerRef(e.playerId),
+              deploy: e.estimate,
+              ...(e.card ? { cardBonus: e.card.armies, cardDue: e.card.due } : {}),
+              ...(e.sanctioned?.applied && e.sanctioned.after !== undefined
+                ? { sanctionApplied: { player: e.playerId, percentage: sanctionPercentage(e.sanctioned.percentages), before: e.sanctioned.before, after: e.sanctioned.after } }
+                : {}),
+            }));
+          return rows.length ? { enemyDeployDetail: rows } : {};
+        })(),
         // #127: who moves first this turn and how it is known; null when unknown.
         firstMover: mover.view,
         // #166: what the award of picks showed (absent when no pick list is kept for this game).
@@ -3334,6 +3355,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                         percentage: x.percentage,
                         untilTurn: x.untilTurn,
                         estimateCut: estimates.find((e) => e.playerId === x.player)?.sanctioned?.applied === true,
+                        ...(x.fromTurn !== undefined ? { fromTurn: x.fromTurn } : {}),
                       })),
                     }
                   : {}),
@@ -3557,8 +3579,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'entered when there is one). The ' +
         'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
-        'adjacent ones, no more armies than a territory has, deploys totalling exactly your income plus played ' +
-        'Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
+        'adjacent ones, no more armies than a territory has, deploys totalling exactly your income (after any Sanctions on you, ' +
+        'as warapp_plan_turn plans it) plus played Reinforcement armies (only a preview warning when a setting such as an army cap makes the modelled ' +
         'income uncertain; after war.app\'s error 11, resend with the game\'s own number as `income`); under Local Deployment, each held bonus\'s armies deployed inside that bonus; under ' +
         'No-Split, at most one attack or transfer per territory (and a warning when one sends less than the whole ' +
         'stack, which war.app moves anyway); under Multi-Attack, a move (not a deploy) may go on from a ' +
@@ -3750,8 +3772,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const options = checkMoveOptions({ moves, board: territories, myInGameId: playerId, settings: game.settings, teammates, deployedOn });
         // #253: the army cap's cut included (min(income, round(cap × income) − my armies on the board)).
         const incomeOnBoard = incomeDetail(graphOf(map), board, me.id, game.settings);
+        // PLAN-TEAMS D3 (owner spec 2026-11-23): the Sanctions on me cut the income checked, as warapp_plan_turn
+        // plans it, so a sanctioned turn is not refused (error 11) and needs no retry with `income`.
+        const sanction = sanctionMyIncome(incomeOnBoard.income, boardCardsInEffect(game, me, turnNumber, info), {
+          localDeployments: game.settings?.localDeployments === true,
+        });
         // #332: in a commerce game the deploy is what my gold buys, as warapp_plan_turn has it.
-        const commerceGold = commerceDeployOf(game, me, info, incomeOnBoard.income);
+        const commerceGold = commerceDeployOf(game, me, info, sanction.income);
         // #332: cities bought this turn come out of the same gold, before the deploys (purchases run in phase 0).
         const purchase = cityPurchaseOf(game, cities ?? [], map, territories, playerId, commerceGold);
         // What is left for the deploys keeps the gold's source: only gold read from the board is enforced (#353 review).
@@ -3764,7 +3791,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               )
             : commerceGold;
         const commerceCheck = submitCommerceCheck(commerce);
-        const modelled = commerce ? commerce.armies : incomeOnBoard.income;
+        const modelled = commerce ? commerce.armies : sanction.income;
         const cardArmies = plays.reduce((sum, p) => sum + p.armies, 0);
         // #130: war.app's own number, given after an error 11, replaces the model for the check.
         const income = (givenIncome ?? modelled) + cardArmies;
@@ -3873,7 +3900,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             givenIncome !== undefined
               ? []
               : [
-                  ...deployCheckUncertainties(game.settings, incomeOnBoard.cap ? { armyCap: incomeOnBoard.cap } : {}),
+                  ...deployCheckUncertainties(game.settings, {
+                    ...(incomeOnBoard.cap ? { armyCap: incomeOnBoard.cap } : {}),
+                    ...(sanction.applied ? { sanctionsApplied: true } : {}),
+                  }),
                   ...commerceCheck.uncertain,
                 ],
           poolsUncertain: [
@@ -3924,6 +3954,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                   'breaking it — never silently.',
           );
         warnings.push(...options.warnings);
+        // The Sanctions on me the deploys were checked against (or, under Local Deployment, why not).
+        if (givenIncome === undefined) warnings.push(...sanction.warnings);
         warnings.push(
           ...modsWarning(game.settings),
           ...guardOffWarnings(

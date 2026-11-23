@@ -437,9 +437,22 @@ export function seenReinforcementPlays(settings: GameSettings | undefined, seen:
 }
 
 /**
+ * A progressive Reinforcement card's formula from its settings: `Mode` 1 / `ProgressiveByNumberOfTerritories`
+ * (by territories) or 2 / `ProgressiveByTurnNumber` (by turn), with a usable `ProgressivePercentage`. The names
+ * are the mod API's `ReinforcementCardMode`; the numbers follow its order — both UNVERIFIED against GameFeed.
+ * `undefined` for a flat card (Mode 0 / Fixed, or none) or an unknown one.
+ */
+function progressiveCard(rec: Record<string, unknown>): ReinforcementClock['progressive'] {
+  const mode = rec.Mode === undefined ? undefined : String(rec.Mode).toLowerCase();
+  const by = mode === '1' || mode === 'progressivebynumberofterritories' ? 'territories' : mode === '2' || mode === 'progressivebyturnnumber' ? 'turns' : undefined;
+  const pct = Number(rec.ProgressivePercentage);
+  return by && Number.isFinite(pct) && pct > 0 ? { by, percentage: pct } : undefined;
+}
+
+/**
  * #164: an opponent's Reinforcement card for the threat model: the first turn one can be in a hand,
- * the armies it adds (a fixed card's `FixedArmies`, else the Reinforcement card in my hand as it is
- * worth now) and the capturing turns each further card takes. `undefined` when no Reinforcement card
+ * the armies it adds (a fixed card's `FixedArmies`; a progressive card's formula in `progressive`, each
+ * opponent valued by it, with the Reinforcement card in my hand as `armies`, 0 with none) and the capturing turns each further card takes. `undefined` when no Reinforcement card
  * is in play, none ever comes, or what it adds is unknown.
  *
  * #427 (proposed, owner approval pending): the clock runs at the EXPECTED weighted rate — the card's
@@ -461,11 +474,18 @@ export function opponentReinforcement(settings: GameSettings | undefined, hand: 
   const firstTurns = turnsFor(1);
   if (firstTurns === null) return undefined;
   const raw = settings!.raw.ReinforcementCard;
-  const fixed = typeof raw === 'object' && raw !== null ? Number((raw as Record<string, unknown>).FixedArmies) : NaN;
+  const rec = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const fixed = Number(rec.FixedArmies);
   const inHand = hand.find((c) => c.type === CARD_REINFORCEMENT && c.armies !== undefined && c.armies > 0)?.armies;
-  const armies = Number.isFinite(fixed) && fixed > 0 ? Math.floor(fixed) : inHand;
-  if (armies === undefined || armies <= 0) return undefined;
+  const progressive = progressiveCard(rec);
+  const armies = !progressive && Number.isFinite(fixed) && fixed > 0 ? Math.floor(fixed) : inHand;
+  if (!progressive && (armies === undefined || armies <= 0)) return undefined;
   const second = turnsFor(2);
   // Pieces arrive at the end of a turn, so the first card is playable the turn after its last piece.
-  return { firstTurn: firstTurns + 1, armies, turnsPerCard: second === null ? null : Math.max(1, second - firstTurns) };
+  return {
+    firstTurn: firstTurns + 1,
+    armies: armies ?? 0,
+    turnsPerCard: second === null ? null : Math.max(1, second - firstTurns),
+    ...(progressive ? { progressive } : {}),
+  };
 }

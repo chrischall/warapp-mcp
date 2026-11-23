@@ -908,9 +908,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   completion's defensibility (R3) — `nextTurnAt` in `plan/threats.ts` (G2). `warapp_check_plan` keeps the
   player among the opponents, so `exposedNextTurn` counts it anyway. Sanctions on me cut `warapp_plan_turn`'s income by the bundle's
   rule (per card, round((1 − Percentage) × income), .5 up, cap 10000; not under Local Deployment, which
-  warns). Sanctions on others (G2) show in `cardsInEffect.sanctionsOnOthers` and cut that opponent's
-  estimate when it is read off the board (`visible`/`exact`; `applySanctions` in `plan/estimates.ts`); an
-  observed, tracked or prior figure stays whole with a warning (it may already carry the cut). The
+  warns; `warapp_submit_turn`'s deploy-total check applies the same cut, and a modelled cut is no income
+  uncertainty). Sanctions on others (G2) show in `cardsInEffect.sanctionsOnOthers` and (owner spec 2026-11-23)
+  cut every income figure of that opponent (`applySanctions` in `plan/estimates.ts`, by the same rule): the
+  estimate whatever its source, the fog prior and thin evidence's range — except a figure read only from
+  deploys on or after `SureSanction.fromTurn` (`untilTurn` − Duration, the turn after the play), which already
+  carries the cut (`sanctioned.carried`). check_plan's `enemyDeploy` and plan_turn's `enemyDeployDetail` report
+  `sanctionApplied` and the clock's `cardBonus`; check_plan's `assume_enemy_cards: "none"` sizes replies without
+  the card. A progressive Reinforcement card (`Mode` 1 by territories in view, 2 by turn − 1, ×
+  `ProgressivePercentage`, round half up, at least 1; the mod API's enum order, UNVERIFIED) is valued per
+  opponent (`reinforcementArmiesFor`), no longer at the card in my hand. Golden: 0 of 6253 plans changed. The
   `SanctionsCard.Percentage` scale (a fraction) is UNVERIFIED for GameFeed. The Sanctions advice passes
   over a truce partner and a player a Diplomacy card keeps at peace with me, saying why. Anything not sure is
   a warning and changes nothing; the plan reports `cardsInEffect` (`verified: false`), and

@@ -464,8 +464,27 @@ export interface ReinforcementPlays {
  */
 export interface ReinforcementClock {
   firstTurn: number;
+  /** A flat card's armies (`FixedArmies`); for a progressive one, the card in my hand (0 with none): the fallback. */
   armies: number;
   turnsPerCard: number | null;
+  /**
+   * A progressive card (`ReinforcementCard.Mode` other than Fixed): each opponent's card is valued by the game's
+   * formula, round(`percentage` × its territories in view) or round(`percentage` × the turn its latest card
+   * could come, turn − 1), at least 1 ({@link reinforcementArmiesFor}). The Mode values and the formula
+   * follow the mod API's `ReinforcementCardMode` (Fixed, ProgressiveByNumberOfTerritories,
+   * ProgressiveByTurnNumber) — UNVERIFIED against a live game.
+   */
+  progressive?: { by: 'territories' | 'turns'; percentage: number };
+}
+
+/** Round to the nearest, .5 up. */
+const roundHalfUp = (x: number): number => Math.floor(x + 0.5 + 1e-9);
+
+/** An opponent's Reinforcement card under `r`: a progressive card by its formula, else the flat (or hand) figure. */
+export function reinforcementArmiesFor(r: ReinforcementClock, opts: { territories: number; turn: number }): number {
+  if (!r.progressive) return r.armies;
+  const basis = r.progressive.by === 'territories' ? opts.territories : Math.max(0, opts.turn - 1);
+  return Math.max(1, roundHalfUp(r.progressive.percentage * basis));
 }
 
 /** #164: GameFeed fog levels that show every territory's owner (No, Light and Dense fog): income is exact. */
@@ -566,7 +585,7 @@ export interface PlanInput {
    * G2 (PLAN-TEAMS D3): the Sanctions on other players the decoder is sure of (`cardsInEffect`'s
    * `sanctionsOnOthers`): a figure read off the board is cut by them ({@link EnemyDeployEstimate.sanctioned}).
    */
-  sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
+  sanctions?: readonly { player: number; percentage: number; untilTurn: number; fromTurn?: number }[];
   /**
    * #275 (b): opponents whose estimate a tripwire marked untrusted (src/analysis/tripwire.ts), each with
    * the deploy to size against instead — the caller's larger of what tripped it and my own income. Only
@@ -1252,13 +1271,13 @@ export interface EnemyDeployEstimate {
    */
   cardInTrack?: { was: number; income: number; armies: number; turns: number[] } | null;
   /**
-   * G2 (PLAN-TEAMS D3): the Sanctions in effect on it that the decoder is sure of. `applied`: the
-   * estimate's income (`before`, card left out) was cut by them to `estimate` less its card — only
-   * when the figure comes from the board (`visible`, `exact`); an observed, tracked or prior figure
-   * may already carry the cut, or stands for an income guessed apart from it, so it is left whole
-   * and a warning says so. Absent with no Sanctions on it.
+   * G2 (PLAN-TEAMS D3): the Sanctions in effect on it that the decoder is sure of. `before`: the
+   * estimate's income (card left out) before the cut; `after`: what it is now (`estimate` less its card).
+   * `applied`: the figure was cut — any source, the fog prior included. `carried`: the figure was read
+   * from deploys made under the card (from `fromTurn`, the turn after its play), so it already carries the
+   * cut and is left whole. Absent with no Sanctions on it.
    */
-  sanctioned?: { percentages: number[]; untilTurn: number; before: number; applied: boolean };
+  sanctioned?: { percentages: number[]; untilTurn: number; fromTurn?: number; before: number; after?: number; applied: boolean; carried?: true };
   /** #332: a figure read off the board in a commerce game with a rising army price: the gold it earns, and the price. */
   armyPrice?: { gold: number; multiplier: number };
   /** #368: the income the user supplied for it (`PlanInput.knownIncome`), and the estimate's income it replaced. */

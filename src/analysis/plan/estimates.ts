@@ -137,7 +137,7 @@ export function planEnemyEstimates(input: {
   game?: PlanGameContext;
   turn?: number | null;
   /** G2: the Sanctions on other players the decoder is sure of ({@link applySanctions}). */
-  sanctions?: readonly { player: number; percentage: number; untilTurn: number }[];
+  sanctions?: readonly { player: number; percentage: number; untilTurn: number; fromTurn?: number }[];
   /** #368: per-player incomes the user knows ({@link applyKnown}): each replaces that player's estimate. */
   known?: readonly { player: number; income: number }[];
 }): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
@@ -160,7 +160,7 @@ export function planEnemyEstimates(input: {
     ...(previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
   const priced = applyKnown(
-    applyArmyPrice(applySanctions(estimates, input.sanctions ?? []), input.settings?.armyCostMultiplier ?? 0),
+    applyArmyPrice(applySanctions(estimates, input.sanctions ?? [], turn), input.settings?.armyCostMultiplier ?? 0),
     input.known ?? [],
   );
   return { estimates: priced, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
@@ -218,14 +218,19 @@ export function applyArmyPrice(estimates: EnemyDeployEstimate[], m: number): Ene
 }
 
 /**
- * G2 (PLAN-TEAMS D3): each estimate under the Sanctions on its player. A figure read off the board
- * (`visible`, `exact`) is income before any cut, so its income (the Reinforcement card left out) is
- * cut by the client's rule ({@link sanctionedIncome}); an observed, tracked or prior figure is left
- * whole — an observed deploy may already carry the cut — and marked not applied. Unchanged without.
+ * G2 (PLAN-TEAMS D3; owner spec 2026-11-23): each estimate under the Sanctions on its player. Every income
+ * figure used for it is cut by the client's rule ({@link sanctionedIncome}): the estimate's income (its
+ * Reinforcement card left out, kept on top), whatever its source — read off the board, observed, tracked or
+ * the fog prior — and thin evidence's range (tracked, prior, trend, lower, upper, midpoint, toward, figure).
+ * The card bites from the turn after it is played (`fromTurn`) through its last turn: a figure read only from
+ * deploys made on or after `fromTurn` (an observed deploy of last turn, every turn behind a tracked figure)
+ * already carries the cut and is left whole (`carried`); a card with no `fromTurn` cuts every figure. A
+ * negative percentage raises them. Unchanged without.
  */
 export function applySanctions(
   estimates: EnemyDeployEstimate[],
-  sanctions: readonly { player: number; percentage: number; untilTurn: number }[],
+  sanctions: readonly { player: number; percentage: number; untilTurn: number; fromTurn?: number }[],
+  turn?: number | null,
 ): EnemyDeployEstimate[] {
   if (!sanctions.length) return estimates;
   return estimates.map((e) => {
@@ -234,12 +239,61 @@ export function applySanctions(
     const percentages = on.map((x) => x.percentage);
     const card = e.card?.armies ?? 0;
     const before = e.estimate - card;
-    const applied = e.source === 'visible' || e.source === 'exact';
     const untilTurn = Math.max(...on.map((x) => x.untilTurn));
+    const starts = on.map((x) => x.fromTurn).filter((t): t is number => t !== undefined);
+    const fromTurn = starts.length === on.length ? Math.min(...starts) : undefined;
+    // The turns of deploys behind the figure: last turn's for an observed one, the track's for a tracked one.
+    const behind =
+      e.source === 'observed'
+        ? turn !== null && turn !== undefined
+          ? [turn - 1]
+          : []
+        : e.source === 'tracked' || (e.thinEvidence && e.source !== 'prior')
+          ? (e.trackedTurns ?? [])
+          : [];
+    const trackTurns = e.trackedTurns ?? [];
+    const carried = fromTurn !== undefined && behind.length > 0 && behind.every((t) => t >= fromTurn);
+    const trackCarried = fromTurn !== undefined && trackTurns.length > 0 && trackTurns.every((t) => t >= fromTurn);
+    const cut = (x: number) => sanctionedIncome(x, percentages);
+    const z = e.thinEvidence;
+    let thinEvidence = z;
+    let after: number;
+    if (z) {
+      // The track's figures stay whole when every turn behind them was under the card; the prior is always cut.
+      const track = (x: number) => (trackCarried ? x : cut(x));
+      const lower = track(z.lower);
+      const upper = Math.max(lower, cut(z.upper));
+      const midpoint = lower + Math.ceil((upper - lower) / 2 - 1e-9);
+      const toward = Math.min(upper, Math.max(lower, trackCarried && z.toward === z.tracked ? z.toward : cut(z.toward)));
+      const figure = toward + Math.ceil(z.weight * (midpoint - toward) - 1e-9);
+      thinEvidence = {
+        ...z,
+        tracked: track(z.tracked),
+        prior: z.prior === null ? null : cut(z.prior),
+        trend: z.trend === null ? null : track(z.trend),
+        lower,
+        upper,
+        midpoint,
+        toward,
+        figure,
+        ...(z.pace ? { pace: { ...z.pace, figure: cut(z.pace.figure) } } : {}),
+      };
+      // The estimate is the figure when thin evidence set it, else the figure it chose, cut alike.
+      after = before === z.figure ? figure : carried ? before : cut(before);
+    } else after = carried ? before : cut(before);
     return {
       ...e,
-      ...(applied ? { estimate: sanctionedIncome(before, percentages) + card } : {}),
-      sanctioned: { percentages, untilTurn, before, applied },
+      estimate: after + card,
+      ...(thinEvidence !== z ? { thinEvidence } : {}),
+      sanctioned: {
+        percentages,
+        untilTurn,
+        ...(fromTurn !== undefined ? { fromTurn } : {}),
+        before,
+        after,
+        applied: !carried,
+        ...(carried ? { carried: true as const } : {}),
+      },
     };
   });
 }
