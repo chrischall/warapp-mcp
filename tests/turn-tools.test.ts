@@ -2476,6 +2476,28 @@ describe('cards in the turn tools', () => {
     }
   });
 
+  it("#435: plan_turn puts a Gift that completes my teammate's bonus into the orders (Gift verified live 2026-11-23)", async () => {
+    const teams = (game('Playing').players as Array<Record<string, string>>).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    // Bob, my teammate, holds 159 and 157: bonus 118 (159, 161, 157) is complete but for my 161.
+    const handed = BOARD.map((t) => (t.id === 159 || t.id === 157 ? { ...t, owner: BOB.inGame } : t));
+    h = await liveHarness({
+      feed: [game('Playing', { players: teams })],
+      warapp: routes({
+        [Method.GetLatestGameInfo]: () => ({
+          body: (w) => writeLatestGameInfo(w, handed, [ANN.inGame, BOB.inGame], { [ANN.inGame]: [{ id: GF, type: 7 }] }),
+        }),
+      }),
+    });
+    const p = payload<CardsPayload & { cards: { advice?: { gift?: { player: number; territories: number[]; inOrders?: true } } } }>(
+      await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }),
+    );
+    expect(p.cards.advice?.gift).toMatchObject({ player: Number(BOB.feed), territories: [161], inOrders: true });
+    expect(p.orders).toContainEqual({ kind: 'card', card: GF, target: 161, player: Number(BOB.feed) });
+    expect(p.orders.some((o) => o.kind === 'move' && (o.from === 161 || o.to === 161))).toBe(false);
+    expect(turnOrdersArg.safeParse(p.orders).success).toBe(true);
+    expect(p.warnings.join('\n')).toMatch(/Gift 161 to your teammate .*In the orders: its encoding is verified live/);
+  });
+
   it('plan_turn AT the hold limit (5/5) requires nothing', async () => {
     h = await liveHarness({
       feed: [game('Playing')],

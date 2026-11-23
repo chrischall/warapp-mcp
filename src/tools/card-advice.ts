@@ -2,8 +2,9 @@
 // players), the team's hand, Order Delay's place, my Bomb and Emergency Blockade, the
 // opponents' Bomb and Emergency Blockade when they can hold one, the cards in effect
 // (Diplomacy, Sanctions), and (PLAN-TEAMS D2) where to play my Diplomacy, Sanctions, Airlift and
-// Gift. Read-only; everything here is advice — of these only the advised Order Delay is added to the
-// orders; my Bomb and Emergency Blockade and the D2 cards carry an `order` to pass to warapp_submit_turn.
+// Gift. Read-only; everything here is advice — of these only the advised Order Delay, a completing Gift
+// (#435, verified live) and a spy card whose play is verified live (#434) are added to the orders; my Bomb
+// and Emergency Blockade and the other D2 cards carry an `order` to pass to warapp_submit_turn.
 
 import { adviseOrderDelay, CARD_BLOCKADE, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, readTurnReinforcementPlays, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { blockadeOffer, bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
@@ -379,7 +380,7 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
     warnings.push('Active cards are read from the live board by an unverified decoder (#163): check them in the game.');
   }
 
-  // PLAN-TEAMS D2: my Diplomacy, Sanctions, Airlift and Gift — advice only, each with its order.
+  // PLAN-TEAMS D2: my Diplomacy, Sanctions, Airlift and Gift, each with its order — advice only, save a completing Gift (#435).
   const atPeace = new Set(
     (view.active ?? []).flatMap((a) => (a.card === 'Diplomacy' && a.players?.includes(me.id) ? a.players.filter((p) => p !== me.id) : [])),
   );

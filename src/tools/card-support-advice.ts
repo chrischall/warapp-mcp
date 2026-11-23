@@ -37,7 +37,7 @@ export interface SupportView {
   /**
    * #435: `drop`, the plan's transfers out of or into a gifted territory (the Gift lands first); `inOrders`
    * when the Gift play is verified live (not in `UNVERIFIED_CARD_PLAYS`): warapp_plan_turn then puts the
-   * gift into its orders and takes `drop` out ({@link giftInOrders}). Gift is unverified today: advice only.
+   * gift into its orders and takes `drop` out ({@link giftInOrders}). Gift was verified live 2026-11-23.
    */
   gift?: { player: number; bonus: number; territories: number[]; drop?: { from: number; to: number }[]; inOrders?: true; orders: CardOrder[] };
   /**
@@ -221,7 +221,7 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
   if (gifts.length) {
     const g = giftAdvice(cb, input.plan.team?.sharedBonuses ?? [], gifts.length);
     if (g) {
-      // #435: a completing gift goes into the orders once its play is verified live (as #434's spy cards).
+      // #435: a completing gift goes into the orders, its play verified live 2026-11-23 (as #434's spy cards).
       const live = !(input.unverifiedPlays ?? UNVERIFIED_CARD_PLAYS).has('Gift');
       view.gift = {
         player: g.player,

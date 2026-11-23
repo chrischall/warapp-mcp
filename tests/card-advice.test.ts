@@ -374,11 +374,17 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     const game = { players: [a, MATE, b], settings: settings() };
     const gift = { ...card(7, 'Gift'), owner: ME_IN };
     const { view } = adviseCards(input({ territories, game, me: a, plan, hand: [gift] }));
-    expect(view.gift).toEqual({ player: MATE.id, bonus: 101, territories: [3], orders: [{ kind: 'card', card: 'd'.repeat(32), target: 3, player: MATE.id }] });
+    expect(view.gift).toEqual({
+      player: MATE.id,
+      bonus: 101,
+      territories: [3],
+      inOrders: true,
+      orders: [{ kind: 'card', card: 'd'.repeat(32), target: 3, player: MATE.id }],
+    });
     const theirs = { ...gift, owner: 444444 };
     expect(adviseCards(input({ territories, game, me: a, plan, hand: [theirs] })).view.gift).toBeUndefined();
-    // #435: Gift is unverified live, so the advice stays out of the orders.
-    expect(giftInOrders(view).cards).toEqual([]);
+    // #435: Gift is verified live (2026-11-23), so the completing gift goes into the orders.
+    expect(giftInOrders(view).cards).toEqual([{ kind: 'card', card: 'd'.repeat(32), target: 3, player: MATE.id }]);
   });
 
   it('#435: a completing Gift whose play is verified goes into the orders, the transfers it drops out', () => {
@@ -393,11 +399,13 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     const territories = [mate(1, 2), mate(2, 2), me(3, 4), me(4, 4), foe(5, 3)];
     const game = { players: [a, MATE, b], settings: settings() };
     const gift = { ...card(7, 'Gift'), owner: ME_IN };
-    const unverified = adviseCards(input({ territories, game, me: a, plan, hand: [gift] }));
+    const unverified = adviseCards(input({ territories, game, me: a, plan, hand: [gift], unverifiedPlays: new Set(['Gift']) }));
+    expect(giftInOrders(unverified.view).cards).toEqual([]);
     expect(unverified.view.gift).toMatchObject({ territories: [3], drop: [{ from: 3, to: 4 }] });
     expect(unverified.view.gift).not.toHaveProperty('inOrders');
     expect(unverified.warnings.join('\n')).toMatch(/Drop the transfer 3 → 4.*Advice only, not in the orders/);
-    const verified = adviseCards(input({ territories, game, me: a, plan, hand: [gift], unverifiedPlays: new Set() }));
+    // The default: Gift verified live 2026-11-23.
+    const verified = adviseCards(input({ territories, game, me: a, plan, hand: [gift] }));
     expect(verified.view.gift).toMatchObject({ inOrders: true, drop: [{ from: 3, to: 4 }] });
     const inOrders = giftInOrders(verified.view);
     expect(inOrders.cards).toEqual([{ kind: 'card', card: 'd'.repeat(32), target: 3, player: MATE.id }]);
