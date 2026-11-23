@@ -437,6 +437,24 @@ export interface PlanGameContext {
    * adds; absent when no Reinforcement card is in play or its armies are unknown.
    */
   reinforcement?: ReinforcementClock;
+  /**
+   * #427: the Reinforcement plays read from the turns' orders, when the game does not fog card plays
+   * (`seenReinforcementPlays`, src/tools/card-advice.ts); absent otherwise (the clock alone, as before).
+   */
+  reinforcementPlays?: ReinforcementPlays;
+}
+
+/**
+ * #427: the Reinforcement plays seen in the turns' order lists (the LatestGameInfo's last GameTurn, kept
+ * turn by turn), only in a game whose card plays are not fogged: there every play shows, whoever made it.
+ * A play restarts its player's card clock; a turn in `read` with no play of a player is no play of its,
+ * whatever its deploy looked like.
+ */
+export interface ReinforcementPlays {
+  /** The turns whose orders were read. */
+  read: readonly number[];
+  /** Each play seen: the player (GameFeed id) and the turn (each one of `read`). */
+  plays: readonly { player: number; turn: number }[];
 }
 
 /**
@@ -1218,6 +1236,8 @@ export interface EnemyDeployEstimate {
   card: { armies: number; due: number } | null;
   /** #164: the latest turn a deployment above its income was seen (a Reinforcement card played); else `null`. */
   cardPlayed: number | null;
+  /** #427: `cardPlayed` was seen in that turn's orders (card plays not fogged), not read from a deploy. */
+  cardSeen?: true;
   /**
    * #427: the tracked figure a card play had set (`was`), read again with the card's armies out
    * (`income`, the figure `tracked` and the estimate use): the turns that set it (`turns`), each a play

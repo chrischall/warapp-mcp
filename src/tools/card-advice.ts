@@ -5,14 +5,14 @@
 // Gift. Read-only; everything here is advice — of these only the advised Order Delay is added to the
 // orders; my Bomb and Emergency Blockade and the D2 cards carry an `order` to pass to warapp_submit_turn.
 
-import { adviseOrderDelay, CARD_BLOCKADE, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, type Card, type CardChoice, type CardGame } from '../cards.js';
+import { adviseOrderDelay, CARD_BLOCKADE, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, readTurnReinforcementPlays, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { blockadeOffer, bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
 import { bonusTerritories } from '../analysis/bonuses.js';
 import { diplomacyOpponents, supportAdvice, type SupportView } from './card-support-advice.js';
 export { giftInOrders, intelOrders } from './card-support-advice.js';
 import type { TruceCover } from '../analysis/card-support.js';
-import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
-import { inGameId } from '../live.js';
+import type { ReinforcementClock, ReinforcementPlays, TurnPlan } from '../analysis/planner.js';
+import { inGameId, playersByInGameId } from '../live.js';
 import type { Game, GameSettings, Player } from '../normalize.js';
 import { capturePieceValue, cardClock } from '../strategy/card-clock.js';
 import { isTeamGame, teammatesOf as teamOf } from '../teams.js';
@@ -404,6 +404,36 @@ export function cardPieceOption(settings: GameSettings | undefined, hand: readon
   const inHand = hand.find((c) => c.type === CARD_REINFORCEMENT && c.armies !== undefined && c.armies > 0)?.armies;
   const v = capturePieceValue(settings, inHand);
   return v.armies !== null && v.armies > 0 ? { cardPieceValue: v.armies } : {};
+}
+
+/**
+ * #427: who played a Reinforcement card in the turn just before `turn` (the one being planned), by GameFeed
+ * id, from the LatestGameInfo's last GameTurn (`readTurnReinforcementPlays`); `undefined` when the info has
+ * none, the turn is unknown, or the GameTurn is another turn's. A player no seat matches is left out.
+ */
+export function lastTurnPlays(info: unknown, players: readonly Player[], turn: number | null): { turn: number; players: number[] } | undefined {
+  const read = readTurnReinforcementPlays(info);
+  if (!read || turn === null || read.turn !== turn - 1) return undefined;
+  const byInGame = playersByInGameId(players);
+  return { turn: read.turn, players: read.players.flatMap((id) => (byInGame.has(id) ? [byInGame.get(id)!.id] : [])) };
+}
+
+/** #427: whether the game shows every Reinforcement play: a Reinforcement card in play and `CardPlayingsFogged` false. */
+export function reinforcementPlaysShown(settings: GameSettings | undefined): boolean {
+  const clock = cardClock(settings);
+  return clock !== undefined && clock.playsHidden === false && clock.cards.some((c) => c.card === 'Reinforcement');
+}
+
+/**
+ * #427: the Reinforcement plays seen turn by turn (`seen`: turn → the GameFeed ids that played one; a turn
+ * present was read), for the threat model — only when the game says card plays are not fogged
+ * (`CardPlayingsFogged` false) and a Reinforcement card is in play: there every play shows. `undefined`
+ * otherwise, or with no turn read: the clock alone, as before.
+ */
+export function seenReinforcementPlays(settings: GameSettings | undefined, seen: ReadonlyMap<number, readonly number[]>): ReinforcementPlays | undefined {
+  if (!reinforcementPlaysShown(settings) || seen.size === 0) return undefined;
+  const read = [...seen.keys()].sort((a, b) => a - b);
+  return { read, plays: read.flatMap((turn) => seen.get(turn)!.map((player) => ({ player, turn }))) };
 }
 
 /**

@@ -14,8 +14,10 @@ import {
   readBoardHistory,
   readCachedOrders,
   readExpectedIncome,
+  readSeenPlays,
   readSurvival,
   writeBoardCache,
+  writeSeenPlays,
   writeSurvival,
   writeOrdersCache,
   dropOrdersCache,
@@ -400,5 +402,36 @@ describe('the survival side store (#275 b)', () => {
       JSON.stringify({ gameId: 7, playerId: ANN.id, turns: {}, estimates: { '2': { '5': 'x', '6': 3 } }, tripwires: [{ player: 'x' }, wire] }),
     );
     expect(await readSurvival(dir, 7, ANN.id)).toEqual({ estimates: new Map([[2, new Map([[6, 3]])]]), tripwires: [wire] });
+  });
+});
+
+describe('the Reinforcement plays seen in the turns\' orders (#427)', () => {
+  const board: BoardState = { source: 'browser', verified: true, territories: [{ territoryId: 1, owner: { kind: 'player', playerId: ANN.id }, armies: 5 }] };
+
+  it('keeps, by turn, who played one (an empty list: the turn was read, nobody did), beside the boards', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    expect(await readSeenPlays(dir, 42, ANN.id)).toEqual(new Map());
+    await writeBoardCache(dir, 42, ANN.id, 3, board, 9);
+    await writeSeenPlays(dir, 42, ANN.id, 3, []);
+    await writeSeenPlays(dir, 42, ANN.id, 4, [BOB.id]);
+    // Board, orders, survival writes keep them.
+    await writeBoardCache(dir, 42, ANN.id, 5, board, 10);
+    await writeOrdersCache(dir, 42, ANN.id, 5, { deploys: [], moves: [] });
+    await writeSurvival(dir, 42, ANN.id, 5, { estimates: new Map([[BOB.id, 7]]), tripwires: [] });
+    expect(await readSeenPlays(dir, 42, ANN.id)).toEqual(new Map([[3, []], [4, [BOB.id]]]));
+    expect(await readBoardHistory(dir, 42, ANN.id)).toHaveLength(2);
+    expect(readFileSync(boardCachePath(dir, 42), 'utf8')).not.toMatch(/Bob|Ann/);
+    // Another player's view sees none.
+    expect(await readSeenPlays(dir, 42, BOB.id)).toEqual(new Map());
+  });
+
+  it('reads loosely and keeps only the newest turns', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-trend-'));
+    for (let t = 1; t <= SURVIVAL_TURNS + 2; t++) await writeSeenPlays(dir, 42, ANN.id, t, t % 2 ? [BOB.id] : []);
+    const seen = await readSeenPlays(dir, 42, ANN.id);
+    expect(seen.size).toBe(SURVIVAL_TURNS);
+    expect(seen.has(2)).toBe(false);
+    writeFileSync(boardCachePath(dir, 7), JSON.stringify({ gameId: 7, playerId: ANN.id, turns: {}, seenPlays: { '2': [5, 'x'], x: [1], '3': 'no' } }));
+    expect(await readSeenPlays(dir, 7, ANN.id)).toEqual(new Map([[2, [5]]]));
   });
 });

@@ -11,7 +11,7 @@ import { neighborsOf, type MapGraph } from '../graph.js';
 import { armyCapIncome, boardIncome, DEFAULT_BASE_INCOME, incomeRules, territoryIncome, type ArmyCapIncome } from '../player.js';
 import { byNum } from './util.js';
 import { LOW_COVERAGE, MIN_ENEMY_DEPLOY, OWNERS_SHOWN_FOG, PRIOR_EVIDENCE_TURNS, TRACKED_MIN_TURNS, bombPossibleOn, fogPaceIncome, localFreeOn } from './shared.js';
-import type { EnemyDeployEstimate, EnemyIncomePrior, PlannerSettings, ReinforcementClock } from './shared.js';
+import type { EnemyDeployEstimate, EnemyIncomePrior, PlannerSettings, ReinforcementClock, ReinforcementPlays } from './shared.js';
 import { observeDeploy, ownerShown, trackCoverage, visibleState } from './observe.js';
 
 /**
@@ -37,16 +37,44 @@ export function openingArmies(
  * #164: the deployments read as card plays that count as cards — each on or after the turn the clock
  * says one is due and before `turn` — and the turn the next card is due: a card's capturing turns after
  * the last one counted (pieces carry over while a card is held), never before the turn after the play.
+ * #427: a play in `seen` (read in that turn's orders) always counts and restarts the clock: the next
+ * card is due its capturing turns after it.
  */
-function cardsCounted(played: readonly number[], r: ReinforcementClock, turn: number): { counted: number[]; due: number } {
+function cardsCounted(
+  played: readonly number[],
+  r: ReinforcementClock,
+  turn: number,
+  seen: ReadonlySet<number> = new Set(),
+): { counted: number[]; due: number } {
   let due = r.firstTurn;
+  // The turn the clock runs from, and the cards counted since it.
+  let anchor = r.firstTurn;
+  let since = 0;
+  const step = r.turnsPerCard === null ? null : Math.max(1, r.turnsPerCard);
   const counted: number[] = [];
   for (const t of [...new Set(played)].sort(byNum)) {
-    if (t < due || t >= turn) continue;
+    if (t >= turn) continue;
+    const certain = seen.has(t);
+    if (!certain && t < due) continue;
     counted.push(t);
-    due = r.turnsPerCard === null ? Infinity : Math.max(t + 1, r.firstTurn + counted.length * Math.max(1, r.turnsPerCard));
+    if (certain) {
+      anchor = t;
+      since = 1;
+    } else since++;
+    due = step === null ? Infinity : Math.max(t + 1, anchor + since * step);
   }
   return { counted, due };
+}
+
+/**
+ * #427: the turns `playerId`'s Reinforcement card is read as played: the turns `inferred` from its
+ * deploys, less those whose orders were read (`plays.read`: there a play shows), plus the plays seen.
+ */
+function playsOf(inferred: readonly number[], playerId: number, plays: ReinforcementPlays | undefined): { turns: number[]; seen: Set<number> } {
+  if (!plays) return { turns: [...inferred], seen: new Set() };
+  const read = new Set(plays.read);
+  const seen = new Set(plays.plays.filter((x) => x.player === playerId).map((x) => x.turn));
+  return { turns: [...inferred.filter((t) => !read.has(t)), ...seen], seen };
 }
 
 /**
@@ -87,6 +115,8 @@ export function enemyDeployEstimates(
     reinforcement?: ReinforcementClock | undefined;
     /** #226: my orders on the turn between `previous` and `board` ({@link ObserveContext.myOrders}). */
     previousOrders?: MyOrders | undefined;
+    /** #427: the Reinforcement plays seen in the turns' orders (card plays not fogged). */
+    plays?: ReinforcementPlays | undefined;
   } = {},
 ): EnemyDeployEstimate[] {
   const owner = new Map<number, number>();
@@ -209,7 +239,8 @@ export function enemyDeployEstimates(
     let cardInTrack: EnemyDeployEstimate['cardInTrack'] = null;
     if (usable && tracked !== null && when.reinforcement && when.reinforcement.armies > 0 && when.turn !== null && when.turn !== undefined) {
       const r = when.reinforcement;
-      const plays = new Set(cardsCounted(usable.turns.filter((x) => above(x.low, x.visibleIncome)).map((x) => x.from), r, when.turn).counted);
+      const read = playsOf(usable.turns.filter((x) => above(x.low, x.visibleIncome)).map((x) => x.from), playerId, when.plays);
+      const plays = new Set(cardsCounted(read.turns, r, when.turn, read.seen).counted);
       const top = usable.turns.filter((x) => x.observed >= tracked!);
       if (top.length && top.every((x) => plays.has(x.from))) {
         const without = Math.max(
@@ -397,10 +428,13 @@ export function enemyDeployEstimates(
     }
     let card: EnemyDeployEstimate['card'] = null;
     let cardPlayed: number | null = null;
+    let cardSeen = false;
     if (when.reinforcement && when.turn !== null && when.turn !== undefined) {
       const r = when.reinforcement;
-      const { counted, due } = cardsCounted(played, r, when.turn);
+      const read = playsOf(played, playerId, when.plays);
+      const { counted, due } = cardsCounted(read.turns, r, when.turn, read.seen);
       cardPlayed = counted.at(-1) ?? null;
+      cardSeen = cardPlayed !== null && read.seen.has(cardPlayed);
       if (when.turn >= due && r.armies > 0) card = { armies: r.armies, due };
     }
     const estimate = income + (card?.armies ?? 0);
@@ -431,6 +465,7 @@ export function enemyDeployEstimates(
       exact,
       card,
       cardPlayed,
+      ...(cardSeen ? { cardSeen: true as const } : {}),
       ...(cardInTrack ? { cardInTrack } : {}),
       ...(priorFull !== null && priorFigure! < priorFull ? { stated: { full: priorFull, scaled: priorFigure!, lower: seen, midpoint: statedMid } } : {}),
     };

@@ -14,7 +14,7 @@ import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './help
 import { overlapRawMap } from './analysis/helpers.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import { boardIncome } from '../src/analysis/player.js';
-import { readCachedOrders } from '../src/trend.js';
+import { readCachedOrders, readSeenPlays } from '../src/trend.js';
 import { writeAward, writePickList } from '../src/pick-list.js';
 import { writeFirstMover } from '../src/move-order.js';
 import { recordMapGame, type MapEntry } from '../src/lessons-store.js';
@@ -24,6 +24,7 @@ import {
   type SyntheticCard,
   type SyntheticTeammateOrders,
   type SyntheticTerritory,
+  type SyntheticTurn,
 } from './protocol/live-bundle.js';
 import { CHAT_SUMMARY_NOTE } from '../src/tools/chat.js';
 import { CHAT_ADVICE_NOTE } from '../src/tools/chat-advice.js';
@@ -4233,5 +4234,37 @@ describe('warapp_plan_turn finishing a player off (#179): the move order, the ca
     // Knife Hills (135) and Widow's Watch (157) are this plan's captures: only 134 is left to flee onto.
     expect(stack.neutrals).toEqual([{ id: 134, name: mapName(134) }]);
     expect(full.expected.captures.map((c) => c.id)).toEqual(expect.arrayContaining([135, 157]));
+  });
+});
+
+describe("warapp_plan_turn: opponents' Reinforcement plays read from the last turn's orders (#427)", () => {
+  // Turn 7 is planned (six completed): the info's last GameTurn is turn 6 (0-based 5), in which Bob played
+  // a Reinforcement card. A fixed 20-army card, three pieces a card at one a capturing turn: one can be in
+  // hand from turn 4, and after a play on turn 6 the next is due on turn 9.
+  const rein = { NumberOfCardsToReceiveEachTurn: 1, ReinforcementCard: { NumPieces: 3, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 0, FixedArmies: 20 } };
+  const lastTurn: SyntheticTurn = {
+    index: 5,
+    orders: [
+      { player: BOB.inGame, order: { kind: 'card', tag: 5, card: 'b'.repeat(32) } },
+      { player: ANN.inGame, order: { kind: 'deploy', territory: 159, armies: 5 } },
+    ],
+  };
+  const withTurn = () => ({ body: (w: Writer) => writeLatestGameInfo(w, BOARD, [ANN.inGame], {}, undefined, undefined, lastTurn) });
+  const feed = (fogged: boolean) =>
+    game('Playing', { numberOfTurns: '6', settings: { ...modelledSettings(), ...rein, CardPlayingsFogged: fogged } });
+
+  it('with card plays not fogged, the seen play restarts the clock, and the plan keeps it for the next turns', async () => {
+    h = await liveHarness({ feed: [feed(false)], warapp: routes({ [Method.GetLatestGameInfo]: withTurn }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    const text = p.warnings.join('\n');
+    expect(text).toMatch(/played a Reinforcement card on turn 6 \(seen in that turn's orders: card plays are not fogged in this game\), so none is added until the next can be due: turn 9/);
+    expect(text).not.toMatch(/may hold a Reinforcement card/);
+    expect(await readSeenPlays(h.dataDir, GAME, Number(ANN.feed))).toEqual(new Map([[6, [Number(BOB.feed)]]]));
+  });
+  it('with card plays fogged, nothing is read or kept: the clock alone, as before', async () => {
+    h = await liveHarness({ feed: [feed(true)], warapp: routes({ [Method.GetLatestGameInfo]: withTurn }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.join('\n')).toMatch(/may hold a Reinforcement card from turn 4 \(the card clock\): \+20/);
+    expect(await readSeenPlays(h.dataDir, GAME, Number(ANN.feed))).toEqual(new Map());
   });
 });

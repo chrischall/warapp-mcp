@@ -385,6 +385,19 @@ appear in all of them. Only the current standing's cards are playable: an instan
 only in the previous standing or the turn's receive/play orders was already played, and playing
 it is refused with error 50 `CardInstanceUnavailable`.
 
+**The last turn's orders (#427) — VERIFIED live 2026-11-22.** `LatestGameInfo` carries one
+`warlight.shared.GameTurn`: the turn just resolved, as this player may see it — { a null, the order list, int32
+turn number **0-based** (one less than GameFeed's `numberOfTurns`; the info's own int is the turns completed), a
+date string }. Read with GetLatestGameInfo (read-only) on three games in progress whose settings had
+`CardPlayingsFogged` false: the list held every player's visible deploys and moves (each with its
+`…Result`), `ActiveCardWoreOff`, my `GameOrderReceiveCard`, and card plays — Surveillance, Diplomacy,
+Order Priority and `GameOrderPlayCardReinforcement` — each { the card's own fields, the card GUID, the player's
+in-game id, its result (whose first field points back at the order: the decoded object is cyclic), a null }. A
+Reinforcement play has no own field and carries no armies. One opponent's Reinforcement play showed though none
+of its deploys was in view. Whether a game with card plays fogged hides others' plays was not seen (the one such
+game read showed no play that turn); the planner reads the plays only when the setting is false
+(`readTurnReinforcementPlays`, src/cards.ts). My pending orders are the info's own order list, never the turn's.
+
 **The cards in effect (PLAN-TEAMS D3) — from the client bundle, UNVERIFIED live.** The current
 `GameStanding` also carries `ActiveCards`: a list of `warlight.shared.ActiveCard { Card, ExpiresAfterTurn }`,
 `Card` being the `GameOrderPlayCard<X>` play order that started it (Diplomacy: two int32 player ids;
