@@ -48,7 +48,8 @@ import { resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
-import { COMMANDER_SIZING, commanderCheckOn } from './commander-check.js';
+import { COMMANDER_SIZING, commanderCheckOn, foggedAttackersArg, foggedCommanderOn, foggedCommanderText, myLargestStack } from './commander-check.js';
+import { DEFAULT_FOGGED_ATTACKERS, foggedStack } from '../analysis/commander-fog.js';
 import { captureCheck, checkPlanLog } from './decision-capture.js';
 import type { CardPlayKind } from '../protocol/methods.js';
 
@@ -115,7 +116,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'board, `commander` says where it stands after the orders, the armies there and `needs`: the armies its ' +
           'territory needs to survive every reply tried, by the check warapp_submit_turn refuses on (each reply at the larger ' +
           'of the estimate and your income, enemy_deploy only raising it, both move orders, your Airlifts counted); when a ' +
-          'reply kills it, the summary starts with it. Exact with no luck and ' +
+          'reply kills it, the summary starts with it. `commander.fogged` tests it against `fogged_attackers` (default 2) ' +
+          'unknown opponents the fog may hide within two moves of where it ends, striking together (each a start of the ' +
+          "game's starting armies, else your largest stack, plus a deploy of your income; luck-free): `safe`, `needs`, where " +
+          'they may come from; the summary names it when it can fall, and it never changes `safe`. Exact with no luck and ' +
           'straight rounding; otherwise battles are resolved at their expectation and `exact` is false. It does not ' +
           `try: ${CHECK_PLAN_NOT_COVERED.join('; ')}. When this server kept your pick list, \`award\` says what the ` +
           "award of picks showed (as in warapp_plan_turn): the opponent's proven starts stand on the board the " +
@@ -169,6 +173,12 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
               'Income in the fog is unseen, so raise it to test a stronger opponent.',
           ),
         known_income: knownIncomeArg,
+        fogged_attackers: foggedAttackersArg.describe(
+          `With your commander on the board: how many unknown opponents the fog may hide within two moves of where it ends ` +
+            `strike it together (default ${DEFAULT_FOGGED_ATTACKERS}; 0 skips the test). Each is taken as a player's start ` +
+            "(the game's starting armies, else your largest stack) plus a deploy of your income. Reported as `commander.fogged`; " +
+            'never changes `safe`.',
+        ),
         avoid_territories: avoidTerritoriesArg,
         avoid_players: avoidPlayersArg,
         first_mover: z
@@ -193,7 +203,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ),
       }),
     },
-    async ({ game_id, player, orders, enemy_deploy, known_income, avoid_territories, avoid_players, first_mover, assume_enemy_cards, view }) => {
+    async ({ game_id, player, orders, enemy_deploy, known_income, fogged_attackers, avoid_territories, avoid_players, first_mover, assume_enemy_cards, view }) => {
       const feed = await ctx.client.getGame(game_id, { settings: true });
       requireTurnPhase(feed);
       const map = mapOf(feed);
@@ -626,8 +636,23 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       // The count and `needs` come from one run (the commander check's), so the line never pairs a count
       // the full run found with armies the targeted run says hold.
       const commanderLine = guard ? commanderText(guard, guard.killers) : undefined;
+      // Part 5 (mega game): my commander against unknown opponents in the fog striking it together (report only).
+      const fogged = guard
+        ? foggedCommanderOn({
+            graph,
+            board,
+            me: me.id,
+            settings,
+            deploys,
+            moves,
+            count: fogged_attackers ?? DEFAULT_FOGGED_ATTACKERS,
+            stack: foggedStack(game.settings?.initialPlayerArmiesPerTerritory, myLargestStack(board, me.id)),
+            deploy: income,
+          })
+        : undefined;
       const summary =
         (guard && (guard.killers > 0 || guard.lostUnanswered) && commanderLine ? `${commanderLine} ` : '') +
+        (fogged && !fogged.safe ? `${foggedCommanderText(fogged)} ` : '') +
         (report.safe === null
           ? `Nothing could be tested this turn: no opposing stack in view touches you.${blind}${ahead}`
           : report.safe
@@ -822,6 +847,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
                 sizing: COMMANDER_SIZING,
                 // A Blockade or Gift of its territory, which the check does not simulate (the submit refuses it).
                 ...(checked!.cards ? { cards: checked!.cards } : {}),
+                // Part 5: against unknown opponents the fog may hide within two moves, striking together.
+                ...(fogged
+                  ? {
+                      fogged: {
+                        text: foggedCommanderText(fogged),
+                        safe: fogged.safe,
+                        needs: fogged.needs,
+                        armies: fogged.armies,
+                        attackers: fogged.attackers,
+                        from: fogged.from.map((f) => ({ territory: name(f.territory), ...(f.via !== undefined ? { via: name(f.via) } : {}), armies: f.armies })),
+                        stack: fogged.stack,
+                        deploy: fogged.deploy,
+                      },
+                    }
+                  : {}),
               },
             }
           : {}),
