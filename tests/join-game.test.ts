@@ -47,7 +47,6 @@ function openGamesPage(games: readonly SyntheticGame[] = Object.values(OPEN), ac
   return `<html>${start}<script type="text/plain" id="AllOpenGamesData">${hexOf(w.bytes())}</script></html>`;
 }
 
-/** A GameFeed lobby for `id`; `withMe` seats the signed-in account. */
 /** The fixture's real map has a -4 bonus; most tests are about something else, so it is made plain unless asked for (#423). */
 function plainLobby(negativeBonus = false): Record<string, unknown> {
   const f = lobbyFixture();
@@ -58,6 +57,7 @@ function plainLobby(negativeBonus = false): Record<string, unknown> {
   return f;
 }
 
+/** A GameFeed lobby for `id`; `withMe` seats the signed-in account. */
 function feedGame(id: number, withMe: boolean, negativeBonus = false): Record<string, unknown> {
   const f = plainLobby(negativeBonus);
   const players = f.players as Array<Record<string, string>>;

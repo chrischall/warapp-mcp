@@ -118,7 +118,9 @@ describe('warapp_mark_chat_read (#311)', () => {
     h = await liveHarness({ feed: [feedGame()], pages: SIGNED_IN_ANN, warapp: fake.handler });
     const preview = payload(await h.call('warapp_mark_chat_read', { game_id: GAME }));
     expect(preview.confirmToken).toEqual(expect.any(String));
-    const text = JSON.stringify(preview);
+    // The confirm token is random text: it is left out, so it can never spell a name by chance (a flake seen in CI).
+    const { confirmToken: _token, ...rest } = preview;
+    const text = JSON.stringify(rest);
     expect(text).toContain(String(GAME));
     expect(text).toContain(ANN.feed);
     expect(text).not.toMatch(/truce\?|push north|hello|group line|Bob/);
