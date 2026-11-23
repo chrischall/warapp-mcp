@@ -149,14 +149,16 @@ export function enemyDeployEstimates(
       myArmies += armies.get(t) ?? 0;
     }
   const myBoardIncome = boardIncome(g, myLand, { base: minimum, per }).total;
+  // A Reinforcement card: a flat card's armies, or a progressive one by the client's formula — the same for every
+  // opponent: 10% (say) of the territories every player holds (here those in view, a floor under fog), or the turn.
+  const cardValue = when.reinforcement ? reinforcementArmiesFor(when.reinforcement, { territories: owner.size, turn: when.turn ?? 0 }) : undefined;
+  const cardArmies = cardValue?.armies ?? 0;
   return players.map((playerId) => {
     // Its visible territories are a lower bound on what it holds, so on its
     // per-territory income too.
     const theirs = new Set<number>();
     for (const [t, p] of owner) if (p === playerId) theirs.add(t);
     const held = theirs.size;
-    // A Reinforcement card of its: a flat card's armies, a progressive one by the game's formula (its territories in view, or the turn).
-    const cardArmies = when.reinforcement ? reinforcementArmiesFor(when.reinforcement, { territories: held, turn: when.turn ?? 0 }) : 0;
     const base = territoryIncome(held, minimum, per);
     // The one income rule (#85) over what it visibly holds; `bonusIncome` is what it adds to the base.
     const bonusIncome = boardIncome(g, theirs, { base: minimum, per }).total - base;
@@ -437,7 +439,7 @@ export function enemyDeployEstimates(
       const { counted, due } = cardsCounted(read.turns, r, when.turn, read.seen);
       cardPlayed = counted.at(-1) ?? null;
       cardSeen = cardPlayed !== null && read.seen.has(cardPlayed);
-      if (when.turn >= due && cardArmies > 0) card = { armies: cardArmies, due };
+      if (when.turn >= due && cardArmies > 0) card = { armies: cardArmies, due, ...(cardValue?.basis ? { basis: cardValue.basis } : {}) };
     }
     const estimate = income + (card?.armies ?? 0);
     return {

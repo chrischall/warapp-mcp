@@ -154,14 +154,18 @@ describe('incomeUncertainties', () => {
     expect(incomeUncertainties(settings({})).join('\n')).toMatch(/base income/i);
     expect(incomeUncertainties(undefined).join('\n')).toMatch(/base income/i);
   });
-  it('names an enabled Sanctions card, which can cut my income below the model', () => {
-    const r = incomeUncertainties(
-      settings({ minimumArmyBonus: 5, cards: ['Sanctions'], raw: { SanctionsCard: { Duration: 1, Percentage: 0.6 } } }),
-    ).join('\n');
-    expect(r).toMatch(/sanctions/i);
-    expect(r).toMatch(/60%/);
-    expect(incomeUncertainties(settings({ minimumArmyBonus: 5, cards: ['Sanctions'] })).join('\n')).toMatch(/sanctions/i);
+  it('an enabled Sanctions card is no doubt on the income: the cut on me is modelled when it is played', () => {
+    const sixty = settings({ minimumArmyBonus: 5, cards: ['Sanctions'], raw: { SanctionsCard: { Duration: 1, Percentage: 0.6 } } });
+    expect(incomeUncertainties(sixty)).toEqual([]);
+    expect(incomeUncertainties(settings({ minimumArmyBonus: 5, cards: ['Sanctions'] }))).toEqual([]);
     expect(incomeUncertainties(settings({ minimumArmyBonus: 5, cards: ['Reinforcement', 'Spy'] }))).toEqual([]);
+  });
+  it('names Sanctions only when they are on me and the cut is not modelled (Local Deployment)', () => {
+    const sixty = settings({ minimumArmyBonus: 5, cards: ['Sanctions'], raw: { SanctionsCard: { Duration: 1, Percentage: 0.6 } } });
+    const r = incomeUncertainties(sixty, { sanctionsUnmodelled: true }).join('\n');
+    expect(r).toMatch(/Sanctions are on you/);
+    expect(r).toMatch(/60%/);
+    expect(r).not.toMatch(/This game has the Sanctions card/);
   });
 });
 

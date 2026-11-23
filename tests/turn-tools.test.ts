@@ -213,6 +213,13 @@ describe('warapp_plan_turn', () => {
     expect(p.warnings.join('\n')).toMatch(/income 5 may be off.*army cap/i);
   });
 
+  it('an enabled Sanctions card nobody played on me is no reason to call the income off', async () => {
+    // The lobby fixture enables SanctionsCard (Percentage 0.6); the board has no card in effect.
+    h = await liveHarness({ feed: [game('Playing')], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const p = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.warnings.join('\n')).not.toMatch(/may be off: .*Sanctions/);
+  });
+
   it('the army cap (#253): plans on what the cap leaves and reports the arithmetic', async () => {
     // 9 armies of mine on the board, income 5, cap 2×: round(2 × 5) − 9 = 1.
     const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 2 };

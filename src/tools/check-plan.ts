@@ -125,7 +125,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'income). An opponent whose estimate one observation broke (see warapp_plan_turn) is tried at the larger of what it ' +
           'implied and your own income (`enemyDeploy` source `untrusted`), said in the first warning. Each `enemyDeploy` entry ' +
           "shows the Reinforcement card the clock says it may hold apart as `cardBonus` (in `deploy` unless `assume_enemy_cards` is " +
-          '"none") and, under Sanctions, `sanctionApplied` (its income before and after the cut). ' +
+          '"none"; a progressive card\'s source in `cardBonusBasis`, as warapp_plan_turn has it) and, under Sanctions, `sanctionApplied` (its income before and after the cut). ' +
           '`belowPlan` compares these orders with the default plan made now on the same board (warapp_plan_turn with no ' +
           'options, the award of picks read as it reads it), or with its border guess when the deploys given are the ' +
           "guess's (`belowPlanAgainst`: plan or guess): each border they leave below what that plan leaves standing there, " +
@@ -757,7 +757,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             deploy: o.deploy,
             source: enemy_deploy !== undefined ? 'enemy_deploy' : knownOf.has(o.id) ? 'known_income' : untrustedOf.has(o.id) ? 'untrusted' : 'estimate',
             // The Reinforcement card the clock says it may hold, apart: in `deploy` under assume_enemy_cards "clock" only.
-            ...(o.cardBonus !== undefined && enemy_deploy === undefined ? { cardBonus: o.cardBonus } : {}),
+            ...(o.cardBonus !== undefined && enemy_deploy === undefined
+              ? { cardBonus: o.cardBonus, ...(o.cardBonusBasis !== undefined ? { cardBonusBasis: o.cardBonusBasis } : {}) }
+              : {}),
             // Sanctions on it: its estimate's income before and after the cut (the card left out).
             ...(o.sanctioned?.applied && o.sanctioned.after !== undefined
               ? { sanctionApplied: { player: o.id, percentage: sanctionPercentage(o.sanctioned.percentages), before: o.sanctioned.before, after: o.sanctioned.after } }
