@@ -959,15 +959,27 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   front lies past a conceded border and the last neutral is taken (golden s246: its interior transfers vanish).
   Golden: 16 of 6253 plans changed — 6 in their orders, 2 in a move's reason only, 8 by the warning only.
 - **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #427 is open). **#433's gate budget (2026-11-22, DRAFT for owner approval):** under Local Deployment the 1v1 gate budget (#297) is pool-aware — a gate's shortfall is paid only by the free income and the pools of the bonuses it is in (`poolShortfall` in `src/analysis/local-deploy.ts`, over `chargeDeploys`; next turn's pools from `keptHeld`, the territories `keptIncome` counts), in `gateStop` (`plan/captures.ts`; rule 4d's `outgrows` lets it stop a capture even when the frontier's hold cost is under the whole next income) and in the reported `gates` (`short`, plus `deployable`: the income that can land on the gates; LD only). Without Local Deployment nothing changes. Golden: 506 of 6253 plans re-hashed (467 only `gates.deployable` added, 37 a gate-budget warning too, 2 in their orders: one capture each stopped, next income and concessions unchanged). Still open from #433: `reviveConceded` counting idle neighbours when a withdrawal is planned (an owner decision: cancelling a withdrawal once the deploys are sized).
-- **#427 (draft, owner approval pending).** (1) Bug: the tracker reads every deploy as income, so an opponent's
+- **#427 (parts 1–2 merged in #491; part 3 2026-11-22).** (1) Bug: the tracker reads every deploy as income, so an opponent's
   Reinforcement play it saw set its tracked figure (max observed, then carried) while the clock added the next card
   on top: one card counted twice, every turn. `enemyDeployEstimates` now reads the figure again with each counted
   play's card armies out when only card plays set it (`EnemyDeployEstimate.cardInTrack`, a "… counts the
   Reinforcement card it played on turn N: M without it (#427)" warning; `hiddenPool` uses the same figure). Golden: 0
   of 4653 plans changed. (2) Rule: `opponentReinforcement` runs the opponents' clock at the expected weighted rate
   (minimum plus the weighted share of the random pieces), not the fastest; identical wherever no piece is drawn at
-  random. Not done: reading opponents' plays when card plays are not fogged (the history's order shape is unverified
-  live).
+  random. (3) Seen plays: in a game with `CardPlayingsFogged` false (`reinforcementPlaysShown`), the LatestGameInfo's
+  last `GameTurn` (the turn just resolved) shows every Reinforcement play, whoever made it — **VERIFIED live
+  2026-11-22** (read-only GetLatestGameInfo on three games in progress with card plays unfogged): the GameTurn is
+  { null, the order list, int32 turn 0-based (one less than the turns completed), a date }; a play there is
+  `GameOrderPlayCardReinforcement` { card GUID, player (in-game id), its result (pointing back at the order), null },
+  no armies; an opponent's play showed with none of its deploys in view (docs/WEB-PROTOCOL.md "The last turn's
+  orders"). `readTurnReinforcementPlays` (src/cards.ts) reads it, `lastTurnPlays` (card-advice.ts) takes it only
+  for turn − 1, by GameFeed id; warapp_plan_turn keeps each turn's plays beside the boards (`seenPlays`,
+  `writeSeenPlays`, src/trend.ts; an empty list = read, no play), and `PlanGameContext.reinforcementPlays` carries
+  them (`seenReinforcementPlays`) to `enemyDeployEstimates`: a seen play always counts and restarts that player's
+  clock (the next card due its capturing turns after it; never again where only one card comes), a read turn with
+  no play is no play whatever its deploy looked like (in the clock and in `cardInTrack`), and the plan says the
+  play was seen (`cardSeen`). With card plays fogged nothing is read or kept. Golden: 0 of 6253 plans changed (no
+  corpus input carries seen plays).
 - **Threat model.** Enemy income is unseen, so the planner estimates each opponent's deploy
   separately: base income + the bonuses it visibly holds in full, never below the game's base
   income (at least 5) (`enemyDeploy` / `enemy_deploy` overrides all of them). Its stack next to

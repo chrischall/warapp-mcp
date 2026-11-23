@@ -1078,14 +1078,20 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
             `Player ${p}'s tracked income of ${c.was} counts the Reinforcement card it played on turn ${c.turns.join(', ')}: ${c.income} without it (#427), so the card is counted once, on the clock, not carried as income.`,
           );
         }
-        // #164: a Reinforcement card the clock says it may hold, on top of its income.
+        // #164: a Reinforcement card the clock says it may hold, on top of its income. #427: with card plays
+        // not fogged, a play is seen in the orders, and the next card is due its capturing turns after it.
+        const cardPlaysRead = input.game?.reinforcementPlays !== undefined;
+        const perCard = input.game?.reinforcement?.turnsPerCard;
+        const cardDue = (t: number) => (perCard === null || perCard === undefined ? 'never (no further card comes)' : `turn ${t + Math.max(1, perCard)}`);
         if (e.card)
           warnings.push(
-            `Player ${p} may hold a Reinforcement card from turn ${e.card.due} (the card clock${e.cardPlayed !== null ? `; it last played one on turn ${e.cardPlayed}` : ''}): +${e.card.armies} added to its deploy, ~${e.estimate} in all, until a deployment above its income is seen; one card at most is counted, though more may be in hand after a long time due.`,
+            `Player ${p} may hold a Reinforcement card from turn ${e.card.due} (the card clock${e.cardPlayed !== null ? `; it last played one on turn ${e.cardPlayed}${e.cardSeen ? ', seen in the orders' : ''}` : ''}): +${e.card.armies} added to its deploy, ~${e.estimate} in all, until ${cardPlaysRead ? 'a play is seen in the orders' : 'a deployment above its income is seen'}; one card at most is counted, though more may be in hand after a long time due.`,
           );
         else if (e.cardPlayed !== null)
           warnings.push(
-            e.source === 'exact'
+            e.cardSeen
+              ? `Player ${p} played a Reinforcement card on turn ${e.cardPlayed} (seen in that turn's orders: card plays are not fogged in this game), so none is added until the next can be due: ${cardDue(e.cardPlayed)}.`
+              : e.source === 'exact'
               ? `Player ${p}'s Reinforcement card is taken as played on turn ${e.cardPlayed} (a deployment above its exact income), so none is added until the next can be due; armies the board misread, or that moved into view out of a territory whose armies the fog hid, can look the same, so it may still hold one and the estimate errs low.`
               : `Player ${p}'s Reinforcement card is taken as played on turn ${e.cardPlayed} (a deployment of a card's armies over its visible income), so none is added until the next can be due; income the fog hides can look the same, so it may still hold one and the estimate errs low.`,
           );

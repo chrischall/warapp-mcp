@@ -156,6 +156,7 @@ export function planEnemyEstimates(input: {
     turn,
     fog: ctx.fog,
     reinforcement: ctx.reinforcement,
+    ...(ctx.reinforcementPlays ? { plays: ctx.reinforcementPlays } : {}),
     ...(previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
   });
   const priced = applyKnown(

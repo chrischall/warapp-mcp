@@ -358,6 +358,8 @@ interface CachedBoards {
   estimates?: Record<string, Record<string, number>>;
   /** #275: the opponents whose estimate is untrusted, and why. */
   tripwires?: Tripwire[];
+  /** #427: by turn, the players seen playing a Reinforcement card in that turn's orders (a turn present was read). */
+  seenPlays?: Record<string, number[]>;
 }
 
 type RawCache = {
@@ -366,9 +368,10 @@ type RawCache = {
   expected: Record<string, unknown>;
   estimates: Record<string, unknown>;
   tripwires: unknown[];
+  seenPlays: Record<string, unknown>;
 };
 
-const EMPTY = (): RawCache => ({ turns: {}, orders: {}, expected: {}, estimates: {}, tripwires: [] });
+const EMPTY = (): RawCache => ({ turns: {}, orders: {}, expected: {}, estimates: {}, tripwires: [], seenPlays: {} });
 
 /** The raw cache for `gameId` as `playerId` saw it: boards, orders and expected incomes by turn; empty when absent or unusable. */
 async function readCache(dir: string, gameId: number, playerId: number): Promise<RawCache> {
@@ -380,6 +383,7 @@ async function readCache(dir: string, gameId: number, playerId: number): Promise
       expected: isRec(c.expected) ? c.expected : {},
       estimates: isRec(c.estimates) ? c.estimates : {},
       tripwires: Array.isArray(c.tripwires) ? (c.tripwires as unknown[]) : [],
+      seenPlays: isRec(c.seenPlays) ? c.seenPlays : {},
     };
     if (isRec(c.turns)) return { turns: c.turns, ...rest };
     // A single-board cache written before turns were kept.
@@ -391,12 +395,13 @@ async function readCache(dir: string, gameId: number, playerId: number): Promise
 }
 
 /** The cache's optional parts as written back: the orders, expected incomes and survival store, when any are kept. */
-function extras(cache: RawCache): Pick<CachedBoards, 'orders' | 'expected' | 'estimates' | 'tripwires'> {
+function extras(cache: RawCache): Pick<CachedBoards, 'orders' | 'expected' | 'estimates' | 'tripwires' | 'seenPlays'> {
   return {
     ...(Object.keys(cache.orders).length ? { orders: cache.orders as Record<string, MyOrders> } : {}),
     ...(Object.keys(cache.expected).length ? { expected: cache.expected as Record<string, number> } : {}),
     ...(Object.keys(cache.estimates).length ? { estimates: cache.estimates as Record<string, Record<string, number>> } : {}),
     ...(cache.tripwires.length ? { tripwires: cache.tripwires as Tripwire[] } : {}),
+    ...(Object.keys(cache.seenPlays).length ? { seenPlays: cache.seenPlays as Record<string, number[]> } : {}),
   };
 }
 
@@ -689,6 +694,38 @@ export async function writeSurvival(
       turns: cache.turns as Record<string, BoardState>,
       ...extras({ ...cache, estimates, tripwires: [...s.tripwires] }),
     });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #427: the Reinforcement plays seen in the turns' orders for `gameId` as `playerId` kept them: turn → the
+ * players (GameFeed ids) seen playing one (an empty list: the turn was read and none did); empty when none.
+ * Unusable entries are dropped. Never throws.
+ */
+export async function readSeenPlays(dir: string, gameId: number, playerId: number): Promise<Map<number, number[]>> {
+  const { seenPlays } = await readCache(dir, gameId, playerId);
+  const out = new Map<number, number[]>();
+  for (const turn of newestTurns(seenPlays, Infinity, SURVIVAL_TURNS)) {
+    const v = seenPlays[String(turn)];
+    if (Array.isArray(v)) out.set(turn, v.filter((p): p is number => isNum(p) && Number.isInteger(p)));
+  }
+  return out;
+}
+
+/**
+ * #427: keep who was seen playing a Reinforcement card in turn `turn`'s orders (`players`, GameFeed ids;
+ * empty: read, none did) for `gameId` as `playerId`, the newest {@link SURVIVAL_TURNS} turns. Never throws.
+ */
+export async function writeSeenPlays(dir: string, gameId: number, playerId: number, turn: number, players: readonly number[]): Promise<boolean> {
+  try {
+    const cache = await readCache(dir, gameId, playerId);
+    const all = { ...cache.seenPlays, [String(turn)]: [...players] };
+    const seenPlays: Record<string, unknown> = {};
+    for (const n of newestTurns(all, Infinity, SURVIVAL_TURNS)) seenPlays[String(n)] = all[String(n)];
+    await writeCache(dir, { gameId, playerId, turns: cache.turns as Record<string, BoardState>, ...extras({ ...cache, seenPlays }) });
     return true;
   } catch {
     return false;

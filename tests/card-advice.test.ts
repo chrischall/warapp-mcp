@@ -3,7 +3,7 @@ import type { TerritoryState } from '../src/board.js';
 import { buildGraph } from '../src/analysis/graph.js';
 import type { Card, CardChoice } from '../src/cards.js';
 import type { GameSettings, Player } from '../src/normalize.js';
-import { adviseCards, giftInOrders, intelOrders, cardGame, cardPieceOption, handOwners, opponentReinforcement, type CardAdviceInput } from '../src/tools/card-advice.js';
+import { adviseCards, giftInOrders, intelOrders, cardGame, cardPieceOption, handOwners, lastTurnPlays, opponentReinforcement, seenReinforcementPlays, type CardAdviceInput } from '../src/tools/card-advice.js';
 import { normalizeSettings } from '../src/normalize.js';
 import { turnOrdersArg } from '../src/tools/turn.js';
 import { board, mine, neutral, tinyMap } from './analysis/helpers.js';
@@ -504,5 +504,35 @@ describe("opponentReinforcement (#164): an opponent's Reinforcement card on the 
       SpyCard: { NumPieces: 3, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1 },
     });
     expect(opponentReinforcement(once, [])).toEqual({ firstTurn: 1, armies: 10, turnsPerCard: null });
+  });
+});
+
+describe("the opponents' Reinforcement plays seen in the turns' orders (#427)", () => {
+  const rein = { NumPieces: 4, InitialPieces: 0, MinimumPiecesPerTurn: 1, Weight: 1, FixedArmies: 8 };
+  const game = (fogged: unknown) =>
+    normalizeSettings({ NumberOfCardsToReceiveEachTurn: 1, ReinforcementCard: rein, ...(fogged === undefined ? {} : { CardPlayingsFogged: fogged }) });
+  const play = (player: number) => ({ $type: 'warlight.shared.GameOrderPlayCardReinforcement', fe: 'ab', $a: player, Yg: null });
+  const info = (index: number, orders: unknown[]) => ({
+    $type: 'warlight.shared.LatestGameInfo',
+    lE: { $type: 'warlight.shared.GameTurn', Li: null, ac: orders, vh: index, zY: 'x' },
+  });
+
+  it('lastTurnPlays: the GameTurn just before the turn being planned, players by GameFeed id', () => {
+    // Turn 7 is planned: the last GameTurn is turn 6 (0-based 5).
+    expect(lastTurnPlays(info(5, [play(FOE_IN), play(ME_IN)]), [ME, FOE], 7)).toEqual({ turn: 6, players: [FOE.id, ME.id] });
+    expect(lastTurnPlays(info(5, []), [ME, FOE], 7)).toEqual({ turn: 6, players: [] });
+    // Any other turn (a stale read, an unknown turn), or a player no seat matches: not read.
+    expect(lastTurnPlays(info(4, [play(FOE_IN)]), [ME, FOE], 7)).toBeUndefined();
+    expect(lastTurnPlays(info(5, [play(FOE_IN)]), [ME, FOE], null)).toBeUndefined();
+    expect(lastTurnPlays(info(5, [play(42)]), [ME, FOE], 7)).toEqual({ turn: 6, players: [] });
+  });
+
+  it('seenReinforcementPlays: only when the game shows card plays (CardPlayingsFogged false) and a Reinforcement card is in play', () => {
+    const seen = new Map([[5, [FOE.id]], [6, []]]);
+    expect(seenReinforcementPlays(game(false), seen)).toEqual({ read: [5, 6], plays: [{ player: FOE.id, turn: 5 }] });
+    expect(seenReinforcementPlays(game(true), seen)).toBeUndefined();
+    expect(seenReinforcementPlays(game(undefined), seen)).toBeUndefined();
+    expect(seenReinforcementPlays(settings({ CardPlayingsFogged: false }), seen)).toBeUndefined();
+    expect(seenReinforcementPlays(game(false), new Map())).toBeUndefined();
   });
 });
