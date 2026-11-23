@@ -16,6 +16,10 @@
 // in the replay keeps its replayed state; card plays are left out; with luck or weighted rounding each
 // battle is resolved at its expectation (`exact: false`).
 //
+// #503: the benchmarks are split by era (`openingEra`: before this server planned, before rule 4f, current),
+// medians are reported beside means with the games each figure rests on, and a game whose opening window
+// has a turn with no orders of mine or a boot of my seat (`openingFlags`) is reported apart, not averaged in.
+//
 // No I/O, no clock; ids ascending.
 import type { BoardState, TerritoryState } from '../board.js';
 import type { GameSettings } from '../normalize.js';
@@ -320,7 +324,19 @@ export interface BenchmarkAggregate {
   /** Games with a battle resolved at its expectation. */
   inexact: number;
   /** Per board after N turns: the mean incomes over the games that reached it, and how often the replay was ahead or behind the real game. */
-  byTurn: { afterTurn: number; n: number; replay: number; real: number; winner: number | null; replayAhead: number; replayBehind: number }[];
+  byTurn: {
+    afterTurn: number;
+    n: number;
+    replay: number;
+    real: number;
+    winner: number | null;
+    /** #503: the games with a winner, which `winner` rests on. */
+    winners: number;
+    /** #503: the medians beside the means (`winner` over the games with one). */
+    median: { replay: number; real: number; winner: number | null };
+    replayAhead: number;
+    replayBehind: number;
+  }[];
   /** Games with land without bonuses after {@link GAP_TURN}: replayed and real. */
   landWithoutBonuses: { replay: number; real: number };
   /** Games where an opponent had {@link GAP_FACTOR}× my income after {@link GAP_TURN}: replayed and real. */
@@ -328,6 +344,11 @@ export interface BenchmarkAggregate {
 }
 
 const mean = (xs: readonly number[]) => r3(xs.reduce((a, b) => a + b, 0) / xs.length);
+const median = (xs: readonly number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return r3(s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2);
+};
 
 /** Many {@link Benchmark}s aggregated. A turn where I held nothing in the real game counts the real income as 0. Pure. */
 export function aggregateBenchmarks(results: readonly Benchmark[]): BenchmarkAggregate {
@@ -343,12 +364,16 @@ export function aggregateBenchmarks(results: readonly Benchmark[]): BenchmarkAgg
       .sort(([a], [b]) => a - b)
       .map(([afterTurn, ts]) => {
         const winners = ts.flatMap((t) => (t.winner === null ? [] : [t.winner]));
+        const replay = ts.map((t) => t.replay.income);
+        const real = ts.map((t) => t.real?.income ?? 0);
         return {
           afterTurn,
           n: ts.length,
-          replay: mean(ts.map((t) => t.replay.income)),
-          real: mean(ts.map((t) => t.real?.income ?? 0)),
+          replay: mean(replay),
+          real: mean(real),
           winner: winners.length ? mean(winners) : null,
+          winners: winners.length,
+          median: { replay: median(replay), real: median(real), winner: winners.length ? median(winners) : null },
           replayAhead: ts.filter((t) => t.replay.income > (t.real?.income ?? 0)).length,
           replayBehind: ts.filter((t) => t.replay.income < (t.real?.income ?? 0)).length,
         };
@@ -359,4 +384,127 @@ export function aggregateBenchmarks(results: readonly Benchmark[]): BenchmarkAgg
       real: at.filter((t) => behind(t.real?.income ?? 0, t.bestOpponent)).length,
     },
   };
+}
+
+// ---- #503: the opening benchmark by era ----
+
+/** Rule 4f (#105) merged: openings played from here on are the current era. */
+export const PRE_RULE_4F_AT = '2026-11-13T08:24:00Z';
+/**
+ * Without a turn-1 time, the era boundary by game id (ids are assigned when a game is created, so this
+ * approximates the time): the first-bonus research of 2026-11-23 split its games here.
+ */
+export const PRE_RULE_4F_GAME_ID = 45_690_000;
+/** The opening window the flags read: turns 1 to this. */
+export const OPENING_WINDOW = 4;
+
+export type OpeningEra = 'pre-tool' | 'pre-rule-4f' | 'current';
+/** What the era was read from. */
+export type EraBasis = 'turn-1 time' | 'game id' | 'not planned' | 'no game id';
+
+/**
+ * A finished game's opening era: by its turn-1 time where known, else by its game id; with neither, the
+ * game is `pre-tool` (no local cache of it was ever kept, so this server never played it) — `basis`
+ * says `not planned` when the record also keeps no outlook line, `no game id` when it does. Pure.
+ */
+export function openingEra(g: { planned: boolean; turn1At?: string; gameId?: number }): { era: OpeningEra; basis: EraBasis } {
+  if (g.turn1At !== undefined && Number.isFinite(Date.parse(g.turn1At)))
+    return { era: Date.parse(g.turn1At) < Date.parse(PRE_RULE_4F_AT) ? 'pre-rule-4f' : 'current', basis: 'turn-1 time' };
+  if (g.gameId !== undefined) return { era: g.gameId < PRE_RULE_4F_GAME_ID ? 'pre-rule-4f' : 'current', basis: 'game id' };
+  return { era: 'pre-tool', basis: g.planned ? 'no game id' : 'not planned' };
+}
+
+export interface OpeningFlags {
+  /** Turns in the window the history shows no orders of mine on. */
+  noOrderTurns: number[];
+  /** The turn my seat was booted on, when it is in the window; else `null`. */
+  bootedTurn: number | null;
+}
+
+/**
+ * The opening window's turns with no orders of mine, and a boot of my seat in it. A turn n (history boards
+ * n − 1 and n both kept, land of mine on n − 1) shows orders when I hold a territory I did not hold before,
+ * a failed attack of mine is recorded that turn, or this server sent orders for it; else it reads as a turn
+ * with no orders. Army growth alone is not read as orders: a missed turn's board shows it too (the
+ * first-bonus research's missed turns all look so). Inferred from the boards: a deploy-and-transfer turn
+ * with no capture reads as no orders. Pure.
+ */
+export function openingFlags(input: {
+  me: number;
+  history: HistoryBoards;
+  window?: number;
+  sentTurns?: readonly number[];
+  failedAttackTurns?: readonly number[];
+  /** My seat's boot: the turn being played when it left (`null`: not known). */
+  booted?: { turn: number | null };
+}): OpeningFlags {
+  const window = input.window ?? OPENING_WINDOW;
+  const boards = new Map(input.history.map((b) => [b.turn, b.board]));
+  const sent = new Set([...(input.sentTurns ?? []), ...(input.failedAttackTurns ?? [])]);
+  const noOrderTurns: number[] = [];
+  for (let n = 1; n <= window; n++) {
+    const before = boards.get(n - 1);
+    const after = boards.get(n);
+    if (!before || !after || sent.has(n)) continue;
+    const was = landOf(before, input.me);
+    if (!was.size) continue;
+    if (![...landOf(after, input.me)].some((id) => !was.has(id))) noOrderTurns.push(n);
+  }
+  const bt = input.booted?.turn ?? null;
+  return { noOrderTurns, bootedTurn: bt !== null && bt >= 1 && bt <= window ? bt : null };
+}
+
+/** One benchmarked game as {@link benchmarkByEra} groups it. */
+export interface EraEntry {
+  era: OpeningEra;
+  basis: EraBasis;
+  format: string;
+  /** The map's territory count. */
+  territories: number;
+  flags: OpeningFlags;
+  bench: Benchmark;
+}
+
+/** A map this many times the median map's territories or more is counted as large. */
+export const LARGE_MAP_FACTOR = 5;
+
+export interface EraBenchmark {
+  /** The games with a clean opening window, all formats. */
+  all: BenchmarkAggregate;
+  byFormat: Record<string, BenchmarkAggregate>;
+  /** Of the clean games, those on a map {@link LARGE_MAP_FACTOR}× the median map or larger (kept in: the medians read past them). */
+  largeMaps: number;
+  /** The games with a turn without orders or a boot in the window: counted and aggregated apart. */
+  flagged: { games: number; noOrderTurns: number; boots: number; benchmark: BenchmarkAggregate | null };
+}
+
+/** The benchmarks grouped by era, then format; flagged games apart; how many eras were read from which basis. Pure. */
+export function benchmarkByEra(entries: readonly EraEntry[]): { basis: Partial<Record<EraBasis, number>>; eras: Partial<Record<OpeningEra, EraBenchmark>> } {
+  const basis: Partial<Record<EraBasis, number>> = {};
+  for (const e of entries) basis[e.basis] = (basis[e.basis] ?? 0) + 1;
+  const sizes = entries.map((e) => e.territories).filter((n) => n > 0);
+  const large = sizes.length ? LARGE_MAP_FACTOR * median(sizes) : Number.POSITIVE_INFINITY;
+  const eras: Partial<Record<OpeningEra, EraBenchmark>> = {};
+  for (const era of ['pre-tool', 'pre-rule-4f', 'current'] as const) {
+    const of = entries.filter((e) => e.era === era);
+    if (!of.length) continue;
+    const isFlagged = (e: EraEntry) => e.flags.noOrderTurns.length > 0 || e.flags.bootedTurn !== null;
+    const clean = of.filter((e) => !isFlagged(e));
+    const flagged = of.filter(isFlagged);
+    const byFormat: Record<string, BenchmarkAggregate> = {};
+    for (const f of [...new Set(clean.map((e) => e.format))].sort())
+      byFormat[f] = aggregateBenchmarks(clean.filter((e) => e.format === f).map((e) => e.bench));
+    eras[era] = {
+      all: aggregateBenchmarks(clean.map((e) => e.bench)),
+      byFormat,
+      largeMaps: clean.filter((e) => e.territories >= large).length,
+      flagged: {
+        games: flagged.length,
+        noOrderTurns: flagged.reduce((a, e) => a + e.flags.noOrderTurns.length, 0),
+        boots: flagged.filter((e) => e.flags.bootedTurn !== null).length,
+        benchmark: flagged.length ? aggregateBenchmarks(flagged.map((e) => e.bench)) : null,
+      },
+    };
+  }
+  return { basis, eras };
 }

@@ -185,6 +185,16 @@ notification in `warapp_get_notifications`. Let those run, then run the harness.
   land and armies the history shows, except land I hold in the replay; a territory I really took but did
   not take in the replay keeps its replayed state; card plays are left out; with luck or weighted
   rounding a battle is resolved at its expectation (counted as inexact).
+- **(b) by era (#503).** The benchmark is printed per era, each figure as mean (median) with the games it
+  rests on (`n`; the winner's figure counts the games with a winner). The era (`openingEra`): `pre-rule-4f`
+  when turn 1 was played before rule 4f merged (2026-11-13 08:24Z), else `current`, read off the turn-1 time
+  where one is known (no record keeps one yet), else off the game id (below `PRE_RULE_4F_GAME_ID`, 45690000:
+  ids are assigned at creation, so this approximates the time); `pre-tool` when nothing local names the game.
+  A record whose settings record aged out gets its id back when a per-game cache (boards, outlook, decision
+  log) still names it, by recomputing the record path. A game whose turns 1–4 have a turn with no orders of
+  mine (`openingFlags`: no capture, no failed attack, no cached orders; army growth alone is not orders, a
+  missed turn's board shows it) or a boot of my seat is reported apart and never averaged in. Clean games on
+  a map 5× the median map's territories or more are counted (kept in: the medians read past them).
 
 ### Replaying the decision log (#412): `scripts/replay-decisions.mjs`
 
