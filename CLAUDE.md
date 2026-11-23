@@ -269,7 +269,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   holder; no threat; a known teammate start); my list is shortened to my starts + the opponents' only when disjoint from every
   teammate list and each is as long as the client allows (a short one can run out, and war.app then grants from mine); `plan.team` reports `overlap`, `sharedBonuses` and `mirrored` (my primary and each top laid on the hands a
   reversing award gives, `splits` naming what a repeating order would split; its `submitPicks`, the shared top then my
-  fallback, is capped at `maxPicks`). No list read, or only empty ones: byte-identical.
+  fallback, is capped at `maxPicks`). No list read, or only empty ones: byte-identical. #435: a teammate's list that cannot be read (`null`, unknown — not an empty one) gets a plan_picks warning to hold the submit, and `warapp_submit_picks` refuses in a team game while any playing teammate's list is unread (read the same way) unless `without_teammate_list: true`, which the preview then warns about.
   Its `submitPicks` (ids in order) is what `warapp_submit_picks` takes; in a two-player game without `spread` it also offers a
   coverage-first `alternative` (a pair, then the picks that most raise `coverage` — the reasonable bonuses reached within 2 moves
   past no wasteland; `coverageModel`) with its own `submitPicks`, only when it covers more, the primary unchanged (#166). `docs/STRATEGY.md` states the community
@@ -830,7 +830,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `redeploy` — an idle stack, only my land beside it and unused by the plan, two or more steps from the target, or one
   cut off from my main holdings, with more than `REDEPLOY_MIN_ARMIES` (3) to spare, to the strike stack, else the
   thinnest border), a
-  Gift of the members that complete a teammate's nearer bonus, and (#434, `blockadeOffer` in `card-threats.ts`) a
+  Gift of the members that complete a teammate's nearer bonus (#435: judged before the idle transfers — a transfer
+  out of or into a gifted member no longer hides it but is listed in `gift.drop`, since the Gift, phase 47, lands before the
+  moves; an attack from it still does; once Gift leaves `UNVERIFIED_CARD_PLAYS` the gift is `inOrders` and plan_turn's
+  `orders` carry it with `drop` taken out, `giftInOrders`), and (#434, `blockadeOffer` in `card-threats.ts`) a
   Blockade (`cards.advice.blockade`) on a border the plan concedes that is the one way into held bonuses or my commander
   (`opensBehind`, #291), when its armies after the plan × `BlockadeCard.MultiplyAmount` stop the stack beside it —
   never on a member of a bonus I hold (it breaks the bonus) or my commander's territory. **The spy cards (G2, `intelAdvice`)** only
@@ -1694,7 +1697,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     line in the reads. Inform only (P1): the planner does not size refills on it.
   - **One owner per bonus (PLAN-TEAMS C3.3, `src/analysis/plan/team.ts`).** A bonus with a member a
     teammate visibly holds is never scored, completed or advanced (a focus on it is ignored with a
-    warning); its other members are plain expansion. `team.sharedBonuses` (advisory) lists each bonus
+    warning); its other members are plain expansion. #435 (owner decision 2026-11-22): only with the Gift card in play
+    (`PlanGameContext.cardsInPlay`, from the settings' card rules; absent or no Gift: skipped as before), one I alone hold the
+    most members of (`nearer`; a tie is nobody's) is mine to work — its other members are scored and advanced,
+    the teammate's are theirs to hand over (a Gift), never captured or costed, and it is never `completable`
+    while they stand (no income claimed); one that is then uneconomic stays skipped as before, its members
+    never marked uneconomic. `team.sharedBonuses` (advisory) lists each bonus
     we both hold members of and who holds the most (`nearer`), from the start-of-turn board; a fogged
     teammate territory is unknown (team vision unverified). Absent outside a team game.
   - **Commit to the closest bonus (#101, rule 4f).** While no bonus is held, and in the opening

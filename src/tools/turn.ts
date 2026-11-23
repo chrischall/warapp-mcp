@@ -83,7 +83,7 @@ import { inferFirstMover } from '../move-order.js';
 import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } from './award.js';
 import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from './card-effects.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
-import { adviseCards, cardGame, cardPieceOption, intelOrders, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
+import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, opponentCanHold, opponentReinforcement, TEAM_HAND } from './card-advice.js';
 import {
   currentTurn,
   turnsCompleted,
@@ -1963,6 +1963,8 @@ export async function livePlanSetup(
     // PLAN-TEAMS C3.6: a joint capture under a cyclic order says whose attack must run first.
     ...(isTeamGame(game.players) && game.settings?.moveOrder !== undefined ? { moveOrder: game.settings.moveOrder } : {}),
     cards: rules.inPlay.length > 0,
+    // #435: the shared-bonus handover needs a Gift card in play.
+    cardsInPlay: [...rules.inPlay],
     // #119: a 1v1 that started even gets the fog prior (an opponent in the fog earns at least my income).
     symmetricStart: symmetricStart(game.settings),
     // #235: why not, when it was not (the plan says so in a free-for-all).
@@ -2792,14 +2794,19 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       const plays = advised ? [...cards.plays, advised] : cards.plays;
       // #163: an Order Delay that had to go is played where the plan advises it, not discarded.
       const playedDelay = advice.view.orderDelay?.card;
+      const gift = giftInOrders(advice.view);
       const orders = [
         ...cards.discards.filter((c) => c.id !== playedDelay).map((c) => ({ kind: 'discard' as const, card: c.id })),
         ...plays.map((c) => ({ kind: 'card' as const, card: c.id })),
         // #434: a spy card advised in heavy fog whose play is verified live (none yet: all are UNVERIFIED_CARD_PLAYS).
         ...intelOrders(advice.view),
+        // #435: a completing Gift whose play is verified live (Gift is not yet), with the transfers it drops left out.
+        ...gift.cards,
         ...plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
         // #274: my commander's walk takes it along (the #165 option, encoding unverified live).
-        ...plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
+        ...plan.moves
+          .filter((m) => !gift.drops(m))
+          .map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
         // #186: the advised Order Delay, placed above its move (war.app accepted the placement live;
         // whether the later moves wait for the opponent's is not yet seen in a replay).
         ...(advice.view.orderDelay ? [advice.view.orderDelay.order] : []),
@@ -3195,8 +3202,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                       ...(advice.view.orderDelay && orders.some((o) => o.kind === 'card' && o.card === advice.view.orderDelay!.card)
                         ? myHand.filter((c) => c.id === advice.view.orderDelay!.card)
                         : []),
-                      // #434: a verified spy-card play the orders carry.
-                      ...myHand.filter((c) => intelOrders(advice.view).some((o) => o.card === c.id)),
+                      // #434: a verified spy-card play the orders carry; #435: a verified completing Gift.
+                      ...myHand.filter((c) => [...intelOrders(advice.view), ...gift.cards].some((o) => o.card === c.id)),
                     ],
                     discards: cards.discards,
                   }).map((r) => ({ ...r, by: r.by === null || r.by === 'me' ? r.by : playerRef(r.by) })),

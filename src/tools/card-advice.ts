@@ -9,7 +9,7 @@ import { adviseOrderDelay, CARD_BLOCKADE, CARD_ORDER_DELAY, CARD_REINFORCEMENT, 
 import { blockadeOffer, bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
 import { bonusTerritories } from '../analysis/bonuses.js';
 import { diplomacyOpponents, supportAdvice, type SupportView } from './card-support-advice.js';
-export { intelOrders } from './card-support-advice.js';
+export { giftInOrders, intelOrders } from './card-support-advice.js';
 import type { TruceCover } from '../analysis/card-support.js';
 import type { ReinforcementClock, TurnPlan } from '../analysis/planner.js';
 import { inGameId } from '../live.js';

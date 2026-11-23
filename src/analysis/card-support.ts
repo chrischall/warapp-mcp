@@ -393,34 +393,48 @@ export interface GiftAdvice {
   bonus: number;
   value: number;
   territories: number[];
+  /**
+   * #435: the plan's transfers out of or into a gifted territory, to take out of the orders: the Gift
+   * (phase 47) lands before the moves (phase 50), so one out would not run and one in would hand its
+   * armies over too.
+   */
+  drop: { from: number; to: number }[];
   why: string;
 }
 
 /**
  * A Gift as team support: my members of a bonus a teammate is nearer to holding, when giving them
  * completes it (every other member is the teammate's) and I hold enough Gift cards — never a territory
- * with a special unit on it (war.app refuses it) or one the plan moves armies out of. The most valuable
- * bonus first, then ascending id. `undefined` when none.
+ * with a special unit on it (war.app refuses it) or one the plan attacks from (the gift would cancel
+ * the attack). #435: judged before the idle transfers, as if they were not there — a transfer out of or
+ * into a gifted territory is listed in `drop` (45731288 turn 6: one idle army walking off the member
+ * hid a +4 completion). The most valuable bonus first, then ascending id. `undefined` when none.
  */
 export function giftAdvice(cb: CardBoard, shared: readonly SharedBonus[], gifts: number): GiftAdvice | undefined {
   if (gifts <= 0) return undefined;
   const r = reader(cb);
-  const ok = (t: number) => !(r.state.get(t)?.specialUnits ?? []).length && r.outOf(t) === 0;
+  const ok = (t: number) => !(r.state.get(t)?.specialUnits ?? []).length && !cb.moves.some((m) => m.from === t && m.kind === 'attack');
   const best = [...shared]
     .filter((b) => b.nearer !== null && b.nearer !== cb.me && !b.others.length && b.teammates.length === 1 && b.mine.length <= gifts && b.mine.every(ok))
     .sort((a, b) => b.value - a.value || a.bonusId - b.bonusId)[0];
   if (!best) return undefined;
   const mate = best.teammates[0]!.player;
   const borders = best.mine.filter((t) => r.reachOf(t) !== undefined);
+  const gifted = new Set(best.mine);
+  const drop = cb.moves.filter((m) => m.kind === 'transfer' && (gifted.has(m.from) || gifted.has(m.to))).map((m) => ({ from: m.from, to: m.to }));
   return {
     player: mate,
     bonus: best.bonusId,
     value: best.value,
     territories: [...best.mine],
+    drop,
     why:
       `Gift ${best.mine.join(', ')} to your teammate ${mate}: it holds every other member of bonus ${best.bonusId}, so the gift completes it ` +
       `(+${best.value} a turn for the team; a bonus pays only the player who holds all of it).` +
-      (borders.length ? ` ${borders.join(', ')} ${borders.length === 1 ? 'faces' : 'face'} an opponent: your teammate must hold ${borders.length === 1 ? 'it' : 'them'}.` : ''),
+      (borders.length ? ` ${borders.join(', ')} ${borders.length === 1 ? 'faces' : 'face'} an opponent: your teammate must hold ${borders.length === 1 ? 'it' : 'them'}.` : '') +
+      (drop.length
+        ? ` Drop the transfer${drop.length === 1 ? '' : 's'} ${drop.map((m) => `${m.from} → ${m.to}`).join(', ')}: the Gift lands before the moves run, so ${drop.length === 1 ? 'it' : 'they'} would not move your armies as planned.`
+        : ''),
   };
 }
 

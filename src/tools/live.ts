@@ -5,7 +5,8 @@ import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations } from '@chrischa
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { clientPickLimits } from '../analysis/picks.js';
-import { isTeamGame } from '../teams.js';
+import { isTeamGame, teammatesOf } from '../teams.js';
+import { teammateOrdersOf } from '../team-orders.js';
 import { parseGameId } from '../client.js';
 import {
   FOG_LEVEL_NAMES,
@@ -34,7 +35,8 @@ import {
   viewArg,
 } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
-import { loadLiveTerritories, loadPicks, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
+import { loadLiveGame, loadLiveTerritories, loadPicks, requireApprovedAccount, writeAccount, type LiveContext } from './live-context.js';
+import { readTeammatePicks } from './team.js';
 import { mapOf } from './map.js';
 import { resolvePlayer, resolveTerritory } from './resolve.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
@@ -316,6 +318,14 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
       .min(1)
       .max(MAX_PICK_ARGS)
       .describe('Your picks in priority order (first = most wanted): territory ids or names. Replaces any picks already submitted.'),
+    without_teammate_list: z
+      .boolean()
+      .optional()
+      .describe(
+        "Team games only (#435): submit even though a teammate's list could not be read (unknown, not empty). " +
+          'Default false: the submit is refused until it can be read, since a pick you both list goes to one of you. ' +
+          'Set it only when waiting is worse, e.g. the pick deadline is close.',
+      ),
   });
 
   interface PicksState {
@@ -348,7 +358,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
         openWorld: true,
       }),
       inputSchema: submitSchema,
-      async plan({ game_id, player, territories }) {
+      async plan({ game_id, player, territories, without_teammate_list }) {
         const feed = await ctx.client.getGame(parseGameId(game_id), { settings: true });
         const map = mapOf(feed);
         // A write through the bridge always acts as the signed-in account, whatever `player` says
@@ -364,7 +374,7 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
           }
           seen.add(t.id);
         }
-        const board = await loadLiveTerritories(ctx, game);
+        const { territories: board, info } = await loadLiveGame(ctx, game);
         const owner = new Map(board.map((t) => [t.territoryId, t]));
         const unpickable = picks.filter((t) => {
           const s = owner.get(t.id);
@@ -410,6 +420,30 @@ export function registerLiveTools(server: McpServer, ctx: LiveContext): void {
         if (bounds && picks.length < bounds.min)
           lengthWarnings.push(
             `war.app expects at least ${bounds.min} picks here (the territories each player is granted); got ${picks.length}, which it may reject.`,
+          );
+        // #435 (bug): a team game's picks went in while a teammate's list was unread (null), so an
+        // overlap could not be seen (45731288: my second pick went to my teammate). Each teammate still
+        // playing has its list read as warapp_plan_picks reads it (V5 teammate orders, else V6
+        // GetTerritoryPicks); an unread one refuses the submit unless the caller says to go without it.
+        // An empty list read is no refusal: the teammate has not picked yet, and picks around mine.
+        const unread: number[] = [];
+        if (isTeamGame(game.players)) {
+          const entries = teammateOrdersOf(info, game.players);
+          for (const mate of teammatesOf(game.players, me).filter((p) => (p.state ?? 'Playing') === 'Playing'))
+            if ((await readTeammatePicks(ctx, game.id, mate, entries?.find((e) => e.playerId === mate.id))) === null) unread.push(mate.id);
+        }
+        if (unread.length && without_teammate_list !== true)
+          throw new McpToolError(
+            `Your teammate's list (player ${unread.join(', ')}) could not be read, so an overlap with yours cannot be seen: a pick you both list goes to one of you.`,
+            {
+              hint:
+                "Nothing was sent. Wait until it can be read (warapp_get_team, warapp_plan_picks show it), agree a list in team chat, " +
+                'or pass without_teammate_list: true to submit anyway when the pick deadline is close.',
+            },
+          );
+        if (unread.length)
+          lengthWarnings.push(
+            `Your teammate's list (player ${unread.join(', ')}) was not read: submitted without it (without_teammate_list), so an overlap cannot be seen.`,
           );
         const playerId = inGameId(me);
         const territoryIds = picks.map((t) => t.id);

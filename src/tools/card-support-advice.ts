@@ -34,7 +34,12 @@ export interface SupportView {
   sanctions?: { player: number; skipped?: string[]; order: CardOrder };
   /** `redeploy` (#434): no border falls without it; an idle or cut-off stack goes to the strike stack or the thinnest border. */
   airlift?: { from: number; to: number; armies: number; teammate?: number; redeploy?: { source: 'idle' | 'disconnected'; target: 'strike' | 'border' }; order: CardOrder };
-  gift?: { player: number; bonus: number; territories: number[]; orders: CardOrder[] };
+  /**
+   * #435: `drop`, the plan's transfers out of or into a gifted territory (the Gift lands first); `inOrders`
+   * when the Gift play is verified live (not in `UNVERIFIED_CARD_PLAYS`): warapp_plan_turn then puts the
+   * gift into its orders and takes `drop` out ({@link giftInOrders}). Gift is unverified today: advice only.
+   */
+  gift?: { player: number; bonus: number; territories: number[]; drop?: { from: number; to: number }[]; inOrders?: true; orders: CardOrder[] };
   /**
    * G2: the information cards, only where they reveal what the plan needs (never with fog off). #434:
    * `inOrders` when the card's play is verified live (not in `UNVERIFIED_CARD_PLAYS`): warapp_plan_turn then
@@ -48,6 +53,19 @@ export interface SupportView {
 /** #434: the advised spy-card plays verified live, which warapp_plan_turn adds to its orders. */
 export function intelOrders(view: Pick<SupportView, 'spy' | 'reconnaissance' | 'surveillance'>): CardOrder[] {
   return [view.spy, view.reconnaissance, view.surveillance].flatMap((a) => (a?.inOrders ? [a.order] : []));
+}
+
+/**
+ * #435: the advised completing Gift when its play is verified live: the card orders warapp_plan_turn adds,
+ * and whether a planned move is one of the transfers the gift drops. Nothing (no cards, no move dropped)
+ * while Gift is unverified or none is advised.
+ */
+export function giftInOrders(view: Pick<SupportView, 'gift'>): { cards: CardOrder[]; drops: (m: { from: number; to: number }) => boolean } {
+  const g = view.gift?.inOrders ? view.gift : undefined;
+  return {
+    cards: g ? g.orders : [],
+    drops: (m) => !!g?.drop?.some((d) => d.from === m.from && d.to === m.to),
+  };
 }
 
 const PLAY_IT =
@@ -203,13 +221,17 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
   if (gifts.length) {
     const g = giftAdvice(cb, input.plan.team?.sharedBonuses ?? [], gifts.length);
     if (g) {
+      // #435: a completing gift goes into the orders once its play is verified live (as #434's spy cards).
+      const live = !(input.unverifiedPlays ?? UNVERIFIED_CARD_PLAYS).has('Gift');
       view.gift = {
         player: g.player,
         bonus: g.bonus,
         territories: g.territories,
+        ...(g.drop.length ? { drop: g.drop } : {}),
+        ...(live ? { inOrders: true as const } : {}),
         orders: g.territories.map((t, i) => ({ kind: 'card', card: gifts[i]!.id, target: t, player: g.player })),
       };
-      warnings.push(`${g.why} ${PLAY_IT}`);
+      warnings.push(`${g.why} ${live ? `${IN_ORDERS}${g.drop.length ? ' The transfers it drops are out of the orders.' : ''}` : PLAY_IT}`);
     }
   }
   return { view, warnings };

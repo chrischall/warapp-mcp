@@ -485,6 +485,27 @@ describe('warapp_submit_picks', () => {
     expect(s.sent).toEqual([]);
   });
 
+  it("#435: in a team game refuses while a teammate's list cannot be read, unless told to submit without it", async () => {
+    // Nothing may be sent: SendTerritoryPicks is not routed (an unrouted method fails the test).
+    const warapp = routes({
+      [Method.GetLatestGameInfo]: board(PICK_BOARD),
+      // V6 refused: the teammate's list is unknown (null), not empty.
+      [Method.GetTerritoryPicks]: () => ({ error: { code: 4, message: 'no' } }),
+    });
+    const g = game('DistributingTerritories', { settings: { ...settingsOf(), TerritoryLimit: 1 } });
+    const players = (g.players as Array<Record<string, string>>).slice(0, 4).map((p, i) => ({ ...p, team: i < 2 ? '0' : '1' }));
+    h = await liveHarness({ pages: SIGNED_IN_ANN, feed: [{ ...g, players }], warapp });
+    const res = await h.call('warapp_submit_picks', { game_id: GAME, territories: [161, 159, 135, 157] });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/teammate.*list.*could not be read/i);
+    expect(textOf(res)).toMatch(/without_teammate_list/);
+    expect(textOf(res)).not.toMatch(/confirmToken/);
+    // With the override the preview is offered, and says the list was not read.
+    const preview = payload(await h.call('warapp_submit_picks', { game_id: GAME, territories: [161, 159, 135, 157], without_teammate_list: true }));
+    expect(preview.confirmToken).toEqual(expect.any(String));
+    expect(JSON.stringify(preview)).toMatch(/not read/);
+  });
+
   it('previews the picks by name and sends nothing until confirmed', async () => {
     const s = picksServer();
     h = await liveHarness({

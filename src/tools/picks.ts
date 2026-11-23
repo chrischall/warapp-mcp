@@ -243,6 +243,13 @@ export function registerPickTools(server: McpServer, ctx: LiveContext, deps: { e
         for (const mate of team)
           mateLists.push(await readTeammatePicks(ctx, game.id, mate, entries?.find((e) => e.playerId === mate.id)));
       }
+      // #435: an unread list is unknown, not empty: say to hold the submit (warapp_submit_picks refuses meanwhile).
+      const unreadMates = (team ?? []).filter((_, i) => mateLists[i] === null).map((p) => p.id);
+      if (unreadMates.length)
+        warnings.push(
+          `Your teammate's list (player ${unreadMates.join(', ')}) could not be read, so this plan cannot avoid their picks: ` +
+            'hold the submit until it can be read or a list is agreed in team chat (warapp_submit_picks refuses meanwhile unless without_teammate_list: true).',
+        );
       const lists = mateLists.map((l) => l?.territories ?? []);
       const budgetMs = picksBudgetMs(deps.env);
       let plan: ReturnType<typeof planPicks>;

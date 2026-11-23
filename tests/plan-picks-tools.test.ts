@@ -591,5 +591,7 @@ describe("warapp_plan_picks with my teammate's list (C2, coordination)", () => {
     expect(p.team.teammates[0]!.picks).toBeNull();
     expect(p.team).not.toHaveProperty('coordination');
     expect(p.rationale.join(' ')).not.toMatch(/teammate's list is read/);
+    // #435: unknown, not empty — the submit is held until it can be read.
+    expect(JSON.stringify(p.warnings)).toMatch(/could not be read.*hold the submit.*without_teammate_list/);
   });
 });

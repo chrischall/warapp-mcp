@@ -302,6 +302,30 @@ describe('truceBreaksIn', () => {
   });
 });
 
+describe('planRelationsFrom: tacit truces (#435)', () => {
+  const quiet = [at(2), at(3), at(4), at(5)];
+  const tacit = (ps: RelationPlayer[]) =>
+    planRelationsFrom({
+      agreements: [],
+      graph,
+      board: quiet[3]!.board,
+      boards: quiet,
+      me: ME,
+      turn: 5,
+      players: ps,
+      incomes: { mine: null, opponents: new Map() },
+    }).tacit;
+
+  it('lists a quiet neighbour off my team', () => {
+    expect(tacit(players())).toEqual([{ player: P, quietTurns: 3, border: [4] }]);
+    expect(tacit(players({ [ME]: { team: 1 }, [P]: { team: 2 }, [OTHER]: { team: 1 } }))).toEqual([{ player: P, quietTurns: 3, border: [4] }]);
+  });
+
+  it("never lists a teammate: a teammate's quiet border is no truce (#246, as warapp_get_relations reads it)", () => {
+    expect(tacit(players({ [ME]: { team: 1 }, [P]: { team: 1 }, [OTHER]: { team: 2 } }))).toEqual([]);
+  });
+});
+
 describe('planRelationsFrom: Diplomacy cards in effect (PLAN-TEAMS D3, T9)', () => {
   const b = at(4);
   const plan = (agreements: Agreement[], diplomacy?: { player: number; untilTurn: number }[], turn = 4) =>

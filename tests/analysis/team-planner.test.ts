@@ -107,6 +107,29 @@ describe('C3.3: one owner per bonus', () => {
     expect(focused.warnings.join('\n')).toMatch(/Focus on bonus B102 \(#102\) ignored: my teammate holds T5 \(#5\)/);
     expect(focused.moves.some((m) => /B102/.test(m.reason))).toBe(false);
   });
+  it('#435: with Gift in play, works a shared bonus I am nearer to (more members than my teammate), never claiming it complete', () => {
+    // Bonus 102 is 2–5: I hold 2 and 3, my teammate 5, 4 is neutral. I hold the most: it is mine to work,
+    // and it pays only once my teammate hands 5 over (a Gift), so the capture of 4 advances it, never completes it.
+    const g3 = buildGraph({ ...lineMap(8), bonuses: [{ id: 102, name: 'B102', value: 5, territoryIds: [2, 3, 4, 5], bonusIds: [] }] });
+    const b3 = board([neutral(1, 2), mine(2, 2), mine(3, 12), neutral(4, 2), player(5, 5, MATE), neutral(6, 2), neutral(7, 2), player(8, 5, 20)]);
+    const gift = { players: PLAYERS, turn: 3, cardsInPlay: ['Gift'] };
+    const p3 = planTurn({ graph: g3, board: b3, me: ME, income: 5, settings, game: gift, options: { adapt: true } });
+    const text = p3.rationale.join('\n');
+    expect(text).not.toMatch(/Skip bonus B102/);
+    expect(text).toMatch(/Bonus B102 \(#102\): I hold 2 of its 4 members, my teammate 1 — I am nearer, so it is mine to work .*T5 \(#5\)/);
+    expect(p3.moves.some((m) => m.to === 4 && /advances bonus B102/.test(m.reason))).toBe(true);
+    expect(p3.moves.some((m) => /completes bonus B102/.test(m.reason))).toBe(false);
+    // A tie is nobody's: skipped as before.
+    const tied = board([neutral(1, 2), neutral(2, 2), mine(3, 12), neutral(4, 2), player(5, 5, MATE), neutral(6, 2), neutral(7, 2), player(8, 5, 20)]);
+    const p4 = planTurn({ graph: g3, board: tied, me: ME, income: 5, settings, game: gift, options: { adapt: true } });
+    expect(p4.rationale.join('\n')).toMatch(/Skip bonus B102 \(#102\): my teammate holds T5 \(#5\)/);
+    // Owner decision 2026-11-22: only with the Gift card in play (the handover needs it); otherwise, or unknown, skipped as before.
+    for (const game of [{ players: PLAYERS, turn: 3 }, { players: PLAYERS, turn: 3, cardsInPlay: ['Reinforcement'] }]) {
+      const p5 = planTurn({ graph: g3, board: b3, me: ME, income: 5, settings, game, options: { adapt: true } });
+      expect(p5.rationale.join('\n')).toMatch(/Skip bonus B102 \(#102\): my teammate holds T5 \(#5\)/);
+      expect(p5.moves.some((m) => /B102/.test(m.reason))).toBe(false);
+    }
+  });
   it('reports no shared bonus when I hold none of it', () => {
     expect(plan.team).toBeUndefined();
   });

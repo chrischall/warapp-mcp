@@ -624,10 +624,12 @@ export function bonusScoring(
   const neutralSize = s.neutralArmies !== undefined && s.neutralArmies >= 0 ? s.neutralArmies : undefined;
   const neutralCost = neutralSize !== undefined ? (costOf(neutralSize) ?? Infinity) : Infinity;
   const neutralLoss = neutralSize !== undefined && Number.isFinite(neutralCost) ? Math.min(neutralCost - 1, straightKills(neutralSize, rates.defensiveKillRate)) + 1 : Infinity;
+  // #435: whether the Gift card is in play (the shared-bonus handover needs it).
+  const giftInPlay = pc.game.cardsInPlay?.includes('Gift') === true;
   for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
     const isFocus = focus.has(b.id);
     const ts = bonusTerritories(g, b.id);
-    const remaining = ts.filter((t) => !mineSet.has(t));
+    let remaining = ts.filter((t) => !mineSet.has(t));
     if (b.value < 0 && !isFocus) {
       // Completing it would cut income: never plan into it (an economic
       // membership elsewhere still wins — see the pass-3 filter).
@@ -647,13 +649,25 @@ export function bonusScoring(
     // PLAN-TEAMS C3.3: a bonus pays only the player holding every member, so one with a member my
     // teammate visibly holds is not mine to complete (plan/team.ts reports the shared ones).
     const mates = remaining.filter((t) => teammateAt(pc, t));
-    if (mates.length) {
+    // #435 (proposed rule): one of us must work a shared bonus, or nobody does (45701358: four, +69,
+    // left to plain expansion). Whoever holds the most members (`nearer`, as team.sharedBonuses reads
+    // it) works it: when that is me, alone, its other members are scored as mine to take, and the
+    // teammate's members are theirs to hand over (a Gift) — never captured, never costed, and never
+    // a completion this turn (`completable` false while they stand), so no income is claimed for it.
+    // Owner decision 2026-11-22: only with the Gift card in play — the handover needs one; without it
+    // (or the cards unread) a shared bonus is skipped as before.
+    const handover = mates.length ? (giftInPlay && nearerMe(pc, ts) ? mates : undefined) : [];
+    if (handover === undefined) {
       if (remaining.some(bonusTarget) || isFocus)
         rationale.push(
           `Skip bonus ${b.name} (#${b.id}): my teammate holds ${mates.map(label).join(', ')}, and a bonus pays only the player holding all of it.`,
         );
       if (isFocus) ps.warnings.push(`Focus on bonus ${b.name} (#${b.id}) ignored: my teammate holds ${mates.map(label).join(', ')} (one owner per bonus).`);
       continue;
+    }
+    if (handover.length) {
+      remaining = remaining.filter((t) => !handover.includes(t));
+      if (!remaining.length) continue;
     }
     // Cluster as a unit (#70): the negative bonuses its missing members complete come off its
     // worth (on a map without negative bonuses, net = value).
@@ -782,11 +796,21 @@ export function bonusScoring(
     cost += fogged * fogEach + foggedNeutral * neutralEach;
     loss += fogged * fogLoss + foggedNeutral * neutralEachLoss;
     const fogNeutral: FogNeutral | undefined = foggedNeutral ? { count: foggedNeutral, each: neutralEach, size: neutralSize! } : undefined;
-    if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach, ...(fogNeutral ? { fogNeutral } : {}) });
     // #432: while the gate budget is short, no bonus is built through a wasteland: its armies go to the gates —
     // unless this turn's captures can complete it (owner decision 2026-11-22: a completing wasteland is taken).
     const wasteStop = !isFocus && pc.shortGates !== undefined && wastelands.length > 0 && !remaining.every(bonusTarget);
     const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net && !wasteStop);
+    // #435: a shared bonus I am nearer to but that is not worth working stays as C3.3 left it — skipped
+    // with its members plain expansion, never marked uneconomic (45701358 turn 1: a 344-member super-bonus,
+    // 6 members to my teammate's 5, would otherwise have stopped expansion into all its members).
+    if (handover.length && !economic) {
+      if (remaining.some(bonusTarget))
+        rationale.push(
+          `Skip bonus ${b.name} (#${b.id}): my teammate holds ${handover.map(label).join(', ')}, and a bonus pays only the player holding all of it.`,
+        );
+      continue;
+    }
+    if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach, ...(fogNeutral ? { fogNeutral } : {}) });
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
     if (!economic && wasteStop && loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net) {
@@ -801,10 +825,18 @@ export function bonusScoring(
       );
       continue;
     }
+    // #435: said once the bonus is worth working (an uneconomic one says only that).
+    if (handover.length) {
+      const mineN = ts.filter((t) => mineSet.has(t)).length;
+      rationale.push(
+        `Bonus ${b.name} (#${b.id}): I hold ${mineN} of its ${ts.length} members, my teammate ${handover.length} — I am nearer, so it is mine to work ` +
+          `(#435); it pays only once my teammate hands over ${handover.map(label).join(', ')} (a Gift), so no capture here completes it.`,
+      );
+    }
     // R3: what holding the completed bonus's frontier would cost next turn (each
     // remaining member holding the survivors of its capture, mine their armies now).
     let defenseCost = 0;
-    if (guarded && remaining.every(bonusTarget)) {
+    if (guarded && !handover.length && remaining.every(bonusTarget)) {
       const rem = new Set(remaining);
       const exposed = exposure(ts, (n) => rem.has(n), (m) => {
         if (!rem.has(m)) return armiesOf(m);
@@ -823,14 +855,15 @@ export function bonusScoring(
       mineSet,
       reach,
       (x) => (mineSet.has(x) ? armiesOf(x) : survivorsOf(x)),
-      !(guarded && remaining.every(bonusTarget)),
+      !(guarded && !handover.length && remaining.every(bonusTarget)),
     ).armies;
     plans.push({
       bonusId: b.id,
       value: b.value,
       focus: isFocus,
       remaining,
-      completable: remaining.every(bonusTarget),
+      // #435: never complete while a teammate's member is still theirs.
+      completable: !handover.length && remaining.every(bonusTarget),
       cost,
       borders: analyzeBonus(g, b.id)!.borderTerritoryIds.length,
       defenseCost,
@@ -850,6 +883,20 @@ export function bonusScoring(
       Number(b.focus) - Number(a.focus) || ratio(b) - ratio(a) || a.borders - b.borders || a.bonusId - b.bonusId,
   );
   return { fogNote, toFinish, plans, wasteShare, wasteCost, wasteLoss, finishCost, economicMember, uneconomicMember, negativeMember, rememberedSaid, ratio };
+}
+
+/**
+ * #435: whether I alone hold the most members of `ts` among me and each teammate visibly holding one
+ * (the `nearer` of team.sharedBonuses, plan/team.ts); a tie is nobody's.
+ */
+function nearerMe(pc: Pick<PlanCtx, 'allies' | 'territories' | 'mineSet'>, ts: readonly number[]): boolean {
+  const mine = ts.filter((t) => pc.mineSet.has(t)).length;
+  const per = new Map<number, number>();
+  for (const t of ts) {
+    const o = pc.territories.get(t)?.owner;
+    if (o?.kind === 'player' && pc.allies.has(o.playerId)) per.set(o.playerId, (per.get(o.playerId) ?? 0) + 1);
+  }
+  return mine > Math.max(0, ...per.values());
 }
 
 /** #319: the opening warning's bound: at least this many territories held with no bonus. */
