@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.8.0](https://github.com/chrischall/warapp-mcp/compare/v0.7.0...v0.8.0) (2026-11-23)
+
+
+### Features
+
+* **cards:** count an opponent's Reinforcement card once and run its clock at the expected rate ([#427](https://github.com/chrischall/warapp-mcp/issues/427)) ([#491](https://github.com/chrischall/warapp-mcp/issues/491)) ([e84520b](https://github.com/chrischall/warapp-mcp/commit/e84520b75adabe243e3e6b97fb06cdc752c56204))
+* **join:** the joining policy is a refusal, with the handicap rules added ([#423](https://github.com/chrischall/warapp-mcp/issues/423)) ([#471](https://github.com/chrischall/warapp-mcp/issues/471)) ([c1760d0](https://github.com/chrischall/warapp-mcp/commit/c1760d0e1216a8a8d4a66f350e9fa9b0c7498524))
+* **join:** warn before joining a tournament game ([#423](https://github.com/chrischall/warapp-mcp/issues/423)) ([#481](https://github.com/chrischall/warapp-mcp/issues/481)) ([59558ad](https://github.com/chrischall/warapp-mcp/commit/59558adbf3dc8eed3538375150df87fd7fff6001))
+* **outlook:** advise a coalition against the leader before the surrender line ([#445](https://github.com/chrischall/warapp-mcp/issues/445)) ([#473](https://github.com/chrischall/warapp-mcp/issues/473)) ([8101535](https://github.com/chrischall/warapp-mcp/commit/8101535ff52521439d7a83171f132f595be0f3b4))
+* **picks:** replace a 1v1 primary pick that only pays beside the pick above it ([#429](https://github.com/chrischall/warapp-mcp/issues/429)) ([#487](https://github.com/chrischall/warapp-mcp/issues/487)) ([9a8f29c](https://github.com/chrischall/warapp-mcp/commit/9a8f29cf78d786953d16dd3dd76d14ef56d45ba5))
+* **planner:** a doomed conceded stack attacks out or merges instead of standing ([#431](https://github.com/chrischall/warapp-mcp/issues/431)) ([#490](https://github.com/chrischall/warapp-mcp/issues/490)) ([c111426](https://github.com/chrischall/warapp-mcp/commit/c111426898bfdc644270751e574d7f31cf52f87d))
+* **planner:** a lone foothold carries its building share, not the whole bonus ([#425](https://github.com/chrischall/warapp-mcp/issues/425)) ([#483](https://github.com/chrischall/warapp-mcp/issues/483)) ([c1a0ca1](https://github.com/chrischall/warapp-mcp/commit/c1a0ca14d9e0ebbaa064578a34ae34463bbb477d))
+* **planner:** complete a bonus that repays its losses in one turn ([#422](https://github.com/chrischall/warapp-mcp/issues/422)) ([#486](https://github.com/chrischall/warapp-mcp/issues/486)) ([288bc65](https://github.com/chrischall/warapp-mcp/commit/288bc65fcaaca6ed4770c4ec76e9c5f4772764a9))
+* **planner:** count only the income Local Deployment lets reach the gates in the 1v1 gate budget ([#433](https://github.com/chrischall/warapp-mcp/issues/433)) ([#493](https://github.com/chrischall/warapp-mcp/issues/493)) ([7daf87c](https://github.com/chrischall/warapp-mcp/commit/7daf87c6556335dae69c29d2e1bf9e3754e08ad6))
+* **planner:** finish the nearest bonus first: count armies beside it, ignore +1 bonuses ([#416](https://github.com/chrischall/warapp-mcp/issues/416)) ([#484](https://github.com/chrischall/warapp-mcp/issues/484)) ([ef4805e](https://github.com/chrischall/warapp-mcp/commit/ef4805ed13418cf38a071956d22a1330d5e06259))
+* **planner:** retake a lost held-bonus member in every format ([#430](https://github.com/chrischall/warapp-mcp/issues/430)) ([#488](https://github.com/chrischall/warapp-mcp/issues/488)) ([2366430](https://github.com/chrischall/warapp-mcp/commit/2366430b684d8b58a712c84df080cafcc101e576))
+* **planner:** shorter capture payback and no wastelands while a 1v1's gates are short ([#432](https://github.com/chrischall/warapp-mcp/issues/432)) ([#489](https://github.com/chrischall/warapp-mcp/issues/489)) ([4ed1d2f](https://github.com/chrischall/warapp-mcp/commit/4ed1d2fec6e60f7c6124a6ef107170ac39506bca))
+* **planner:** take free no-loss neutral captures and warn about idle stacks beside them ([#426](https://github.com/chrischall/warapp-mcp/issues/426)) ([#485](https://github.com/chrischall/warapp-mcp/issues/485)) ([f86b54c](https://github.com/chrischall/warapp-mcp/commit/f86b54c2fd6ce626922cad481cce314c275ea5d4))
+* **teams:** the nearer teammate works a shared bonus when Gift is in play; team-game fixes ([#435](https://github.com/chrischall/warapp-mcp/issues/435)) ([#492](https://github.com/chrischall/warapp-mcp/issues/492)) ([7dfda54](https://github.com/chrischall/warapp-mcp/commit/7dfda541adca070db8f799f92eb56ca6e665c3c8))
+
+
+### Bug Fixes
+
+* **picks:** document the team-game teammate-list refusal; sweep auto-review follow-ups ([#496](https://github.com/chrischall/warapp-mcp/issues/496)) ([9bb203d](https://github.com/chrischall/warapp-mcp/commit/9bb203d0a29c3f1ef3172eca47a6f45b0435d436))
+* **picks:** rank a very large map from its best bonuses, with a time budget and a bounded compact view ([#474](https://github.com/chrischall/warapp-mcp/issues/474)) ([85f1bcf](https://github.com/chrischall/warapp-mcp/commit/85f1bcf756345b4a44b4683579d3cabd1b41deaf))
+* **picks:** rank by score alone when every territory is dealt ([#476](https://github.com/chrischall/warapp-mcp/issues/476)) ([#494](https://github.com/chrischall/warapp-mcp/issues/494)) ([dd4eb85](https://github.com/chrischall/warapp-mcp/commit/dd4eb857529ca2d4c405be1d60c857203f22e174))
+* **picks:** rank very large maps by each territory's own opening, within the budget ([#476](https://github.com/chrischall/warapp-mcp/issues/476)) ([#482](https://github.com/chrischall/warapp-mcp/issues/482)) ([18116fc](https://github.com/chrischall/warapp-mcp/commit/18116fc15ff089c18185ad703e20eaeeb82bcb2b))
+* **planner:** idle stacks walk up behind conceded borders when no front is reachable ([#497](https://github.com/chrischall/warapp-mcp/issues/497)) ([ee12355](https://github.com/chrischall/warapp-mcp/commit/ee123554f2da868a10bdb681d870983759be8dff))
+
+
+### Refactor
+
+* one gameBaseIncome accessor; GOLDEN_DUMP for reviewing golden updates ([#433](https://github.com/chrischall/warapp-mcp/issues/433)) ([#466](https://github.com/chrischall/warapp-mcp/issues/466)) ([33d57e9](https://github.com/chrischall/warapp-mcp/commit/33d57e9121a6921de6522cfdfcc80e1bde47c83f))
+* split the deploy-estimate and income helpers out of plan/shared.ts ([#469](https://github.com/chrischall/warapp-mcp/issues/469)) ([d1ce252](https://github.com/chrischall/warapp-mcp/commit/d1ce252ecd54b1ae14481faa000c3589b653269f))
+* split the opponent-observation block out of plan/shared.ts ([#467](https://github.com/chrischall/warapp-mcp/issues/467)) ([971ab6c](https://github.com/chrischall/warapp-mcp/commit/971ab6cb88095f5acb71f3cb69570238c14c7d98))
+* split withdrawals out of plan/holds.ts and the strike stack out of plan/strike.ts ([#470](https://github.com/chrischall/warapp-mcp/issues/470)) ([12a2f0d](https://github.com/chrischall/warapp-mcp/commit/12a2f0d4c491e32db77bb426790de8f67a745551))
+
+
+### Documentation
+
+* Reconnaissance is accepted live ([#463](https://github.com/chrischall/warapp-mcp/issues/463)) ([#464](https://github.com/chrischall/warapp-mcp/issues/464)) ([336be79](https://github.com/chrischall/warapp-mcp/commit/336be792b3bef260ba54b84c7c996d167f03add6))
+
 ## [0.7.0](https://github.com/chrischall/warapp-mcp/compare/v0.6.0...v0.7.0) (2026-11-20)
 
 
