@@ -2500,7 +2500,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
 - **A game's map comes from `mapOf(game)`** (`src/tools/map.ts`), which applies the game's
   `OverriddenBonuses` (`applyBonusOverrides`); load the game with `settings: true` wherever bonus
   values matter. The JSON shape is verified live (an array of `{ bonusID, value }` numbers); overrides
-  that do not read in full keep the submit pre-checks soft.
+  that do not read in full keep the submit pre-checks soft. Mega-game audit (2026-11-23, game settings
+  with 1,067 overrides, 397 paying, MinimumArmyBonus 15): plan_turn, check_plan, plan_picks, get_map,
+  the outlook and the stress test already read the game's values and base income, and skip bonuses
+  worth 0 or less as targets while still routing through them; the one gap was `recordFromGame`
+  (map stats), which now applies the game's overrides (records cached before keep their old reading).
+  `warapp_get_map` `income_map: true` (`incomeMap`) lists only the paying bonuses with members and size.
 - **API facts live in `docs/WARAPP-API.md`**, each marked verified or unverified. The board
   standing parser (`src/board.ts`) is unverified and must stay loose (never throw). Territory
   and bonus ids overlap, so a bonus member is a territory first and a superbonus only otherwise.

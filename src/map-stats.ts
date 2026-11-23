@@ -14,6 +14,7 @@
 // (`historyBoards`), and a game whose history does not parse still records its
 // winner, with no starts. Such a game says nothing about starts or bonuses, so
 // {@link mapStats} leaves it out of every figure and counts it apart (#132).
+import { applyBonusOverrides } from './analysis/overrides.js';
 import type { BoardState } from './board.js';
 import type { Game, GameMap } from './normalize.js';
 import { historyBoards, historyReport } from './trend.js';
@@ -82,8 +83,13 @@ const ownedBy = (board: BoardState, playerId: number): Set<number> =>
 const scoringBonuses = (map: GameMap) =>
   map.bonuses.filter((b) => b.value > 0 && b.territoryIds.length > 0).sort((a, b) => a.id - b.id);
 
-/** Reduce a finished game (with `GetHistory`) to its stats record. Never throws on a bad history. */
-export function recordFromGame(game: Game, map: GameMap): GameRecord {
+/**
+ * Reduce a finished game (with `GetHistory`) to its stats record. Never throws on a bad history.
+ * `map` carries the map's own values; the game's `OverriddenBonuses` are applied here, so a bonus
+ * the game made worthless is neither an anchor nor a first completion.
+ */
+export function recordFromGame(game: Game, base: GameMap): GameRecord {
+  const map = applyBonusOverrides(base, game.settings);
   const boards = historyBoards(game.history, game.players, game.numberOfTurns !== undefined ? { numberOfTurns: game.numberOfTurns } : {});
   const start = boards.find(({ board }) => board.territories.some((t) => t.owner.kind === 'player'));
   const later = start ? boards.filter((b) => b.turn >= start.turn) : [];

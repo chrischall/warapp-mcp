@@ -2,8 +2,10 @@ import { McpToolError } from '@chrischall/mcp-utils';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { analyzeBonuses, applyBonusOverrides, findChokepoints, type BonusAnalysis, type MapGraph } from '../analysis/index.js';
+import { bonusTerritories } from '../analysis/bonuses.js';
+import { gameBaseIncome } from '../analysis/player.js';
 import type { WarappClient } from '../client.js';
-import type { Game, GameMap } from '../normalize.js';
+import type { Game, GameMap, GameSettings } from '../normalize.js';
 import { gameIdArg, graphOf, mapSummary, readAnnotations, respond, round2, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { modeRow, withModeTerritories, type MapDetailsContext } from './map-details.js';
@@ -64,6 +66,41 @@ function detail(g: MapGraph, b: BonusAnalysis) {
   return out;
 }
 
+/**
+ * The income map (mega-game spec part 3): only the bonuses that pay in this game (value > 0 after its
+ * `OverriddenBonuses`), each with its size and member territories (a superbonus's flattened), highest
+ * value first (then the smaller, then by id), and the base income every player gets on top. A bonus
+ * worth 0 or less is left out — it pays nothing here, though its territories can still be crossed.
+ */
+export function incomeMap(g: MapGraph, settings: GameSettings | undefined, opts: { bonus?: string; limit?: number } = {}) {
+  const paying = g.map.bonuses.filter((b) => b.value > 0);
+  const q = opts.bonus?.trim().toLowerCase();
+  const rows = paying
+    .filter((b) => !q || b.name.toLowerCase().includes(q))
+    .map((b) => ({ b, members: bonusTerritories(g, b.id) }))
+    .sort((x, y) => y.b.value - x.b.value || x.members.length - y.members.length || x.b.id - y.b.id);
+  const shown = opts.limit === undefined ? rows : rows.slice(0, opts.limit);
+  const per = settings?.bonusArmyPer ?? 0;
+  return {
+    baseIncome: gameBaseIncome(settings),
+    ...(per > 0 ? { territoriesPerArmy: per } : {}),
+    paying: paying.length,
+    notPaying: g.map.bonuses.length - paying.length,
+    bonusesShown: `${shown.length} of ${rows.length}`,
+    bonuses: shown.map(({ b, members }) => ({
+      bonusId: b.id,
+      name: b.name,
+      value: b.value,
+      size: members.length,
+      territories: named(g, members),
+      ...(b.bonusIds.length ? { memberBonuses: b.bonusIds.map((id) => ({ id, name: g.bonusById.get(id)?.name ?? String(id) })) } : {}),
+    })),
+    note:
+      `Income each turn is the base income (${gameBaseIncome(settings)}${per > 0 ? `, or 1 per ${per} territor${per === 1 ? 'y' : 'ies'} held when that is more` : ''}) ` +
+      "plus every bonus listed here held whole, at the game's values (its overridden bonuses applied). Every other bonus pays nothing in this game; its territories can still be crossed.",
+  };
+}
+
 function chokepoints(g: MapGraph, limit?: number) {
   const all = findChokepoints(g);
   const bonusName = (id: number | null) => (id === null ? null : (g.bonusById.get(id)?.name ?? String(id)));
@@ -89,6 +126,10 @@ export function registerMapTool(server: McpServer, client: WarappClient, live: M
           '`bonus` (part of a bonus name) to see one bonus\'s territories, borders and entry points by name. ' +
           'View "full" also lists the map\'s distribution modes with the territories each lets a player start on ' +
           '(read once from war.app\'s map details through the web-client channel (direct or bridge), then kept with the map; unknown is null). ' +
+          '`income_map: true` answers only the income map instead: the bonuses that pay in this game (value above 0 after the game\'s ' +
+          'overridden bonus values; a bonus overridden to 0 pays nothing but can still be crossed), each with its value, size and member ' +
+          'territories, highest value first, and the base income (MinimumArmyBonus) every player gets on top. ' +
+          'Every view uses the game\'s overridden bonus values, not the map\'s defaults. ' +
           'Map-only — needs no board, so it works in a lobby. Read-only.',
       ),
       _meta: lookupMeta(['warzone map', 'best bonuses', 'easiest bonus', 'chokepoints']),
@@ -100,6 +141,10 @@ export function registerMapTool(server: McpServer, client: WarappClient, live: M
           .enum(['easiest', 'value', 'name'])
           .optional()
           .describe('Bonus order: "easiest" (default — ease score = value / (territories + borders)), "value", or "name".'),
+        income_map: z
+          .boolean()
+          .optional()
+          .describe("Only the income map: the bonuses that pay at this game's values, with members and size, and the base income (default false)."),
         limit: z.coerce.number().int().min(1).max(1000).optional().describe(`Max bonus rows (default ${DEFAULT_LIMIT} on compact; all on full).`),
         view: viewArg(
           VIEWS,
@@ -109,11 +154,17 @@ export function registerMapTool(server: McpServer, client: WarappClient, live: M
         ),
       }),
     },
-    async ({ game_id, bonus, sort, limit, view }) => {
+    async ({ game_id, bonus, sort, limit, view, income_map }) => {
       // Settings carry the game's overridden bonus values, which the bonus table reports.
       const game = await client.getGame(game_id, { settings: true });
       const map = mapOf(game);
       const g = graphOf(map);
+      if (income_map) {
+        return respond(undefined, ['compact'], () => ({
+          map: mapSummary(map),
+          incomeMap: incomeMap(g, game.settings, { ...(bonus ? { bonus } : {}), ...(limit !== undefined ? { limit } : {}) }),
+        }));
+      }
       // #328: only the full table lists the modes' starting territories, so only it may ask war.app for them.
       const modes = view === 'full' && !bonus?.trim() ? await withModeTerritories(live, map) : undefined;
       const order = SORTS[sort ?? 'easiest'];
