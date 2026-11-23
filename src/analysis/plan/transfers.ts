@@ -210,6 +210,12 @@ export function transfers(
       }
       return border === undefined ? undefined : { border, front: at };
     };
+    // Rule 6's last target (owner, 2026-11-22; golden s246): with no enemy front and no territory not mine
+    // reachable without crossing a border the plan concedes — the last neutral taken, the enemy past those
+    // borders — a stack had no target and stood deep inside. It walks up behind the conceded borders on the way to
+    // the enemy instead: never into one (the plan gives it up), and one already beside one waits there (#367).
+    const behind = [...conceded].filter((c) => held.has(c) && distEnemyThrough.has(c));
+    const distBehind = bfsDistances(g, behind, { passable });
     // #125: staging. Idle armies on a territory facing no visible enemy — a border beside neutrals
     // included — walk one step toward the source of the capture the leftover saved toward, when
     // it is no farther than the enemy front; once there they help take it.
@@ -274,7 +280,8 @@ export function transfers(
         distEnemyVia.get(t)! < (distEnemy.get(t) ?? Infinity) &&
         distEnemyVia.get(t)! <= (distAny.get(t) ?? Infinity) &&
         !neighborsOf(g, t).some((x) => isEnemy(x));
-      const dist = via ? distEnemyVia : distEnemy.has(t) ? distEnemy : distAny;
+      const toConceded = !via && !distEnemy.has(t) && !distAny.has(t) && distBehind.has(t);
+      const dist = via ? distEnemyVia : distEnemy.has(t) ? distEnemy : toConceded ? distBehind : distAny;
       const n = avail.get(t)!;
       if (n <= 0 || locked.has(t)) continue;
       // #417, the breach force: beside land a static seat left, still untaken and cheap at the
@@ -302,6 +309,16 @@ export function transfers(
           (x) =>
             mineSet.has(x) &&
             (via ? viaOk(x) : !conceded.has(x)) &&
+            // Behind a conceded border: up to the territory beside it, never into it — nor into a territory an attack
+            // leaves from this turn or one beside a rival at the start of the turn (an interior walk, not a strike's
+            // reinforcement: golden s1405's would have run before the strike that ends a player, taking its first slot).
+            (!toConceded ||
+              ((dist.get(x) ?? 0) >= 1 &&
+                !moves.some((m) => m.from === x && m.kind === 'attack') &&
+                !neighborsOf(g, x).some((y) => {
+                  const o = state.get(y)?.owner;
+                  return o?.kind === 'player' && o.playerId !== me && !teammateAt(pc, y);
+                }))) &&
             (dist.get(x) ?? Infinity) < d &&
             capStepRoom(pc, ps, t, x) > 0,
         )
@@ -349,6 +366,12 @@ export function transfers(
       arrived.set(step, (arrived.get(step) ?? 0) + k);
       // #260: say why a step goes toward a front past a conceded border, and what it heads for.
       let front = '';
+      // Rule 6's last target: say which conceded border the stack walks up behind, and why it stops beside it.
+      if (toConceded) {
+        const past = pastConceded(step);
+        if (past)
+          front = ` (no front is reachable without crossing a border the plan concedes: they walk up behind ${label(past.border)}, past which lies ${label(past.front)}, and wait beside it — once it falls the front is there)`;
+      }
       if (via) {
         const targets = attacksFrom(step);
         const beside = neighborsOf(g, step).filter((x) => !held.has(x) && isEnemy(x)).sort((a, b) => a - b);

@@ -1344,6 +1344,10 @@
 //     S …, the C sent leave L, above the H that hold it …"); a capture removes rule 4e's
 //     stand-still warning, and a refused try leaves no line.
 //  6. Idle armies on interior territories transfer one step toward the front,
+//     When no front and no territory not mine is reachable without crossing a border the plan concedes (the
+//     last neutral taken, the enemy past those borders; owner 2026-11-22, golden s246), an idle interior stack
+//     walks up behind the conceded borders on the way to the enemy — never into one, never into a territory an
+//     attack leaves from this turn or one beside a rival at the start of the turn — and waits beside them (#367).
 //     only into territories held at the start of the turn and never into, or
 //     measured through, a conceded border
 //     (unless `idleTransfers` is off: the planner's own switch, not war.app's AllowTransferOnly,
