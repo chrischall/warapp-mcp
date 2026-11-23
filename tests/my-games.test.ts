@@ -225,6 +225,8 @@ describe('warapp_my_games', () => {
         { name: 'Bob', state: 'Playing', committed: true },
         { name: 'Ann', state: 'Playing', committed: false },
       ],
+      // The game list's unread-chat flags (each false by default in the synthetic list).
+      unreadChat: { public: false, team: false, private: false, group: false, toMe: false },
       // #317: this fake answers no GameRefresh, so the details are unread: unknown, never "none".
       surrenderPending: null,
     });

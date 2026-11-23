@@ -14,6 +14,7 @@ import type { Reader } from './protocol/codec.js';
 import { playerStateName } from './player-states.js';
 import { fields, isObj } from './protocol/decoded.js';
 import { carriesTeam } from './teams.js';
+import type { ChatChannel } from './chat.js';
 
 export const MY_GAMES_RETURN = 'warlight.shared.MyGamesReturn';
 export const GAME_INFO = 'warlight.shared.GameInfo';
@@ -70,6 +71,27 @@ export interface UnreadChatFlags {
   team: boolean;
 }
 
+/**
+ * A game's unread chat as warapp_my_games reports it: war.app's flags per channel (booleans, not counts: the list
+ * carries no count) and `toMe`, the private flag — a private conversation in my list is one I am in and my own
+ * messages are never unread to me, so unread private chat is addressed to me. UNVERIFIED live, like the flags.
+ */
+export interface UnreadChatView extends UnreadChatFlags {
+  toMe: boolean;
+}
+
+/** The view of the flags, or null when they did not read. */
+export const unreadChatView = (f: UnreadChatFlags | undefined): UnreadChatView | null =>
+  f ? { public: f.public, team: f.team, private: f.private, group: f.group, toMe: f.private } : null;
+
+/** The flag each chat channel's unread state shows in (the web client's `unknown` is the game groups). */
+export const CHANNEL_FLAG: Readonly<Record<ChatChannel, keyof UnreadChatFlags>> = {
+  public: 'public',
+  team: 'team',
+  private: 'private',
+  unknown: 'group',
+};
+
 /** Whether any of the flags is set. */
 export const anyUnreadChat = (f: UnreadChatFlags | undefined): boolean =>
   f !== undefined && (f.group || f.private || f.public || f.team);
@@ -98,6 +120,8 @@ export interface MyGame {
   turn: number | null;
   waitingOnYou: boolean;
   players: Array<{ name: string; state: string; committed: boolean }>;
+  /** The game list's unread-chat flags (null when they did not read); see {@link UnreadChatView}. */
+  unreadChat?: UnreadChatView | null;
 }
 
 /** The GetMyGames reply arrived in a shape this server does not understand. */
@@ -206,9 +230,16 @@ export function summarizeMyGames(games: readonly RawMyGame[], myInGameId: number
         state: playerStateName(p.stateCode),
         committed: p.committed,
       })),
+      unreadChat: unreadChatView(g.unreadChat),
     };
   });
-  return [...out.filter((g) => g.waitingOnYou), ...out.filter((g) => !g.waitingOnYou)];
+  // Waiting on me first, then unread private chat, then the rest (war.app's order within each).
+  const privateUnread = (g: MyGame) => !g.waitingOnYou && g.unreadChat?.private === true;
+  return [
+    ...out.filter((g) => g.waitingOnYou),
+    ...out.filter(privateUnread),
+    ...out.filter((g) => !g.waitingOnYou && !privateUnread(g)),
+  ];
 }
 
 /**
@@ -258,14 +289,18 @@ export function unflaggedFinished(games: readonly RawMyGame[]): number[] {
 const BRIEF_MAX = 120;
 
 /**
- * One brief line, `name — <turn N | state> — waiting on you | waiting on others`,
+ * One brief line, `name — <turn N | state> — waiting on you | waiting on others`, then ` — unread private`
+ * and ` — unread <channels>` from the game list's unread flags (flags, not counts),
  * at most {@link BRIEF_MAX} characters: the name (another player's text) is
  * flattened to one line and shortened first; a name starting `-- ` or `\` gets
  * one leading `\` so it can never read as a note line.
  */
 export function briefGameLine(game: MyGame): string {
   const where = game.state === 'Playing' && game.turn !== null ? `turn ${game.turn}` : game.state;
-  const tail = ` — ${where} — ${game.waitingOnYou ? 'waiting on you' : 'waiting on others'}`;
+  const u = game.unreadChat;
+  const others = u ? (['public', 'team', 'group'] as const).filter((c) => u[c]) : [];
+  const unread = (u?.private ? ' — unread private' : '') + (others.length ? ` — unread ${others.join(', ')}` : '');
+  const tail = ` — ${where} — ${game.waitingOnYou ? 'waiting on you' : 'waiting on others'}${unread}`;
   const flat = game.name.replace(/\s+/g, ' ').trim() || '(untitled)';
   const escaped = flat.startsWith('-- ') || flat.startsWith('\\') ? `\\${flat}` : flat;
   const room = BRIEF_MAX - tail.length;

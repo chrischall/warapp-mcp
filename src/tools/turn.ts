@@ -103,7 +103,7 @@ import {
   viewArg,
 } from './common.js';
 import { lookupMeta, mintMeta } from './hints.js';
-import { chatSummary } from './chat.js';
+import { chatSummary, privateToMeUnread, privateToMeWarning } from './chat.js';
 import { blockedLog, CHAT_BLOCKS_NOTE, chatSeats, planChatView, planStanding, turnChatBlocks, withBlocks } from './chat-advice.js';
 import { chatBlockLine } from '../analysis/chat-blocks.js';
 import { chatAutomationMode, chatBlocksTurnMode, type ChatBlocksTurn } from '../chat-automation.js';
@@ -2986,6 +2986,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
       const standInNote = standInLine(standInOf(ctx));
       if (standInNote) warnings.unshift(standInNote);
+      // Unread private chat to me leads every warning (report only: read after the plan, no order reads it). From
+      // GameFeed's chat, else one GameRefresh only when GameFeed shows unread messages of others with no channel.
+      const privateLine = chat ? privateToMeWarning(await privateToMeUnread(ctx, game, chat)) : undefined;
+      if (privateLine) warnings.unshift(privateLine);
       // #312 E3: after turns 4 and 8, my income beside the pace my finished games on this map set
       // (reported only: read after the plan is made, never an input to it).
       const paceRecord = PACE_TURNS.includes(turnsCompleted(game) as (typeof PACE_TURNS)[number])
