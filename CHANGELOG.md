@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/chrischall/warapp-mcp/compare/v0.10.0...v0.11.0) (2026-11-23)
+
+
+### Features
+
+* **chat:** territory and bonus links in chat ([#514](https://github.com/chrischall/warapp-mcp/issues/514)) ([e031143](https://github.com/chrischall/warapp-mcp/commit/e031143e8f9a5886e30fe52ee63c0da46c62c7a9))
+* **relations:** partner-approved truce exceptions that are not breaks ([#512](https://github.com/chrischall/warapp-mcp/issues/512)) ([863804f](https://github.com/chrischall/warapp-mcp/commit/863804f0349391a748fae480f69b61a5b6ab9b2d))
+
+
+### Bug Fixes
+
+* **chat:** never mark a game seen that the inbox filter leaves out ([#515](https://github.com/chrischall/warapp-mcp/issues/515)) ([2abf9b2](https://github.com/chrischall/warapp-mcp/commit/2abf9b2796fafa57bd56d6da5bcee29b4b7628df))
+
 ## [0.10.0](https://github.com/chrischall/warapp-mcp/compare/v0.9.0...v0.10.0) (2026-11-23)
 
 
