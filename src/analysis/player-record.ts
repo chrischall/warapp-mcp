@@ -57,6 +57,8 @@ export interface RecordEntry {
     scopeSize: number | null;
     noticeTurns: number;
     cap: number | null;
+    /** Territory caps the agreement carried (a count only); absent when none. */
+    caps?: number;
     endCondition: 'none' | 'turn' | 'player-out' | 'turn-or-player-out';
     /** It named a player it was aimed at. */
     against: boolean;
@@ -123,6 +125,7 @@ export function recordEntryFor(
       scopeSize: scope === 'all' ? null : 'territories' in scope ? scope.territories.length : scope.bonuses.length,
       noticeTurns: a.terms.noticeTurns,
       cap: a.terms.borderCap ?? null,
+      ...(a.caps?.length ? { caps: a.caps.length } : {}),
       endCondition: endCondition(a.terms),
       against: a.terms.against !== undefined,
     },

@@ -646,7 +646,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   notes** (`RelationsLedger.coordination`, `src/analysis/coordination.ts`: `{id k<n>, with, target, mine, theirs, turn?,
   recordedTurn, doneTurn?, note?}`, ≤50 per game) are report only: `warapp_record_agreement` `coordination` /
   `coordination_done` (no agreement needed), listed by `warapp_get_relations`, told by `warapp_plan_turn` as a rationale line
-  appended in the tool layer when `coordinationDue` — the planner never sees them. Not yet: writing `broken-by-them` to the
+  appended in the tool layer when `coordinationDue` — the planner never sees them. **Territory caps**
+  (`Agreement.caps`, additive: `{territory, max, addedTurn, note?}`, ≤20, `withCaps`) amend a non-terminal agreement without
+  touching `terms`: `PlanRelation.territoryCaps` feeds `capsOf` beside the border cap (`promised` names the line), check_plan's
+  `territoryCapOverruns` warns, `capSelfCheck` adds a `cap-exceeded` flag `by: 'me'` that `trust` never sees, and the player
+  record keeps only `terms.caps` (a count). Not yet: writing `broken-by-them` to the
   ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
 - **Deals outside the ledger (#375): `avoid_territories` / `avoid_players`** on `warapp_plan_turn` and
   `warapp_check_plan`, for this call only (`PlanOptions.avoid`). The planner treats each like a truce's covered
