@@ -2444,14 +2444,16 @@ async function bombPlanView(a: Parameters<typeof airliftPlanView>[0]): Promise<R
   };
 }
 
-/** The Emergency Blockade card's type id, and the Blockade's. */
+/** The Emergency Blockade card's type id (the Blockade's is `CARD_BLOCKADE`, from src/cards.ts). */
 const CARD_EMERGENCY_BLOCKADE = 3;
 
 /**
- * Owner request 2026-11-24 (part B): `blockadePlan`, the best plan that walls off a conceded border with an Emergency
- * Blockade card (`src/analysis/blockade-plan.ts`; DRAFT: its denial term needs the owner's approval), beside the plain
- * plan, whose `orders` never change. Only when I hold an Emergency Blockade or a Blockade card; a Blockade alone is
- * named as not planned (it acts after the attacks, so the one-turn measure cannot value it).
+ * Owner request 2026-11-24 (part B): `blockadePlan`, the best wall plan beside the plain plan, whose `orders` never
+ * change (`src/analysis/blockade-plan.ts`). Only when I hold an Emergency Blockade or a Blockade card: an Emergency
+ * Blockade walls a conceded border before every move (`planWall`, the walled board planned), a Blockade walls a
+ * territory after the attacks while the stress-tested line keeps it mine (`planBlockade`, the plain orders plus the
+ * card); each is worth the bonus its fall would hand an opponent (× 0.8, owner-approved 2026-11-24), and the better
+ * of the two is offered (`card` names it).
  */
 async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promise<Record<string, unknown> | undefined> {
   const used = new Set([...a.cards.plays, ...a.cards.discards].map((c) => c.id));
