@@ -181,8 +181,8 @@ export type SyntheticOrder =
       units?: readonly SyntheticUnit[];
     }
   | { kind: 'card'; tag: 5 | 10 | 11; card: string }
-  /** Gift (13): the recipient's in-game id, then the territory. Blockade (18), Bomb (20), Emergency Blockade (8): the territory. */
-  | { kind: 'card'; tag: 13 | 18 | 20 | 8; card: string; ints: readonly number[] }
+  /** Gift (13): the recipient's in-game id, then the territory. Sanctions (15): the sanctioned player's in-game id. Blockade (18), Bomb (20), Emergency Blockade (8): the territory. */
+  | { kind: 'card'; tag: 13 | 15 | 18 | 20 | 8; card: string; ints: readonly number[] }
   /** Airlift (12): the armies (and units), from, to. */
   | { kind: 'card'; tag: 12; card: string; from: number; to: number; armies: number; units?: readonly SyntheticUnit[] }
   | { kind: 'discard'; card: string }
@@ -216,7 +216,7 @@ function writeOrder(w: Writer, o: SyntheticOrder, player: number): void {
       w.bool(true).bool(false).int32(o.armies).u8(units.length);
       for (const u of units) writeUnit(w, u);
       w.int32(o.from).int32(0).int32(o.to);
-    } else if (o.tag === 13 || o.tag === 18 || o.tag === 20 || o.tag === 8) for (const n of o.ints) w.int32(n);
+    } else if (o.tag === 13 || o.tag === 15 || o.tag === 18 || o.tag === 20 || o.tag === 8) for (const n of o.ints) w.int32(n);
     w.guid(o.card);
   }
   else w.u8(9).guid(o.card);

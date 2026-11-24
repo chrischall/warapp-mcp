@@ -1,0 +1,20 @@
+{
+  "note": "Recorded from writeSendOrdersParams: one deploy and a Sanctions play on the player himself (the self-Sanctions a negative percentage makes worth playing). Field order read from the client bundle's GameOrderPlayCardSanctions (tag 15, SanctionedPlayerID, then the card GUID and the base); the Sanctions play is NOT yet verified live. Synthetic ids.",
+  "game": 12345678,
+  "player": 123456,
+  "turn": 3,
+  "orders": [
+    {
+      "kind": "deploy",
+      "territoryId": 159,
+      "armies": 5
+    },
+    {
+      "kind": "card",
+      "card": "Sanctions",
+      "cardId": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "player": 123456
+    }
+  ],
+  "hex": "4e61bc00010200000001029f000000000500000040e201000000010f40e20100cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd40e201000000030000000000"
+}

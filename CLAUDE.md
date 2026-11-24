@@ -966,8 +966,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`src/tools/card-plays.ts`) and refuses what the bundle's `GameValidateOrders` refuses (a commander
   never gifted or airlifted to a teammate; no Spy on me or a teammate, nor on the neutral — target 0 — unless
   the game's `SpyCard.CanSpyOnNeutral`; no Diplomacy between teammates, nor naming a player out — the
-  validator checks both named players for 381) plus Sanctions on my own side (an opponent instead when the
-  percentage is negative); an Airlift of the commander alone sends 0 armies (the validator does not check
+  validator checks both named players for 381) plus Sanctions on the wrong side for the game's percentage (`sanctionsSettings` in `cards-in-effect.ts`: a
+  fraction in -1..1, read as a number or numeric string; positive or unreadable: never my side; negative — it raises
+  income, and the client's own guide says to play it on yourself — never an opponent; the client and the validator allow
+  any player still playing). A negative card is advised on me with `income` (next income before/after), projected by
+  `warapp_check_plan`'s `sanctionsPlayed`, shown in `cards.settings`, and read back after a commit (`cardReadBack`,
+  `src/tools/player-card-readback.ts`); an Airlift of the commander alone sends 0 armies (the validator does not check
   the count); what an Airlift sends leaves its source's later moves (armies it lands cannot move that
   turn); a Gift to an opponent gets its own preview line naming the recipient by id as an opponent. **Bomb** (tag 20, phase 30,
   `GameOrderPlayCardBomb`) and **Emergency Blockade** (tag 8, phase 37, `GameOrderPlayCardAbandon`) each write one

@@ -89,7 +89,8 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
         'submit at once (warapp_plan_turn, then warapp_submit_turn; in manual distribution, the picks). ' +
         'Refuses games past their first turn, games without the speed first turn, games you are not ' +
         'playing, and games whose board is already visible; reads the board back to report `begun` (with a card in ' +
-        'play, `cards`: the hand by type with counts and the pieces toward the next card, as warapp_get_game shows it). ' +
+        'play, `cards`: the hand by type with counts, the pieces toward the next card and the card settings — Sanctions\' ' +
+        'percentage and whom it goes on — as warapp_get_game shows it). ' +
         `The BeginFirstTurn encoding is read from the war.app client, not yet verified live. ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Begin the first turn of a war.app speed game',
