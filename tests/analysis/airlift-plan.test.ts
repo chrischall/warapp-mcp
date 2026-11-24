@@ -8,6 +8,9 @@ import {
   compareScores,
   planAirlift,
   scoreOf,
+  STAGING_DISCOUNT,
+  stagingCandidates,
+  stagingGain,
 } from '../../src/analysis/airlift-plan.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn } from '../../src/analysis/planner.js';
@@ -106,5 +109,50 @@ describe('the Airlift plan', () => {
     const p = planTurn(lost);
     expect(p.conceded).toContain(3);
     expect(airliftCandidates(lost, p).some((c) => c.kind === 'evacuate' && c.from === 3 && c.armies === 11)).toBe(true);
+  });
+});
+
+// Owner decision 2026-11-24 (A): an Airlift staged for NEXT turn's capture, scored on a two-turn objective.
+describe('the Airlift plan: staging for next turn', () => {
+  // Bonus 200 (+8) is 1, 2, 3: 1 and 2 mine, 3 a neutral 20 the income cannot take this turn. My 60 on 5 stand
+  // deep (beside only 1). 7 is the foe's, far off beside the wasteland 6.
+  const STAGE = makeMap(7, [[1, 2], [2, 3], [1, 5], [3, 6], [6, 7]], [[200, 8, [1, 2, 3]]]);
+  const stageInput: PlanInput = {
+    graph: buildGraph(STAGE),
+    board: board([me(1, 1), me(2, 2), neutral(3, 20), me(5, 60), neutral(6, 50), foe(7, 3)]),
+    me: ME,
+    income: 5,
+  };
+  const plain = planTurn(stageInput);
+
+  it('stages the deep stack beside the bonus member the plain plan cannot take, sized for next turn\'s attack', () => {
+    expect(plain.expected.captures).not.toContain(3);
+    const r = planAirlift({ input: stageInput, plain, cards: 1 });
+    expect(r.best?.airlifts).toEqual([
+      { from: 5, to: 2, armies: 32, kind: 'stage', staging: { target: 3, attack: 33, defenders: 20, gain: 8 } },
+    ]);
+    // The two-turn objective: this turn's measure plus the discounted bonus next turn.
+    expect(r.best!.score.twoTurn).toBeCloseTo(r.best!.score.safeIncome + STAGING_DISCOUNT * 8);
+    expect(r.best!.score.twoTurn).toBeGreaterThan(r.best!.plainScore.twoTurn);
+    // The staged armies never move this turn.
+    expect(r.best!.plan.moves.filter((m) => m.from === 2).reduce((n, m) => n + m.armies, 0)).toBeLessThanOrEqual(stageInput.board.territories.find((t) => t.territoryId === 2)!.armies! - 1 + 5);
+  });
+
+  it('earns nothing where the threat model says the staged stack is hit', () => {
+    // A foe's 80 beside 2 would take the staged 34.
+    const hit: PlanInput = {
+      ...stageInput,
+      graph: buildGraph(makeMap(7, [[1, 2], [2, 3], [1, 5], [3, 6], [6, 7], [2, 7]], [[200, 8, [1, 2, 3]]])),
+      board: board([me(1, 1), me(2, 2), neutral(3, 20), me(5, 60), neutral(6, 50), foe(7, 80)]),
+    };
+    const p = planTurn(hit);
+    const lift = { from: 5, to: 2, armies: 32, kind: 'stage' as const, staging: { target: 3, attack: 33, defenders: 20, gain: 8 } };
+    expect(stagingGain(hit.graph, hit.board, p, [lift], ME)).toBe(0);
+    expect(stagingGain(stageInput.graph, stageInput.board, plain, [lift], ME)).toBe(8);
+  });
+
+  it('ranks the other candidates as before: their gain is 0', () => {
+    expect(scoreOf(plain).twoTurn).toBe(scoreOf(plain).safeIncome);
+    expect(stagingCandidates(input, planTurn(input)).every((c) => c.kind === 'stage')).toBe(true);
   });
 });

@@ -91,7 +91,7 @@ import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
 import { myOrdersOf as committedOrdersOf, readMyOrderList } from '../my-orders.js';
 import { checkAirlifts, mismatchMessage, recordedWithCommit, sentAirlifts } from './airlift-readback.js';
 import { alternativeOrders, cardsLeftAfter, playsCardType } from './alternative-orders.js';
-import { planAirlift } from '../analysis/airlift-plan.js';
+import { planAirlift, STAGING_DISCOUNT } from '../analysis/airlift-plan.js';
 import type { TurnPlan } from '../analysis/plan/shared.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
@@ -2275,7 +2275,8 @@ async function airliftPlanView(a: {
   const found = planAirlift({ input: a.setup.input, plain: a.plan, cards: playable, guard: guardOn });
   if (!found.best)
     return none(
-      `No Airlift beats the plain plan by its own measure (next income if its conceded borders fall, then next income, ` +
+      `No Airlift beats the plain plan by its own measure (next income if its conceded borders fall, plus ${STAGING_DISCOUNT} × ` +
+        `a staged capture's bonus next turn, then next income, ` +
         `fewer concessions, more captures): ${found.considered} tried${found.invalid ? `, ${found.invalid} dropped as orders the submit would refuse` : ''}.`,
     );
   const best = found.best;
@@ -2316,6 +2317,16 @@ async function airliftPlanView(a: {
   return {
     airliftPlan: {
       airlifts: lifts.map((l) => ({ from: a.name(l.from), to: a.name(l.to), armies: l.armies, kind: l.kind })),
+      // Owner decision 2026-11-24 (A, DRAFT): an Airlift staged for next turn's capture.
+      ...(lifts.some((l) => l.staging)
+        ? {
+            staging: lifts.flatMap((l) =>
+              l.staging
+                ? [{ target: a.name(l.staging.target), from: a.name(l.to), nextTurnAttack: l.staging.attack, defendersSizedFor: l.staging.defenders, bonusValue: l.staging.gain }]
+                : [],
+            ),
+          }
+        : {}),
       orders,
       expected: {
         captures: best.plan.expected.captures,
@@ -2324,6 +2335,7 @@ async function airliftPlanView(a: {
         ...(best.plan.expected.nextIncomeIfConcededFall !== undefined ? { nextIncomeIfConcededFall: best.plan.expected.nextIncomeIfConcededFall } : {}),
       },
       delta: {
+        twoTurn: Math.round((best.score.twoTurn - best.plainScore.twoTurn) * 100) / 100,
         nextIncomeIfConcededFall: best.score.safeIncome - best.plainScore.safeIncome,
         nextIncome: best.score.nextIncome - best.plainScore.nextIncome,
         captures: best.score.captures - best.plainScore.captures,
@@ -2758,7 +2770,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'its conceded borders fall, then next income, fewer concessions, more captures) — `airlifts`, `orders` (the Airlift ' +
           'plays included), `expected`, `delta` (income, captures, borders saved, bonuses kept or completed), `cardsSpent`, ' +
           '`cardsLeft`; `keep_cards` holds cards back; `null` with `airliftPlanNote` when none beats the plan. Airlifted armies ' +
-          'cannot attack that turn, so it never funds a capture. ' +
+          'cannot attack that turn, so a capture is staged for NEXT turn instead (`staging`: an interior stack flown beside a ' +
+          'target the plan does not take whose capture completes a bonus of yours or breaks an opponent\'s, with the target, ' +
+          '`nextTurnAttack` and the bonus value), scored on a two-turn objective — this turn\'s measure plus 0.8 × that bonus ' +
+          '(`delta.twoTurn`) — and only when the staged stack holds against the plan\'s threat at that border. ' +
           '`reads` (opponent profiles, as warapp_profile_opponents reads them; reported only, the plan never uses them): ' +
           'each opponent in contact with a habit at the confidence bar or a label — its labels, `lastAttackTurn` (the last turn it attacked you), those habits with `n` and ' +
           '`basis`, `gamesMet` — a likelihood, never a certainty, and never to be quoted to another player. ' +
