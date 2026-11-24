@@ -80,4 +80,21 @@ describe('card state', () => {
     expect(s.held).toEqual([]);
     expect(cardState(info({}), ME, normalizeSettings({}))).toBeUndefined();
   });
+
+  it("states each card's settings that change how it plays: the Sanctions percentage's sign and whom it goes on (owner request 2026-11-24)", () => {
+    const settings = normalizeSettings({
+      AirliftCard: { NumPieces: 4 },
+      DiplomacyCard: { NumPieces: 4, Duration: 2 },
+      SanctionsCard: { NumPieces: 10, Duration: 1, Percentage: -0.3 },
+    });
+    const s = cardState(info({ [ME]: { cards: [] } }), ME, settings)!;
+    expect(s.settings).toEqual([
+      { type: 8, name: 'Diplomacy', duration: 2 },
+      { type: 9, name: 'Sanctions', duration: 1, percentage: -0.3, effect: 'boost', targets: 'your side' },
+    ]);
+    const cut = cardState(info({ [ME]: { cards: [] } }), ME, normalizeSettings({ SanctionsCard: { NumPieces: 4, Duration: 1, Percentage: 0.5 } }))!;
+    expect(cut.settings).toEqual([{ type: 9, name: 'Sanctions', duration: 1, percentage: 0.5, effect: 'cut', targets: 'opponents' }]);
+    // A game with no such card states none.
+    expect(cardState(info({ [ME]: { cards: [] } }), ME, SETTINGS)!).not.toHaveProperty('settings');
+  });
 });

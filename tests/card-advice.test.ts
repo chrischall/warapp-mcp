@@ -197,6 +197,11 @@ describe('adviseCards (#163)', () => {
     expect(w).toMatch(/Diplomacy is in effect between you and player 7176543229 \(until turn 5\).*attacks on T5 would do nothing/);
     expect(w).toMatch(/Sanctions are on you \(until turn 4\): your income is cut by 50%/);
     expect(w).toMatch(/unverified decoder/);
+    // A negative percentage raises it: said so, never "cut by -30%".
+    const raised = adviseCards(
+      input({ territories: [neutral(3, 2), me(4, 20), foe(5, 1), neutral(6, 2)], plan, info, game: { players: [ME, FOE], settings: settings({ EmergencyBlockadeCard: 'none', SanctionsCard: { ...piece, Duration: 1, Percentage: -0.3 } }) } }),
+    ).warnings.join('\n');
+    expect(raised).toMatch(/Sanctions are on you \(until turn 4\): your income is raised by 30%/);
   });
 });
 
@@ -332,6 +337,37 @@ describe('adviseCards: Diplomacy, Sanctions, Airlift and Gift (PLAN-TEAMS D2)', 
     expect(intelOrders(adviseCards(input({ territories, game: ffa, hand, unverifiedPlays: new Set() })).view)).toHaveLength(3);
     const off = adviseCards(input({ territories, game: { ...ffa, settings: { ...settings(), fog: 'NoFog' } }, hand, unverifiedPlays: new Set() }));
     expect(intelOrders(off.view)).toEqual([]);
+  });
+
+  it('advises Sanctions on myself when the percentage is negative, with the income it adds next turn (owner request 2026-11-24)', () => {
+    const boost = { players: [ME, FOE, FOE2], settings: settings({ SanctionsCard: { ...piece, Duration: 2, Percentage: -0.3 } }) };
+    const { view, warnings } = adviseCards(input({ territories: fronts(), game: boost, hand: [card(9, 'Sanctions')], nextIncome: 20 }));
+    expect(view.sanctions).toEqual({
+      player: ME.id,
+      income: { percentage: -0.3, turns: 2, before: 20, after: 26, gain: 6 },
+      order: { kind: 'card', card: 'd'.repeat(32), player: ME.id },
+    });
+    const w = warnings.join('\n');
+    expect(w).toMatch(/Sanctions on yourself: this game's percentage is negative \(-30%\).*next income 20 → 26 \(\+6\) for 2 turns/);
+    expect(w).toMatch(/Advice only, not in the orders/);
+    // Never a negative card on an opponent, whatever the ranking says.
+    expect(view.sanctions?.order.player).toBe(ME.id);
+  });
+
+  it('a negative card under Local Deployment is still advised on me, its income gain unmodelled', () => {
+    const ld = { players: [ME, FOE, FOE2], settings: { ...settings({ SanctionsCard: { ...piece, Duration: 1, Percentage: -0.3 } }), localDeployments: true } };
+    const { view, warnings } = adviseCards(input({ territories: fronts(), game: ld, hand: [card(9, 'Sanctions')], nextIncome: 20 }));
+    expect(view.sanctions).toMatchObject({ player: ME.id });
+    expect(view.sanctions).not.toHaveProperty('income');
+    expect(warnings.join('\n')).toMatch(/Local Deployment.*not modelled/);
+  });
+
+  it('never advises positive Sanctions on myself, nor a card whose percentage cannot be read', () => {
+    const { view } = adviseCards(input({ territories: fronts(), game: ffa, hand: [card(9, 'Sanctions')], nextIncome: 20 }));
+    expect(view.sanctions?.player).not.toBe(ME.id);
+    expect(view.sanctions).not.toHaveProperty('income');
+    const unread = { players: [ME, FOE, FOE2], settings: settings({ SanctionsCard: { ...piece, Duration: 1 } }) };
+    expect(adviseCards(input({ territories: fronts(), game: unread, hand: [card(9, 'Sanctions')] })).view.sanctions?.player).not.toBe(ME.id);
   });
 
   it('G2: Sanctions pass over a truce partner, saying why', () => {

@@ -90,6 +90,7 @@ import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
 import { myOrdersOf as committedOrdersOf, readMyOrderList } from '../my-orders.js';
 import { checkAirlifts, mismatchMessage, recordedWithCommit, sentAirlifts } from './airlift-readback.js';
+import { checkPlayerCards, playerCardMismatchParts, READ_BACK_PLAYER_CARDS, sentPlayerCards } from './player-card-readback.js';
 import { alternativeOrders, cardsLeftAfter, playsCardType } from './alternative-orders.js';
 import { planAirlift, STAGING_DISCOUNT } from '../analysis/airlift-plan.js';
 import type { TurnPlan } from '../analysis/plan/shared.js';
@@ -314,7 +315,8 @@ const turnOrderArg = z.discriminatedUnion('kind', [
       .optional()
       .describe(
         "Spy: the opponent to see (0 or \"neutral\": the neutral, when the game's Spy card allows it). Sanctions: the player whose " +
-          'income it cuts. Gift: who receives `target`. Id or name.',
+          "income it changes — an opponent when the game's percentage is positive, yourself (or a teammate) when it is negative " +
+          '(a boost). Gift: who receives `target`. Id or name.',
       ),
     players: z
       .array(playerRef)
@@ -2697,7 +2699,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'withdrawal worth a card, a commander strike) or it is the card that must go (over the hold limit the cards worth ' +
           'least in this game leave first; the timing cards are kept longest); never Blockade, Order Delay, Bomb or Emergency ' +
           'Blockade — `cards.advice` says where those pay (Order Delay above the calm orders, a Bomb target or hold it, an ' +
-          "Emergency Blockade wall on a conceded border that shields a bonus or your commander behind it, or kills more than it gives up, never where the stack can go around; Diplomacy on the opponent pressing you hardest when two or more do, Sanctions on the leader, an Airlift onto a " +
+          "Emergency Blockade wall on a conceded border that shields a bonus or your commander behind it, or kills more than it gives up, never where the stack can go around; Diplomacy on the opponent pressing you hardest when two or more do, Sanctions on the leader (on yourself when the game's percentage is negative, with `income`: your next income before and after the boost; never a negative card on an opponent nor a positive one on you), an Airlift onto a " +
           "border of yours or a teammate's that falls without it, a Gift that completes a teammate's bonus, Spy, Reconnaissance or Surveillance " +
           'where the fog hides what the plan needs (never with fog off) — each with an `order` to pass to ' +
           "warapp_submit_turn, never added to the orders — save a completing Gift (verified live; the transfers it would strand are dropped) and a Reconnaissance, which go into `orders`), and the warnings flag an opponent's Bomb or Emergency Blockade and the cards in effect. Moves are listed in the " +
@@ -3050,6 +3052,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             truces: inForce.map((r) => ({ player: r.player, state: r.state as 'active' | 'notice', coveredMine: r.coveredMine, ...(r.endsTurn !== undefined ? { endsTurn: r.endsTurn } : {}) })),
             ...(effect.diplomacy.length ? { enforced: new Set(effect.diplomacy.map((d) => d.player)) } : {}),
             ...(sanction.applied ? { sanctionsApplied: true } : {}),
+            // Owner request 2026-11-24: a self-Sanctions boost is measured on the plan's next income.
+            nextIncome: plan.expected.nextIncome,
           })
         : { view: {}, warnings: [] };
       // #412: the decision log — this turn's decision (a what-if plan is only an observation of the board,
@@ -3995,14 +3999,17 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         '`commander`), Gift (`target` yours, `player`), Diplomacy (`players`: two), Sanctions (`player`), Bomb (`target` ' +
         "next to yours, not yours or a teammate's) and Emergency Blockade (`target` yours, never your commander's), encoded " +
         'as the client does (the Airlift, Diplomacy and Gift verified live, Reconnaissance accepted live; the others not yet), each refused where war.app would refuse it (a commander is never ' +
-        'gifted or airlifted to a teammate, no Spy or Sanctions on yourself or a teammate, no Diplomacy between ' +
+        'gifted or airlifted to a teammate, no Spy on yourself or a teammate, Sanctions on your own side only when the game\'s ' +
+        'percentage is negative (it then raises the target\'s income: never on an opponent; a positive or unreadable one never on ' +
+        'your side), no Diplomacy between ' +
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
         'when your hand is over the hold limit and the orders do not play or discard enough cards; in a team game warns ' +
         'when they play or discard a card your teammate has already entered (a card named by type is one nobody ' +
         'entered when there is one). An Airlift leaves at least one army behind while One Army Must Stand Guard is on; ' +
         'once the orders read as committed every Airlift sent is read back from war.app\'s copy of them (the ' +
         'warapp_get_my_orders read) and reported as `airliftReadBack` — a missing or altered one makes the result an error ' +
-        'naming it, and nothing is resent. The ' +
+        'naming it, and nothing is resent; a Sanctions play is read back the same way (`cardReadBack`: its card and player; ' +
+        'missing or on another player is an error). The ' +
         'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
         'adjacent ones, no more armies than a territory has, deploys totalling exactly your income (after any Sanctions on you, ' +
@@ -4760,21 +4767,24 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const withExceptions = st.exceptions?.length ? { ...withRisk, exceptionsRecorded: await recordApproved(st, result.outcome === 'confirmed') } : withRisk;
         const final = st.breaks?.length ? { ...withExceptions, agreementsBroken: await recordBreaks(st, result.outcome === 'confirmed') } : withExceptions;
         // Owner request 2026-11-24: the Airlifts sent are read back from war.app's copy of my committed orders
-        // (the warapp_get_my_orders read) and any missing or altered one fails loudly. Nothing is resent.
+        // (the warapp_get_my_orders read) and any missing or altered one fails loudly. Nothing is resent. The
+        // player-targeted plays (Sanctions, owner request 2026-11-24) are read back the same way (`cardReadBack`).
         const lifts = sentAirlifts(st.orders);
-        if (!lifts.length) return final;
+        const aiming = st.orders.some((o) => o.kind === 'card' && READ_BACK_PLAYER_CARDS.has(o.card));
+        if (!lifts.length && !aiming) return final;
         if (!committedGame) {
+          const why = (what: string) =>
+            result.status === 'resolved'
+              ? `The turn resolved at once, so war.app no longer holds the orders to read back: check the ${what} in the turn's result on the board.`
+              : `The orders do not read as committed, so the ${what} were not read back.`;
           return {
             ...final,
-            airliftReadBack: {
-              status: 'not-read' as const,
-              note:
-                result.status === 'resolved'
-                  ? "The turn resolved at once, so war.app no longer holds the orders to read back: check the Airlifts in the turn's result on the board."
-                  : 'The orders do not read as committed, so the Airlifts were not read back.',
-            },
+            ...(lifts.length ? { airliftReadBack: { status: 'not-read' as const, note: why('Airlifts') } } : {}),
+            ...(aiming ? { cardReadBack: { status: 'not-read' as const, note: why('Sanctions plays') } } : {}),
           };
         }
+        const byInGame = playersByInGameId(committedGame.players);
+        const aimed = sentPlayerCards(st.orders, (n) => byInGame.get(n)?.id);
         let read: ReturnType<typeof committedOrdersOf> = null;
         let failure: string | undefined;
         try {
@@ -4783,23 +4793,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           failure = failureText(e);
         }
         const lifted = checkAirlifts(lifts, read);
-        if (lifted.status === 'mismatch') {
+        const named = checkPlayerCards(aimed, read);
+        if ((lifts.length && lifted.status === 'mismatch') || named.status === 'mismatch') {
           // #556: what the commit recorded (a truce break, exceptions, …) is said in the error, never dropped.
           const recorded = recordedWithCommit(final as Record<string, unknown>);
-          throw new McpToolError(`${mismatchMessage(lifted, st.turnNumber, st.gameId)}${recorded ? ` ${recorded}` : ''}`, {
+          throw new McpToolError(`${mismatchMessage(lifted, st.turnNumber, st.gameId, playerCardMismatchParts(named))}${recorded ? ` ${recorded}` : ''}`, {
             hint:
               'Read the committed orders with warapp_get_my_orders. To correct them, withdraw with warapp_uncommit_turn and ' +
               'submit again (both confirm-gated); do not resend blindly.',
           });
         }
+        const unreadNote = (what: string) =>
+          ({ note: `Your committed orders could not be read back${failure ? ` (${failure})` : ''}: check the ${what} with warapp_get_my_orders.` });
         return {
           ...final,
-          airliftReadBack: {
-            ...lifted,
-            ...(lifted.status === 'unread'
-              ? { note: `Your committed orders could not be read back${failure ? ` (${failure})` : ''}: check the Airlifts with warapp_get_my_orders.` }
-              : {}),
-          },
+          ...(lifts.length ? { airliftReadBack: { ...lifted, ...(lifted.status === 'unread' ? unreadNote('Airlifts') : {}) } } : {}),
+          ...(aimed.length || aiming ? { cardReadBack: { ...named, ...(named.status === 'unread' ? unreadNote('Sanctions plays') : {}) } } : {}),
         };
 
       },

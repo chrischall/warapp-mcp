@@ -114,7 +114,9 @@ export function registerGameTool(
           '(`backfilled`). To take a finished game off the app\'s My Games use warapp_close_finished_game. ' +
           'While the game is played or picked with a card in play, `cards` is my hand from the live board (one more ' +
           'request): `held` (each card type with `count`), `total`, `maxCardsHold`, and `pieces` (per card in play, the ' +
-          'pieces toward the next one and `of` how many make one; read by shape, UNVERIFIED live; `null` when unread) — a ' +
+          'pieces toward the next one and `of` how many make one; read by shape, UNVERIFIED live; `null` when unread), and ' +
+          '`settings` (each card in play with a `duration`, and Sanctions\' `percentage` — negative raises the target\'s income — ' +
+          'with its `effect` and `targets`: opponents, or your side when negative) — a ' +
           'failed read is `cardsUnread`, never an error. For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
       ),
       _meta: lookupMeta(['warzone game', 'war.app game', 'whose turn is it', 'game status']),

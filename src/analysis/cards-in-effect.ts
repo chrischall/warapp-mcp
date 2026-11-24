@@ -108,6 +108,46 @@ function cardSettings(settings: GameSettings | undefined, card: 'Diplomacy' | 'S
   return typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : undefined;
 }
 
+/**
+ * The game's Sanctions card as the settings give it (owner request 2026-11-24). The client bundle's
+ * `CardGameSanctions` keeps `Percentage` as a fraction the game creator may set from -1 to 1 (its validator
+ * refuses anything else) and cuts the target's income by it: a negative one raises the target's income
+ * instead, and the client's own guide then says to play it on yourself. war.app's validator does not look
+ * at the target's side (only error 219, a player not playing), nor does the client's player list.
+ */
+export interface SanctionsSettings {
+  /** `Percentage` (-0.3 = −30%); `null` when the settings give none in -1..1. */
+  percentage: number | null;
+  /** `Duration`: the turns it lasts; `null` when not given. */
+  duration: number | null;
+  /** What it does to the target's income. */
+  effect: 'cut' | 'boost' | 'none' | 'unknown';
+  /** Whom it is worth playing on: an opponent for a cut, yourself or a teammate for a boost. */
+  targets: 'opponents' | 'your side' | 'anyone' | 'unknown';
+}
+
+/** A setting's number: a JSON number, or a numeric string (GameFeed may send a scalar as either). */
+const settingNumber = (v: unknown): number | undefined => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && /^\s*-?\d+(\.\d+)?\s*$/.test(v) ? Number(v) : undefined;
+  return n !== undefined && Number.isFinite(n) ? n : undefined;
+};
+
+/** The Sanctions card's settings, or `undefined` when the game does not have it in play. */
+export function sanctionsSettings(settings: GameSettings | undefined): SanctionsSettings | undefined {
+  const s = cardSettings(settings, 'Sanctions');
+  if (!s) return undefined;
+  const p = settingNumber(s.Percentage);
+  const percentage = p !== undefined && p >= -1 && p <= 1 ? p : null;
+  const d = settingNumber(s.Duration);
+  const duration = d !== undefined && Number.isInteger(d) && d >= 1 ? d : null;
+  const effect = percentage === null ? 'unknown' : percentage > 0 ? 'cut' : percentage < 0 ? 'boost' : 'none';
+  const targets = ({ cut: 'opponents', boost: 'your side', none: 'anyone', unknown: 'unknown' } as const)[effect];
+  return { percentage, duration, effect, targets };
+}
+
+/** A percentage as a person reads it: −0.3 → "−30%" (signed when negative). */
+export const percentText = (p: number): string => `${Math.round(p * 100)}%`;
+
 const durationOf = (s: Record<string, unknown> | undefined): number | undefined => {
   const d = s?.Duration;
   return typeof d === 'number' && Number.isInteger(d) && d >= 1 ? d : undefined;
