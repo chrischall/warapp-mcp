@@ -6,6 +6,7 @@ import { leavers, type Game, type GameSettings } from '../normalize.js';
 import { recordFinalResult } from '../outlook-log.js';
 import { historyReport } from '../trend.js';
 import { currentTurn, gameIdArg, mapSummary, readAnnotations, respond, turnsCompleted, untrustedDescription, viewArg } from './common.js';
+import type { CardStateRead } from './card-state-view.js';
 import { lookupMeta } from './hints.js';
 import { lossReport } from './how-lost.js';
 import { endOfGame, finishedAccount, type EndOfGameResult } from './end-of-game.js';
@@ -80,6 +81,8 @@ export function registerGameTool(
   dir?: () => string,
   env?: EnvSource,
   identity?: () => Promise<number | undefined>,
+  /** My card state from the live board (src/tools/card-state-view.ts); absent: not read. */
+  cards?: (game: Game) => Promise<CardStateRead>,
 ): void {
   server.registerTool(
     'warapp_get_game',
@@ -109,7 +112,10 @@ export function registerGameTool(
           '(`endOfGame.processed`); a failed read is recorded and not retried, except by a call with ' +
           '`include_history`, which re-runs it from that read and adds the stats to a game processed before them ' +
           '(`backfilled`). To take a finished game off the app\'s My Games use warapp_close_finished_game. ' +
-          'For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
+          'While the game is played or picked with a card in play, `cards` is my hand from the live board (one more ' +
+          'request): `held` (each card type with `count`), `total`, `maxCardsHold`, and `pieces` (per card in play, the ' +
+          'pieces toward the next one and `of` how many make one; read by shape, UNVERIFIED live; `null` when unread) — a ' +
+          'failed read is `cardsUnread`, never an error. For the map\'s bonuses and chokepoints use warapp_get_map. Read-only.',
       ),
       _meta: lookupMeta(['warzone game', 'war.app game', 'whose turn is it', 'game status']),
       annotations: readAnnotations('Get a war.app game'),
@@ -156,7 +162,9 @@ export function registerGameTool(
           end = await endOfGame({ client, dataDir: dir(), env: env ?? process.env }, game.id, me, game, include_history ? { history: game, retry: true } : {});
         }
       }
+      const cardRead = cards ? await cards(game) : {};
       const folded = {
+        ...cardRead,
         ...(fold && fold.status !== 'off' ? { profileFold: fold } : {}),
         ...(lost ? { howLost: lost } : {}),
         ...(end && end.status !== 'off' ? { endOfGame: end } : {}),

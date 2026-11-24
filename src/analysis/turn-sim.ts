@@ -3,6 +3,10 @@
 //
 // The rules are the wiki's (docs/STRATEGY.md "Turn resolution" links each page):
 //   - Deployments come before every attack and transfer, and deployed armies may move that turn.
+//   - Airlifts (card phase 43) run after every deploy and before every attack and transfer: the armies
+//     leave their source and land on the destination (the player's own, or a teammate's), where they
+//     cannot move again that turn (the wiki's Airlift Card). A commander goes along only to its owner's
+//     own territory and has then used its move. An Airlift sends what stands on its source when it runs.
 //   - Attack and transfer orders run interleaved in a zigzag over the turn's move order
 //     (1 2 … n, n … 2 1, 1 2 … n), each player's next order in each slot. An order that moves
 //     no armies takes no slot. An Order Priority card makes its player the first mover for the
@@ -90,12 +94,23 @@ export interface SimOrder {
   attackTeammates?: boolean;
 }
 
+/** An Airlift card play: `armies` (and the commander, with `commander`) from `from` to `to`, after the deploys. */
+export interface SimAirlift {
+  player: number;
+  from: number;
+  to: number;
+  armies: number;
+  commander?: boolean;
+}
+
 export interface SimInput {
   graph: MapGraph;
   board: BoardState;
   /** Start from these territories in place of the board: the end of an earlier simulated turn. */
   start?: ReadonlyMap<number, SimTerritory>;
   deploys: readonly SimDeploy[];
+  /** Airlift card plays, run in this order after every deploy and before every move (default none). */
+  airlifts?: readonly SimAirlift[];
   /** Each player's attack and transfer orders, in the order that player listed them. */
   orders: readonly { player: number; orders: readonly SimOrder[] }[];
   /** This turn's move order, first mover first. Players with orders but not named go last, by id. */
@@ -214,6 +229,22 @@ export function simulateTurn(input: SimInput): SimResult {
   for (const d of input.deploys) {
     const c = cells.get(d.territoryId);
     if (c && c.owner === d.player && d.armies > 0) c.armies += d.armies;
+  }
+
+  // Phase 43: the Airlifts, after every deploy. What lands cannot move again this turn.
+  for (const a of input.airlifts ?? []) {
+    const src = cells.get(a.from);
+    const dst = cells.get(a.to);
+    if (!src || !dst || a.from === a.to || src.owner !== a.player || !friendly(dst.owner, a.player)) continue;
+    const sent = Math.max(0, Math.min(Math.floor(a.armies), src.armies));
+    src.armies -= sent;
+    dst.armies += sent;
+    dst.moved += sent;
+    if (a.commander && src.commander === a.player && dst.owner === a.player) {
+      delete src.commander;
+      dst.commander = a.player;
+      dst.commanderMoved = true;
+    }
   }
 
   /** A player whose commander died: everything it holds turns neutral, and its orders stop. */

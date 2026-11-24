@@ -11,7 +11,9 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { parseGameId } from '../client.js';
 import type { LiveTerritory } from '../live.js';
-import type { Game } from '../normalize.js';
+import { cardState } from '../card-state.js';
+import type { Game, GameSettings } from '../normalize.js';
+import { handOwners } from './card-advice.js';
 import { Method, writeBeginFirstTurnParams } from '../protocol/methods.js';
 import { gameIdArg, shownAccount, UNTRUSTED_PREVIEW_NOTE, untrustedText } from './common.js';
 import { mintMeta } from './hints.js';
@@ -33,6 +35,8 @@ interface BeginState {
   picking: boolean;
   /** The account the plan checked and the gate bound (its GameFeed id). */
   me: number;
+  /** With a card in play: the in-game ids whose cards are my hand, and the settings (the pieces per card). */
+  hand?: { owners: number[]; settings: GameSettings };
 }
 
 const gameLabel = (game: Game): string => game.name ?? `game ${game.id}`;
@@ -84,7 +88,8 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
         'Begin is pressed, and pressing it STARTS YOUR TURN TIMER — call this only when ready to plan and ' +
         'submit at once (warapp_plan_turn, then warapp_submit_turn; in manual distribution, the picks). ' +
         'Refuses games past their first turn, games without the speed first turn, games you are not ' +
-        'playing, and games whose board is already visible; reads the board back to report `begun`. ' +
+        'playing, and games whose board is already visible; reads the board back to report `begun` (with a card in ' +
+        'play, `cards`: the hand by type with counts and the pieces toward the next card, as warapp_get_game shows it). ' +
         `The BeginFirstTurn encoding is read from the war.app client, not yet verified live. ${CONFIRM_INJECTION_RULE}`,
       annotations: toolAnnotations({
         title: 'Begin the first turn of a war.app speed game',
@@ -129,10 +134,16 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
               untrusted: UNTRUSTED_PREVIEW_NOTE,
             },
           },
-          state: { gameId, name, picking, me } satisfies BeginState,
+          state: {
+            gameId,
+            name,
+            picking,
+            me,
+            ...(game.settings?.cards.length ? { hand: { owners: handOwners(game, mySeat(game, me)), settings: game.settings } } : {}),
+          } satisfies BeginState,
         };
       },
-      async execute({ gameId, name, picking, me }: BeginState) {
+      async execute({ gameId, name, picking, me, hand }: BeginState) {
         await requireApprovedAccount(ctx, writeAccount(me));
         const game = { id: gameId, name };
         const notReadBack = (ignored: boolean, readFailure: string | undefined) => ({
@@ -163,10 +174,13 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
               'already have gone through and your timer may be running. Check warapp_get_live_board; do not ' +
               'press Begin again blindly.',
           }),
-          readBack: () => liveBoard(ctx, gameId),
+          readBack: () => readLatestBoard(ctx, gameId),
           // Nothing was read: never conclude the board is hidden from a failed read (#130).
           unreadable: (failure, ignored) => notReadBack(ignored !== undefined, failure),
-          classify: (territories, ignored) => {
+          classify: ({ territories: read, info }, ignored) => {
+            const territories = read ?? undefined;
+            // My hand once the board shows (owner request 2026-11-24): whole cards by type and pieces toward the next.
+            const cards = territories && hand ? cardState(info, hand.owners, hand.settings) : undefined;
             if (!territories && ignored) {
               return {
                 status: 'not_begun' as const,
@@ -184,6 +198,7 @@ export function registerBeginTurnTool(server: McpServer, ctx: LiveContext): void
               outcome: 'confirmed' as const,
               game,
               territoriesVisible: territories.length,
+              ...(cards ? { cards } : {}),
               next: picking
                 ? 'Your pick timer is running: choose and submit your picks now (warapp_submit_picks).'
                 : 'Your turn timer is running: plan and submit now (warapp_plan_turn, then warapp_submit_turn).',

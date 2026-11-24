@@ -1,0 +1,22 @@
+{
+  "note": "Recorded from writeSendOrdersParams (the encoder of the Airlift play verified live 2026-11-16, #296). Synthetic ids.",
+  "game": 12345678,
+  "player": 123456,
+  "turn": 3,
+  "orders": [
+    {
+      "kind": "deploy",
+      "territoryId": 159,
+      "armies": 5
+    },
+    {
+      "kind": "card",
+      "card": "Airlift",
+      "cardId": "55555555666666667777777788888888",
+      "from": 159,
+      "to": 161,
+      "armies": 8
+    }
+  ],
+  "hex": "4e61bc00010200000001029f000000000500000040e201000000010c010008000000009f00000000000000a10000005555555566666666777777778888888840e201000000030000000000"
+}

@@ -87,7 +87,8 @@ import { assumedWarning, awardView, firstMoverFor, loadAward, openingThreat } fr
 import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from './card-effects.js';
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
-import { readMyOrderList } from '../my-orders.js';
+import { myOrdersOf as committedOrdersOf, readMyOrderList } from '../my-orders.js';
+import { checkAirlifts, mismatchMessage, sentAirlifts } from './airlift-readback.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
 import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, lastTurnPlays, opponentCanHold, opponentReinforcement, reinforcementPlaysShown, seenReinforcementPlays, TEAM_HAND } from './card-advice.js';
@@ -114,7 +115,7 @@ import { blockedLog, CHAT_BLOCKS_NOTE, chatSeats, planChatView, planStanding, tu
 import { chatBlockLine } from '../analysis/chat-blocks.js';
 import { chatAutomationMode, chatBlocksTurnMode, type ChatBlocksTurn } from '../chat-automation.js';
 import { readPendingSurrenders, surrenderOwedLine } from './surrender-pending.js';
-import { failureText, loadLiveGame, requireApprovedAccount, standInLine, standInOf, writeAccount, type LiveContext } from './live-context.js';
+import { failureText, loadLiveGame, readLatestBoard, requireApprovedAccount, standInLine, standInOf, writeAccount, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { guessOrdersOf, guessView } from './guess-view.js';
 import { guessSalt, peekGuessSalt } from '../guess-salt.js';
@@ -3811,7 +3812,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'teammates); discards any card (`{ kind: "discard", card }`); refuses ' +
         'when your hand is over the hold limit and the orders do not play or discard enough cards; in a team game warns ' +
         'when they play or discard a card your teammate has already entered (a card named by type is one nobody ' +
-        'entered when there is one). The ' +
+        'entered when there is one). An Airlift leaves at least one army behind while One Army Must Stand Guard is on; ' +
+        'once the orders read as committed every Airlift sent is read back from war.app\'s copy of them (the ' +
+        'warapp_get_my_orders read) and reported as `airliftReadBack` — a missing or altered one makes the result an error ' +
+        'naming it, and nothing is resent. The ' +
         'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
         'adjacent ones, no more armies than a territory has, deploys totalling exactly your income (after any Sanctions on you, ' +
@@ -4506,6 +4510,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'your `committed` true means the orders are in. Do not resend these orders blindly — a second commit for ' +
           'the same turn is not known to be safe, and once the turn has resolved they would commit to the next one.';
         const unconfirmed = (warning: string) => ({ status: 'unknown' as const, outcome: 'unconfirmed' as const, ...base, warning });
+        /** The game as read back once my orders show committed (the Airlift read-back reads its players). */
+        let committedGame: Game | undefined;
         const result = await sendAndVerify({
           send: async () => {
             // The reply's bool is war.app's "vacation ended" flag — never a success signal.
@@ -4549,6 +4555,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               };
             }
             if (after.players.find((p) => p.id === st.feedPlayerId)?.hasCommittedOrders) {
+              committedGame = after;
               return {
                 status: 'committed' as const,
                 outcome: 'confirmed' as const,
@@ -4564,8 +4571,47 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const withChat = st.chatReviewed ? { ...result, chatReviewed: st.chatReviewed } : result;
         const withRisk = st.commanderRisk ? { ...withChat, commanderRiskAccepted: st.commanderRisk } : withChat;
         const withExceptions = st.exceptions?.length ? { ...withRisk, exceptionsRecorded: await recordApproved(st, result.outcome === 'confirmed') } : withRisk;
-        if (!st.breaks?.length) return withExceptions;
-        return { ...withExceptions, agreementsBroken: await recordBreaks(st, result.outcome === 'confirmed') };
+        const final = st.breaks?.length ? { ...withExceptions, agreementsBroken: await recordBreaks(st, result.outcome === 'confirmed') } : withExceptions;
+        // Owner request 2026-11-24: the Airlifts sent are read back from war.app's copy of my committed orders
+        // (the warapp_get_my_orders read) and any missing or altered one fails loudly. Nothing is resent.
+        const lifts = sentAirlifts(st.orders);
+        if (!lifts.length) return final;
+        if (!committedGame) {
+          return {
+            ...final,
+            airliftReadBack: {
+              status: 'not-read' as const,
+              note:
+                result.status === 'resolved'
+                  ? "The turn resolved at once, so war.app no longer holds the orders to read back: check the Airlifts in the turn's result on the board."
+                  : 'The orders do not read as committed, so the Airlifts were not read back.',
+            },
+          };
+        }
+        let read: ReturnType<typeof committedOrdersOf> = null;
+        let failure: string | undefined;
+        try {
+          read = committedOrdersOf((await readLatestBoard(ctx, st.gameId)).info, committedGame.players);
+        } catch (e) {
+          failure = failureText(e);
+        }
+        const lifted = checkAirlifts(lifts, read);
+        if (lifted.status === 'mismatch') {
+          throw new McpToolError(mismatchMessage(lifted, st.turnNumber, st.gameId), {
+            hint:
+              'Read the committed orders with warapp_get_my_orders. To correct them, withdraw with warapp_uncommit_turn and ' +
+              'submit again (both confirm-gated); do not resend blindly.',
+          });
+        }
+        return {
+          ...final,
+          airliftReadBack: {
+            ...lifted,
+            ...(lifted.status === 'unread'
+              ? { note: `Your committed orders could not be read back${failure ? ` (${failure})` : ''}: check the Airlifts with warapp_get_my_orders.` }
+              : {}),
+          },
+        };
 
       },
     },
