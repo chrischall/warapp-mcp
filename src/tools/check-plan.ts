@@ -64,9 +64,18 @@ const COMPACT_OTHERS = 2;
 const LIST_MAX = 10;
 const ORDER_PRIORITY = cardTypeByName('Order Priority');
 const BOMB = cardTypeByName('Bomb');
+const EMERGENCY_BLOCKADE = cardTypeByName('Emergency Blockade');
+const BLOCKADE = cardTypeByName('Blockade');
+
+/** A wall card's `MultiplyAmount` from the settings (`EmergencyBlockadeCard`, `BlockadeCard`), when the game sets one. */
+function wallMultiplier(raw: Record<string, unknown> | undefined, key: string): number | undefined {
+  const r = raw?.[key];
+  if (typeof r !== 'object' || r === null) return undefined;
+  const m = Number((r as Record<string, unknown>).MultiplyAmount);
+  return Number.isFinite(m) && m > 0 ? m : undefined;
+}
 /** Card plays that change the board this test does not simulate, each with what the test does instead. */
 const UNSIMULATED_CARDS = new Map<number | undefined, (on: string) => string>([
-  [cardTypeByName('Emergency Blockade'), (on) => `The Emergency Blockade${on} is not simulated: the test keeps it yours, armies unchanged.`],
 ]);
 
 /** #274: the card plays the commander check reads (an Airlift simulated, the others named on its territory). */
@@ -84,7 +93,7 @@ export const CHECK_PLAN_NOT_COVERED = [
   'a deploy split over several stacks',
   'two opponents together other than on one of your territories, and two free-for-all opponents together at all unless you lead (see leader)',
   'under Multi-Attack, any chain of attacks but the one most damaging per stack',
-  'cards, apart from your own Order Priority, Airlifts and Bombs',
+  'cards, apart from your own Order Priority, Airlifts, Bombs, Emergency Blockades and Blockades',
 ] as const;
 
 export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void {
@@ -165,7 +174,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             "everyone's; an Airlift (`from`, `to`, `armies`) is carried out at its phase — after every deploy, before every " +
             'move: its source loses the armies, its destination gains them, and they cannot move again that turn — so ' +
             'every reply is tried against the board it leaves; other card plays and discards are ignored by the test ' +
-            '(a Bomb is carried out at its phase too — after every deploy, its target keeps half its armies, rounded down; an Emergency Blockade is named ' +
+            '(a Bomb is carried out at its phase too — after every deploy, its target keeps half its armies, rounded down; an ' +
+            'Emergency Blockade before the moves and a Blockade after them turn their territory neutral at its armies × the ' +
+            "game's multiplier; a wall whose multiplier the settings do not give is named " +
             'in `warnings` as not simulated; in a team game, a card your teammate has ' +
             "already entered is warned of). A move's options (mode, percent, commander, " +
             'attack_teammates) are carried out as war.app would.',
@@ -268,6 +279,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const airlifts: CommanderAirlift[] = [];
       /** My Bombs' targets: carried out at their phase (30) by the stress test. */
       const bombs: number[] = [];
+      /** My Emergency Blockades (phase 37) and Blockades (phase 60): carried out by the stress test with the game's multiplier. */
+      const abandons: { target: number; multiplier: number }[] = [];
+      const blockades: { target: number; multiplier: number }[] = [];
       const cardTargets: { kind: CardPlayKind; territory: number }[] = [];
       const ignored: string[] = [];
       const unsimulatedCards: string[] = [];
@@ -351,9 +365,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             } catch {
               // A target not on the map: warapp_submit_turn refuses it; the test goes without it.
             }
+          } else if (type === EMERGENCY_BLOCKADE || type === BLOCKADE) {
+            const key = type === BLOCKADE ? 'BlockadeCard' : 'EmergencyBlockadeCard';
+            const multiplier = wallMultiplier(game.settings?.raw, key);
+            const name = type === BLOCKADE ? 'Blockade' : 'Emergency Blockade';
+            try {
+              const target = o.target !== undefined ? resolveTerritory(map, o.target).id : undefined;
+              if (target !== undefined && multiplier !== undefined) (type === BLOCKADE ? blockades : abandons).push({ target, multiplier });
+              else if (target !== undefined)
+                unsimulatedCards.push(`The ${name} on ${target} is not simulated: the game's settings give no multiplier for it.`);
+            } catch {
+              // A target not on the map: warapp_submit_turn refuses it; the test goes without it.
+            }
           } else if (kindOf === 'Airlift') {
             // Owner request 2026-11-24: the stress test carries the Airlift out at its phase (below).
-          } else if (type === undefined || cardTypeName(type) !== 'Reinforcement') ignored.push('a card play other than Order Priority, Reinforcement, Airlift or Bomb');
+          } else if (type === undefined || cardTypeName(type) !== 'Reinforcement') ignored.push('a card play other than Order Priority, Reinforcement, Airlift, Bomb or a Blockade');
         }
       }
 
@@ -459,6 +485,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orderPriority,
         ...(airlifts.length ? { airlifts } : {}),
         ...(bombs.length ? { bombs } : {}),
+        ...(abandons.length ? { abandons } : {}),
+        ...(blockades.length ? { blockades } : {}),
         ...(settings.localDeployments ? { localDeployments: true, baseIncome: gameBaseIncome(settings) } : {}),
         ...(settings.localDeployments && (settings.bonusArmyPer ?? 0) > 0 ? { perTerritoryIncome: true } : {}),
         leader,

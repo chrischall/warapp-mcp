@@ -27,6 +27,9 @@ interface TwoStepInput {
   opponents: readonly { id: number; deploy: number }[];
   /** My deploys this turn (default none: the board as it stands). */
   deploys?: readonly { territoryId: number; armies: number }[];
+  /** My Emergency Blockades (phase 37) and Blockades (phase 60) this turn (default none). */
+  abandons?: readonly { target: number; multiplier: number }[];
+  blockades?: readonly { target: number; multiplier: number }[];
   /** My Bombs this turn (phase 30: after the deploys, before the Airlifts and moves; default none). */
   bombs?: readonly number[];
   /** My Airlifts this turn (after the deploys, before the moves; default none). */
@@ -80,6 +83,8 @@ export function twoStepReaches(input: TwoStepInput): TwoStepReach[] {
       board,
       deploys: [...myDeploys, ...deploys],
       ...(input.bombs?.length ? { bombs: input.bombs.map((target) => ({ player: me, target })) } : {}),
+      ...(input.abandons?.length ? { abandons: input.abandons.map((w) => ({ ...w, player: me })) } : {}),
+      ...(input.blockades?.length ? { blockades: input.blockades.map((w) => ({ ...w, player: me })) } : {}),
       ...(input.airlifts?.length ? { airlifts: input.airlifts.map((a) => ({ ...a, player: me })) } : {}),
       orders: [{ player: me, orders: myOrders }, ...(theirs ? [theirs] : [])],
       moveOrder,

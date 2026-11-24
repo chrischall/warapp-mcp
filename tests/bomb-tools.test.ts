@@ -75,7 +75,7 @@ describe('warapp_check_plan: a Bomb carried out at its phase', () => {
     const without = await check([DEPLOY]);
     const bombed = await check([PLAY, DEPLOY]);
     expect(bombed.warnings.join('\n')).not.toMatch(/Bomb.*not simulated/);
-    expect(bombed.notCovered.join('\n')).toMatch(/Order Priority, Airlifts and Bombs/);
+    expect(bombed.notCovered.join('\n')).toMatch(/Order Priority, Airlifts, Bombs, Emergency Blockades and Blockades/);
     expect(bombed.atRisk.territories.length).toBeLessThan(without.atRisk.territories.length);
   });
 });

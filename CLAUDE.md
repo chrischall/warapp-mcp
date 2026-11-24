@@ -178,6 +178,18 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   played Bomb was found to read (in-progress games' history is not served; no finished game had it in play).
   `bombAdvice` (`card-threats.ts`) uses the same rule (`bombLeaves` in `combat.ts`; owner decision 2026-11-24 — it took
   the larger half for an enemy before), so the advice and `bombPlan` agree; two advice tests' boards changed target.
+- **The walls through the same pipeline (owner request 2026-11-24, part B).** From the client bundle: an Emergency
+  Blockade (`GameOrderPlayCardAbandonResult`, phase 37) and a Blockade (`…BlockadeResult`, phase 60, only while its
+  player still holds the territory) turn it neutral at `roundHalfDown(armies × MultiplyAmount)` (`turn-sim.ts`), its
+  special units lost. `turn-sim.ts` takes `abandons`/`blockades`, `stressPlan` excludes a walled territory from
+  `mineAtStart` (given up, never "lost"), check_plan carries both out with the settings' multiplier (none: warned as not
+  simulated), and the submit reads them back (`cardReadBack`). `src/analysis/blockade-plan.ts` (pure, DRAFT):
+  `blockadePlan` (owner-approved 2026-11-24): with an Emergency Blockade, a conceded border of mine (not my commander's),
+  denials first, planned walled; its worth is the bonus its fall would complete for an opponent with a stack beside it
+  (`scoreOf(plan, denied)`, × 0.8), credited only when the wall holds this turn. With a Blockade (`planBlockade`): the
+  plain orders plus the card on a territory of mine with that denial, only when `stressPlan` (each opponent beside me at
+  the plan's enemy deploy, no look-ahead) keeps it mine through the attacks, charged any bonus of mine it gives up; the
+  better of the two is offered. The Emergency Blockade play stays UNVERIFIED live.
 - **Commander safety (#274, `src/analysis/commander-safety.ts`, pure).** One question of the stress test: of
   the single-deploy replies that strike my commander's territory after my orders (`stressPlan`'s `targets`,
   no look-ahead), which kill it, and the armies it needs there to survive them all (`needs`, searched by adding
