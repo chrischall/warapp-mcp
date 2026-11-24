@@ -2466,16 +2466,16 @@ async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promi
   const freeWalls = walls.filter((c) => !used.has(c.id));
   const freeBlockades = blockades.filter((c) => !used.has(c.id));
   if (!freeWalls.length && !freeBlockades.length) return none('The plain plan already plays or discards your wall cards: no wall plan.');
-  const tries: { kind: 'EmergencyBlockade' | 'Blockade'; card: string; found: ReturnType<typeof planWall>; held: number }[] = [];
+  const tries: { kind: 'EmergencyBlockade' | 'Blockade'; card: string; found: ReturnType<typeof planWall>; held: number; free: number }[] = [];
   const notes: string[] = [];
   if (freeWalls.length) {
     const m = multiplierOf('EmergencyBlockadeCard');
-    if (m > 0) tries.push({ kind: 'EmergencyBlockade', card: freeWalls[0]!.id, held: walls.length, found: planWall({ input: a.setup.input, plain: a.plan, cards: freeWalls.length, multiplier: m }) });
+    if (m > 0) tries.push({ kind: 'EmergencyBlockade', card: freeWalls[0]!.id, held: walls.length, free: freeWalls.length, found: planWall({ input: a.setup.input, plain: a.plan, cards: freeWalls.length, multiplier: m }) });
     else notes.push("the game's settings give no Emergency Blockade multiplier");
   }
   if (freeBlockades.length) {
     const m = multiplierOf('BlockadeCard');
-    if (m > 0) tries.push({ kind: 'Blockade', card: freeBlockades[0]!.id, held: blockades.length, found: planBlockade({ input: a.setup.input, plain: a.plan, cards: freeBlockades.length, multiplier: m }) });
+    if (m > 0) tries.push({ kind: 'Blockade', card: freeBlockades[0]!.id, held: blockades.length, free: freeBlockades.length, found: planBlockade({ input: a.setup.input, plain: a.plan, cards: freeBlockades.length, multiplier: m }) });
     else notes.push("the game's settings give no Blockade multiplier");
   }
   const winner = tries
@@ -2499,22 +2499,27 @@ async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promi
     tripwires: a.setup.trip.tripwires,
     deploys: best.plan.deploys,
     moves: best.plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
-    orderPriority: a.cards.plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+    orderPriority: playsCardType(a.orders, a.myCards, CARD_ORDER_PRIORITY),
     ...(a.enemyDeploy !== undefined ? { floor: a.enemyDeploy } : {}),
     killedBy: false,
   });
   if (checked?.risk && a.plainCommanderSafe)
     return none('The best wall plan would leave your commander takeable (warapp_submit_turn would refuse it), so none is offered.');
   const card = winner.card;
-  const delayDiscard = a.playedDelay && a.delayOrder !== undefined ? [{ kind: 'discard' as const, card: a.playedDelay }] : [];
-  // A Blockade adds only its card play to the plain orders (they stand unchanged); an Emergency Blockade's plan has its own.
-  const orders = winner.kind === 'Blockade' ? [...a.orders, { kind: 'card' as const, card, target: best.wall.target }] : [
-    ...a.orders.filter((o) => (o.kind === 'discard' || o.kind === 'card') && o !== a.delayOrder),
-    ...delayDiscard,
-    { kind: 'card' as const, card, target: best.wall.target },
-    ...best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
-    ...best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
-  ];
+  // A Blockade adds only its card play to the plain orders (they stand unchanged); an Emergency Blockade's plan has its
+  // own, and (#558) discards the advised Order Delay only when the plain card choice had to shed it.
+  const orders =
+    winner.kind === 'Blockade'
+      ? [...a.orders, { kind: 'card' as const, card, target: best.wall.target }]
+      : alternativeOrders({
+          orders: a.orders,
+          delayOrder: a.delayOrder,
+          playedDelay: a.playedDelay,
+          delayMustGo: a.playedDelay !== undefined && a.cards.discards.some((c) => c.id === a.playedDelay),
+          cardPlays: [{ kind: 'card' as const, card, target: best.wall.target }],
+          deploys: best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
+          moves: best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
+        });
   return {
     blockadePlan: {
       card: winner.kind === 'Blockade' ? 'Blockade' : 'Emergency Blockade',
@@ -2536,7 +2541,7 @@ async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promi
         nextIncome: best.score.nextIncome - best.plainScore.nextIncome,
       },
       cardsSpent: 1,
-      cardsLeft: winner.held - 1,
+      cardsLeft: cardsLeftAfter({ held: winner.held, free: winner.free, spent: 1 }),
       considered: found.considered,
       ...(checked ? { commander: { safe: !checked.risk, ...(checked.risk ? { needs: checked.risk.needs } : {}) } } : {}),
       note: WALL_PLAN_NOTE,
