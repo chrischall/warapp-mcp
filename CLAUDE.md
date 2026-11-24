@@ -161,8 +161,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   most-pressed kept border) are applied to the board and planned by the UNCHANGED `planTurn`, kept only when nothing
   moves out of a destination beyond what stood there plus its deploys less the guard, and the best beats the plain plan
   on `scoreOf` (next income if conceded borders fall, next income, fewer concessions, more captures). The plain plan and
-  its `orders` never change: golden byte-identical. Not built (owner decision): an Airlift that masses armies for a
-  capture — airlifted armies cannot attack that turn. A plan the submit's commander check would refuse is not offered.
+  its `orders` never change: golden byte-identical. Staging (owner decision 2026-11-24, DRAFT): airlifted armies cannot
+  attack that turn, so `stagingCandidates` flies an interior stack beside a target the plain plan does not take whose
+  capture next turn completes or breaks a bonus, sized by `armiesToTake` (an opponent's target plus `plan.enemyDeploy`);
+  the planner plans without the staged armies, and `stagingGain` credits the bonus (× `STAGING_DISCOUNT` 0.8, the
+  two-turn `PlanScore.twoTurn`, ranked first) only when the stack still makes the attack and holds against every enemy
+  stack beside it plus the enemy deploy (luck-free). Reported as `staging`. A plan the submit's commander check would refuse is not offered.
 - **Commander safety (#274, `src/analysis/commander-safety.ts`, pure).** One question of the stress test: of
   the single-deploy replies that strike my commander's territory after my orders (`stressPlan`'s `targets`,
   no look-ahead), which kill it, and the armies it needs there to survive them all (`needs`, searched by adding
