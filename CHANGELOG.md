@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.14.0](https://github.com/chrischall/warapp-mcp/compare/v0.13.1...v0.14.0) (2026-11-24)
+
+
+### Features
+
+* **cards:** offer an Airlift plan beside the plain plan in warapp_plan_turn ([#557](https://github.com/chrischall/warapp-mcp/issues/557)) ([2c6b77f](https://github.com/chrischall/warapp-mcp/commit/2c6b77f5faa39a46d6f917da45d3ca988496dddf))
+* **cards:** play Emergency Blockade and Blockade through the Airlift pipeline ([#561](https://github.com/chrischall/warapp-mcp/issues/561)) ([ed51344](https://github.com/chrischall/warapp-mcp/commit/ed5134409472dd9ce57df148ce1242b7b863443b))
+* **cards:** play the Bomb through the Airlift pipeline ([#560](https://github.com/chrischall/warapp-mcp/issues/560)) ([815b583](https://github.com/chrischall/warapp-mcp/commit/815b5839a448c2f568f7a1b649d13c2ce883f83d))
+* **cards:** show my hand, simulate Airlifts exactly and verify them after submit ([#555](https://github.com/chrischall/warapp-mcp/issues/555)) ([5c77da3](https://github.com/chrischall/warapp-mcp/commit/5c77da3c582729cd05be18decee8b9727051b05a))
+* **cards:** stage an Airlift for next turn's capture in the Airlift plan ([#559](https://github.com/chrischall/warapp-mcp/issues/559)) ([577ba15](https://github.com/chrischall/warapp-mcp/commit/577ba15e881c5b94c4f5ac006b2773883d64e611))
+* **output:** show times in your timezone with WARAPP_TIMEZONE ([#549](https://github.com/chrischall/warapp-mcp/issues/549)) ([05f4350](https://github.com/chrischall/warapp-mcp/commit/05f4350620309f229ef3d0348152d82d6ad3ebef))
+* **relations:** per-territory caps on an active truce ([#550](https://github.com/chrischall/warapp-mcp/issues/550)) ([3a6f1f9](https://github.com/chrischall/warapp-mcp/commit/3a6f1f95a870f58e7dc64b3ec86fdc9b14e4033c))
+* **relations:** record a coordinated attack with a partner (report only) ([#552](https://github.com/chrischall/warapp-mcp/issues/552)) ([727e28d](https://github.com/chrischall/warapp-mcp/commit/727e28d8431ea0e48af158dbbf780ee5550bbb67))
+
+
+### Documentation
+
+* **cards:** describe the wall plan as built and owner-approved ([#565](https://github.com/chrischall/warapp-mcp/issues/565)) ([913f4a9](https://github.com/chrischall/warapp-mcp/commit/913f4a95b3617cfc9c0e452484b33fa501598542))
+* **check-plan:** add the missing space before the Sanctions sentence ([#566](https://github.com/chrischall/warapp-mcp/issues/566)) ([9dea4b7](https://github.com/chrischall/warapp-mcp/commit/9dea4b7ac5197ae1f3fcb1cb57f9c4ba9678d677))
+* **relations:** keep breachWatch's doc comment above breachWatch ([#554](https://github.com/chrischall/warapp-mcp/issues/554)) ([a51077e](https://github.com/chrischall/warapp-mcp/commit/a51077e69d44f61b5e70c1c3b6a270ab1cd0447c))
+
 ## [0.13.1](https://github.com/chrischall/warapp-mcp/compare/v0.13.0...v0.13.1) (2026-11-24)
 
 
