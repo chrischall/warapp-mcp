@@ -835,6 +835,8 @@ describe('coordinated attacks with a partner (report only)', () => {
     const done = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(done.rationale.join('\n')).not.toMatch(/coordination k1/);
     expect(done).not.toHaveProperty('coordination');
+  });
+});
 
 // Per-territory caps on an agreement (amendment): a territory of mine I promised the partner to keep
 // at most `max` armies on — recorded on an agreed truce without rewriting its terms, honoured by the
