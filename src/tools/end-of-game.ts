@@ -40,6 +40,7 @@ import { recordLessons, recordLessonsExcluded, recordMapExcluded, recordMapGame 
 import { endingOf, foldGame, markHistoryFolded, profileFileState, type FoldSeat } from '../profile-store.js';
 import type { WarappClient } from '../client.js';
 import {
+  END_STATS_VERSION,
   MAX_FINISHED_RECORDS,
   finishedPath,
   finishedRecordOf,
@@ -112,7 +113,10 @@ export interface EndOfGameResult {
    * record kept before them from an `include_history` read), by GameFeed id.
    */
   stats?: EndStatsView;
-  /** #523: the stats were added to a record kept before them (an `include_history` call; nothing else re-run). */
+  /**
+   * #523: the stats were added to a record kept before them, or (#541/#542) recomputed on one whose stats an older
+   * version computed (an `include_history` call; nothing else re-run).
+   */
   backfilled?: 'stats';
 }
 
@@ -125,7 +129,7 @@ export interface EndStatsView {
 }
 
 export const END_STATS_NOTE =
-  "From the game's history, as the client's end-of-game screen defines them: produced = every army deployed (card armies included); lost = its armies killed attacking and defending; killed = armies it killed attacking (neutrals included: killedNeutral) and defending; highestIncome = the most board income it had (cards and the army cap aside). `series` are the client's All Graphs: armies, territories and income per history board from the start (the line stops when the seat left), deployed per turn, and cumulative luck, offensiveLuck and defensiveLuck from 0.";
+  "From the game's history, as the client's end-of-game screen defines them: produced = every army deployed (card armies included); lost = its armies killed attacking and defending; killed = armies it killed attacking (neutrals included: killedNeutral) and defending; highestIncome = the most board income it had (cards and the army cap aside). `series` are the client's All Graphs: armies, territories and income per history board from the start and deployed per turn, each skipping the turns the seat was out (eliminated, surrendered or booted: `left` when it stayed out; a return to Playing resumes the line), and cumulative luck, offensiveLuck and defensiveLuck from 0 every turn (out or not, as the client draws them, so they can run longer). A seat an AI took over keeps its line and totals, the AI's from `aiFrom` (to `aiUntil` when its player took it back).";
 
 /** The record's stats with the keys put back to `players`' ids (a key is never reversed: matched). */
 function statsView(rec: { stats?: { turnsRead: number; players: Record<string, StoredEndStats> } }, salt: string, players: readonly { id: number }[], me: number): EndStatsView | undefined {
@@ -327,7 +331,8 @@ export async function endOfGame(
 }
 
 /**
- * #523: a captured record, already processed: its stats shown when it keeps them; else, given a read WITH the
+ * #523: a captured record, already processed: its stats shown when it keeps current ones ({@link END_STATS_VERSION}:
+ * older ones are recomputed like missing ones, #541/#542); else, given a read WITH the
  * history (an explicit `include_history` call, never a trigger), the stats computed from that read and added to the
  * record (`backfilled`) — nothing else is re-run (no profile fold, map record, lessons or decision-log truth), so
  * nothing is counted twice. Called under the record's path lock. Never throws (an unreadable record: as kept).
@@ -343,7 +348,7 @@ async function keptOrBackfilled(
   const rec = await readFinishedRecord(path);
   if (typeof rec === 'string') return { status: 'already-processed' };
   const players = shown?.players ?? [];
-  if (rec.stats || !history || history.state !== 'Finished') {
+  if ((rec.stats && rec.stats.version === END_STATS_VERSION) || !history || history.state !== 'Finished') {
     const view = statsView(rec, salt, players, me);
     return { status: 'already-processed', ...(view ? { stats: view } : {}) };
   }
