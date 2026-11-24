@@ -10,12 +10,13 @@
 // territory next to one of mine after the deployments and before every move, and kills half its
 // armies — a commander is reported unharmed. An Emergency Blockade turns a territory into a
 // neutral of its armies (that turn's deploy included) times the multiplier, before the attacks;
-// special units count for nothing on it. UNVERIFIED: how war.app rounds the half (each side is
-// read in its worst case: a bombed enemy keeps the larger half, a bombed stack of mine the
-// smaller) and the wall (rounded to the nearest army here).
+// special units count for nothing on it. The Bomb's half is the client's rule (owner decision 2026-11-24, read
+// from the bundle's GameOrderPlayCardBombResult: round(armies / 2) with a half rounded down): a bombed stack keeps
+// floor(armies / 2), the same rule bombPlan and the stress test apply. UNVERIFIED: the wall (rounded to the nearest
+// army here).
 
 import type { BoardState, TerritoryState } from '../board.js';
-import { armiesToTake, COMMANDER_STRENGTH, DEFAULT_DEFENSIVE_KILL_RATE, straightKills, type KillRates } from './combat.js';
+import { armiesToTake, bombLeaves, COMMANDER_STRENGTH, DEFAULT_DEFENSIVE_KILL_RATE, straightKills, type KillRates } from './combat.js';
 import { neighborsOf, type MapGraph } from './graph.js';
 import { bonusTerritories } from './bonuses.js';
 import { opensBehind, type Opened } from './opens.js';
@@ -129,9 +130,9 @@ export function reader(cb: CardBoard) {
   /**
    * Each opponent's stacks next to `t` plus its deploy (the strongest one), with `bombed` halved by
    * a bomb. The bomb lands after the deploys, so the worst case is taken: an owner with another
-   * stack next to `t` deploys there, unhalved (d + ⌈a/2⌉ + the other stacks, less the guards); one
+   * stack next to `t` deploys there, unhalved (d + ⌊a/2⌋ + the other stacks, less the guards); one
    * whose only stack next to `t` is the bombed one deploys on it, and the deploy is halved with it
-   * (⌈(a + d)/2⌉ less the guard).
+   * (⌊(a + d)/2⌋ less the guard).
    */
   const reachOf = (t: number, bombed?: number) => {
     const by = new Map<number, { others: number; hasOther: boolean; bombed?: number }>();
@@ -153,8 +154,8 @@ export function reader(cb: CardBoard) {
         e.bombed === undefined
           ? d + e.others
           : e.hasOther
-            ? d + e.others + Math.max(0, Math.ceil(e.bombed / 2) - guard)
-            : Math.max(0, Math.ceil((e.bombed + d) / 2) - guard);
+            ? d + e.others + Math.max(0, bombLeaves(e.bombed) - guard)
+            : Math.max(0, bombLeaves(e.bombed + d) - guard);
       if (!best || reach > best.reach) best = { player, reach };
     }
     return best;
@@ -203,7 +204,7 @@ export function bombAdvice(cb: CardBoard): BombAdvice {
       continue;
     }
     const n = r.armiesOf(t) + cb.enemyDeploy;
-    const left = Math.ceil(n / 2);
+    const left = bombLeaves(n);
     const cmd = r.commanderOf(t, (q) => q === p) ? COMMANDER_STRENGTH : 0;
     const planned = r.attacksOn(t);
     const free = planned + borders.reduce((a, b) => a + Math.max(0, r.after(b) - r.guard), 0);

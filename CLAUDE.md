@@ -176,7 +176,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   first, then the largest stacks, never a player at peace; the unchanged planner on the halved board; `scoreOf`). The
   submit reads a Bomb back (`checkTargeted`, `cardReadBack`) like the Airlifts. The play stays UNVERIFIED live: no
   played Bomb was found to read (in-progress games' history is not served; no finished game had it in play).
-  `bombAdvice`'s own worst-case halving (`card-threats.ts`, ceil for an enemy) is unchanged.
+  `bombAdvice` (`card-threats.ts`) uses the same rule (`bombLeaves` in `combat.ts`; owner decision 2026-11-24 — it took
+  the larger half for an enemy before), so the advice and `bombPlan` agree; two advice tests' boards changed target.
 - **Commander safety (#274, `src/analysis/commander-safety.ts`, pure).** One question of the stress test: of
   the single-deploy replies that strike my commander's territory after my orders (`stressPlan`'s `targets`,
   no look-ahead), which kill it, and the armies it needs there to survive them all (`needs`, searched by adding

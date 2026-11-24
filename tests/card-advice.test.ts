@@ -133,7 +133,10 @@ describe('adviseCards (#163)', () => {
     const { view, warnings } = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 8), neutral(6, 2)], plan, hand: [bomb] }));
     expect(view.bomb).toMatchObject({ target: 5, order: { kind: 'card', card: bomb.id, target: 5 } });
     expect(warnings.join('\n')).toMatch(/pass `cards.advice.bomb.order` to warapp_submit_turn/);
-    const hold = adviseCards(input({ territories: [neutral(3, 2), me(4, 2), foe(5, 2), neutral(6, 2)], hand: [bomb] }));
+    // Owner decision 2026-11-24 (the client's floor rule): the old board here (my 2 beside the foe's 2) now advises the
+    // Bomb — halved to floor((2 + 5) / 2) = 3, the foe's 2 movable no longer take my 2 — so the hold case uses a board
+    // where halving changes nothing: my 20 beside the foe's 1.
+    const hold = adviseCards(input({ territories: [neutral(3, 2), me(4, 20), foe(5, 1), neutral(6, 2)], hand: [bomb] }));
     expect(hold.view.bomb).toMatchObject({ target: null });
     expect(hold.view.bomb).not.toHaveProperty('order');
     expect(turnOrdersArg.safeParse([view.bomb!.order]).success).toBe(true);

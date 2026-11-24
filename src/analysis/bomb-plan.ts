@@ -13,6 +13,7 @@
 
 import type { BoardState } from '../board.js';
 import { compareScores, scoreOf, type PlanScore } from './airlift-plan.js';
+import { bombLeaves } from './combat.js';
 import { neighborsOf } from './graph.js';
 import { planTurn } from './planner.js';
 import type { PlanInput, TurnPlan } from './plan/shared.js';
@@ -36,8 +37,7 @@ export interface BombPlan {
   considered: number;
 }
 
-/** What a Bomb leaves of `armies`: half, rounded down (round(armies / 2) with a half rounded down). */
-export const bombLeaves = (armies: number): number => Math.floor(armies / 2);
+export { bombLeaves };
 
 /** The board with `target`'s armies halved. */
 export function bombedBoard(board: BoardState, target: number): BoardState {

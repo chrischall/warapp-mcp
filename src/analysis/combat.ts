@@ -245,3 +245,9 @@ export function armiesForChance(defenders: number, minChance: number, settings: 
   }
   return hi;
 }
+
+/**
+ * What a Bomb leaves of `armies`: half, rounded down — the client bundle's GameOrderPlayCardBombResult,
+ * round(armies / 2) with a half rounded down. One rule for the turn simulator, the Bomb plan and the card advice.
+ */
+export const bombLeaves = (armies: number): number => Math.floor(armies / 2);
