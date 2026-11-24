@@ -144,7 +144,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'income). An opponent whose estimate one observation broke (see warapp_plan_turn) is tried at the larger of what it ' +
           'implied and your own income (`enemyDeploy` source `untrusted`), said in the first warning. Each `enemyDeploy` entry ' +
           "shows the Reinforcement card the clock says it may hold apart as `cardBonus` (in `deploy` unless `assume_enemy_cards` is " +
-          '"none"; a progressive card\'s source in `cardBonusBasis`, as warapp_plan_turn has it) and, under Sanctions, `sanctionApplied` (its income before and after the cut).' +
+          '"none"; a progressive card\'s source in `cardBonusBasis`, as warapp_plan_turn has it) and, under Sanctions, `sanctionApplied` (its income before and after the cut). ' +
           'A Sanctions card in the orders is projected onto next turn in `sanctionsPlayed` (`nextIncome`: yours from this turn\'s ' +
           'income when the game\'s percentage is negative and you play it on yourself, an opponent\'s estimate when positive), and ' +
           'a card on the wrong side for its sign is a warning (warapp_submit_turn refuses it). ' +
