@@ -122,6 +122,8 @@ export interface EndOfGameResult {
 
 /** #523: the stats as a tool shows them: per player by GameFeed id, mine marked. */
 export interface EndStatsView {
+  /** How the stats were computed ({@link END_STATS_VERSION}; absent when an older record kept none). */
+  version?: number;
   turnsRead: number;
   /** What each figure is (the client's end-of-game screen definitions). */
   note: string;
@@ -129,17 +131,17 @@ export interface EndStatsView {
 }
 
 export const END_STATS_NOTE =
-  "From the game's history, as the client's end-of-game screen defines them: produced = every army deployed (card armies included); lost = its armies killed attacking and defending; killed = armies it killed attacking (neutrals included: killedNeutral) and defending; highestIncome = the most board income it had (cards and the army cap aside). `series` are the client's All Graphs: armies, territories and income per history board from the start and deployed per turn, each skipping the turns the seat was out (eliminated, surrendered or booted: `left` when it stayed out; a return to Playing resumes the line), and cumulative luck, offensiveLuck and defensiveLuck from 0 every turn (out or not, as the client draws them, so they can run longer). A seat an AI took over keeps its line and totals, the AI's from `aiFrom` (to `aiUntil` when its player took it back).";
+  "From the game's history, as the client's end-of-game screen defines them: produced = every army deployed (card armies included); lost = its armies killed attacking and defending; killed = armies it killed attacking (neutrals included: killedNeutral) and defending; highestIncome = the most board income it had (cards and the army cap aside). `series` are the client's All Graphs: armies, territories and income per history board from the start and deployed per turn, each skipping the turns the seat was out (eliminated, surrendered or booted: `left` when it stayed out; a return to Playing resumes the line), and cumulative luck, offensiveLuck and defensiveLuck from 0 every turn (out or not, as the client draws them, so they can run longer). A seat an AI took over keeps its line and totals, the AI's from `aiFrom` (to `aiUntil` when its player took it back). `leftAtEnd`: the seat left after the last turn (a final surrender or boot, or an AI conceding when one human was left; `intoAI` when an AI took it then), so its line runs to the end. `version`: how the stats were computed.";
 
 /** The record's stats with the keys put back to `players`' ids (a key is never reversed: matched). */
-function statsView(rec: { stats?: { turnsRead: number; players: Record<string, StoredEndStats> } }, salt: string, players: readonly { id: number }[], me: number): EndStatsView | undefined {
+function statsView(rec: { stats?: { version?: number; turnsRead: number; players: Record<string, StoredEndStats> } }, salt: string, players: readonly { id: number }[], me: number): EndStatsView | undefined {
   if (!rec.stats) return undefined;
   const out: EndStatsView['players'] = [];
   for (const p of players) {
     const s = rec.stats.players[playerKey(salt, p.id)];
     if (s) out.push({ playerId: p.id, ...(p.id === me ? { me: true as const } : {}), ...s });
   }
-  return { turnsRead: rec.stats.turnsRead, note: END_STATS_NOTE, players: out };
+  return { ...(rec.stats.version !== undefined ? { version: rec.stats.version } : {}), turnsRead: rec.stats.turnsRead, note: END_STATS_NOTE, players: out };
 }
 
 /**

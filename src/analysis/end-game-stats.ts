@@ -22,8 +22,12 @@
 // replayed GamePlayerState is Eliminated, SurrenderAccepted or Booted — point by point, so a later transition back
 // to Playing resumes the line. A `GameOrderStateTransition` turning a seat into an AI (`TurningIntoAI`), or taking
 // it back from one (`TakingOverForAI`), leaves the replayed state as it was, so the line runs on under the seat;
-// the luck lines get a point every turn for every seat. A seat that leaves without the flag but goes on giving
-// orders in a later turn is an AI's seat too (nobody else orders for it). Pure; never throws.
+// the luck lines get a point every turn for every seat. The GameFeed drops both flags, so an AI is read from the
+// orders: a seat that leaves but goes on giving orders — later in the same turn (a boot or surrender is the turn's
+// first order) or in a later turn — is an AI's seat (nobody else orders for it), and a later transition to Playing
+// is its player taking it back. Won is never a departure. A seat the player list ends surrendered or booted
+// with no transition in the history left after the last turn (`leftAtEnd`): its line runs to the end. Pure; never
+// throws.
 import type { Player } from '../normalize.js';
 import { playersByInGameId } from '../live.js';
 
@@ -49,6 +53,13 @@ export interface PlayerEndStats {
    */
   aiFrom?: number;
   aiUntil?: number;
+  /**
+   * The seat left after the last turn read: the player list's final state is SurrenderAccepted or Booted (states
+   * the client stops a line on) but no turn's orders carry the transition, so its line runs to the end
+   * (a surrender or boot that ended the game, or an AI conceding when one human was left). `intoAI`: an AI took
+   * the seat there (the list's `humanTurnedIntoAI`) and played no turn of it.
+   */
+  leftAtEnd?: { state: string; intoAI?: true };
   /**
    * The client's "All Graphs" series that come from the orders (`warlight.unity.live.Statistics`): `deployed`, the
    * armies it deployed each turn read (metric 3, "Armies actually deployed each turn"; not the turns it was out,
@@ -82,6 +93,11 @@ export function seatIn(r: Pick<EndGameStatsResult, 'out'>, id: number, afterTurn
 
 /** The GamePlayerStates the client stops a seat's line on (3, 7, 8). */
 const OUT_STATES = new Set(['Eliminated', 'SurrenderAccepted', 'Booted']);
+/**
+ * Of those, the ones a player enters by not playing (a boot or a surrender, possibly into an AI, possibly between
+ * turns); an elimination only happens in a turn, with its transition.
+ */
+const AT_END_STATES = new Set(['SurrenderAccepted', 'Booted']);
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const num = (v: unknown): number => {
@@ -95,7 +111,10 @@ const SAFE_STATE = /^[A-Za-z]{1,40}$/;
  * The stats from a GameFeed history (the gathered `standing<N>` / `turn<N>` object, or a `history` wrapper of
  * it), `undefined` when no turn's orders read. `players`: the game's players (owners may be in-game ids).
  */
-export function endGameStats(history: unknown, players: readonly Pick<Player, 'id' | 'feedId'>[]): EndGameStatsResult | undefined {
+export function endGameStats(
+  history: unknown,
+  players: readonly (Pick<Player, 'id' | 'feedId'> & Partial<Pick<Player, 'state' | 'humanTurnedIntoAI'>>)[],
+): EndGameStatsResult | undefined {
   try {
     const h = unwrap(history);
     if (!h) return undefined;
@@ -120,6 +139,15 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
       const last = o[o.length - 1];
       return last && last.to === undefined ? last : undefined;
     };
+    // The open departure `o` was an AI taking the seat over: no departure, the line runs on, the AI's from `o.from`.
+    const toAI = (p: number, s: PlayerEndStats, o: { from: number }) => {
+      const list = outs.get(p)!;
+      list.splice(list.indexOf(o as (typeof list)[number]), 1);
+      if (s.aiFrom === undefined || s.aiUntil !== undefined) {
+        s.aiFrom = o.from;
+        delete s.aiUntil;
+      }
+    };
     let turnsRead = 0;
     const turns = Object.keys(h)
       .map((k) => /^turn_?(\d+)$/i.exec(k))
@@ -140,7 +168,14 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
         if (!isRec(o) || typeof o.type !== 'string') continue;
         const p = feedOf(o.playerID);
         const s = p === undefined ? undefined : out.get(p);
-        if (s && p !== undefined && (o.type === 'GameOrderDeploy' || o.type === 'GameOrderAttackTransfer' || o.type.startsWith('GameOrderPlayCard'))) ordered.add(p);
+        if (s && p !== undefined && (o.type === 'GameOrderDeploy' || o.type === 'GameOrderAttackTransfer' || o.type.startsWith('GameOrderPlayCard'))) {
+          ordered.add(p);
+          // Ordering after its own boot or surrender in the same turn (that transition is the turn's first order, the
+          // player's orders never ran): an AI took the seat over there (the flag not in the feed). Not an elimination:
+          // a seat's orders listed after it in its turn are its own, left over.
+          const gone = open(p);
+          if (gone && gone.from === turn && AT_END_STATES.has(gone.state)) toAI(p, s, gone);
+        }
         if (o.type === 'GameOrderDeploy') {
           if (s && p !== undefined) {
             s.produced += num(o.armies);
@@ -186,12 +221,13 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
           } else if (OUT_STATES.has(state) || state === 'unknown') {
             if (!open(p)) outs.get(p)!.push({ from: turn, state });
           } else {
-            // Back to Playing (or a state the client draws a line in): the line resumes.
+            // Back to Playing (or a state the client draws a line in): the line resumes; from an AI, its player took
+            // the seat back (TakingOverForAI, the flag not in the feed).
             const o = open(p);
             if (o) {
               o.to = turn;
               back.add(p);
-            }
+            } else if (s.aiFrom !== undefined && s.aiUntil === undefined && state === 'Playing') s.aiUntil = turn;
           }
         }
       }
@@ -199,13 +235,7 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
       for (const p of ordered) {
         const o = open(p);
         if (!o || o.from >= turn || back.has(p)) continue;
-        const list = outs.get(p)!;
-        list.splice(list.indexOf(o), 1);
-        const s = out.get(p)!;
-        if (s.aiFrom === undefined || s.aiUntil !== undefined) {
-          s.aiFrom = o.from;
-          delete s.aiUntil;
-        }
+        toAI(p, out.get(p)!, o);
       }
       const r2 = (v: number) => Math.round(v * 100) / 100;
       for (const [id, s] of out) {
@@ -224,6 +254,12 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
       spans.set(id, o.map(({ from, to }) => (to === undefined ? { from } : { from, to })));
       const last = o[o.length - 1];
       if (last && last.to === undefined) s.left = { turn: last.from, state: last.state };
+    }
+    for (const p of players) {
+      const s = out.get(p.id)!;
+      if (s.left || typeof p.state !== 'string' || !AT_END_STATES.has(p.state)) continue;
+      const heldByAI = s.aiFrom !== undefined && s.aiUntil === undefined;
+      s.leftAtEnd = { state: p.state, ...(p.humanTurnedIntoAI && !heldByAI ? { intoAI: true as const } : {}) };
     }
     const r = { players: out, turnsRead, out: spans };
     // The client adds a turn's deploy point only while the seat is in after it.
