@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { DecodedRequest, ReplyFrame } from '../src/protocol/codec.js';
 import { Method } from '../src/protocol/methods.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
-import { writeLatestGameInfo, type SyntheticTerritory } from './protocol/live-bundle.js';
+import { writeLatestGameInfo, type SyntheticCard, type SyntheticTerritory } from './protocol/live-bundle.js';
 
 let h: Harness | undefined;
 afterEach(async () => {
@@ -44,14 +44,14 @@ function feedGame(extra: Record<string, unknown> = {}, myState = 'Playing'): Rec
  * repeating; null: no standing; 'fail': a war.app error), BeginFirstTurn records what it was sent and
  * answers `begin`.
  */
-function server(boards: Array<SyntheticTerritory[] | null | 'fail'>, begin: Partial<ReplyFrame> = { body: (w) => w.bool(false) }) {
+function server(boards: Array<SyntheticTerritory[] | null | 'fail'>, begin: Partial<ReplyFrame> = { body: (w) => w.bool(false) }, hand?: SyntheticCard[]) {
   const begun: Array<{ gameId: number; left: number }> = [];
   let reads = 0;
   const warapp = (req: DecodedRequest): Partial<ReplyFrame> => {
     if (req.method === Method.GetLatestGameInfo) {
       const b = boards[Math.min(reads++, boards.length - 1)]!;
       if (b === 'fail') return { error: { code: 99, message: 'read failed' } };
-      return { body: (w) => writeLatestGameInfo(w, b, [ME.inGame]) };
+      return { body: (w) => writeLatestGameInfo(w, b, [ME.inGame], hand && b ? { [ME.inGame]: hand } : {}) };
     }
     if (req.method === Method.BeginFirstTurn) {
       begun.push({ gameId: req.body.int32(), left: req.body.remaining });
@@ -88,6 +88,15 @@ describe('warapp_begin_turn', () => {
     expect(p).toMatchObject({ status: 'begun', game: { id: GAME_ID, name: 'Synthetic Race' }, territoriesVisible: 2 });
     expect(p.outcome).toBe('confirmed');
     expect(String(p.next)).toMatch(/warapp_plan_turn/);
+  });
+
+  it('shows my hand once the board reads back (owner request 2026-11-24)', async () => {
+    const hand: SyntheticCard[] = [{ id: '55555555666666667777777788888888', type: 6 }];
+    const s = server([null, null, BOARD], undefined, hand);
+    const settings = { ...(feedGame().settings as Record<string, unknown>), AirliftCard: { NumPieces: 4 } };
+    h = await liveHarness({ pages: SIGNED_IN, feed: [feedGame({ settings })], warapp: s.warapp });
+    const p = payload<{ cards: { held: unknown[] } }>(await confirmed({ game_id: GAME_ID }));
+    expect(p.cards.held).toEqual([{ type: 6, name: 'Airlift', count: 1 }]);
   });
 
   it('reports unconfirmed when the board is still hidden after Begin', async () => {

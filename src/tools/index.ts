@@ -1,3 +1,4 @@
+import { readCardState } from './card-state-view.js';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { defaultMapCache, WarappClient, type WarappClientOptions } from '../client.js';
 import { captureSeats } from './decision-capture.js';
@@ -117,7 +118,7 @@ function registerEveryTool(server: McpServer, deps: ToolDeps): void {
   client.observeGames((game) => captureSeats(live, game));
   registerHealthcheckTool(server, fetchproxy, bridge, { ...deps, standIn: () => live.decoderReport()?.standIn });
   // The signed-in account names a finished game's player for its end-of-game pass when no board was cached (#312).
-  registerGameTool(server, client, () => dataDir(deps.env), deps.env, () => live.myInviteToken());
+  registerGameTool(server, client, () => dataDir(deps.env), deps.env, () => live.myInviteToken(), (game) => readCardState(live, game));
   registerMapTool(server, client, live);
   // Opt-in (WARAPP_STATS=1), never hosted: the tool refuses before any request
   // when off. One collector per registration, so its 1 s throttle spans calls.

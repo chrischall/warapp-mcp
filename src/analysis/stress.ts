@@ -108,6 +108,11 @@ export interface StressInput {
   board: BoardState;
   me: number;
   deploys: readonly { territoryId: number; armies: number }[];
+  /**
+   * My Airlift card plays (owner request 2026-11-24): run after every deploy (mine and each reply's) and before
+   * every move, the source losing the armies and the destination gaining them, which cannot move again that turn.
+   */
+  airlifts?: readonly { from: number; to: number; armies: number; commander?: boolean }[];
   /** My attacks and transfers, in the order they will be submitted, with their options (#165). */
   moves: readonly SimOrder[];
   opponents: readonly StressOpponent[];
@@ -338,11 +343,13 @@ export function stressPlan(input: StressInput): StressReport {
 
   const myDeploys: SimDeploy[] = input.deploys.map((d) => ({ player: me, territoryId: d.territoryId, armies: d.armies }));
   const myOrders: SimOrder[] = input.moves.map((m) => ({ ...m }));
+  const myAirlifts = (input.airlifts ?? []).map((a) => ({ ...a, player: me }));
   const simulate = (sides: readonly Side[], moveOrder: number[]): SimResult =>
     simulateTurn({
       graph,
       board,
       deploys: [...myDeploys, ...sides.flatMap((x) => (x.deploy > 0 ? [{ player: x.player, territoryId: x.deployTo, armies: x.deploy }] : []))],
+      ...(myAirlifts.length ? { airlifts: myAirlifts } : {}),
       orders: [{ player: me, orders: myOrders }, ...sides.map((x) => ({ player: x.player, orders: x.orders }))],
       moveOrder,
       ...(input.settings ? { settings: input.settings } : {}),
@@ -396,6 +403,19 @@ export function stressPlan(input: StressInput): StressReport {
   for (const d of myDeploys) {
     const c = afterMyDeploys.get(d.territoryId);
     if (c && c.owner === me && d.armies > 0) c.armies += d.armies;
+  }
+  // My Airlifts land before any move, so the dodges and chains are searched on the board after them too.
+  for (const a of myAirlifts) {
+    const src = afterMyDeploys.get(a.from);
+    const dst = afterMyDeploys.get(a.to);
+    if (!src || !dst || a.from === a.to || src.owner !== me || !friendly(dst.owner)) continue;
+    const sent = Math.max(0, Math.min(Math.floor(a.armies), src.armies));
+    src.armies -= sent;
+    dst.armies += sent;
+    if (a.commander && src.commander === me && dst.owner === me) {
+      delete src.commander;
+      dst.commander = me;
+    }
   }
   const allOf = (s: number, deploy: number): number => (start.get(s)?.armies ?? 0) + deploy;
   const stacksOf = (id: number): number[] =>
@@ -771,6 +791,7 @@ export function stressPlan(input: StressInput): StressReport {
       me,
       opponents: input.opponents,
       deploys: input.deploys,
+      ...(input.airlifts?.length ? { airlifts: input.airlifts } : {}),
       moves: input.moves,
       ...(input.settings ? { settings: input.settings } : {}),
       ...(teams ? { teams } : {}),

@@ -83,7 +83,7 @@ export const CHECK_PLAN_NOT_COVERED = [
   'a deploy split over several stacks',
   'two opponents together other than on one of your territories, and two free-for-all opponents together at all unless you lead (see leader)',
   'under Multi-Attack, any chain of attacks but the one most damaging per stack',
-  'cards, apart from your own Order Priority',
+  'cards, apart from your own Order Priority and Airlifts',
 ] as const;
 
 export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void {
@@ -158,7 +158,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orders: turnOrdersArg.describe(
           'The orders to test, in the order you would submit them: deploys and moves by territory id or name (the ' +
             '`orders` array warapp_plan_turn returns). An Order Priority card play makes your first order run before ' +
-            "everyone's; other card plays and discards are ignored by the test (a Bomb or Emergency Blockade is named " +
+            "everyone's; an Airlift (`from`, `to`, `armies`) is carried out at its phase — after every deploy, before every " +
+            'move: its source loses the armies, its destination gains them, and they cannot move again that turn — so ' +
+            'every reply is tried against the board it leaves; other card plays and discards are ignored by the test ' +
+            '(a Bomb or Emergency Blockade is named ' +
             'in `warnings` as not simulated; in a team game, a card your teammate has ' +
             "already entered is warned of). A move's options (mode, percent, commander, " +
             'attack_teammates) are carried out as war.app would.',
@@ -327,7 +330,9 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             // A territory not on the map: warapp_submit_turn refuses it; the check goes without it.
           }
           if (type !== undefined && type === ORDER_PRIORITY) orderPriority = true;
-          else if (type === undefined || cardTypeName(type) !== 'Reinforcement') ignored.push('a card play other than Order Priority or Reinforcement');
+          else if (kindOf === 'Airlift') {
+            // Owner request 2026-11-24: the stress test carries the Airlift out at its phase (below).
+          } else if (type === undefined || cardTypeName(type) !== 'Reinforcement') ignored.push('a card play other than Order Priority, Reinforcement or Airlift');
         }
       }
 
@@ -423,6 +428,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(teams.size ? { teams } : {}),
         ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         orderPriority,
+        ...(airlifts.length ? { airlifts } : {}),
         ...(settings.localDeployments ? { localDeployments: true, baseIncome: gameBaseIncome(settings) } : {}),
         ...(settings.localDeployments && (settings.bonusArmyPer ?? 0) > 0 ? { perTerritoryIncome: true } : {}),
         leader,

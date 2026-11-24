@@ -389,7 +389,13 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
     {
       name: 'an Airlift of more armies than stand there',
       orders: [{ kind: 'card', card: 'Airlift', from: 161, to: 159, armies: 4 }],
-      message: /airlift 4 armies from .*at most 3 stand there/,
+      message: /airlift 4 armies from .*at most 2 can leave .*3 stand there.*one stays behind as its guard/,
+    },
+    {
+      // Owner spec 2026-11-24: at least one army stays behind (the guard).
+      name: 'an Airlift of every army on its source',
+      orders: [{ kind: 'card', card: 'Airlift', from: 161, to: 159, armies: 3 }],
+      message: /airlift 3 armies from .*at most 2 can leave/,
     },
     {
       name: 'a commander airlifted with no commanders in the game',

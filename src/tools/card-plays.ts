@@ -485,10 +485,14 @@ function airlift(input: CardTargetInput, ctx: CardPlayContext, warnings: string[
   }
   const there = (standingOf(ctx, f.id)?.armies ?? 0) + (ctx.deployedOn.get(f.id) ?? 0);
   const total = (ctx.seen.airliftedFrom.get(f.id) ?? 0) + armies;
-  if (total > there) {
+  // Owner spec 2026-11-24: an Airlift leaves at least one army behind while One Army Must Stand Guard is on (the
+  // bundle's validator does not check the count; ours, as a move leaves its guard).
+  const guard = ctx.settings?.oneArmyStandsGuard === false ? 0 : 1;
+  if (total > there - guard) {
     throw new McpToolError(
-      `These orders airlift ${total} armies from ${place(from)}, but at most ${there} stand there when the Airlift runs (its armies now plus this turn's deploys).`,
-      { hint: 'Airlift no more armies than stand on the territory.' },
+      `These orders airlift ${total} armies from ${place(from)}, but at most ${Math.max(0, there - guard)} can leave when the Airlift runs ` +
+        `(${there} stand there — its armies now plus this turn's deploys${guard ? ' — and one stays behind as its guard' : ''}).`,
+      { hint: guard ? 'Airlift fewer armies: one must stay behind on the territory it leaves.' : 'Airlift no more armies than stand on the territory.' },
     );
   }
   ctx.seen.airliftedFrom.set(f.id, total);

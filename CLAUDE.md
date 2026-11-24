@@ -147,6 +147,14 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   transfers, staging, top-ups — guarded: my commander's, a held bonus's member, or (#291) a territory whose loss opens
   held bonuses, so the gate behind a conceded border keeps a hold; #257's step into that conceded border cuts the reach
   through it and is not blocked): change it there, and `exposedNextTurn` and the planner move together.
+- **Airlifts are first-class (owner request 2026-11-24).** `turn-sim.ts` takes `airlifts` (phase 43: after every
+  deploy, before every move; what lands is marked moved), `stressPlan` and the look-ahead pass them through, and
+  `warapp_check_plan` tries every reply on the board the Airlifts leave (no longer "ignored"). `warapp_submit_turn`
+  refuses an Airlift that leaves no army behind while the guard is on (ours; the validator does not check the count),
+  and after a `committed` read-back compares every Airlift sent with `LatestGameInfo`'s active orders
+  (`src/tools/airlift-readback.ts`): missing or altered throws (nothing resent), else `airliftReadBack`. My card
+  state (`src/card-state.ts`: whole cards by type, and `PlayerCards.Pieces` read by shape — UNVERIFIED live) is
+  `cards` on `warapp_get_game` (one GetLatestGameInfo while played/picked with a card in play) and `begun`.
 - **Commander safety (#274, `src/analysis/commander-safety.ts`, pure).** One question of the stress test: of
   the single-deploy replies that strike my commander's territory after my orders (`stressPlan`'s `targets`,
   no look-ahead), which kill it, and the armies it needs there to survive them all (`needs`, searched by adding
