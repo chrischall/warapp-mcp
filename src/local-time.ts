@@ -2,7 +2,7 @@
 // owner's zone, e.g. `time` → `localTime: "Tue 24 Nov, 6:14 am EST"`. Applied once, at the output layer
 // (`withLocalTimes` wraps every registered tool's handler), so no tool formats a time itself. The UTC fields are
 // never changed; with the setting unset (or invalid) nothing is touched and every answer is byte-identical.
-import type { EnvSource } from '@chrischall/mcp-utils';
+import { readEnvVar, type EnvSource } from '@chrischall/mcp-utils';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { parseFeedTime } from './normalize.js';
 
@@ -10,7 +10,7 @@ let noted = false;
 
 /** The IANA zone WARAPP_TIMEZONE names, or undefined when unset or not a zone (noted once per process). */
 export function readTimezone(env: EnvSource = process.env, note: (line: string) => void = (l) => console.error(l)): string | undefined {
-  const raw = env.WARAPP_TIMEZONE?.trim();
+  const raw = readEnvVar('WARAPP_TIMEZONE', { env })?.trim();
   if (!raw) return undefined;
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: raw });
