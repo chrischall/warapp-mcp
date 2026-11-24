@@ -133,10 +133,12 @@ export interface FinishedRecord {
 
 /**
  * #541/#542: the version of the stats computation. 2: seat lines stop and resume as the client's (a return to
- * Playing resumes; an AI takeover runs on under the seat with `aiFrom`). Absent (1): every state transition ended
- * the line, and a seat's deploy line stopped at its first transition.
+ * Playing resumes; an AI takeover runs on under the seat with `aiFrom`). 3 (#542 follow-up): a seat ordering after
+ * its own boot or surrender in the same turn is an AI's from that turn (no point dropped), its return to Playing
+ * `aiUntil`; `leftAtEnd` for a seat that left after the last turn. Absent (1): every state transition ended the
+ * line, and a seat's deploy line stopped at its first transition.
  */
-export const END_STATS_VERSION = 2;
+export const END_STATS_VERSION = 3;
 
 /**
  * #523: one player's end-of-game stats as stored: the totals (`endGameStats`, src/analysis/end-game-stats.ts), its

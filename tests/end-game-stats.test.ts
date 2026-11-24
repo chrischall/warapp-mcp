@@ -198,6 +198,82 @@ describe('endGameStats: departures, returns and AI seats (#541, #542)', () => {
     const s = storedStats(r, capture(5), String).players[String(ANN)]!;
     expect(lengths(s)).toMatchObject({ armies: 4, deployed: 3, luck: 6 });
   });
+
+  // #542 follow-up, from real histories: the feed sends a boot or surrender as the turn's FIRST order, then the
+  // seat's orders that turn (an AI's: the player's never ran), and no TurningIntoAI / TakingOverForAI flags.
+  it('a boot then the seat\'s own orders in the same turn is an AI\'s from that turn; a return to Playing is aiUntil — no board dropped (the winner kept 41 of 42 points)', () => {
+    const h = game([[dep(123456, 5)], [st(123456, 'Booted'), dep(123456, 6)], [st(123456, 'Playing'), dep(123456, 7)], [dep(123456, 8)]]);
+    const r = endGameStats(h, [{ id: ANN, state: 'Won' }, { id: BOB, state: 'Eliminated' }])!;
+    const ann = r.players.get(ANN)!;
+    expect(ann).not.toHaveProperty('left');
+    expect(ann).not.toHaveProperty('leftAtEnd');
+    expect(ann).toMatchObject({ aiFrom: 2, aiUntil: 3, deployed: [5, 6, 7, 8] });
+    expect([0, 1, 2, 3, 4].every((k) => seatIn(r, ANN, k))).toBe(true);
+    expect(lengths(storedStats(r, capture(4), String).players[String(ANN)]!)).toMatchObject({ armies: 5, territories: 5, income: 5, deployed: 4, luck: 5 });
+  });
+
+  it('booted into an AI in turn 1, back, booted again, then eliminated: points up to the elimination turn (36 of 37 before)', () => {
+    const h = game([
+      [st(123456, 'Booted'), dep(123456, 5)],
+      [st(123456, 'Playing'), dep(123456, 5)],
+      [dep(123456, 6), dep(765432, 1)],
+      [st(123456, 'Booted'), dep(123456, 7)],
+      [dep(123456, 2), st(123456, 'Eliminated')],
+      [dep(765432, 5)],
+    ]);
+    const r = endGameStats(h, players)!;
+    const ann = r.players.get(ANN)!;
+    expect(ann).toMatchObject({ aiFrom: 4, left: { turn: 5, state: 'Eliminated' }, deployed: [5, 5, 6, 7] });
+    expect(ann).not.toHaveProperty('aiUntil');
+    // Boards after 0..4 completed turns: as many points as the turn it left.
+    expect(lengths(storedStats(r, capture(6), String).players[String(ANN)]!)).toMatchObject({ armies: 5, deployed: 4, luck: 7 });
+  });
+
+  it('Won is never a departure, nor are the orders before it', () => {
+    const h = game([[dep(123456, 5)], [dep(123456, 5), st(123456, 'Won')]]);
+    const r = endGameStats(h, [{ id: ANN, state: 'Won' }, { id: BOB }])!;
+    const ann = r.players.get(ANN)!;
+    expect(ann).not.toHaveProperty('left');
+    expect(ann).not.toHaveProperty('leftAtEnd');
+    expect(lengths(storedStats(r, capture(2), String).players[String(ANN)]!)).toMatchObject({ armies: 3, deployed: 2 });
+  });
+
+  it('a seat the player list ends surrendered (into an AI) with no transition in the history left after the last turn: leftAtEnd, full line', () => {
+    const h = game([[dep(123456, 5), dep(765432, 5)], [dep(123456, 5), dep(765432, 6)], [dep(123456, 5), dep(765432, 7)]]);
+    const r = endGameStats(h, [
+      { id: ANN, state: 'SurrenderAccepted', humanTurnedIntoAI: true },
+      { id: BOB, state: 'SurrenderAccepted', humanTurnedIntoAI: false },
+    ])!;
+    expect(r.players.get(ANN)).toMatchObject({ leftAtEnd: { state: 'SurrenderAccepted', intoAI: true }, deployed: [5, 5, 5] });
+    expect(r.players.get(ANN)).not.toHaveProperty('left');
+    expect(r.players.get(ANN)).not.toHaveProperty('aiFrom');
+    expect(r.players.get(BOB)!.leftAtEnd).toEqual({ state: 'SurrenderAccepted' });
+    expect(lengths(storedStats(r, capture(3), String).players[String(ANN)]!)).toMatchObject({ armies: 4, deployed: 3 });
+  });
+
+  it('an AI already holding the seat conceding at the end is leftAtEnd without intoAI; a seat that left in the history has no leftAtEnd', () => {
+    const h = game([[dep(123456, 5), dep(765432, 5)], [st(123456, 'Booted'), dep(123456, 5), dep(765432, 2), st(765432, 'Eliminated')], [dep(123456, 5)]]);
+    const r = endGameStats(h, [
+      { id: ANN, state: 'SurrenderAccepted', humanTurnedIntoAI: true },
+      { id: BOB, state: 'Eliminated' },
+    ])!;
+    expect(r.players.get(ANN)).toMatchObject({ aiFrom: 2, leftAtEnd: { state: 'SurrenderAccepted' } });
+    expect(r.players.get(ANN)!.leftAtEnd).not.toHaveProperty('intoAI');
+    expect(r.players.get(BOB)).toMatchObject({ left: { turn: 2, state: 'Eliminated' } });
+    expect(r.players.get(BOB)).not.toHaveProperty('leftAtEnd');
+  });
+
+  it('orders listed after a seat\'s own elimination in its turn are not an AI\'s', () => {
+    const h = game([[dep(123456, 5)], [st(123456, 'Eliminated'), dep(123456, 1)], [dep(765432, 5)]]);
+    const r = endGameStats(h, players)!;
+    expect(r.players.get(ANN)).toMatchObject({ left: { turn: 2, state: 'Eliminated' } });
+    expect(r.players.get(ANN)).not.toHaveProperty('aiFrom');
+  });
+
+  it('an elimination is never read as after the last turn (it only happens in a turn)', () => {
+    const r = endGameStats(game([[dep(123456, 5)]]), [{ id: ANN, state: 'Eliminated' }, { id: BOB, state: 'Won' }])!;
+    expect(r.players.get(ANN)).not.toHaveProperty('leftAtEnd');
+  });
 });
 
 describe('highestIncomes', () => {

@@ -242,7 +242,7 @@ describe('the end-of-game pass', () => {
     h = await liveHarness({ feed: [finished(), withOrders(), finished()], dataDir: dir, pages: SIGNED_IN });
     const r = payload(await h.call('warapp_get_game', { game_id: GAME }));
     expect(r.endOfGame).toMatchObject({ status: 'captured' });
-    expect((r.endOfGame as { stats: unknown }).stats).toMatchObject({ turnsRead: 2, players: [{ playerId: ANN, me: true, ...annStats }, { playerId: BOB, ...bobStats }] });
+    expect((r.endOfGame as { stats: unknown }).stats).toMatchObject({ version: END_STATS_VERSION, turnsRead: 2, players: [{ playerId: ANN, me: true, ...annStats }, { playerId: BOB, ...bobStats }] });
     const salt = (await playerRecordSalt(dir))!;
     const rec = await record(dir);
     expect(rec.stats).toEqual({ version: END_STATS_VERSION, turnsRead: 2, players: { [playerKey(salt, ANN)]: annStats, [playerKey(salt, BOB)]: bobStats } });
@@ -295,9 +295,11 @@ describe('the end-of-game pass', () => {
     const plain = payload(await h.call('warapp_get_game', { game_id: GAME }));
     expect(plain.endOfGame).toMatchObject({ status: 'already-processed', stats: { players: [{ playerId: ANN, series: { deployed: [] } }, { playerId: BOB }] } });
     expect(plain.endOfGame).not.toHaveProperty('backfilled');
+    // No version kept: none shown.
+    expect((plain.endOfGame as { stats: object }).stats).not.toHaveProperty('version');
 
     const back = payload(await h.call('warapp_get_game', { game_id: GAME, include_history: true }));
-    expect(back.endOfGame).toMatchObject({ status: 'already-processed', backfilled: 'stats', stats: { players: [{ playerId: ANN, ...annStats }, { playerId: BOB, ...bobStats }] } });
+    expect(back.endOfGame).toMatchObject({ status: 'already-processed', backfilled: 'stats', stats: { version: END_STATS_VERSION, players: [{ playerId: ANN, ...annStats }, { playerId: BOB, ...bobStats }] } });
     expect(await record(dir)).toMatchObject({ stats: { version: END_STATS_VERSION, turnsRead: 2 } });
 
     // Current now: a second include_history writes nothing.
