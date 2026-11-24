@@ -35,99 +35,13 @@ function parseArgs(argv) {
 
 // ---- the measurement ----
 
+// The body lives in src/tools/calibration-harness.ts (#569), shared with warapp_calibration's `harness: true`.
 export async function calibrate(dir, opts = {}) {
-  const { calibrationSources } = await dist('calibration-source.js');
-  const { applyBonusOverrides } = await dist('analysis/overrides.js');
-  const { graphOf } = await dist('tools/common.js');
-  const { plannerSettings } = await dist('tools/turn.js');
-  const { trackGame } = await dist('analysis/opponents.js');
-  const { profileFormatOf } = await dist('analysis/opponent-profile.js');
-  const { addCalibration } = await dist('analysis/game-lessons.js');
-  const cal = await dist('analysis/calibrate.js');
-  const { holdsSeat } = await dist('player-states.js');
-
-  const src = await calibrationSources(dir);
-  const counts = { histories: src.statuses, skipped: src.skipped, scored: 0, recordOnly: 0, benchmarked: 0, samples: 0 };
-  const byFormat = {};
-  const benchByFormat = {};
-  const eraEntries = [];
-  for (const input of src.inputs) {
-    const { history: h, settings, map, cached } = input;
-    if (input.source === 'record-only') counts.recordOnly++;
-    const me = h.me;
-    const graph = graphOf(applyBonusOverrides(map, settings));
-    const seated = h.players.filter((p) => holdsSeat(p.state));
-    const format = profileFormatOf(seated);
-    const mine = seated.find((p) => p.id === me);
-    const myTeam = typeof mine?.team === 'number' && mine.team >= 0 ? mine.team : undefined;
-    const opponents = seated.filter((p) => p.id !== me && (myTeam === undefined || p.team !== myTeam)).map((p) => p.id);
-    const asPlaying = seated.map(({ state: _s, ...p }) => p);
-    const ps = plannerSettings(settings);
-    const samples = cal.estimateSamples({
-      graph,
-      me,
-      cached,
-      history: h.boards,
-      plannerSettings: ps,
-      incomeSettings: settings,
-      settings,
-      game: trackGame(asPlaying, settings, map),
-      players: asPlaying,
-      opponents,
-    });
-    counts.samples += samples.length;
-    if (samples.length) counts.scored++;
-    const agg = cal.aggregateEstimates(samples);
-    const f = (byFormat[format] ??= {});
-    for (const [k, c] of Object.entries(agg)) f[k] = addCalibration(f[k] ?? {}, c);
-    const bench = cal.openingBenchmark({
-      graph,
-      me,
-      history: h.boards,
-      plannerSettings: ps,
-      incomeSettings: settings,
-      players: asPlaying,
-      winners: seated.filter((p) => p.state === 'Won').map((p) => p.id),
-      ...(opts.turns ? { turns: opts.turns } : {}),
-    });
-    if (bench.turns.length) {
-      counts.benchmarked++;
-      (benchByFormat[format] ??= []).push(bench);
-      // #503: the era (turn-1 time where known — no record keeps one yet — else the game id) and the
-      // opening window's flags (turns with no orders of mine, a boot of my seat).
-      const o = input.opening;
-      const { era, basis } = cal.openingEra({ planned: o.planned, ...(o.gameId !== undefined ? { gameId: o.gameId } : {}) });
-      const flags = cal.openingFlags({
-        me,
-        history: h.boards,
-        sentTurns: o.sentTurns,
-        failedAttackTurns: o.failedAttackTurns,
-        booted: { turn: o.bootedTurn },
-      });
-      eraEntries.push({ era, basis, format, territories: graph.territoryById.size, flags, bench });
-    }
-  }
-  const calibration = {};
-  for (const [format, ests] of Object.entries(byFormat))
-    for (const [k, c] of Object.entries(ests))
-      for (const [band, stats] of Object.entries(c)) ((calibration[format] ??= {})[k] ??= {})[band] = cal.ratioSummary(stats);
-  const benchmark = {};
-  for (const [format, list] of Object.entries(benchByFormat)) benchmark[format] = cal.aggregateBenchmarks(list);
-  benchmark.all = cal.aggregateBenchmarks(Object.values(benchByFormat).flat());
-  const byEra = cal.benchmarkByEra(eraEntries);
-  return { counts, calibration, benchmark, byEra };
+  const { calibrationHarness } = await dist('tools/calibration-harness.js');
+  return calibrationHarness(dir, opts);
 }
 
-const APPROX = [
-  'Opening benchmark approximations: the planner sees the whole board (no fog); opponents never attack me —',
-  'they hold the land and armies the history shows, except land I hold in the replay; card plays are left out;',
-  'with luck or weighted rounding a battle is resolved at its expectation (counted as inexact).',
-  'Eras (#503): pre-tool = never planned by this server, or no local cache names the game; pre-rule-4f = turn 1',
-  'before 2026-11-13 08:24Z by its turn-1 time where known, else game id below 45690000 (ids are assigned at creation,',
-  'so the id boundary approximates the time); current = the rest. A game with a turn with no orders of mine (read off',
-  'the history boards: no capture, no failed attack, no orders cached; army growth alone is not orders) or a boot of my seat in turns',
-  '1-4 is reported apart, never averaged in.',
-];
+const { HARNESS_APPROXIMATIONS: APPROX } = await dist('tools/calibration-harness.js');
 
 const NO_TRUTH = [
   'No finished game\'s history is kept yet, so there is nothing to score: the end-of-game pass has to run first',

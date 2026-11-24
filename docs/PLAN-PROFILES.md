@@ -138,8 +138,9 @@ twenty finished games; the second report is the one P1 is decided on.
 
 ### Calibration and the opening benchmark (#318): `scripts/calibrate.mjs`
 
-A local dev script, not a tool and not run in CI; it prints aggregates only (no game id, player id or
-name). Its pure parts are `src/analysis/calibrate.ts` (tested in `tests/analysis/calibrate.test.ts`).
+A local dev script, not run in CI; it prints aggregates only (no game id, player id or
+name). Its body is `src/tools/calibration-harness.ts` (#569), which `warapp_calibration` also runs with
+`harness: true`, so a hosted server's data can be scored from the tool. Its pure parts are `src/analysis/calibrate.ts` (tested in `tests/analysis/calibrate.test.ts`).
 
 ```sh
 npm run build                                   # tsc emits dist/**, which the script imports
