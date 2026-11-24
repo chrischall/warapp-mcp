@@ -23,6 +23,7 @@ import {
   readHand,
   reinforcementArmies,
   type Card,
+  type CardChoice,
   type CardRules,
 } from '../cards.js';
 import {
@@ -88,7 +89,10 @@ import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
 import { myOrdersOf as committedOrdersOf, readMyOrderList } from '../my-orders.js';
-import { checkAirlifts, mismatchMessage, sentAirlifts } from './airlift-readback.js';
+import { checkAirlifts, mismatchMessage, recordedWithCommit, sentAirlifts } from './airlift-readback.js';
+import { alternativeOrders, cardsLeftAfter, playsCardType } from './alternative-orders.js';
+import { planAirlift } from '../analysis/airlift-plan.js';
+import type { TurnPlan } from '../analysis/plan/shared.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
 import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, lastTurnPlays, opponentCanHold, opponentReinforcement, reinforcementPlaysShown, seenReinforcementPlays, TEAM_HAND } from './card-advice.js';
@@ -2222,6 +2226,131 @@ export async function livePlanSetup(
 }
 
 
+/** The Airlift card's type id. */
+const CARD_AIRLIFT = 6;
+
+/**
+ * Owner request 2026-11-24 (part 3): `airliftPlan`, the best plan that plays my Airlift cards, beside the plain plan
+ * (`src/analysis/airlift-plan.ts`; the plain plan and its `orders` never change). Only when I hold an Airlift card:
+ * `undefined` otherwise, so a hand without one adds no field. Its orders are the plain orders' card plays and
+ * discards, the Airlift plays, then the Airlift plan's deploys and moves; the advised Order Delay is left out (its
+ * place names a move of the plain plan) and, when it had to leave the hand, discarded instead. A plan the submit's
+ * commander check would refuse while the plain plan passes it is not offered.
+ */
+async function airliftPlanView(a: {
+  ctx: LiveContext;
+  game: Game;
+  me: Player;
+  map: GameMap;
+  seen: BoardState;
+  turn: number | null;
+  info: unknown;
+  hand: readonly Card[];
+  setup: Awaited<ReturnType<typeof livePlanSetup>>;
+  plan: TurnPlan;
+  orders: ReadonlyArray<Record<string, unknown> & { kind: string }>;
+  myCards: readonly Card[];
+  cards: CardChoice;
+  playedDelay: string | undefined;
+  delayOrder: unknown;
+  gift: { cards: readonly unknown[] };
+  keepCards: number;
+  plainCommanderSafe: boolean;
+  enemyDeploy: number | undefined;
+  name: (id: number) => { id: number; name: string };
+}): Promise<Record<string, unknown> | undefined> {
+  const used = new Set([...a.cards.plays, ...a.cards.discards].map((c) => c.id));
+  const held = a.myCards.filter((c) => c.type === CARD_AIRLIFT);
+  if (!held.length) return undefined;
+  const free = held.filter((c) => !used.has(c.id));
+  const playable = Math.max(0, free.length - a.keepCards);
+  const none = (note: string) => ({ airliftPlan: null, airliftPlanNote: note });
+  if (!playable)
+    return none(
+      `You hold ${held.length} Airlift card${held.length === 1 ? '' : 's'}, ${free.length < held.length ? 'the plain plan already uses some, and ' : ''}` +
+        `${a.keepCards} ${a.keepCards === 1 ? 'is' : 'are'} kept in reserve (keep_cards): no Airlift plan.`,
+    );
+  if (a.gift.cards.length) return none('The plain plan plays a Gift, which lands after an Airlift: no Airlift plan is made beside it.');
+  const guardOn = a.game.settings?.oneArmyStandsGuard !== false;
+  const found = planAirlift({ input: a.setup.input, plain: a.plan, cards: playable, guard: guardOn });
+  if (!found.best)
+    return none(
+      `No Airlift beats the plain plan by its own measure (next income if its conceded borders fall, then next income, ` +
+        `fewer concessions, more captures): ${found.considered} tried${found.invalid ? `, ${found.invalid} dropped as orders the submit would refuse` : ''}.`,
+    );
+  const best = found.best;
+  const moves = best.plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) }));
+  const checked = await commanderCheck(a.ctx, {
+    game: a.game,
+    me: a.me,
+    map: a.map,
+    seen: a.seen,
+    turn: a.turn,
+    info: a.info,
+    hand: a.hand,
+    income: a.setup.boardIncome,
+    tripwires: a.setup.trip.tripwires,
+    deploys: best.plan.deploys,
+    moves,
+    // #558: the Airlift orders carry the plain card plays, an advised Order Priority included.
+    orderPriority: playsCardType(a.orders, a.myCards, CARD_ORDER_PRIORITY),
+    ...(a.enemyDeploy !== undefined ? { floor: a.enemyDeploy } : {}),
+    killedBy: false,
+    airlifts: best.airlifts.map(({ from, to, armies }) => ({ from, to, armies })),
+  });
+  if (checked?.risk && a.plainCommanderSafe)
+    return none('The best Airlift plan would leave your commander takeable (warapp_submit_turn would refuse it), so none is offered.');
+  const lifts = best.airlifts.map((l, i) => ({ ...l, card: free[i]!.id }));
+  // #558: the advised Order Delay is discarded only when the plain card choice had to shed it.
+  const orders = alternativeOrders({
+    orders: a.orders,
+    delayOrder: a.delayOrder,
+    playedDelay: a.playedDelay,
+    delayMustGo: a.playedDelay !== undefined && a.cards.discards.some((c) => c.id === a.playedDelay),
+    cardPlays: lifts.map((l) => ({ kind: 'card' as const, card: l.card, from: l.from, to: l.to, armies: l.armies })),
+    deploys: best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
+    moves: best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
+  });
+  const minus = (x: readonly number[], y: readonly number[]) => x.filter((v) => !y.includes(v)).sort((p, q) => p - q);
+  const atRisk = (p: TurnPlan) => (p.expected.bonusesAtRisk ?? []).map((b) => b.bonusId);
+  return {
+    airliftPlan: {
+      airlifts: lifts.map((l) => ({ from: a.name(l.from), to: a.name(l.to), armies: l.armies, kind: l.kind })),
+      orders,
+      expected: {
+        captures: best.plan.expected.captures,
+        bonusesCompleted: best.plan.expected.bonusesCompleted,
+        nextIncome: best.plan.expected.nextIncome,
+        ...(best.plan.expected.nextIncomeIfConcededFall !== undefined ? { nextIncomeIfConcededFall: best.plan.expected.nextIncomeIfConcededFall } : {}),
+      },
+      delta: {
+        nextIncomeIfConcededFall: best.score.safeIncome - best.plainScore.safeIncome,
+        nextIncome: best.score.nextIncome - best.plainScore.nextIncome,
+        captures: best.score.captures - best.plainScore.captures,
+        borders: { saved: minus(a.plan.conceded, best.plan.conceded), conceded: minus(best.plan.conceded, a.plan.conceded) },
+        bonuses: {
+          completed: minus(best.plan.expected.bonusesCompleted, a.plan.expected.bonusesCompleted),
+          notCompleted: minus(a.plan.expected.bonusesCompleted, best.plan.expected.bonusesCompleted),
+          saved: minus(atRisk(a.plan), atRisk(best.plan)),
+          atRisk: minus(atRisk(best.plan), atRisk(a.plan)),
+        },
+      },
+      cardsSpent: lifts.length,
+      // #558: the Airlift cards the plain plan leaves, less those this plan spends.
+      cardsLeft: cardsLeftAfter({ held: held.length, free: free.length, spent: lifts.length }),
+      keepCards: a.keepCards,
+      considered: best.considered,
+      ...(checked ? { commander: { safe: !checked.risk, ...(checked.risk ? { needs: checked.risk.needs } : {}) } } : {}),
+      note: AIRLIFT_PLAN_NOTE,
+    },
+  };
+}
+
+const AIRLIFT_PLAN_NOTE =
+  'An alternative to `orders`, never applied: the same planner on the board the Airlifts leave (their armies land after ' +
+  'the deploys and before every move, and cannot move again that turn), compared by the plain plan\'s own measure. ' +
+  'Test it with warapp_check_plan, then pass its `orders` to warapp_submit_turn if you prefer it.';
+
 /**
  * #274: whether these orders leave my commander takeable by a single-deploy reply (`commanderCheckOn`,
  * src/tools/commander-check.ts: the one check, which warapp_check_plan reports too), each reply sized at
@@ -2623,6 +2752,13 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           '`guess` is a randomized split, weighted by what each border is worth, against an opponent who would read a fixed ' +
           'one, and `guessOrders` the plan\'s `orders` with that split — optional (the user chooses; `orders` stay the ' +
           "plan's), and a model: one opponent, one deploy, its visible stacks. " +
+          'Holding an Airlift card, `airliftPlan` is an alternative beside the plan (its `orders` never change): the same ' +
+          'planner on the board after the Airlifts (an interior stack flown onto a border the plan concedes, or a conceded ' +
+          "border's armies flown to the border most pressed), the best compared by the plan's own measure (next income if " +
+          'its conceded borders fall, then next income, fewer concessions, more captures) — `airlifts`, `orders` (the Airlift ' +
+          'plays included), `expected`, `delta` (income, captures, borders saved, bonuses kept or completed), `cardsSpent`, ' +
+          '`cardsLeft`; `keep_cards` holds cards back; `null` with `airliftPlanNote` when none beats the plan. Airlifted armies ' +
+          'cannot attack that turn, so it never funds a capture. ' +
           '`reads` (opponent profiles, as warapp_profile_opponents reads them; reported only, the plan never uses them): ' +
           'each opponent in contact with a habit at the confidence bar or a label — its labels, `lastAttackTurn` (the last turn it attacked you), those habits with `n` and ' +
           '`basis`, `gamesMet` — a likelihood, never a certainty, and never to be quoted to another player. ' +
@@ -2726,6 +2862,16 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               'two-player game under a cyclic order it is remembered and later turns default to it, alternated; ' +
               'omitted, the default is that, else the award of picks, else unknown (`firstMover` says which).',
           ),
+        keep_cards: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .max(100)
+          .optional()
+          .describe(
+            'Airlift cards to keep in reserve: `airliftPlan` plays only those held beyond this many (default 0). ' +
+              'Changes nothing when you hold no Airlift.',
+          ),
         view: viewArg(
           VIEWS,
           'compact (default) gives the plan and orders (the profile as format, phase and standing); "full" adds each ' +
@@ -2733,7 +2879,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ),
       }),
     },
-    async ({ game_id, player, goal, siege_target, jabs, focus, reserve, enemy_deploy, known_income, fogged_attackers, avoid_territories, avoid_players, min_win_chance, first_mover, view }) => {
+    async ({ game_id, player, goal, siege_target, jabs, focus, reserve, enemy_deploy, known_income, fogged_attackers, avoid_territories, avoid_players, min_win_chance, first_mover, keep_cards, view }) => {
       // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
       const feed = await ctx.client.getGame(game_id, { settings: true, chat: true });
       requireTurnPhase(feed);
@@ -3135,6 +3281,30 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(advised ? { orderPriority: true } : {}),
       });
       const guessOrders = guess ? guessOrdersOf(orders, guess) : undefined;
+      // Owner request 2026-11-24: with Airlift cards in hand, the best plan that plays them, ALONGSIDE the plain
+      // plan (whose orders never change): candidates scored by the plain plan's own measure (airlift-plan.ts).
+      const airlift = await airliftPlanView({
+        ctx,
+        game,
+        me,
+        map,
+        seen,
+        turn,
+        info,
+        hand,
+        setup,
+        plan,
+        orders,
+        myCards,
+        cards,
+        playedDelay,
+        gift,
+        delayOrder: advice.view.orderDelay?.order,
+        keepCards: keep_cards ?? 0,
+        plainCommanderSafe: checked?.risk === undefined,
+        enemyDeploy: enemy_deploy,
+        name,
+      });
       // #385: siege_target only means something under goal siege; say so rather than drop it silently.
       if (siege_target !== undefined && goal !== 'siege')
         warnings.push(`siege_target is ignored: it applies only with goal "siege" (this plan's goal is ${goal ?? 'chosen by the game profile'}).`);
@@ -3661,6 +3831,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         warnings,
         rationale: coordLines.length ? [...plan.rationale, ...coordLines] : plan.rationale,
         orders,
+        // Owner request 2026-11-24: only when I hold an Airlift card (no field otherwise).
+        ...(airlift ?? {}),
         // The border guess, only when there is one; why there is none, full view only.
         ...(guess
           ? {
@@ -4597,7 +4769,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         }
         const lifted = checkAirlifts(lifts, read);
         if (lifted.status === 'mismatch') {
-          throw new McpToolError(mismatchMessage(lifted, st.turnNumber, st.gameId), {
+          // #556: what the commit recorded (a truce break, exceptions, …) is said in the error, never dropped.
+          const recorded = recordedWithCommit(final as Record<string, unknown>);
+          throw new McpToolError(`${mismatchMessage(lifted, st.turnNumber, st.gameId)}${recorded ? ` ${recorded}` : ''}`, {
             hint:
               'Read the committed orders with warapp_get_my_orders. To correct them, withdraw with warapp_uncommit_turn and ' +
               'submit again (both confirm-gated); do not resend blindly.',
