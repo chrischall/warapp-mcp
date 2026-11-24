@@ -82,3 +82,57 @@ export function recordedWithCommit(result: Record<string, unknown>): string | un
   const parts = RECORDED_KEYS.filter((k) => result[k] !== undefined).map((k) => `${k} ${JSON.stringify(result[k])}`);
   return parts.length ? `Recorded with this commit: ${parts.join('; ')}.` : undefined;
 }
+
+/**
+ * Owner request 2026-11-24 (part B): the territory-targeted card plays read back the same way — a Bomb (and the
+ * Blockades, through the same pipeline): the card instance and its target. Matched by card GUID, else (a card swapped
+ * for another of its type) by the same target.
+ */
+export interface TargetedLine {
+  card: string;
+  kind: string;
+  target: number;
+}
+
+export interface TargetedReadBack {
+  status: 'verified' | 'mismatch' | 'unread';
+  sent: TargetedLine[];
+  missing: TargetedLine[];
+  altered: { sent: TargetedLine; read: { card: string; target: number } }[];
+}
+
+/** The card plays of these kinds (`TurnOrder` card names, e.g. `Bomb`) among the orders sent. */
+export function sentTargeted(orders: readonly TurnOrder[], kinds: ReadonlySet<string>): TargetedLine[] {
+  return orders.flatMap((o) =>
+    o.kind === 'card' && kinds.has(o.card) && o.target !== undefined ? [{ card: normalizeGuid(o.cardId) ?? o.cardId, kind: o.card, target: o.target }] : [],
+  );
+}
+
+export function checkTargeted(sent: readonly TargetedLine[], read: MyOrders | null): TargetedReadBack {
+  if (!read) return { status: 'unread', sent: [...sent], missing: [], altered: [] };
+  const back = read.orders.flatMap((o) =>
+    o.kind === 'card' && o.target !== undefined && o.from === undefined ? [{ card: normalizeGuid(o.card) ?? o.card, target: o.target }] : [],
+  );
+  const used = new Set<number>();
+  const missing: TargetedLine[] = [];
+  const altered: TargetedReadBack['altered'] = [];
+  for (const s of sent) {
+    let i = back.findIndex((b, k) => !used.has(k) && b.card === s.card);
+    if (i < 0) i = back.findIndex((b, k) => !used.has(k) && b.target === s.target);
+    if (i < 0) {
+      missing.push(s);
+      continue;
+    }
+    used.add(i);
+    if (back[i]!.target !== s.target) altered.push({ sent: s, read: back[i]! });
+  }
+  return { status: missing.length || altered.length ? 'mismatch' : 'verified', sent: [...sent], missing, altered };
+}
+
+/** The error message's parts for a targeted mismatch. */
+export function targetedMismatchParts(r: TargetedReadBack): string[] {
+  return [
+    ...r.missing.map((t) => `the ${t.kind} play on ${t.target} is missing`),
+    ...r.altered.map((x) => `the ${x.sent.kind} play on ${x.sent.target} reads back on ${x.read.target}`),
+  ];
+}

@@ -65,9 +65,10 @@ describe('bombAdvice (#163)', () => {
   it("takes the worst case for a bombed stack: the owner deploys on its other stack beside my border, unhalved", () => {
     // T4's 6 need 10. T5 (10) bombed keeps 5; the 5 deploy goes on T3 (2) instead, unhalved:
     // 5 + (5 − 1) + (2 − 1) = 10 still takes T4, so bombing T5 holds nothing.
+    // Owner decision 2026-11-24: the client's rule (a bombed stack keeps floor(armies / 2)) changes the advised target:
+    // T3's 2 plus a deploy of 5 bombed keep 3 (the old worst case kept 4), which my 5 movable on T4 now take.
     const a = bombAdvice(cb([enemy(3, 2), mine(4, 6), enemy(5, 10), neutral(6, 2)]));
-    expect(a.target).toBeUndefined();
-    expect(a.why).toMatch(/^Hold the Bomb/);
+    expect(a).toMatchObject({ target: 3, kind: 'capture' });
   });
 
   it('halves the deploy with the stack when the owner has no other stack beside my border', () => {

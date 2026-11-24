@@ -113,6 +113,8 @@ export interface StressInput {
    * every move, the source losing the armies and the destination gaining them, which cannot move again that turn.
    */
   airlifts?: readonly { from: number; to: number; armies: number; commander?: boolean }[];
+  /** My Bombs (their targets): phase 30, after every deploy, before the Airlifts and every move; the target keeps half, rounded down. */
+  bombs?: readonly number[];
   /** My attacks and transfers, in the order they will be submitted, with their options (#165). */
   moves: readonly SimOrder[];
   opponents: readonly StressOpponent[];
@@ -349,6 +351,7 @@ export function stressPlan(input: StressInput): StressReport {
       graph,
       board,
       deploys: [...myDeploys, ...sides.flatMap((x) => (x.deploy > 0 ? [{ player: x.player, territoryId: x.deployTo, armies: x.deploy }] : []))],
+      ...(input.bombs?.length ? { bombs: input.bombs.map((target) => ({ player: me, target })) } : {}),
       ...(myAirlifts.length ? { airlifts: myAirlifts } : {}),
       orders: [{ player: me, orders: myOrders }, ...sides.map((x) => ({ player: x.player, orders: x.orders }))],
       moveOrder,
@@ -403,6 +406,11 @@ export function stressPlan(input: StressInput): StressReport {
   for (const d of myDeploys) {
     const c = afterMyDeploys.get(d.territoryId);
     if (c && c.owner === me && d.armies > 0) c.armies += d.armies;
+  }
+  // My Bombs (phase 30) halve their targets after every deploy, before the Airlifts and moves.
+  for (const t of input.bombs ?? []) {
+    const c = afterMyDeploys.get(t);
+    if (c && c.owner !== 'unknown' && c.owner !== me) c.armies = Math.floor(c.armies / 2);
   }
   // My Airlifts land before any move, so the dodges and chains are searched on the board after them too.
   for (const a of myAirlifts) {
@@ -792,6 +800,7 @@ export function stressPlan(input: StressInput): StressReport {
       opponents: input.opponents,
       deploys: input.deploys,
       ...(input.airlifts?.length ? { airlifts: input.airlifts } : {}),
+      ...(input.bombs?.length ? { bombs: input.bombs } : {}),
       moves: input.moves,
       ...(input.settings ? { settings: input.settings } : {}),
       ...(teams ? { teams } : {}),
