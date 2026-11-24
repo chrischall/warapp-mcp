@@ -41,12 +41,12 @@ const BOARD: SyntheticTerritory[] = [
   { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
 ];
 
-function server(readBack?: SyntheticOrder[]) {
+function server(readBack?: SyntheticOrder[], board: SyntheticTerritory[] = BOARD) {
   const sent: Uint8Array[] = [];
   const warapp = (req: DecodedRequest): Partial<ReplyFrame> => {
     if (req.method === Method.GetLatestGameInfo) {
       const mine = sent.length && readBack ? { player: ANN.inGame, orders: readBack } : null;
-      return { body: (w) => writeLatestGameInfo(w, BOARD, [ANN.inGame, BOB.inGame], { [ANN.inGame]: HAND }, undefined, undefined, undefined, mine) };
+      return { body: (w) => writeLatestGameInfo(w, board, [ANN.inGame, BOB.inGame], { [ANN.inGame]: HAND }, undefined, undefined, undefined, mine) };
     }
     if (req.method === Method.SendOrders) {
       sent.push(req.body.raw(req.body.remaining));
@@ -120,5 +120,19 @@ describe('warapp_plan_turn: the Bomb plan', () => {
     expect(withBomb.orders).toEqual(without.orders);
     if (withBomb.bombPlan === null) expect(withBomb.bombPlanNote).toMatch(/No Bomb beats the plain plan/);
     else expect((withBomb.bombPlan as { orders: unknown[] }).orders).toContainEqual({ kind: 'card', card: BOMB, target: 158 });
+  });
+});
+
+describe('warapp_plan_turn: a Bomb plan offered', () => {
+  it('bombs the stack that presses my bonus, with its orders, delta and cards left', async () => {
+    // Bob's 14 beside my bonus 118: halved to 7, the plain plan's conceded borders hold.
+    const board = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 14 } : t));
+    h = await liveHarness({ feed: [game()], pages: ME_PAGE, warapp: server(undefined, board).warapp });
+    type Plan = { orders: unknown[]; bombPlan: { bomb: { target: { id: number }; armies: number; leaves: number }; orders: unknown[]; delta: Record<string, unknown>; cardsSpent: number; cardsLeft: number } };
+    const p = payload<Plan>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    expect(p.bombPlan.bomb).toMatchObject({ target: { id: 158 }, armies: 14, leaves: 7 });
+    expect(p.bombPlan.orders).toContainEqual({ kind: 'card', card: BOMB, target: 158 });
+    expect(p.bombPlan.delta).toHaveProperty('borders');
+    expect([p.bombPlan.cardsSpent, p.bombPlan.cardsLeft]).toEqual([1, 0]);
   });
 });

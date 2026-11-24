@@ -61,3 +61,15 @@ describe('the Bomb plan', () => {
     expect(planBomb({ input, plain, cards: 0 })).toEqual({ considered: 0 });
   });
 });
+
+describe('bombCandidates: ordering', () => {
+  it('puts a held bonus\'s member first, then the larger stack', () => {
+    // My 3 borders the foe's 4 (in its whole bonus 200) and its 6 (no bonus, a bigger stack).
+    const m = map([[3, 4], [3, 6], [4, 5]], [[200, 3, [4, 5]]]);
+    const input: PlanInput = { graph: buildGraph(m), board: board([me(3, 5), foe(4, 4), foe(5, 2), foe(6, 20)]), me: ME, income: 5 };
+    expect(bombCandidates(input).map((c) => [c.target, c.kind])).toEqual([
+      [4, 'break-bonus'],
+      [6, 'cut-stack'],
+    ]);
+  });
+});
