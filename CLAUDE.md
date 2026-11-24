@@ -771,9 +771,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   finished record (`stats`, by key; `src/analysis/end-game-stats.ts`): produced = deploys, lost/killed = each attack's
   `attackingArmiesKilled`/`defendingArmiesKilled` both ways (defender = the owner when the attack runs), highest income =
   the board income — all four matched the client's Defeat screen for 45682542 — and the client's All Graphs series
-  (`warlight.unity.live.Statistics` metrics 0–6: armies, territories, income per board, stopping when a seat left;
-  deployed per turn; cumulative luck). A captured record without them is backfilled only by `include_history`
-  (`backfilled: 'stats'`, nothing else re-run). The app's My Games is GetMyGames' Default list, which holds a finished
+  (`warlight.unity.live.Statistics` metrics 0–6: armies, territories, income per board and deployed per turn, skipping
+  a seat's points while its state is Eliminated/SurrenderAccepted/Booted — a return to Playing resumes, an AI takeover
+  (`TurningIntoAI`, or orders after the departure) keeps the line with `aiFrom`; cumulative luck every turn, #541/#542).
+  A captured record without them, or with an older `stats.version` (`END_STATS_VERSION`), is (re)computed only by
+  `include_history` (`backfilled: 'stats'`, nothing else re-run). The app's My Games is GetMyGames' Default list, which holds a finished
   game only while GameInfo field 20 (SeenEndGameWindow) is clear (read live 2026-11-23); the client sets it by asking
   GetEndGameWindowData (85) when it shows the Victory / Defeat window, which `warapp_close_finished_game` sends
   (confirm-gated; read back from that flag; **verified live 2026-11-23**: a finished game closed and read back seen,

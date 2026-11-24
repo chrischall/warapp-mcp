@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MapCache, WarappClient } from '../src/client.js';
 import { rememberGameMap, writeStoredMap } from '../src/map-store.js';
 import { normalizeMap } from '../src/normalize.js';
-import { finishedDir, finishedPath, historyOfRecord, type FinishedRecord } from '../src/finished-store.js';
+import { END_STATS_VERSION, finishedDir, finishedPath, historyOfRecord, type FinishedRecord } from '../src/finished-store.js';
 import { lessonsPath, mapRecordDir, mapRecordPath } from '../src/lessons-store.js';
 import { profilePlayersPath } from '../src/profile-store.js';
 import { playerKey, playerRecordSalt } from '../src/player-record-store.js';
@@ -245,7 +245,7 @@ describe('the end-of-game pass', () => {
     expect((r.endOfGame as { stats: unknown }).stats).toMatchObject({ turnsRead: 2, players: [{ playerId: ANN, me: true, ...annStats }, { playerId: BOB, ...bobStats }] });
     const salt = (await playerRecordSalt(dir))!;
     const rec = await record(dir);
-    expect(rec.stats).toEqual({ turnsRead: 2, players: { [playerKey(salt, ANN)]: annStats, [playerKey(salt, BOB)]: bobStats } });
+    expect(rec.stats).toEqual({ version: END_STATS_VERSION, turnsRead: 2, players: { [playerKey(salt, ANN)]: annStats, [playerKey(salt, BOB)]: bobStats } });
     const text = readFileSync(finishedPath(dir, salt, ANN, GAME), 'utf8');
     for (const x of [String(ANN), String(BOB), '123456', '765432', 'Ann', 'Bob']) expect(text).not.toContain(x);
 
@@ -276,6 +276,32 @@ describe('the end-of-game pass', () => {
     // Once there, a second include_history shows them without writing again.
     const twice = payload(await h.call('warapp_get_game', { game_id: GAME, include_history: true }));
     expect(twice.endOfGame).toMatchObject({ status: 'already-processed', stats: { turnsRead: 2 } });
+    expect(twice.endOfGame).not.toHaveProperty('backfilled');
+  });
+
+  it('#541/#542: stats kept by an older version are recomputed by include_history only', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-eog-'));
+    h = await liveHarness({ feed: [finished(), withOrders(), finished(), withOrders(), withOrders()], dataDir: dir, pages: SIGNED_IN });
+    payload(await h.call('warapp_get_game', { game_id: GAME }));
+    const salt = (await playerRecordSalt(dir))!;
+    const path = finishedPath(dir, salt, ANN, GAME);
+    // As a record written before the version: no `version`, and a stale series.
+    const old = JSON.parse(readFileSync(path, 'utf8')) as { stats: { version?: number; players: Record<string, { series: { deployed: number[] } }> } };
+    delete old.stats.version;
+    old.stats.players[playerKey(salt, ANN)]!.series.deployed = [];
+    writeFileSync(path, JSON.stringify(old));
+
+    // A plain read shows the stats as kept.
+    const plain = payload(await h.call('warapp_get_game', { game_id: GAME }));
+    expect(plain.endOfGame).toMatchObject({ status: 'already-processed', stats: { players: [{ playerId: ANN, series: { deployed: [] } }, { playerId: BOB }] } });
+    expect(plain.endOfGame).not.toHaveProperty('backfilled');
+
+    const back = payload(await h.call('warapp_get_game', { game_id: GAME, include_history: true }));
+    expect(back.endOfGame).toMatchObject({ status: 'already-processed', backfilled: 'stats', stats: { players: [{ playerId: ANN, ...annStats }, { playerId: BOB, ...bobStats }] } });
+    expect(await record(dir)).toMatchObject({ stats: { version: END_STATS_VERSION, turnsRead: 2 } });
+
+    // Current now: a second include_history writes nothing.
+    const twice = payload(await h.call('warapp_get_game', { game_id: GAME, include_history: true }));
     expect(twice.endOfGame).not.toHaveProperty('backfilled');
   });
 

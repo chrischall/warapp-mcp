@@ -33,7 +33,7 @@
 import { readdir, readFile, stat, unlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FinishedCapture, FinishedOutcome, GameKind, PlayerTurn } from './analysis/finished-game.js';
-import { highestIncomes, type EndGameStatsResult, type PlayerEndStats } from './analysis/end-game-stats.js';
+import { highestIncomes, seatIn, type EndGameStatsResult, type PlayerEndStats } from './analysis/end-game-stats.js';
 import { profileFormatOf, type ProfileFormat } from './analysis/opponent-profile.js';
 import { writeJsonAtomic } from './map-store.js';
 import type { Game } from './normalize.js';
@@ -124,16 +124,25 @@ export interface FinishedRecord {
   boardsOmitted?: number;
   /**
    * #523: every player's end-of-game stats, by key, as the client's end-of-game screen shows them (absent on records
-   * kept before them, and when the history's orders did not read): see {@link StoredEndStats}.
+   * kept before them, and when the history's orders did not read): see {@link StoredEndStats}. `version`: how they
+   * were computed ({@link END_STATS_VERSION}; absent before #541/#542) — an older one is recomputed by the next
+   * `include_history` read.
    */
-  stats?: { turnsRead: number; players: Record<string, StoredEndStats> };
+  stats?: { version?: number; turnsRead: number; players: Record<string, StoredEndStats> };
 }
+
+/**
+ * #541/#542: the version of the stats computation. 2: seat lines stop and resume as the client's (a return to
+ * Playing resumes; an AI takeover runs on under the seat with `aiFrom`). Absent (1): every state transition ended
+ * the line, and a seat's deploy line stopped at its first transition.
+ */
+export const END_STATS_VERSION = 2;
 
 /**
  * #523: one player's end-of-game stats as stored: the totals (`endGameStats`, src/analysis/end-game-stats.ts), its
  * highest income, and every series the client's end-of-game "All Graphs" offers (`warlight.unity.live.Statistics`):
- * per history board in `turns` order (after `afterTurn` completed turns, up to the board before its seat left, as
- * the client stops a line) its `armies` (metric 0, armies controlled), `territories` (1) and `income` (2); per turn
+ * per history board in `turns` order (after `afterTurn` completed turns, the boards its seat was out of left out,
+ * as the client skips them) its `armies` (metric 0, armies controlled), `territories` (1) and `income` (2); per turn
  * read its `deployed` armies (3); and its cumulative `luck`, `offensiveLuck`, `defensiveLuck` (4–6) from 0.
  */
 export interface StoredEndStats extends Omit<PlayerEndStats, 'deployed' | 'luck' | 'offensiveLuck' | 'defensiveLuck'> {
@@ -363,8 +372,8 @@ export function storedStats(stats: EndGameStatsResult, c: FinishedCapture, key: 
   const players: Record<string, StoredEndStats> = {};
   for (const [id, st] of stats.players) {
     const { deployed, luck, offensiveLuck, defensiveLuck, ...totals } = st;
-    // The client stops a line once the seat is out: the boards before the turn it left.
-    const kept = c.turns.filter((t) => !totals.left || t.afterTurn < totals.left.turn);
+    // The client skips a seat's point on the boards it is out of (from the turn it left to the turn it came back).
+    const kept = c.turns.filter((t) => seatIn(stats, id, t.afterTurn));
     const at = (t: (typeof c.turns)[number]) => t.players.get(id);
     players[key(id)] = {
       ...totals,
@@ -383,7 +392,7 @@ export function storedStats(stats: EndGameStatsResult, c: FinishedCapture, key: 
       },
     };
   }
-  return { turnsRead: stats.turnsRead, players };
+  return { version: END_STATS_VERSION, turnsRead: stats.turnsRead, players };
 }
 
 /** The opening and closing boards a record keeps, and how many between them it leaves out. Pure. */

@@ -15,7 +15,15 @@
 //   given by the caller: cards and the army cap aside).
 // An attack's defender is the territory's owner when the attack runs: the turn's starting board, updated by the
 // successful attacks before it in the turn. A territory changing hands by a card (Gift, Abandon…) mid-turn is
-// not followed (no such card was in play in the reference game). Pure; never throws.
+// not followed (no such card was in play in the reference game).
+//
+// Seat lines (#541, #542), as the client's All Graphs builder draws them (`warlight.unity.live.Statistics`): it
+// replays the history and, for armies, territories, income and deployed, skips a seat's point after a turn whose
+// replayed GamePlayerState is Eliminated, SurrenderAccepted or Booted — point by point, so a later transition back
+// to Playing resumes the line. A `GameOrderStateTransition` turning a seat into an AI (`TurningIntoAI`), or taking
+// it back from one (`TakingOverForAI`), leaves the replayed state as it was, so the line runs on under the seat;
+// the luck lines get a point every turn for every seat. A seat that leaves without the flag but goes on giving
+// orders in a later turn is an AI's seat too (nobody else orders for it). Pure; never throws.
 import type { Player } from '../normalize.js';
 import { playersByInGameId } from '../live.js';
 
@@ -29,14 +37,25 @@ export interface PlayerEndStats {
   /** Cards played (`GameOrderPlayCard*`) and whole cards received (`GameOrderReceiveCard`'s `cardsMadeWhole`). */
   cardsPlayed: number;
   cardsReceived: number;
-  /** The turn being played (1-based) and the state its seat entered there (`GameOrderStateTransition`), when it left. */
+  /**
+   * The turn being played (1-based) and the state its seat entered there (`GameOrderStateTransition`), when it left
+   * and stayed out to the end: Eliminated, SurrenderAccepted or Booted (the states the client stops a line on), not
+   * into an AI. A seat that left and came back to Playing has none.
+   */
   left?: { turn: number; state: string };
   /**
+   * #542: the turn an AI took the seat over (a surrender or boot into an AI): the series and totals run on under
+   * the seat, as the client draws them, so from here they are the AI's. `aiUntil`: the turn its player took it back.
+   */
+  aiFrom?: number;
+  aiUntil?: number;
+  /**
    * The client's "All Graphs" series that come from the orders (`warlight.unity.live.Statistics`): `deployed`, the
-   * armies it deployed each turn read (metric 3, "Armies actually deployed each turn"; up to the turn it left), and
-   * the cumulative luck (metrics 4–6) — `luck` over all its attacks and defences, `offensiveLuck` as attacker
-   * (offenseLuck − defenseLuck), `defensiveLuck` as defender (defenseLuck − offenseLuck) — from 0 before the first
-   * turn, then after each turn read (every turn, as the client draws them). Rounded to 0.01.
+   * armies it deployed each turn read (metric 3, "Armies actually deployed each turn"; not the turns it was out,
+   * see {@link seatIn}), and the cumulative luck (metrics 4–6) — `luck` over all its attacks and defences,
+   * `offensiveLuck` as attacker (offenseLuck − defenseLuck), `defensiveLuck` as defender (defenseLuck −
+   * offenseLuck) — from 0 before the first turn, then after each turn read (every turn, out or not, as the client
+   * draws them). Rounded to 0.01.
    */
   deployed: number[];
   luck: number[];
@@ -49,7 +68,20 @@ export interface EndGameStatsResult {
   players: Map<number, PlayerEndStats>;
   /** Turns whose orders were read. */
   turnsRead: number;
+  /**
+   * By GameFeed id, the spans its seat was out (the client skips its board and deploy points): from the turn it
+   * left up to (not including) the turn it came back, open when it never did. Use {@link seatIn}.
+   */
+  out: Map<number, { from: number; to?: number }[]>;
 }
+
+/** Whether the client draws `id`'s board point after `afterTurn` completed turns (its deploy point of that turn). */
+export function seatIn(r: Pick<EndGameStatsResult, 'out'>, id: number, afterTurn: number): boolean {
+  return !(r.out.get(id) ?? []).some((o) => o.from <= afterTurn && (o.to === undefined || afterTurn < o.to));
+}
+
+/** The GamePlayerStates the client stops a seat's line on (3, 7, 8). */
+const OUT_STATES = new Set(['Eliminated', 'SurrenderAccepted', 'Booted']);
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const num = (v: unknown): number => {
@@ -81,6 +113,13 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
     const off = new Map<number, number>();
     const def = new Map<number, number>();
     const add = (m: Map<number, number>, p: number, v: number) => m.set(p, (m.get(p) ?? 0) + v);
+    const outs = new Map<number, { from: number; to?: number; state: string }[]>(players.map((p) => [p.id, []]));
+    const deploys = new Map<number, { turn: number; armies: number }[]>(players.map((p) => [p.id, []]));
+    const open = (id: number) => {
+      const o = outs.get(id)!;
+      const last = o[o.length - 1];
+      return last && last.to === undefined ? last : undefined;
+    };
     let turnsRead = 0;
     const turns = Object.keys(h)
       .map((k) => /^turn_?(\d+)$/i.exec(k))
@@ -93,11 +132,15 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
       if (!Array.isArray(orders)) continue;
       turnsRead++;
       const owner = ownersOf(h[`standing${n}`] ?? h[`standing_${n}`], feedOf);
+      const turn = n + 1;
       const deployed = new Map<number, number>();
+      const ordered = new Set<number>();
+      const back = new Set<number>();
       for (const o of orders) {
         if (!isRec(o) || typeof o.type !== 'string') continue;
         const p = feedOf(o.playerID);
         const s = p === undefined ? undefined : out.get(p);
+        if (s && p !== undefined && (o.type === 'GameOrderDeploy' || o.type === 'GameOrderAttackTransfer' || o.type.startsWith('GameOrderPlayCard'))) ordered.add(p);
         if (o.type === 'GameOrderDeploy') {
           if (s && p !== undefined) {
             s.produced += num(o.armies);
@@ -131,13 +174,42 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
           if (s && Array.isArray(o.cardsMadeWhole)) s.cardsReceived += o.cardsMadeWhole.length;
         } else if (o.type === 'GameOrderStateTransition') {
           const state = typeof o.newState === 'string' && SAFE_STATE.test(o.newState) ? o.newState : 'unknown';
-          if (s) s.left = { turn: n + 1, state };
+          if (!s || p === undefined) continue;
+          if (yes(o.turningIntoAI ?? o.TurningIntoAI)) {
+            // The client leaves the seat's state as it was: its line runs on, the AI's from here.
+            if (s.aiFrom === undefined || s.aiUntil !== undefined) {
+              s.aiFrom = turn;
+              delete s.aiUntil;
+            }
+          } else if (yes(o.takingOverForAI ?? o.TakingOverForAI)) {
+            if (s.aiFrom !== undefined && s.aiUntil === undefined) s.aiUntil = turn;
+          } else if (OUT_STATES.has(state) || state === 'unknown') {
+            if (!open(p)) outs.get(p)!.push({ from: turn, state });
+          } else {
+            // Back to Playing (or a state the client draws a line in): the line resumes.
+            const o = open(p);
+            if (o) {
+              o.to = turn;
+              back.add(p);
+            }
+          }
+        }
+      }
+      // A seat out since an earlier turn that gave orders this turn is an AI's (the flag not in the feed).
+      for (const p of ordered) {
+        const o = open(p);
+        if (!o || o.from >= turn || back.has(p)) continue;
+        const list = outs.get(p)!;
+        list.splice(list.indexOf(o), 1);
+        const s = out.get(p)!;
+        if (s.aiFrom === undefined || s.aiUntil !== undefined) {
+          s.aiFrom = o.from;
+          delete s.aiUntil;
         }
       }
       const r2 = (v: number) => Math.round(v * 100) / 100;
       for (const [id, s] of out) {
-        // The client adds a turn's deploy point only while the seat is still in after it.
-        if (!s.left || n + 1 < s.left.turn) s.deployed.push(deployed.get(id) ?? 0);
+        deploys.get(id)?.push({ turn, armies: deployed.get(id) ?? 0 });
         const o = off.get(id) ?? 0;
         const d = def.get(id) ?? 0;
         s.offensiveLuck.push(r2(o));
@@ -145,7 +217,18 @@ export function endGameStats(history: unknown, players: readonly Pick<Player, 'i
         s.luck.push(r2(o + d));
       }
     }
-    return turnsRead ? { players: out, turnsRead } : undefined;
+    if (!turnsRead) return undefined;
+    const spans = new Map<number, { from: number; to?: number }[]>();
+    for (const [id, s] of out) {
+      const o = outs.get(id) ?? [];
+      spans.set(id, o.map(({ from, to }) => (to === undefined ? { from } : { from, to })));
+      const last = o[o.length - 1];
+      if (last && last.to === undefined) s.left = { turn: last.from, state: last.state };
+    }
+    const r = { players: out, turnsRead, out: spans };
+    // The client adds a turn's deploy point only while the seat is in after it.
+    for (const [id, s] of out) for (const d of deploys.get(id) ?? []) if (seatIn(r, id, d.turn)) s.deployed.push(d.armies);
+    return r;
   } catch {
     return undefined;
   }
