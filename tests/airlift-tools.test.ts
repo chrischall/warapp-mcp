@@ -115,7 +115,7 @@ describe('warapp_check_plan: an Airlift carried out at its phase', () => {
     expect(without.atRisk.territories.map((t) => t.territory.id)).toContain(161);
     expect(lifted.atRisk.territories.map((t) => t.territory.id)).not.toContain(161);
     expect(lifted.notCovered.join('\n')).not.toMatch(/card play other than/);
-    expect(lifted.notCovered.join('\n')).toMatch(/apart from your own Order Priority and Airlifts/);
+    expect(lifted.notCovered.join('\n')).toMatch(/apart from your own Order Priority, Airlifts and Bombs/);
   });
 });
 

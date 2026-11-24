@@ -156,3 +156,40 @@ describe('the Airlift plan: staging for next turn', () => {
     expect(stagingCandidates(input, planTurn(input)).every((c) => c.kind === 'stage')).toBe(true);
   });
 });
+
+describe('the Airlift candidates: ranking and exclusions', () => {
+  // 1 and 2 mine beside the neutral 20s on 3 and 4 (bonus 100 = 1+3, +5; bonus 200 = 2+4, +4). Interior: 5 (beside
+  // 1, 2, 6, 7), 6 (my commander, beside 5) and 7 (beside 5).
+  const M = makeMap(7, [[1, 3], [2, 3], [2, 4], [1, 5], [2, 5], [5, 6], [5, 7]], [[100, 5, [1, 3]], [200, 4, [2, 4]]]);
+  const withCommander: TerritoryState = { ...me(6, 50), specialUnits: [{ kind: 'commander', playerId: ME, id: 'c' }] } as TerritoryState;
+  const input: PlanInput = {
+    graph: buildGraph(M),
+    board: board([me(1, 2), me(2, 3), neutral(3, 20), neutral(4, 20), me(5, 40), withCommander, me(7, 30)]),
+    me: ME,
+    income: 5,
+  };
+  const plain = planTurn(input);
+
+  it("stages from the largest interior stack, never my commander's, the richest target first", () => {
+    const c = stagingCandidates(input, plain);
+    expect(c.map((x) => [x.from, x.to, x.staging?.target])).toEqual([
+      [5, 2, 3],
+      [5, 2, 4],
+    ]);
+    expect(c.every((x) => x.from !== 6)).toBe(true);
+  });
+
+  it('with two cards, also tries the best two together', () => {
+    const two = planAirlift({ input: stageInputTwo, plain: planTurn(stageInputTwo), cards: 2 });
+    expect(two.considered).toBeGreaterThan(planAirlift({ input: stageInputTwo, plain: planTurn(stageInputTwo), cards: 1 }).considered);
+  });
+});
+
+// Two conceded bonus borders, two deep stacks: the reinforce candidates rank the larger stack first.
+const TWO = makeMap(9, [[1, 2], [2, 3], [3, 4], [1, 5], [5, 6], [6, 1], [2, 7], [7, 8], [8, 9], [9, 2]], [[100, 6, [1, 2, 3]], [300, 4, [7, 8]]]);
+const stageInputTwo: PlanInput = {
+  graph: buildGraph(TWO),
+  board: board([me(1, 1), me(2, 1), me(3, 2), foe(4, 40), me(5, 60), me(6, 30), me(7, 2), foe(8, 40), foe(9, 2)]),
+  me: ME,
+  income: 5,
+};

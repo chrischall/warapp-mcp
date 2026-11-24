@@ -631,7 +631,7 @@ describe('submit_turn plays Bomb and Emergency Blockade (UNVERIFIED live)', () =
     expect(ledger.agreements[0]!.status).toBe('broken-by-me');
   });
 
-  it('warapp_check_plan warns that a Bomb or Emergency Blockade in the orders is not simulated', async () => {
+  it('warapp_check_plan simulates a Bomb and warns that an Emergency Blockade in the orders is not simulated', async () => {
     const s = server(COMBAT_HAND);
     const cs = combatSettings();
     h = await liveHarness({ feed: [game({ settings: cs }), game({ settings: cs })], pages: ME_PAGE, warapp: s.warapp });
@@ -643,7 +643,8 @@ describe('submit_turn plays Bomb and Emergency Blockade (UNVERIFIED live)', () =
       DEPLOY,
       { kind: 'move', from: 159, to: 158, armies: 10 },
     ]);
-    expect(warned).toMatch(/The Bomb on 158 is not simulated: the test fights at its armies before the Bomb halves them\./);
+    // The Bomb is carried out at its phase now (owner request 2026-11-24): no longer warned of.
+    expect(warned).not.toMatch(/The Bomb on 158 is not simulated/);
     expect(warned).toMatch(/The Emergency Blockade on 161 is not simulated: the test keeps it yours, armies unchanged\./);
     expect(await check([DEPLOY])).not.toMatch(/not simulated/);
   });

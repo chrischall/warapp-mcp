@@ -42,7 +42,7 @@ export const LIVE_BUNDLE = [
   'Go.Ha=function(a,b,d){var e=a.bc();switch(e){case 1:return Ga.r(a,b,d);case 2:return Gd.r(a,b,d);' +
     'case 5:return Gr.r(a,b,d);case 9:return Gx.r(a,b,d);case 10:return Gk.r(a,b,d);case 14:return Gy.r(a,b,d);' +
     'case 15:return Gz.r(a,b,d);case 11:return Gl.r(a,b,d);case 12:return Gf.r(a,b,d);case 13:return Gg.r(a,b,d);' +
-    'case 18:return Gb.r(a,b,d);case 22:return new Ge;' +
+    'case 18:return Gb.r(a,b,d);case 20:return Gm.r(a,b,d);case 8:return Gn.r(a,b,d);case 22:return new Ge;' +
     'default:throw Y.sa(new Pa("unknown order "+e))}};',
   'Go.base=function(a,b,d){b.o9=P.Ya(a);b.oa=a.Ua()?P.Ya(a):null;b.ob=a.Ua()?P.Sd(a,function(){return P.Ya(a)}):null};',
   'W["warlight.shared.GameOrderDeploy"]=Gd;',
@@ -69,6 +69,12 @@ export const LIVE_BUNDLE = [
   'Gg.r=function(a,b,d){b=new Gg;b.o1=P.Ya(a);b.o2=P.Ya(a);b.o3=P.tL(a);Go.base(a,b,d);return b};',
   'W["warlight.shared.GameOrderPlayCardBlockade"]=Gb;',
   'Gb.r=function(a,b,d){b=new Gb;b.o1=P.Ya(a);b.o2=P.tL(a);Go.base(a,b,d);return b};',
+  // Bomb (tag 20) and Emergency Blockade (`Abandon`, tag 8): the territory, the card GUID, the base.
+  'function Gm(){}function Gn(){}',
+  'W["warlight.shared.GameOrderPlayCardBomb"]=Gm;',
+  'Gm.r=function(a,b,d){b=new Gm;b.o1=P.Ya(a);b.o2=P.tL(a);Go.base(a,b,d);return b};',
+  'W["warlight.shared.GameOrderPlayCardAbandon"]=Gn;',
+  'Gn.r=function(a,b,d){b=new Gn;b.o1=P.Ya(a);b.o2=P.tL(a);Go.base(a,b,d);return b};',
   // #427: GameTurn — the turn's orders (each optional), then its 0-based number.
   'function Gq(){}',
   'W["warlight.shared.GameTurn"]=Gq;',
@@ -175,8 +181,8 @@ export type SyntheticOrder =
       units?: readonly SyntheticUnit[];
     }
   | { kind: 'card'; tag: 5 | 10 | 11; card: string }
-  /** Gift (13): the recipient's in-game id, then the territory. Blockade (18): the territory. Sanctions (15): the sanctioned player's in-game id. */
-  | { kind: 'card'; tag: 13 | 15 | 18; card: string; ints: readonly number[] }
+  /** Gift (13): the recipient's in-game id, then the territory. Sanctions (15): the sanctioned player's in-game id. Blockade (18), Bomb (20), Emergency Blockade (8): the territory. */
+  | { kind: 'card'; tag: 13 | 15 | 18 | 20 | 8; card: string; ints: readonly number[] }
   /** Airlift (12): the armies (and units), from, to. */
   | { kind: 'card'; tag: 12; card: string; from: number; to: number; armies: number; units?: readonly SyntheticUnit[] }
   | { kind: 'discard'; card: string }
@@ -210,7 +216,7 @@ function writeOrder(w: Writer, o: SyntheticOrder, player: number): void {
       w.bool(true).bool(false).int32(o.armies).u8(units.length);
       for (const u of units) writeUnit(w, u);
       w.int32(o.from).int32(0).int32(o.to);
-    } else if (o.tag === 13 || o.tag === 15 || o.tag === 18) for (const n of o.ints) w.int32(n);
+    } else if (o.tag === 13 || o.tag === 15 || o.tag === 18 || o.tag === 20 || o.tag === 8) for (const n of o.ints) w.int32(n);
     w.guid(o.card);
   }
   else w.u8(9).guid(o.card);

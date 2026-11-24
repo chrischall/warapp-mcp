@@ -89,10 +89,14 @@ import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
 import { myOrdersOf as committedOrdersOf, readMyOrderList } from '../my-orders.js';
-import { checkAirlifts, mismatchMessage, recordedWithCommit, sentAirlifts } from './airlift-readback.js';
+import { checkAirlifts, checkTargeted, mismatchMessage, recordedWithCommit, sentAirlifts, sentTargeted, targetedMismatchParts } from './airlift-readback.js';
 import { checkPlayerCards, playerCardMismatchParts, READ_BACK_PLAYER_CARDS, sentPlayerCards } from './player-card-readback.js';
 import { alternativeOrders, cardsLeftAfter, playsCardType } from './alternative-orders.js';
+
+/** The territory-targeted card plays read back after a commit (owner request 2026-11-24, part B). */
+const READ_BACK_TARGETED: ReadonlySet<string> = new Set(['Bomb']);
 import { planAirlift, STAGING_DISCOUNT } from '../analysis/airlift-plan.js';
+import { planBomb } from '../analysis/bomb-plan.js';
 import type { TurnPlan } from '../analysis/plan/shared.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
@@ -2360,6 +2364,90 @@ async function airliftPlanView(a: {
   };
 }
 
+/** The Bomb card's type id. */
+const CARD_BOMB = 13;
+
+/**
+ * Owner request 2026-11-24 (part B): `bombPlan`, the best plan that plays one Bomb card, beside the plain plan
+ * (`src/analysis/bomb-plan.ts`; the plain plan and its `orders` never change). Only when I hold a Bomb card. Its
+ * orders: the plain card plays and discards, the Bomb play, then the Bomb plan's deploys and moves (the advised Order
+ * Delay left out, as in the Airlift plan). A plan the submit's commander check would refuse while the plain plan
+ * passes it is not offered.
+ */
+async function bombPlanView(a: Parameters<typeof airliftPlanView>[0]): Promise<Record<string, unknown> | undefined> {
+  const used = new Set([...a.cards.plays, ...a.cards.discards].map((c) => c.id));
+  const held = a.myCards.filter((c) => c.type === CARD_BOMB);
+  if (!held.length) return undefined;
+  const free = held.filter((c) => !used.has(c.id));
+  const none = (note: string) => ({ bombPlan: null, bombPlanNote: note });
+  if (!free.length) return none('The plain plan already plays or discards your Bomb card: no Bomb plan.');
+  const found = planBomb({ input: a.setup.input, plain: a.plan, cards: free.length });
+  if (!found.best)
+    return none(
+      `No Bomb beats the plain plan by its own measure (next income if its conceded borders fall, then next income, fewer ` +
+        `concessions, more captures): ${found.considered} target${found.considered === 1 ? '' : 's'} tried.`,
+    );
+  const best = found.best;
+  const checked = await commanderCheck(a.ctx, {
+    game: a.game,
+    me: a.me,
+    map: a.map,
+    seen: a.seen,
+    turn: a.turn,
+    info: a.info,
+    hand: a.hand,
+    income: a.setup.boardIncome,
+    tripwires: a.setup.trip.tripwires,
+    deploys: best.plan.deploys,
+    moves: best.plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+    orderPriority: playsCardType(a.orders, a.myCards, CARD_ORDER_PRIORITY),
+    ...(a.enemyDeploy !== undefined ? { floor: a.enemyDeploy } : {}),
+    killedBy: false,
+  });
+  if (checked?.risk && a.plainCommanderSafe)
+    return none('The best Bomb plan would leave your commander takeable (warapp_submit_turn would refuse it), so none is offered.');
+  const card = free[0]!.id;
+  // #558: the advised Order Delay is discarded only when the plain card choice had to shed it.
+  const orders = alternativeOrders({
+    orders: a.orders,
+    delayOrder: a.delayOrder,
+    playedDelay: a.playedDelay,
+    delayMustGo: a.playedDelay !== undefined && a.cards.discards.some((c) => c.id === a.playedDelay),
+    cardPlays: [{ kind: 'card' as const, card, target: best.bomb.target }],
+    deploys: best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
+    moves: best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
+  });
+  const minus = (x: readonly number[], y: readonly number[]) => x.filter((v) => !y.includes(v)).sort((p, q) => p - q);
+  return {
+    bombPlan: {
+      bomb: { target: a.name(best.bomb.target), kind: best.bomb.kind, armies: best.bomb.armies, leaves: best.bomb.left },
+      orders,
+      expected: {
+        captures: best.plan.expected.captures,
+        bonusesCompleted: best.plan.expected.bonusesCompleted,
+        nextIncome: best.plan.expected.nextIncome,
+        ...(best.plan.expected.nextIncomeIfConcededFall !== undefined ? { nextIncomeIfConcededFall: best.plan.expected.nextIncomeIfConcededFall } : {}),
+      },
+      delta: {
+        nextIncomeIfConcededFall: best.score.safeIncome - best.plainScore.safeIncome,
+        nextIncome: best.score.nextIncome - best.plainScore.nextIncome,
+        captures: best.score.captures - best.plainScore.captures,
+        borders: { saved: minus(a.plan.conceded, best.plan.conceded), conceded: minus(best.plan.conceded, a.plan.conceded) },
+      },
+      cardsSpent: 1,
+      cardsLeft: cardsLeftAfter({ held: held.length, free: free.length, spent: 1 }),
+      considered: found.considered,
+      ...(checked ? { commander: { safe: !checked.risk, ...(checked.risk ? { needs: checked.risk.needs } : {}) } } : {}),
+      note: BOMB_PLAN_NOTE,
+    },
+  };
+}
+
+const BOMB_PLAN_NOTE =
+  'An alternative to `orders`, never applied: the same planner on the board the Bomb leaves (it runs after the deploys ' +
+  'and before every move; its target keeps half its armies, rounded down), compared by the plain plan\'s own measure. ' +
+  'The Bomb play\'s encoding is UNVERIFIED live. Test it with warapp_check_plan, then pass its `orders` to warapp_submit_turn if you prefer it.';
+
 const AIRLIFT_PLAN_NOTE =
   'An alternative to `orders`, never applied: the same planner on the board the Airlifts leave (their armies land after ' +
   'the deploys and before every move, and cannot move again that turn), compared by the plain plan\'s own measure. ' +
@@ -2776,6 +2864,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'target the plan does not take whose capture completes a bonus of yours or breaks an opponent\'s, with the target, ' +
           '`nextTurnAttack` and the bonus value), scored on a two-turn objective — this turn\'s measure plus 0.8 × that bonus ' +
           '(`delta.twoTurn`) — and only when the staged stack holds against the plan\'s threat at that border. ' +
+          'Holding a Bomb card, `bombPlan` is the same kind of alternative: the planner on the board the Bomb leaves (its target ' +
+          'keeps half its armies, rounded down — an opponent\'s territory beside yours, a held bonus\'s member first, then the ' +
+          'largest stacks; never a player at peace with you) — `bomb`, `orders` (the Bomb play included), `expected`, `delta`; ' +
+          '`null` with `bombPlanNote` when none beats the plan (the Bomb play\'s encoding is unverified live). ' +
           '`reads` (opponent profiles, as warapp_profile_opponents reads them; reported only, the plan never uses them): ' +
           'each opponent in contact with a habit at the confidence bar or a label — its labels, `lastAttackTurn` (the last turn it attacked you), those habits with `n` and ' +
           '`basis`, `gamesMet` — a likelihood, never a certainty, and never to be quoted to another player. ' +
@@ -3324,6 +3416,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         enemyDeploy: enemy_deploy,
         name,
       });
+      // Owner request 2026-11-24 (B): with a Bomb card in hand, the best plan that plays it, ALONGSIDE the plain plan.
+      const bomb = await bombPlanView({
+        ctx, game, me, map, seen, turn, info, hand, setup, plan, orders, myCards, cards, playedDelay, gift,
+        delayOrder: advice.view.orderDelay?.order,
+        keepCards: 0,
+        plainCommanderSafe: checked?.risk === undefined,
+        enemyDeploy: enemy_deploy,
+        name,
+      });
       // #385: siege_target only means something under goal siege; say so rather than drop it silently.
       if (siege_target !== undefined && goal !== 'siege')
         warnings.push(`siege_target is ignored: it applies only with goal "siege" (this plan's goal is ${goal ?? 'chosen by the game profile'}).`);
@@ -3852,6 +3953,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         orders,
         // Owner request 2026-11-24: only when I hold an Airlift card (no field otherwise).
         ...(airlift ?? {}),
+        ...(bomb ?? {}),
         // The border guess, only when there is one; why there is none, full view only.
         ...(guess
           ? {
@@ -4008,8 +4110,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'entered when there is one). An Airlift leaves at least one army behind while One Army Must Stand Guard is on; ' +
         'once the orders read as committed every Airlift sent is read back from war.app\'s copy of them (the ' +
         'warapp_get_my_orders read) and reported as `airliftReadBack` — a missing or altered one makes the result an error ' +
-        'naming it, and nothing is resent; a Sanctions play is read back the same way (`cardReadBack`: its card and player; ' +
-        'missing or on another player is an error). The ' +
+        'naming it, and nothing is resent; a Bomb or Sanctions play is read back the same way (`cardReadBack`: its card and ' +
+        'target territory or player; missing or on another target is an error). The ' +
         'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
         'adjacent ones, no more armies than a territory has, deploys totalling exactly your income (after any Sanctions on you, ' +
@@ -4770,21 +4872,22 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // (the warapp_get_my_orders read) and any missing or altered one fails loudly. Nothing is resent. The
         // player-targeted plays (Sanctions, owner request 2026-11-24) are read back the same way (`cardReadBack`).
         const lifts = sentAirlifts(st.orders);
+        const aimed = sentTargeted(st.orders, READ_BACK_TARGETED);
         const aiming = st.orders.some((o) => o.kind === 'card' && READ_BACK_PLAYER_CARDS.has(o.card));
-        if (!lifts.length && !aiming) return final;
+        if (!lifts.length && !aimed.length && !aiming) return final;
         if (!committedGame) {
-          const why = (what: string) =>
+          const note =
             result.status === 'resolved'
-              ? `The turn resolved at once, so war.app no longer holds the orders to read back: check the ${what} in the turn's result on the board.`
-              : `The orders do not read as committed, so the ${what} were not read back.`;
+              ? "The turn resolved at once, so war.app no longer holds the orders to read back: check the card plays in the turn's result on the board."
+              : 'The orders do not read as committed, so the card plays were not read back.';
           return {
             ...final,
-            ...(lifts.length ? { airliftReadBack: { status: 'not-read' as const, note: why('Airlifts') } } : {}),
-            ...(aiming ? { cardReadBack: { status: 'not-read' as const, note: why('Sanctions plays') } } : {}),
+            ...(lifts.length ? { airliftReadBack: { status: 'not-read' as const, note } } : {}),
+            ...(aimed.length || aiming ? { cardReadBack: { status: 'not-read' as const, note } } : {}),
           };
         }
         const byInGame = playersByInGameId(committedGame.players);
-        const aimed = sentPlayerCards(st.orders, (n) => byInGame.get(n)?.id);
+        const aimedPlayers = sentPlayerCards(st.orders, (n) => byInGame.get(n)?.id);
         let read: ReturnType<typeof committedOrdersOf> = null;
         let failure: string | undefined;
         try {
@@ -4793,22 +4896,42 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           failure = failureText(e);
         }
         const lifted = checkAirlifts(lifts, read);
-        const named = checkPlayerCards(aimed, read);
-        if ((lifts.length && lifted.status === 'mismatch') || named.status === 'mismatch') {
+        const hit = checkTargeted(aimed, read);
+        const named = checkPlayerCards(aimedPlayers, read);
+        if (lifted.status === 'mismatch' || hit.status === 'mismatch' || named.status === 'mismatch') {
+          const parts = lifted.status === 'mismatch' ? [mismatchMessage(lifted, st.turnNumber, st.gameId)] : [];
+          const extra = [...targetedMismatchParts(hit), ...playerCardMismatchParts(named)];
           // #556: what the commit recorded (a truce break, exceptions, …) is said in the error, never dropped.
           const recorded = recordedWithCommit(final as Record<string, unknown>);
-          throw new McpToolError(`${mismatchMessage(lifted, st.turnNumber, st.gameId, playerCardMismatchParts(named))}${recorded ? ` ${recorded}` : ''}`, {
+          const message =
+            (parts.length
+              ? `${parts[0]}${extra.length ? ` Also: ${extra.join('; ')}.` : ''}`
+              : `Your orders for game ${st.gameId}, turn ${st.turnNumber} are committed, but war.app's copy of them does not match what was sent: ${extra.join('; ')}. Nothing was resent.`) +
+            (recorded ? ` ${recorded}` : '');
+          throw new McpToolError(message, {
             hint:
               'Read the committed orders with warapp_get_my_orders. To correct them, withdraw with warapp_uncommit_turn and ' +
               'submit again (both confirm-gated); do not resend blindly.',
           });
         }
-        const unreadNote = (what: string) =>
-          ({ note: `Your committed orders could not be read back${failure ? ` (${failure})` : ''}: check the ${what} with warapp_get_my_orders.` });
+        const unreadNote = (what: string) => ({ note: `Your committed orders could not be read back${failure ? ` (${failure})` : ''}: check the ${what} with warapp_get_my_orders.` });
+        // Territory-targeted (Bomb) and player-targeted (Sanctions) plays share one `cardReadBack`: one kind alone keeps its
+        // own shape; both together merge their lines (each line names its `target` or its `player`).
+        const cards =
+          aimed.length && (aimedPlayers.length || aiming)
+            ? {
+                status: [hit, named].some((x) => x.status === 'unread') ? ('unread' as const) : ('verified' as const),
+                sent: [...hit.sent, ...named.sent],
+                missing: [...hit.missing, ...named.missing],
+                altered: [...hit.altered, ...named.altered],
+              }
+            : aimed.length
+              ? hit
+              : named;
         return {
           ...final,
           ...(lifts.length ? { airliftReadBack: { ...lifted, ...(lifted.status === 'unread' ? unreadNote('Airlifts') : {}) } } : {}),
-          ...(aimed.length || aiming ? { cardReadBack: { ...named, ...(named.status === 'unread' ? unreadNote('Sanctions plays') : {}) } } : {}),
+          ...(aimed.length || aimedPlayers.length || aiming ? { cardReadBack: { ...cards, ...(cards.status === 'unread' ? unreadNote('card plays') : {}) } } : {}),
         };
 
       },
