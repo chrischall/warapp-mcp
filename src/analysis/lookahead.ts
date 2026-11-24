@@ -27,6 +27,8 @@ interface TwoStepInput {
   opponents: readonly { id: number; deploy: number }[];
   /** My deploys this turn (default none: the board as it stands). */
   deploys?: readonly { territoryId: number; armies: number }[];
+  /** My Bombs this turn (phase 30: after the deploys, before the Airlifts and moves; default none). */
+  bombs?: readonly number[];
   /** My Airlifts this turn (after the deploys, before the moves; default none). */
   airlifts?: readonly { from: number; to: number; armies: number; commander?: boolean }[];
   /**
@@ -77,6 +79,7 @@ export function twoStepReaches(input: TwoStepInput): TwoStepReach[] {
       graph,
       board,
       deploys: [...myDeploys, ...deploys],
+      ...(input.bombs?.length ? { bombs: input.bombs.map((target) => ({ player: me, target })) } : {}),
       ...(input.airlifts?.length ? { airlifts: input.airlifts.map((a) => ({ ...a, player: me })) } : {}),
       orders: [{ player: me, orders: myOrders }, ...(theirs ? [theirs] : [])],
       moveOrder,

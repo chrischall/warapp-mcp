@@ -167,6 +167,16 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   the planner plans without the staged armies, and `stagingGain` credits the bonus (× `STAGING_DISCOUNT` 0.8, the
   two-turn `PlanScore.twoTurn`, ranked first) only when the stack still makes the attack and holds against every enemy
   stack beside it plus the enemy deploy (luck-free). Reported as `staging`. A plan the submit's commander check would refuse is not offered.
+- **The Bomb through the same pipeline (owner request 2026-11-24, part B).** The rule is read from the client bundle
+  (`GameOrderPlayCardBombResult`): phase 30, after every deploy and before the Airlifts and moves, the target keeps
+  round(armies / 2) with a half rounded down (i.e. floor), special units untouched; nothing on the bomber's own territory
+  or hidden armies. `turn-sim.ts` takes `bombs`, `stressPlan`/look-ahead pass them, and `warapp_check_plan` carries a
+  Bomb out instead of warning. `src/analysis/bomb-plan.ts` (pure): `bombPlan` beside the plain plan in
+  `warapp_plan_turn` (only with a Bomb in hand; candidates an opponent's territory beside mine, a held bonus's member
+  first, then the largest stacks, never a player at peace; the unchanged planner on the halved board; `scoreOf`). The
+  submit reads a Bomb back (`checkTargeted`, `cardReadBack`) like the Airlifts. The play stays UNVERIFIED live: no
+  played Bomb was found to read (in-progress games' history is not served; no finished game had it in play).
+  `bombAdvice`'s own worst-case halving (`card-threats.ts`, ceil for an enemy) is unchanged.
 - **Commander safety (#274, `src/analysis/commander-safety.ts`, pure).** One question of the stress test: of
   the single-deploy replies that strike my commander's territory after my orders (`stressPlan`'s `targets`,
   no look-ahead), which kill it, and the armies it needs there to survive them all (`needs`, searched by adding

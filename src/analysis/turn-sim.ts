@@ -3,6 +3,10 @@
 //
 // The rules are the wiki's (docs/STRATEGY.md "Turn resolution" links each page):
 //   - Deployments come before every attack and transfer, and deployed armies may move that turn.
+//   - Bombs (card phase 30, after every deploy, before the Airlifts and the moves): the target keeps half its
+//     armies, rounded down — the client bundle's GameOrderPlayCardBombResult: round(armies / 2) with a half rounded
+//     down — its special units untouched; a Bomb on the bomber's own territory, or one whose armies are hidden,
+//     does nothing.
 //   - Airlifts (card phase 43) run after every deploy and before every attack and transfer: the armies
 //     leave their source and land on the destination (the player's own, or a teammate's), where they
 //     cannot move again that turn (the wiki's Airlift Card). A commander goes along only to its owner's
@@ -94,6 +98,12 @@ export interface SimOrder {
   attackTeammates?: boolean;
 }
 
+/** A Bomb card play: `player` bombs `target` (phase 30). */
+export interface SimBomb {
+  player: number;
+  target: number;
+}
+
 /** An Airlift card play: `armies` (and the commander, with `commander`) from `from` to `to`, after the deploys. */
 export interface SimAirlift {
   player: number;
@@ -109,6 +119,8 @@ export interface SimInput {
   /** Start from these territories in place of the board: the end of an earlier simulated turn. */
   start?: ReadonlyMap<number, SimTerritory>;
   deploys: readonly SimDeploy[];
+  /** Bomb card plays (phase 30): after every deploy, before the Airlifts and the moves (default none). */
+  bombs?: readonly SimBomb[];
   /** Airlift card plays, run in this order after every deploy and before every move (default none). */
   airlifts?: readonly SimAirlift[];
   /** Each player's attack and transfer orders, in the order that player listed them. */
@@ -229,6 +241,14 @@ export function simulateTurn(input: SimInput): SimResult {
   for (const d of input.deploys) {
     const c = cells.get(d.territoryId);
     if (c && c.owner === d.player && d.armies > 0) c.armies += d.armies;
+  }
+
+  // Phase 30: the Bombs. The target keeps round-half-down(armies / 2), i.e. half rounded down.
+  for (const b of input.bombs ?? []) {
+    const c = cells.get(b.target);
+    if (!c || c.owner === 'unknown' || c.owner === b.player) continue;
+    c.armies = Math.floor(c.armies / 2);
+    c.moved = Math.min(c.moved, c.armies);
   }
 
   // Phase 43: the Airlifts, after every deploy. What lands cannot move again this turn.
