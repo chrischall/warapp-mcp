@@ -14,6 +14,9 @@
 // `commitments` (part B4): what my chat messages promised (warapp_send_chat's declared commitments,
 // never the text), recorded once a message is sent; warapp_submit_turn warns when orders break one.
 //
+// `coordination`: joint attacks agreed with a partner (warapp_record_agreement `coordination`; ids,
+// turns and a scrubbed note), reported by warapp_get_relations and warapp_plan_turn, never an order.
+//
 // `intel` (#386): avoid targets and stated incomes from diplomacy (warapp_record_intel), applied by
 // warapp_plan_turn and warapp_check_plan by default.
 //
@@ -38,6 +41,7 @@ import {
   type AgreementTerms,
 } from './analysis/relations.js';
 import { COMMITMENT_KINDS, type RecordedCommitment } from './analysis/commitments.js';
+import { coordinationOf, MAX_COORDINATION, type Coordination } from './analysis/coordination.js';
 import { AVOID_REASONS, intelIsEmpty, type AvoidReason, type StoredIntel } from './analysis/intel.js';
 
 type Rec = Record<string, unknown>;
@@ -77,6 +81,8 @@ export interface RelationsLedger {
   commitments?: RecordedCommitment[];
   /** #386: avoid targets and stated incomes `warapp_record_intel` kept (ids, turns and a reason code only; absent when none). */
   intel?: StoredIntel;
+  /** Joint attacks agreed with a partner (`warapp_record_agreement` `coordination`; report only), oldest first; absent when none. */
+  coordination?: Coordination[];
 }
 
 export const relationsDir = (dir: string) => join(dir, 'relations');
@@ -193,6 +199,13 @@ export function nextCommitmentId(ledger: Pick<RelationsLedger, 'commitments'>): 
   return `c${n + 1}`;
 }
 
+/** The coordination notes of a ledger file, the unusable dropped; absent when none. */
+function coordinationsOf(v: unknown): { coordination?: Coordination[] } {
+  if (!Array.isArray(v)) return {};
+  const list = v.map(coordinationOf).filter((c): c is Coordination => c !== undefined);
+  return list.length ? { coordination: list.slice(-MAX_COORDINATION) } : {};
+}
+
 /** #386: the intel of a ledger file, the unusable entries dropped; absent when none. */
 export function intelOf(v: unknown): { intel?: StoredIntel } {
   if (!isRec(v)) return {};
@@ -241,7 +254,7 @@ export async function readLedger(dir: string, gameId: number, playerId: number):
     const c: unknown = JSON.parse(await readFile(relationsPath(dir, gameId, playerId), 'utf8'));
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !Array.isArray(c.agreements)) return undefined;
     const agreements = c.agreements.map(agreementOf).filter((a): a is Agreement => a !== undefined);
-    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments), ...intelOf(c.intel) };
+    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments), ...intelOf(c.intel), ...coordinationsOf(c.coordination) };
   } catch {
     return undefined;
   }
@@ -267,7 +280,7 @@ export async function readLedgerForWrite(
     const c: unknown = JSON.parse(text);
     if (!isRec(c) || c.gameId !== gameId || c.playerId !== playerId || !Array.isArray(c.agreements)) return 'unreadable';
     const agreements = c.agreements.map(agreementOf).filter((a): a is Agreement => a !== undefined);
-    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments), ...intelOf(c.intel) };
+    return { gameId, playerId, agreements, usage: usageOf(c.usage), ...commitmentsOf(c.commitments), ...intelOf(c.intel), ...coordinationsOf(c.coordination) };
   } catch {
     return 'unreadable';
   }
@@ -290,7 +303,8 @@ export function boundLedger(ledger: RelationsLedger): RelationsLedger {
     .slice(0, MAX_USAGE_TURNS)
     .sort((a, b) => a - b);
   const commitments = ledger.commitments?.length ? { commitments: ledger.commitments.slice(-MAX_COMMITMENTS) } : {};
-  const { commitments: _all, intel: _intel, ...rest } = ledger;
+  const { commitments: _all, intel: _intel, coordination: _coord, ...rest } = ledger;
+  const coordination = ledger.coordination?.length ? { coordination: ledger.coordination.slice(-MAX_COORDINATION) } : {};
   const intel = intelIsEmpty(ledger.intel)
     ? {}
     : {
@@ -300,7 +314,7 @@ export function boundLedger(ledger: RelationsLedger): RelationsLedger {
           incomes: ledger.intel!.incomes.slice(-MAX_INTEL_PLAYERS),
         },
       };
-  return { ...rest, agreements, usage: Object.fromEntries(turns.map((t) => [String(t), ledger.usage[String(t)]!])), ...commitments, ...intel };
+  return { ...rest, agreements, usage: Object.fromEntries(turns.map((t) => [String(t), ledger.usage[String(t)]!])), ...commitments, ...intel, ...coordination };
 }
 
 /** Write the ledger (bounded), atomically, 0600. `true` when written; never throws. */

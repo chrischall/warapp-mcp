@@ -783,6 +783,61 @@ describe('warapp_get_relations: teams from the game list when GameFeed sends non
   });
 });
 
+// Coordination notes (report only): a joint attack agreed with a partner, kept per game in the
+// ledger, listed by warapp_get_relations and told by warapp_plan_turn on its turn; never an order.
+describe('coordinated attacks with a partner (report only)', () => {
+  type Coord = { id: string; with: number; target: number; mine: number[]; theirs: number[]; turn?: number; recordedTurn: number; doneTurn?: number; note?: string };
+  const ledgerFile = () =>
+    JSON.parse(readFileSync(join(h!.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')) as { agreements: unknown[]; coordination?: Coord[] };
+
+  it('records a coordination with a partner without an agreement, scrubs the note, closes it, and refuses bad ones', async () => {
+    h = await liveHarness({ feed: [game('2')] });
+    const r = payload<{ recorded: string; coordination: Array<Record<string, unknown>> }>(
+      await record({ with: 'Bob', coordination: [{ target: 'Cat', theirs: [157], mine: [161], turn: 3, note: 'Bob hits first, Cat is weak' }] }),
+    );
+    expect(r.recorded).toBe('coordination');
+    expect(r.coordination).toEqual([
+      expect.objectContaining({ id: 'k1', with: expect.objectContaining({ id: Number(BOB.feed) }), target: expect.objectContaining({ id: Number(CAT.feed) }), turn: 3, open: true }),
+    ]);
+    expect(ledgerFile().agreements).toEqual([]);
+    expect(ledgerFile().coordination).toEqual([
+      { id: 'k1', with: Number(BOB.feed), target: Number(CAT.feed), mine: [161], theirs: [157], turn: 3, recordedTurn: 3, note: `Player ${BOB.feed} hits first, Player ${CAT.feed} is weak` },
+    ]);
+    expect(readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')).not.toMatch(/Bob|Cat|Ann/);
+    payload(await record({ coordination_done: ['k1'] }));
+    expect(ledgerFile().coordination![0]).toMatchObject({ id: 'k1', doneTurn: 3 });
+    expect(textOf(await record({ coordination_done: ['k1'] }))).toMatch(/k1 is already done: nothing was recorded/);
+    expect(textOf(await record({ with: 'Bob', coordination: [{ target: 'Bob' }] }))).toMatch(/target must be a third player.*nothing was recorded/);
+    expect(textOf(await record({ with: 'Bob', coordination: [{ target: 'Cat', turn: 2 }] }))).toMatch(/turn 2 is before this turn.*nothing was recorded/);
+    expect(textOf(await record({ coordination: [{ target: 'Cat' }] }))).toMatch(/needs `with`.*nothing was recorded/);
+  });
+
+  it('takes the partner from an agreement, and warapp_get_relations lists the coordination', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a1', coordination: [{ target: 'Cat', theirs: [157] }] }));
+    expect(ledgerFile().coordination).toEqual([expect.objectContaining({ id: 'k1', with: Number(BOB.feed), target: Number(CAT.feed) })]);
+    const p = payload<{ coordination: Array<Record<string, unknown>> }>(await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }));
+    expect(p.coordination).toEqual([expect.objectContaining({ id: 'k1', open: true, theirs: [expect.objectContaining({ id: 157 })], mine: [] })]);
+  });
+
+  it('warapp_plan_turn tells an open coordination on its turn, and never changes the orders', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    const before = payload<PlanPayload & { orders: unknown[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    payload(await record({ with: 'Bob', coordination: [{ target: 'Cat', theirs: [157], mine: [158], turn: 3 }, { target: 'Cat', theirs: [135], turn: 4 }] }));
+    const p = payload<PlanPayload & { orders: unknown[]; coordination: unknown[] }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(p.orders).toEqual(before.orders);
+    const lines = p.rationale.join('\n');
+    expect(lines).toMatch(/Agreed with player \d+ \(coordination k1, against player \d+, turn 3\): they hit .*157.*, you follow on .*158.* Report only/);
+    expect(lines).not.toMatch(/coordination k2/);
+    expect(p.coordination).toEqual([expect.objectContaining({ id: 'k1' })]);
+    payload(await record({ coordination_done: ['k1'] }));
+    const done = payload<PlanPayload>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(done.rationale.join('\n')).not.toMatch(/coordination k1/);
+    expect(done).not.toHaveProperty('coordination');
+  });
+});
+
 // Per-territory caps on an agreement (amendment): a territory of mine I promised the partner to keep
 // at most `max` armies on — recorded on an agreed truce without rewriting its terms, honoured by the
 // planner like the border cap, warned on by warapp_check_plan, and self-checked by warapp_get_relations.

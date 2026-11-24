@@ -61,6 +61,7 @@ import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 import { boardHistory, plannerSettings } from './turn.js';
 import { captureObservation } from './decision-capture.js';
 import { scrubNames } from '../decision-log.js';
+import { coordinationDue, MAX_COORDINATION_NOTE, nextCoordinationId, type Coordination } from '../analysis/coordination.js';
 import { resolveTeamsFor } from './team-source.js';
 
 const VIEWS = ['compact', 'full'] as const;
@@ -243,6 +244,28 @@ function agreementView(a: Agreement, game: Game, map: GameMap, turn: number, run
         }
       : {}),
     ...(rung === 'full' ? { history: a.history } : {}),
+  };
+}
+
+/** A coordination as a result shows it: players by id with a delimited name, territories by id and name. */
+export function coordinationView(c: Coordination, game: Game, map: GameMap, turn: number) {
+  const name = namer(map);
+  const player = (id: number) => {
+    const p = game.players.find((x) => x.id === id);
+    return { id, name: p ? untrustedText(p.name) : null };
+  };
+  return {
+    id: c.id,
+    with: player(c.with),
+    target: player(c.target),
+    mine: c.mine.map(name),
+    theirs: c.theirs.map(name),
+    ...(c.turn !== undefined ? { turn: c.turn } : {}),
+    open: c.doneTurn === undefined,
+    due: coordinationDue(c, turn),
+    recordedTurn: c.recordedTurn,
+    ...(c.doneTurn !== undefined ? { doneTurn: c.doneTurn } : {}),
+    ...(c.note !== undefined ? { note: untrustedText(c.note) } : {}),
   };
 }
 
@@ -546,6 +569,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           'armies near the covered border grew two turns running, or an event the fog leaves ambiguous), `outgrowing` (its ' +
           `estimated income above ${TRUCE_OUTGROW_RATIO}× yours) and \`kept\` (quiet turns) — and \`trust\`: \`clear\`, or \`watch\` ` +
           'on any flag but kept, on their notice, and in the endgame (no other opponent still a match for either of you). ' +
+          'Also `coordination`: the joint attacks recorded with warapp_record_agreement (open, due this turn, or done). ' +
           'Also `tacit`: neighbours with no agreement whose shared border stayed quiet three turns or more — reported, never ' +
           "relied on. The cross-game player record (on unless WARAPP_PLAYER_RECORD=off, local and hosted) gives each partner's " +
           '`record`: how it kept earlier agreements — tallies, a kept rate, its notices honoured or broken, its breaks in ' +
@@ -662,6 +686,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           ...(rung === 'full' && x.entries ? { recordEntries: x.entries.map(entryView) } : {}),
         })),
         tacit: tacit.map((t) => ({ player: playerName(t.player), quietTurns: t.quietTurns, border: t.border.map(name) })),
+        ...(ledger.coordination?.length ? { coordination: ledger.coordination.map((c) => coordinationView(c, game, map, turn)) } : {}),
         ...(modView ? { modAlliances: modView } : {}),
         boards: { turns: boards.map((b) => b.turn).sort((a, b) => a - b), live },
         incomes: { mine: incomes.mine, opponents: Object.fromEntries(incomes.opponents) },
@@ -675,7 +700,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
     'warapp_record_agreement',
     {
       title: 'Record an agreement in a war.app game',
-      _meta: mintMeta('change', ['record a truce', 'we agreed a truce', 'they broke the truce', 'give notice', 'truce exception', 'promise a territory cap']),
+      _meta: mintMeta('change', ['record a truce', 'we agreed a truce', 'they broke the truce', 'give notice', 'truce exception', 'coordinated attack', 'promise a territory cap']),
       description: untrustedDescription(
         'Record a truce you made, proposed or received in a war.app (Warzone) free-for-all, or a change to one, in this ' +
           "machine's agreement ledger. Nothing is sent to war.app or to any player (so there is no confirmation " +
@@ -695,7 +720,11 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           'its terms: each `{territory, max, note?}` promises at most `max` of your armies on that territory (dated; again ' +
           'on the same territory replaces it), and `caps_remove` lifts one — warapp_plan_turn keeps it like the border cap ' +
           '(the excess one step back, a warning when its hold needs more), warapp_check_plan warns when orders exceed it, ' +
-          'and warapp_get_relations flags your own stack above it. An agreement exists only because you record it here: chat is never read ' +
+          'and warapp_get_relations flags your own stack above it. ' +
+          '`coordination` records a joint attack agreed with the partner (`with`, ' +
+          'or the partner of `agreement_id`; no agreement needed): each `{target, mine?, theirs?, turn?, note?}` gets an id ' +
+          '(k1, …), and `coordination_done` closes one; warapp_get_relations lists them and warapp_plan_turn tells one on ' +
+          'its turn (any turn while open when it has none) — report only, never an order. An agreement exists only because you record it here: chat is never read ' +
           'into one. With the cross-game player record on (owner decision D5: on unless WARAPP_PLAYER_RECORD=off, local and ' +
           'hosted), each agreement is also kept per partner under a salted hash, name-free (no id, no name, no game, no ' +
           'message): the format, the turns agreed and ended, the shape of the terms, the outcome, a break\'s turn, flag and ' +
@@ -734,6 +763,22 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           .max(10)
           .optional()
           .describe('Partner-approved exceptions to add: attacks the partner agreed to, which are no break. Any status.'),
+        coordination: z
+          .array(
+            z.object({
+              target: playerRef.describe('The player (name or id) you attack together.'),
+              mine: z.array(playerRef).max(MAX_SCOPE_ITEMS).optional().describe('Territories (names or ids) you hit or follow on.'),
+              theirs: z.array(playerRef).max(MAX_SCOPE_ITEMS).optional().describe('Territories (names or ids) the partner hits.'),
+              turn: z.coerce.number().int().min(1).optional().describe('The turn agreed (omit: any turn while it is open).'),
+              note: z.string().max(MAX_COORDINATION_NOTE).optional().describe("The owner's own words on the plan (player names are scrubbed)."),
+            }),
+          )
+          .max(10)
+          .optional()
+          .describe(
+            'Joint attacks agreed with the partner (`with`, or the partner of `agreement_id`), kept per game and reported by warapp_get_relations and warapp_plan_turn: never an order. Needs no agreement.',
+          ),
+        coordination_done: z.array(z.string().trim().min(1).max(20)).max(10).optional().describe('Coordination ids (e.g. "k1") to close.'),
         caps: z
           .array(
             z.object({
@@ -823,6 +868,40 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           };
         });
 
+      const coordGiven = !!args.coordination?.length || !!args.coordination_done?.length;
+      // Only coordination notes: no agreement is created or changed.
+      const coordOnly =
+        coordGiven && args.agreement_id === undefined && args.status === undefined && !termsGiven && args.retaliated === undefined && !args.exceptions?.length;
+      /** `ledger`'s coordination with `args`' new notes (partner `partner`) added and `coordination_done` closed. */
+      const coordinationFrom = (ledger: RelationsLedger, partner: number | undefined): Coordination[] => {
+        let list = [...(ledger.coordination ?? [])];
+        for (const id of args.coordination_done ?? []) {
+          const c = list.find((x) => x.id === id);
+          if (!c) refuse(`Game ${game.id} has no coordination ${JSON.stringify(id)}`, 'warapp_get_relations lists the coordination recorded.');
+          if (c!.doneTurn !== undefined) refuse(`Coordination ${id} is already done`, 'Nothing to close.');
+          list = list.map((x) => (x.id === id ? { ...x, doneTurn: turn } : x));
+        }
+        for (const x of args.coordination ?? []) {
+          if (partner === undefined) refuse('A coordination needs `with` (the partner) or `agreement_id`', 'Name the partner you agreed the attack with.');
+          const target = resolvePlayer(game.players, x.target).id;
+          if (target === me.id || target === partner) refuse('A coordination target must be a third player, not you or the partner', 'Name the player you attack together.');
+          if (x.turn !== undefined && x.turn < turn) refuse(`A coordination turn ${x.turn} is before this turn (${turn})`, 'Give this turn or a later one, or omit it.');
+          const ids = (ts: readonly (string | number)[] | undefined) => [...new Set((ts ?? []).map((t) => resolveTerritory(map, t).id))].sort((a, b) => a - b);
+          const note = exceptionNote(x.note, game)?.slice(0, MAX_COORDINATION_NOTE);
+          list.push({
+            id: nextCoordinationId(list),
+            with: partner!,
+            target,
+            mine: ids(x.mine),
+            theirs: ids(x.theirs),
+            ...(x.turn !== undefined ? { turn: x.turn } : {}),
+            recordedTurn: turn,
+            ...(note ? { note } : {}),
+          });
+        }
+        return list;
+      };
+
       /** The change `args` make to `ledger`: the agreement after it, and as it stood. Refuses what cannot be recorded. */
       const change = (ledger: RelationsLedger): { agreement: Agreement; before: Agreement | undefined; created: boolean } => {
         let agreement: Agreement;
@@ -849,8 +928,8 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           before = found;
           if (args.with !== undefined && resolvePlayer(game.players, args.with).id !== agreement.with)
             refuse(`Agreement ${agreement.id} is with player ${agreement.with}`, 'Omit `with` when updating, or record a new agreement.');
-          if (args.status === undefined && !termsGiven && args.retaliated === undefined && !args.exceptions?.length && !capsGiven)
-            refuse('Nothing to record: give a new `status`, terms, `retaliated`, `exceptions` or `caps`', 'Pass the status the agreement moved to.');
+          if (args.status === undefined && !termsGiven && args.retaliated === undefined && !args.exceptions?.length && !capsGiven && !coordGiven)
+            refuse('Nothing to record: give a new `status`, terms, `retaliated`, `exceptions`, `caps` or `coordination`', 'Pass the status the agreement moved to.');
           if (termsGiven) {
             if (agreement.status !== 'proposed-by-me' && agreement.status !== 'proposed-by-them')
               refuse(`The terms of agreement ${agreement.id} (${agreement.status}) can no longer change`, 'End it and record a new agreement with the new terms.');
@@ -892,7 +971,10 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         updateAgreementRecord({ dir, env, game, me, map, graph, agreement, before, created, others });
 
       // Read, change and write the ledger under its in-process lock: two calls never lose each other's change.
-      const { agreement, created, recorded } = await withLedgerLock(dir, game.id, me.id, async () => {
+      const result = await withLedgerLock(dir, game.id, me.id, async (): Promise<
+        | { coordination: Coordination[] }
+        | { agreement: Agreement; before: Agreement | undefined; created: boolean; coordination: Coordination[] | undefined; recorded: Awaited<ReturnType<typeof updateRecord>> }
+      > => {
         const read = await readLedgerForWrite(dir, game.id, me.id);
         if (read === 'unreadable') {
           throw new McpToolError(`The ledger for game ${game.id} exists but cannot be read: nothing was recorded, and the file was left as it is.`, {
@@ -900,19 +982,33 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           });
         }
         const ledger: RelationsLedger = read ?? emptyLedger(game.id, me.id);
-        const c = change(ledger);
-        const rest = ledger.agreements.filter((a) => a.id !== c.agreement.id);
-        if (!(await writeLedger(dir, { ...ledger, agreements: [...rest, c.agreement] }))) {
-          throw new McpToolError(`The ledger for game ${game.id} could not be written: nothing was recorded.`, {
+        const unwritable = () =>
+          new McpToolError(`The ledger for game ${game.id} could not be written: nothing was recorded.`, {
             hint: "Check that the server's data directory is writable.",
           });
+        if (coordOnly) {
+          const partner = args.with !== undefined ? resolvePlayer(game.players, args.with).id : undefined;
+          if (partner === me.id) refuse('A coordination partner must be another player', 'Name the partner you agreed the attack with.');
+          const coordination = coordinationFrom(ledger, partner);
+          if (!(await writeLedger(dir, { ...ledger, coordination }))) throw unwritable();
+          return { coordination };
         }
-        return { ...c, recorded: await updateRecord(c.agreement, c.before, c.created, rest) };
+        const c = change(ledger);
+        const coordination = coordGiven ? coordinationFrom(ledger, c.agreement.with) : ledger.coordination;
+        const rest = ledger.agreements.filter((a) => a.id !== c.agreement.id);
+        if (!(await writeLedger(dir, { ...ledger, agreements: [...rest, c.agreement], ...(coordination?.length ? { coordination } : {}) }))) throw unwritable();
+        return { ...c, coordination, recorded: await updateRecord(c.agreement, c.before, c.created, rest) };
       });
+      const coordView = result.coordination?.length && coordGiven ? { coordination: result.coordination.map((x) => coordinationView(x, game, map, turn)) } : {};
+      if (!('agreement' in result)) {
+        return respond(undefined, ['compact'], () => ({ game: { id: game.id, turn }, recorded: 'coordination', ...coordView, written: LEDGER_NOTE }));
+      }
+      const { agreement, created, recorded } = result;
       return respond(undefined, ['compact'], () => ({
         game: { id: game.id, turn },
         recorded: created ? 'created' : 'updated',
         agreement: agreementView(agreement, game, map, turn, 'full'),
+        ...coordView,
         playerRecord: recorded,
         written: LEDGER_NOTE,
       }));
