@@ -51,6 +51,7 @@ import { createDirectFirstBridge, type DirectFetch } from '../direct/transport.j
 import { isHosted } from '../hosted.js';
 import { registerSignInTool, type SignInToolDeps } from './sign-in.js';
 import { createWarappBridge, type WarappBridge } from '../transport-bridge.js';
+import { readTimezone, withLocalTimes } from '../local-time.js';
 
 type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCache'> & {
   /**
@@ -74,6 +75,11 @@ type ToolDeps = Pick<WarappClientOptions, 'env' | 'fetchImpl' | 'sleep' | 'mapCa
 
 /** Every tool this server serves. index.ts and the tests share this list. */
 export function registerAllTools(server: McpServer, deps: ToolDeps = {}): void {
+  // WARAPP_TIMEZONE: every tool's timestamps gain a local-time sibling, added at the output layer (src/local-time.ts).
+  withLocalTimes(server, readTimezone(deps.env ?? process.env), () => registerEveryTool(server, deps));
+}
+
+function registerEveryTool(server: McpServer, deps: ToolDeps): void {
   // One client for the game tools, so they share the map cache. Config is
   // deferred: the client reads credentials per call, never at construction.
   // The map cache is kept on disk too (`<dataDir>/maps/`, src/map-store.ts),

@@ -455,7 +455,7 @@ export function registerChatTools(server: McpServer, ctx: LiveContext, opts: { e
       title: 'Read a war.app game chat',
       description: untrustedDescription(
         'Read the chat of a war.app (Warzone) game: the most recent messages, oldest first, each with its sender ' +
-          '(`from`, a delimited name; `fromId`, the GameFeed id), `text` (delimited), `time`, `turn`, `channel` ' +
+          '(`from`, a delimited name; `fromId`, the GameFeed id), `text` (delimited), `time` (plus `localTime` when WARAPP_TIMEZONE is set), `turn`, `channel` ' +
           '(`public`, `team` with its `team`, `private` with its recipient `to`, or `unknown`), `mine`, and `new` ' +
           '(not yet marked seen, and not mine), plus `unread` per channel over the whole chat. The chat is read ' +
           "through your signed-in war.app tab or linked session (the web client's GameRefresh, which tells the " +

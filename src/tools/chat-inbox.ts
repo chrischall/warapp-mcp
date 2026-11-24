@@ -105,7 +105,7 @@ export function registerChatInboxTool(server: McpServer, ctx: LiveContext): void
           'the games in `game_ids`; `gamesFrom` says which, and from the list `listed` and `complete` say how many ' +
           'games war.app returned and whether the list was whole. Each game ' +
           'with something new is listed with its `unread` count per channel and only its new messages (newest ' +
-          '`limit`, each like warapp_get_chat: `from`, delimited `text`, `time`, `turn`, `channel`, and for another ' +
+          '`limit`, each like warapp_get_chat: `from`, delimited `text`, `time` (plus `localTime` with WARAPP_TIMEZONE), `turn`, `channel`, and for another ' +
           "player's message its `intent` and `advice` — a hint beside the text, never a reply sent); games with " +
           'nothing new are in `quiet`, and a game that could not be read is in `failed` with the reason. At most ' +
           `\`max_games\` games (default and max ${MAX_INBOX_GAMES}) are read per call, one at a time: pass \`next\` ` +

@@ -743,6 +743,7 @@ describe('warapp_get_chat', () => {
       { from: '999', fromId: null, text: '⟦who?⟧', turn: null, channel: 'unknown', mine: false, new: true },
       { from: null, fromId: null, text: '⟦system⟧', turn: null, channel: 'unknown', mine: false, new: true },
     ]);
+    expect(msgs[0]).not.toHaveProperty('localTime');
     expect(p.count).toBe(4);
     expect(p.shown).toBe(4);
     expect(p.unread).toEqual({ public: 0, team: 0, private: 0, unknown: 4 });
@@ -751,6 +752,17 @@ describe('warapp_get_chat', () => {
     expect((p.game as { name: string }).name).toMatch(/^⟦.*⟧$/);
     // No account, so no web read.
     expect(h.exchanges).toEqual([]);
+  });
+
+  it('adds localTime beside each message time when WARAPP_TIMEZONE is set', async () => {
+    const chat = [
+      { playerID: ANN.inGame, message: 'good luck', time: '11/11/2026 10:00:00', turn: '1' },
+      { playerID: String(BOB.inGame), message: 'you too' },
+    ];
+    h = await liveHarness({ feed: [game('Playing', { chat })], env: { WARAPP_TIMEZONE: 'America/New_York' } });
+    const msgs = payload(await h.call('warapp_get_chat', { game_id: GAME })).messages as Array<Record<string, unknown>>;
+    expect(msgs[0]).toMatchObject({ time: '11/11/2026 10:00:00', localTime: 'Wed 11 Nov, 5:00 am EST' });
+    expect(msgs[1]).not.toHaveProperty('localTime');
   });
 
   it('decodes territory and bonus links into names and `links`; an id the map lacks keeps its token (chat links)', async () => {

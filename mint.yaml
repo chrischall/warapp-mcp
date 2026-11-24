@@ -135,6 +135,13 @@ env:
       warapp_submit_turn until it is read. Off by default, hosted as well: the
       preview only warns. Set on to refuse until the messages are marked seen
       or the submit says chat_reviewed.
+  - name: WARAPP_TIMEZONE
+    required: false
+    help: >-
+      Your IANA time zone (e.g. America/New_York). When set, every timestamp
+      in a tool's answer gains a sibling in that zone (time -> localTime, e.g.
+      "Tue 24 Nov, 6:14 am EST"); the UTC fields stay. Unset or not a zone:
+      UTC only. Hosted, set it on the registration.
   - name: WARAPP_SESSION_FILE
     required: false
     help: >-
