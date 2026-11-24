@@ -489,7 +489,7 @@ describe('warapp_check_plan', () => {
 
   it('says so when battles are not exact, and names what it did not try', async () => {
     h = await live(at(20, 20, 3), 'Playing', {}, { LuckModifier: 0.16, MultiAttack: true });
-    const p = await check({ orders: [{ kind: 'deploy', territory: 159, armies: 5 }, { kind: 'card', card: 'Blockade', target: 161 }] });
+    const p = await check({ orders: [{ kind: 'deploy', territory: 159, armies: 5 }, { kind: 'card', card: 'Order Delay' }] });
     expect(p.exact).toBe(false);
     expect(p.summary).toMatch(/not exact/);
     expect(p.notCovered.join(' ')).toMatch(/Multi-Attack/);

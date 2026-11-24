@@ -83,6 +83,7 @@ import { twoStepReaches } from './lookahead.js';
 import { DEFAULT_BASE_INCOME } from './player.js';
 import { ownerShown } from './plan/shared.js';
 import {
+  roundHalfDown,
   simTerritories,
   simulateTurn,
   type SimDeploy,
@@ -113,6 +114,9 @@ export interface StressInput {
    * every move, the source losing the armies and the destination gaining them, which cannot move again that turn.
    */
   airlifts?: readonly { from: number; to: number; armies: number; commander?: boolean }[];
+  /** My Emergency Blockades (phase 37) and Blockades (phase 60): the territory, given up on purpose, and its wall's multiplier. */
+  abandons?: readonly { target: number; multiplier: number }[];
+  blockades?: readonly { target: number; multiplier: number }[];
   /** My Bombs (their targets): phase 30, after every deploy, before the Airlifts and every move; the target keeps half, rounded down. */
   bombs?: readonly number[];
   /** My attacks and transfers, in the order they will be submitted, with their options (#165). */
@@ -352,6 +356,8 @@ export function stressPlan(input: StressInput): StressReport {
       board,
       deploys: [...myDeploys, ...sides.flatMap((x) => (x.deploy > 0 ? [{ player: x.player, territoryId: x.deployTo, armies: x.deploy }] : []))],
       ...(input.bombs?.length ? { bombs: input.bombs.map((target) => ({ player: me, target })) } : {}),
+      ...(input.abandons?.length ? { abandons: input.abandons.map((w) => ({ ...w, player: me })) } : {}),
+      ...(input.blockades?.length ? { blockades: input.blockades.map((w) => ({ ...w, player: me })) } : {}),
       ...(myAirlifts.length ? { airlifts: myAirlifts } : {}),
       orders: [{ player: me, orders: myOrders }, ...sides.map((x) => ({ player: x.player, orders: x.orders }))],
       moveOrder,
@@ -361,7 +367,9 @@ export function stressPlan(input: StressInput): StressReport {
     });
 
   const baseline = simulate([], [me]);
-  const mineAtStart = new Set([...start].filter(([, t]) => t.owner === me).map(([id]) => id));
+  // A territory I wall off (an Emergency Blockade or a Blockade) is given up on purpose: never a loss to a reply.
+  const walled = new Set([...(input.abandons ?? []), ...(input.blockades ?? [])].map((w) => w.target));
+  const mineAtStart = new Set([...start].filter(([id, t]) => t.owner === me && !walled.has(id)).map(([id]) => id));
   const mineAfter = (r: SimResult): Set<number> => new Set([...r.territories].filter(([, t]) => t.owner === me).map(([id]) => id));
   const baseMine = mineAfter(baseline);
   const planned = [...baseMine].filter((id) => !mineAtStart.has(id)).sort(byNum);
@@ -411,6 +419,15 @@ export function stressPlan(input: StressInput): StressReport {
   for (const t of input.bombs ?? []) {
     const c = afterMyDeploys.get(t);
     if (c && c.owner !== 'unknown' && c.owner !== me) c.armies = Math.floor(c.armies / 2);
+  }
+  // My Emergency Blockades (phase 37) wall their territories before the moves.
+  for (const w of input.abandons ?? []) {
+    const c = afterMyDeploys.get(w.target);
+    if (c && c.owner !== 'unknown') {
+      c.owner = 'neutral';
+      c.armies = roundHalfDown(c.armies * w.multiplier);
+      delete c.commander;
+    }
   }
   // My Airlifts land before any move, so the dodges and chains are searched on the board after them too.
   for (const a of myAirlifts) {
@@ -801,6 +818,8 @@ export function stressPlan(input: StressInput): StressReport {
       deploys: input.deploys,
       ...(input.airlifts?.length ? { airlifts: input.airlifts } : {}),
       ...(input.bombs?.length ? { bombs: input.bombs } : {}),
+      ...(input.abandons?.length ? { abandons: input.abandons } : {}),
+      ...(input.blockades?.length ? { blockades: input.blockades } : {}),
       moves: input.moves,
       ...(input.settings ? { settings: input.settings } : {}),
       ...(teams ? { teams } : {}),

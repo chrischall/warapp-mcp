@@ -7,6 +7,11 @@
 //     armies, rounded down — the client bundle's GameOrderPlayCardBombResult: round(armies / 2) with a half rounded
 //     down — its special units untouched; a Bomb on the bomber's own territory, or one whose armies are hidden,
 //     does nothing.
+//   - An Emergency Blockade (card phase 37, after the Bombs, before the Airlifts and moves) and a Blockade (phase 60,
+//     after every move) turn their territory neutral with its armies × the card's multiplier, rounded with a half
+//     down (the bundle's GameOrderPlayCardAbandonResult / …BlockadeResult); special units on it are lost. A Blockade
+//     acts only while its player still holds the territory (one taken during the turn stays taken); the Emergency
+//     Blockade does not check (the validator already refused a territory not mine).
 //   - Airlifts (card phase 43) run after every deploy and before every attack and transfer: the armies
 //     leave their source and land on the destination (the player's own, or a teammate's), where they
 //     cannot move again that turn (the wiki's Airlift Card). A commander goes along only to its owner's
@@ -104,6 +109,13 @@ export interface SimBomb {
   target: number;
 }
 
+/** An Emergency Blockade (phase 37) or a Blockade (phase 60): `target` turns neutral at its armies × `multiplier`. */
+export interface SimWall {
+  player: number;
+  target: number;
+  multiplier: number;
+}
+
 /** An Airlift card play: `armies` (and the commander, with `commander`) from `from` to `to`, after the deploys. */
 export interface SimAirlift {
   player: number;
@@ -121,6 +133,10 @@ export interface SimInput {
   deploys: readonly SimDeploy[];
   /** Bomb card plays (phase 30): after every deploy, before the Airlifts and the moves (default none). */
   bombs?: readonly SimBomb[];
+  /** Emergency Blockades (phase 37): after the Bombs, before the Airlifts and moves (default none). */
+  abandons?: readonly SimWall[];
+  /** Blockades (phase 60): after every move (default none). */
+  blockades?: readonly SimWall[];
   /** Airlift card plays, run in this order after every deploy and before every move (default none). */
   airlifts?: readonly SimAirlift[];
   /** Each player's attack and transfer orders, in the order that player listed them. */
@@ -178,6 +194,12 @@ const ASSUME_WIPE =
 
 const ASSUME_PERCENT =
   'A percentage order took its share of the armies its territory could still move, the guard left out (the client rounds the share; what it counts is not stated).';
+
+/** `x` rounded to the nearest whole number, a half rounded down (the client's `O.Bg(x, false, true)`). */
+export function roundHalfDown(x: number): number {
+  const whole = Math.floor(x);
+  return x - whole > 0.5 ? whole + 1 : whole;
+}
 
 /** `pct`% of `n`, rounded to nearest with a half rounded down, as the client works out a percentage order. */
 export function percentOf(pct: number, n: number): number {
@@ -249,6 +271,20 @@ export function simulateTurn(input: SimInput): SimResult {
     if (!c || c.owner === 'unknown' || c.owner === b.player) continue;
     c.armies = Math.floor(c.armies / 2);
     c.moved = Math.min(c.moved, c.armies);
+  }
+
+  /** A wall: the territory neutral at its armies × the multiplier (a half rounded down), its special units lost. */
+  const wall = (c: Cell, m: number): void => {
+    c.owner = 'neutral';
+    c.armies = roundHalfDown(c.armies * m);
+    c.moved = 0;
+    delete c.commander;
+    delete c.commanderMoved;
+  };
+  // Phase 37: the Emergency Blockades.
+  for (const w of input.abandons ?? []) {
+    const c = cells.get(w.target);
+    if (c && c.owner !== 'unknown') wall(c, w.multiplier);
   }
 
   // Phase 43: the Airlifts, after every deploy. What lands cannot move again this turn.
@@ -413,6 +449,12 @@ export function simulateTurn(input: SimInput): SimResult {
       if (!pending()) break;
       takeSlot(p);
     }
+  }
+
+  // Phase 60: the Blockades, after every move, only while their player still holds the territory.
+  for (const w of input.blockades ?? []) {
+    const c = cells.get(w.target);
+    if (c && c.owner === w.player) wall(c, w.multiplier);
   }
 
   const territories = new Map<number, SimTerritory>();

@@ -93,9 +93,10 @@ import { checkAirlifts, checkTargeted, mismatchMessage, recordedWithCommit, sent
 import { alternativeOrders, cardsLeftAfter, playsCardType } from './alternative-orders.js';
 
 /** The territory-targeted card plays read back after a commit (owner request 2026-11-24, part B). */
-const READ_BACK_TARGETED: ReadonlySet<string> = new Set(['Bomb']);
+const READ_BACK_TARGETED: ReadonlySet<string> = new Set(['Bomb', 'Blockade', 'EmergencyBlockade']);
 import { planAirlift, STAGING_DISCOUNT } from '../analysis/airlift-plan.js';
 import { planBomb } from '../analysis/bomb-plan.js';
+import { planWall } from '../analysis/blockade-plan.js';
 import type { TurnPlan } from '../analysis/plan/shared.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
@@ -2441,6 +2442,95 @@ async function bombPlanView(a: Parameters<typeof airliftPlanView>[0]): Promise<R
   };
 }
 
+/** The Emergency Blockade card's type id, and the Blockade's. */
+const CARD_EMERGENCY_BLOCKADE = 3;
+
+/**
+ * Owner request 2026-11-24 (part B): `blockadePlan`, the best plan that walls off a conceded border with an Emergency
+ * Blockade card (`src/analysis/blockade-plan.ts`; DRAFT: its denial term needs the owner's approval), beside the plain
+ * plan, whose `orders` never change. Only when I hold an Emergency Blockade or a Blockade card; a Blockade alone is
+ * named as not planned (it acts after the attacks, so the one-turn measure cannot value it).
+ */
+async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promise<Record<string, unknown> | undefined> {
+  const used = new Set([...a.cards.plays, ...a.cards.discards].map((c) => c.id));
+  const walls = a.myCards.filter((c) => c.type === CARD_EMERGENCY_BLOCKADE);
+  const blockades = a.myCards.filter((c) => c.type === CARD_BLOCKADE);
+  if (!walls.length && !blockades.length) return undefined;
+  const none = (note: string) => ({ blockadePlan: null, blockadePlanNote: note });
+  const free = walls.filter((c) => !used.has(c.id));
+  if (!free.length)
+    return none(
+      walls.length
+        ? 'The plain plan already plays or discards your Emergency Blockade card: no wall plan.'
+        : 'Only a Blockade is held: it walls a territory after the attacks, so the plain plan\'s one-turn measure cannot value it (cards.advice.blockade still says where it pays).',
+    );
+  const raw = a.game.settings?.raw.EmergencyBlockadeCard;
+  const multiplier = typeof raw === 'object' && raw !== null ? Number((raw as Record<string, unknown>).MultiplyAmount) : Number.NaN;
+  if (!(multiplier > 0)) return none("The game's settings give no Emergency Blockade multiplier, so no wall can be sized.");
+  const found = planWall({ input: a.setup.input, plain: a.plan, cards: free.length, multiplier });
+  if (!found.best)
+    return none(`No Emergency Blockade beats the plain plan (with the bonus a wall denies counted): ${found.considered} tried.`);
+  const best = found.best;
+  const checked = await commanderCheck(a.ctx, {
+    game: a.game,
+    me: a.me,
+    map: a.map,
+    seen: a.seen,
+    turn: a.turn,
+    info: a.info,
+    hand: a.hand,
+    income: a.setup.boardIncome,
+    tripwires: a.setup.trip.tripwires,
+    deploys: best.plan.deploys,
+    moves: best.plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+    orderPriority: a.cards.plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+    ...(a.enemyDeploy !== undefined ? { floor: a.enemyDeploy } : {}),
+    killedBy: false,
+  });
+  if (checked?.risk && a.plainCommanderSafe)
+    return none('The best wall plan would leave your commander takeable (warapp_submit_turn would refuse it), so none is offered.');
+  const card = free[0]!.id;
+  const delayDiscard = a.playedDelay && a.delayOrder !== undefined ? [{ kind: 'discard' as const, card: a.playedDelay }] : [];
+  const orders = [
+    ...a.orders.filter((o) => (o.kind === 'discard' || o.kind === 'card') && o !== a.delayOrder),
+    ...delayDiscard,
+    { kind: 'card' as const, card, target: best.wall.target },
+    ...best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
+    ...best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
+  ];
+  return {
+    blockadePlan: {
+      wall: {
+        target: a.name(best.wall.target),
+        armies: best.wall.armies,
+        wall: best.wall.wall,
+        ...(best.wall.denied ? { denies: { bonusValue: best.wall.denied, player: best.wall.deniedFrom } } : {}),
+      },
+      orders,
+      expected: {
+        captures: best.plan.expected.captures,
+        nextIncome: best.plan.expected.nextIncome,
+        ...(best.plan.expected.nextIncomeIfConcededFall !== undefined ? { nextIncomeIfConcededFall: best.plan.expected.nextIncomeIfConcededFall } : {}),
+      },
+      delta: {
+        twoTurn: Math.round((best.score.twoTurn - best.plainScore.twoTurn) * 100) / 100,
+        nextIncomeIfConcededFall: best.score.safeIncome - best.plainScore.safeIncome,
+        nextIncome: best.score.nextIncome - best.plainScore.nextIncome,
+      },
+      cardsSpent: 1,
+      cardsLeft: walls.length - 1,
+      considered: found.considered,
+      ...(checked ? { commander: { safe: !checked.risk, ...(checked.risk ? { needs: checked.risk.needs } : {}) } } : {}),
+      note: WALL_PLAN_NOTE,
+    },
+  };
+}
+
+const WALL_PLAN_NOTE =
+  'An alternative to `orders`, never applied: the planner on the board an Emergency Blockade leaves (the conceded border ' +
+  "neutral at its armies × the game's multiplier, before every move), its worth the bonus it denies an opponent (× 0.8, " +
+  'DRAFT for the owner) when the wall holds this turn. The play\'s encoding is UNVERIFIED live. Test it with warapp_check_plan.';
+
 const BOMB_PLAN_NOTE =
   'An alternative to `orders`, never applied: the same planner on the board the Bomb leaves (it runs after the deploys ' +
   'and before every move; its target keeps half its armies, rounded down), compared by the plain plan\'s own measure. ' +
@@ -2866,6 +2956,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'keeps half its armies, rounded down — an opponent\'s territory beside yours, a held bonus\'s member first, then the ' +
           'largest stacks; never a player at peace with you) — `bomb`, `orders` (the Bomb play included), `expected`, `delta`; ' +
           '`null` with `bombPlanNote` when none beats the plan (the Bomb play\'s encoding is unverified live). ' +
+          'Holding an Emergency Blockade, `blockadePlan` walls off a border the plan concedes (neutral at its armies × the ' +
+          "game's multiplier, before every move), worth the bonus its fall would hand an opponent when the wall holds this turn " +
+          '(`wall`, `orders`, `delta`; DRAFT rule); a Blockade alone is named as not planned. ' +
           '`reads` (opponent profiles, as warapp_profile_opponents reads them; reported only, the plan never uses them): ' +
           'each opponent in contact with a habit at the confidence bar or a label — its labels, `lastAttackTurn` (the last turn it attacked you), those habits with `n` and ' +
           '`basis`, `gamesMet` — a likelihood, never a certainty, and never to be quoted to another player. ' +
@@ -3421,6 +3514,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         enemyDeploy: enemy_deploy,
         name,
       });
+      const wallPlan = await blockadePlanView({
+        ctx, game, me, map, seen, turn, info, hand, setup, plan, orders, myCards, cards, playedDelay, gift,
+        delayOrder: advice.view.orderDelay?.order,
+        keepCards: 0,
+        plainCommanderSafe: checked?.risk === undefined,
+        enemyDeploy: enemy_deploy,
+        name,
+      });
       // #385: siege_target only means something under goal siege; say so rather than drop it silently.
       if (siege_target !== undefined && goal !== 'siege')
         warnings.push(`siege_target is ignored: it applies only with goal "siege" (this plan's goal is ${goal ?? 'chosen by the game profile'}).`);
@@ -3950,6 +4051,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // Owner request 2026-11-24: only when I hold an Airlift card (no field otherwise).
         ...(airlift ?? {}),
         ...(bomb ?? {}),
+        ...(wallPlan ?? {}),
         // The border guess, only when there is one; why there is none, full view only.
         ...(guess
           ? {
@@ -4104,7 +4206,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         'entered when there is one). An Airlift leaves at least one army behind while One Army Must Stand Guard is on; ' +
         'once the orders read as committed every Airlift sent is read back from war.app\'s copy of them (the ' +
         'warapp_get_my_orders read) and reported as `airliftReadBack` — a missing or altered one makes the result an error ' +
-        'naming it, and nothing is resent; a Bomb is read back the same way (`cardReadBack`: its card and target). The ' +
+        'naming it, and nothing is resent; a Bomb, Blockade or Emergency Blockade is read back the same way (`cardReadBack`: ' +
+        'its card and target). The ' +
         'orders reach the game and cannot be withdrawn here; when the turn resolves, other players see the results. ' +
         'Validated against the live board first: deploys on and moves from your own territories, moves to ' +
         'adjacent ones, no more armies than a territory has, deploys totalling exactly your income (after any Sanctions on you, ' +
