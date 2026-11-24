@@ -398,6 +398,8 @@ function coveredBorder(pc: PlanCtx, r: PlanRelation): number[] {
 interface Caps {
   borderOf: Map<number, number[]>;
   capped: Map<number, number>;
+  /** Territories whose lowest cap is a territory cap I promised (the agreement's `caps`), not a border cap. */
+  promised: Set<number>;
 }
 const capsMemo = new WeakMap<PlanCtx, Caps>();
 function capsOf(pc: PlanCtx): Caps {
@@ -406,13 +408,29 @@ function capsOf(pc: PlanCtx): Caps {
   const { truce } = pc;
   const capped = new Map<number, number>();
   const borderOf = new Map<number, number[]>();
+  const promised = new Set<number>();
   truce.given.forEach((r, i) => {
     if (!truce.binds[i] || r.borderCap === undefined || truce.enforced.has(r.player)) return;
     const ts = coveredBorder(pc, r);
     borderOf.set(i, ts);
     for (const t of ts) capped.set(t, Math.min(capped.get(t) ?? Infinity, Math.max(0, Math.floor(r.borderCap))));
   });
-  const caps = { borderOf, capped };
+  // A territory cap I promised binds while the truce does, on a territory of mine, like a border cap.
+  truce.given.forEach((r, i) => {
+    if (!truce.binds[i] || !r.territoryCaps?.length) return;
+    const ts = borderOf.get(i) ?? [];
+    for (const c of r.territoryCaps) {
+      if (!pc.mineSet.has(c.territory)) continue;
+      const max = Math.max(0, Math.floor(c.max));
+      if (max < (capped.get(c.territory) ?? Infinity)) {
+        capped.set(c.territory, max);
+        promised.add(c.territory);
+      }
+      if (!ts.includes(c.territory)) ts.push(c.territory);
+    }
+    if (ts.length) borderOf.set(i, ts.sort(byNum));
+  });
+  const caps = { borderOf, capped, promised };
   capsMemo.set(pc, caps);
   return caps;
 }
@@ -467,7 +485,7 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
   const { truce, g, mineSet, label, armiesOf, noSplit, unitsAt, territories: state } = pc;
   if (!tp) return;
   const { deployed, avail, moves, warnings, rationale, incoming } = ps;
-  const { capped, borderOf } = capsOf(pc);
+  const { capped, borderOf, promised } = capsOf(pc);
   if (!capped.size) return;
   // Another front: a foe's territory no truce covers, else any territory not mine no truce covers.
   const ids = [...g.territoryById.keys()];
@@ -482,6 +500,9 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
   truce.given.forEach((r, i) => {
     for (const t of borderOf.get(i) ?? []) {
       const cap = capped.get(t)!;
+      // How the lines name it: a territory cap I promised, or the truce's border cap.
+      const capIs = promised.has(t) ? `cap of ${cap} on ${label(t)}` : `border cap ${cap}`;
+      const capWord = promised.has(t) ? 'cap' : 'border cap';
       const before = endsAt(pc, ps, t);
       let excess = before - cap;
       if (excess <= 0) continue;
@@ -542,7 +563,7 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
               to: step,
               armies: k,
               kind: 'transfer',
-              reason: `keeps the truce's border cap of ${cap} with player ${r.player} on ${label(t)}`,
+              reason: `keeps the truce's ${capWord} of ${cap} with player ${r.player} on ${label(t)}`,
             });
           hd.arrived.set(step, (hd.arrived.get(step) ?? 0) + k);
           moved.push({ from: t, to: step, armies: k });
@@ -553,7 +574,7 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
       if (moved.length) tp.capMoved.set(i, moved);
       if (said.length || trimmed.length)
         rationale.push(
-          `Truce with player ${r.player} (border cap ${cap}): ${already ? `${label(t)} already stands above the cap with ${armiesOf(t)}, so` : `my orders would leave more than ${cap} on ${label(t)}, so`} ${[...trimmed, ...said].join(' and ')}${said.length && !facesOther ? ', toward another front' : ''} (T5).`,
+          `Truce with player ${r.player} (${capIs}): ${already ? `${label(t)} already stands above the cap with ${armiesOf(t)}, so` : `my orders would leave more than ${cap} on ${label(t)}, so`} ${[...trimmed, ...said].join(' and ')}${said.length && !facesOther ? ', toward another front' : ''} (T5).`,
         );
       if (excess > 0) {
         const dep = deployed.get(t) ?? 0;
@@ -569,8 +590,8 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
             : ' (the armies there cannot move again this turn)';
         warnings.push(
           why.endsWith('.')
-            ? `Truce with player ${r.player}: my orders leave ${excess} above the agreed border cap of ${cap} on ${label(t)}${why}`
-            : `Truce with player ${r.player}: my orders leave ${excess} above the agreed border cap of ${cap} on ${label(t)}${why}: that breaks a term of the truce.`,
+            ? `Truce with player ${r.player}: my orders leave ${excess} above the agreed ${capWord} of ${cap} on ${label(t)}${why}`
+            : `Truce with player ${r.player}: my orders leave ${excess} above the agreed ${capWord} of ${cap} on ${label(t)}${why}: that breaks a term of the truce.`,
         );
       }
       if (facesOther) {
@@ -587,7 +608,7 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
         const left = endsAt(pc, ps, t);
         if (f && need > 0 && left < need && before >= need)
           warnings.push(
-            `Truce with player ${r.player} (border cap ${cap}): ${label(t)} also faces player ${f.player}, and the ${left} the cap leaves there do not hold it — its hold needs ${need} against player ${f.player}'s ~${f.threat}. Keep the term, or give notice (notice-by-me) and ask the owner before exceeding the cap; never break it silently.`,
+            `Truce with player ${r.player} (${capIs}): ${label(t)} also faces player ${f.player}, and the ${left} the cap leaves there do not hold it — its hold needs ${need} against player ${f.player}'s ~${f.threat}. Keep the term, or give notice (notice-by-me) and ask the owner before exceeding the cap; never break it silently.`,
           );
       }
       if (pc.myCommanders.has(t)) {
@@ -604,7 +625,7 @@ export function applyBorderCaps(pc: PlanCtx, ps: PlanState, book: DeployBook, hd
         const left = endsAt(pc, ps, t);
         if (f && need > 0 && left < need && before >= need)
           warnings.push(
-            `Truce with player ${r.player} (border cap ${cap}): my commander stands on ${label(t)}, and the ${left} the cap leaves there do not hold it against player ${r.player}'s full attack — its hold needs ${need} against ~${f.threat}. Keep the term, or give notice (notice-by-me) and ask the owner before exceeding the cap; never break it silently.`,
+            `Truce with player ${r.player} (${capIs}): my commander stands on ${label(t)}, and the ${left} the cap leaves there do not hold it against player ${r.player}'s full attack — its hold needs ${need} against ~${f.threat}. Keep the term, or give notice (notice-by-me) and ask the owner before exceeding the cap; never break it silently.`,
           );
       }
     }
@@ -942,4 +963,43 @@ export function reportBreakLosses(pc: PlanCtx, views: PlanRelationView[], plan: 
       `${name}: if it broke this turn — its ~${loss.deploy} deploy on ${label(loss.from)} and an attack on ${label(loss.to)} with ${loss.attackers} — I would lose ${lost}${when} (T6).`,
     );
   });
+}
+
+/** One territory cap a set of orders goes over ({@link territoryCapOverruns}). */
+export interface CapOverrun {
+  player: number;
+  agreement?: string;
+  territory: number;
+  max: number;
+  /** What the orders leave there, every transfer of mine arriving. */
+  armies: number;
+}
+
+/**
+ * The territory caps I promised (each binding relation's `territoryCaps`) that `deploys` and `moves`
+ * go over: per capped territory of mine, its armies now, plus the deploys there, less the armies moved
+ * out, plus those moved in from territories of mine (transfers). For warapp_check_plan's warning.
+ */
+export function territoryCapOverruns(
+  relations: readonly PlanRelation[],
+  o: {
+    mine: ReadonlySet<number>;
+    armiesOf: (t: number) => number;
+    deploys: readonly { territoryId: number; armies: number }[];
+    moves: readonly { from: number; to: number; armies: number }[];
+  },
+): CapOverrun[] {
+  const out: CapOverrun[] = [];
+  for (const r of relations)
+    for (const c of r.territoryCaps ?? []) {
+      if (!o.mine.has(c.territory)) continue;
+      let n = o.armiesOf(c.territory);
+      for (const d of o.deploys) if (d.territoryId === c.territory) n += d.armies;
+      for (const m of o.moves) {
+        if (m.from === c.territory) n -= m.armies;
+        if (m.to === c.territory && o.mine.has(m.from)) n += m.armies;
+      }
+      if (n > c.max) out.push({ player: r.player, ...(r.agreement ? { agreement: r.agreement } : {}), territory: c.territory, max: c.max, armies: n });
+    }
+  return out.sort((a, b) => a.territory - b.territory || a.player - b.player);
 }

@@ -642,7 +642,11 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `exceptedOn` drops them from `truceBreaksIn` (mine), `breachWatch` (theirs: no `broken`) and the plan's covered sets
   (`PlanRelation.exceptions`); `warapp_record_agreement` `exceptions` adds them in any status, `warapp_submit_turn`
   `partner_approved` records a one-turn `mine` one once committed (`recordPartnerApproved`; with `break_agreement`: refused);
-  the player record counts them apart (`exceptionsMine` / `exceptionsTheirs`, absent in older tallies = 0). Not yet: writing `broken-by-them` to the
+  the player record counts them apart (`exceptionsMine` / `exceptionsTheirs`, absent in older tallies = 0). **Territory caps**
+  (`Agreement.caps`, additive: `{territory, max, addedTurn, note?}`, ≤20, `withCaps`) amend a non-terminal agreement without
+  touching `terms`: `PlanRelation.territoryCaps` feeds `capsOf` beside the border cap (`promised` names the line), check_plan's
+  `territoryCapOverruns` warns, `capSelfCheck` adds a `cap-exceeded` flag `by: 'me'` that `trust` never sees, and the player
+  record keeps only `terms.caps` (a count). Not yet: writing `broken-by-them` to the
   ledger itself (the plan's T8 warning says to record it with `warapp_record_agreement` before submitting).
 - **Deals outside the ledger (#375): `avoid_territories` / `avoid_players`** on `warapp_plan_turn` and
   `warapp_check_plan`, for this call only (`PlanOptions.avoid`). The planner treats each like a truce's covered
