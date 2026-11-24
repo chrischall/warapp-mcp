@@ -782,3 +782,77 @@ describe('warapp_get_relations: teams from the game list when GameFeed sends non
     expect(p.tacit).toEqual([]);
   });
 });
+
+// Per-territory caps on an agreement (amendment): a territory of mine I promised the partner to keep
+// at most `max` armies on — recorded on an agreed truce without rewriting its terms, honoured by the
+// planner like the border cap, warned on by warapp_check_plan, and self-checked by warapp_get_relations.
+describe('per-territory caps on an active truce', () => {
+  type Cap = { territory: number; max: number; addedTurn: number; note?: string };
+  const ledgerFile = () =>
+    JSON.parse(readFileSync(join(h!.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')) as {
+      agreements: Array<{ id: string; status: string; terms: Record<string, unknown>; caps?: Cap[] }>;
+    };
+  const recordTerms = () =>
+    Object.values((JSON.parse(readFileSync(join(h!.dataDir, 'relations', 'players.json'), 'utf8')) as { players: Record<string, { entries: Array<{ terms: Record<string, unknown> }> }> }).players)[0]!
+      .entries[0]!.terms;
+
+  it('records a cap on an agreed truce as a dated amendment, replaces it, lifts it, and refuses one on an ended truce', async () => {
+    h = await liveHarness({ feed: [game('2')] });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    const r = payload<RecordPayload & { agreement: { caps: unknown[] } }>(
+      await record({ agreement_id: 'a1', caps: [{ territory: 161, max: 2, note: 'Bob asked me to keep it thin' }] }),
+    );
+    expect(r.agreement.status).toBe('agreed');
+    expect(r.agreement.terms).toEqual({ scope: 'all', noticeTurns: 1 });
+    expect(r.agreement.caps).toEqual([{ territory: expect.objectContaining({ id: 161 }), max: 2, addedTurn: 3, note: expect.stringContaining(`Player ${BOB.feed} asked`) }]);
+    expect(ledgerFile().agreements[0]!.caps).toEqual([{ territory: 161, max: 2, addedTurn: 3, note: `Player ${BOB.feed} asked me to keep it thin` }]);
+    expect(readFileSync(join(h.dataDir, 'relations', `${GAME}-${ANN.feed}.json`), 'utf8')).not.toMatch(/Bob|Ann/);
+    // The cross-game record keeps only how many caps the terms carried.
+    expect(recordTerms()).toMatchObject({ caps: 1 });
+    expect(JSON.stringify(recordTerms())).not.toMatch(/161/);
+    // Again on the same territory: replaced, not added.
+    payload(await record({ agreement_id: 'a1', caps: [{ territory: 161, max: 1 }] }));
+    expect(ledgerFile().agreements[0]!.caps).toEqual([{ territory: 161, max: 1, addedTurn: 3 }]);
+    payload(await record({ agreement_id: 'a1', caps_remove: [161] }));
+    expect(ledgerFile().agreements[0]).not.toHaveProperty('caps');
+    expect(textOf(await record({ agreement_id: 'a1', caps_remove: [159] }))).toMatch(/no cap on .*159.*nothing was recorded/);
+    payload(await record({ agreement_id: 'a1', status: 'ended' }));
+    expect(textOf(await record({ agreement_id: 'a1', caps: [{ territory: 161, max: 2 }] }))).toMatch(/is ended: caps apply only .*nothing was recorded/);
+  });
+
+  it('warapp_plan_turn keeps a capped territory at its cap (warning when its hold needs more), and warapp_check_plan warns when orders exceed a cap', async () => {
+    h = await liveHarness({ feed: [game('2', { seats: 3 })], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    // Uncapped, the plan puts all 5 on Hornwood (159) for its hold against Bob's 7: 11 there.
+    const free = await planTurn();
+    expect(free.rationale.join('\n')).not.toMatch(/cap of/);
+    payload(await record({ agreement_id: 'a1', caps: [{ territory: 159, max: 7 }] }));
+    const p = await planTurn();
+    const lines = [...p.rationale, ...p.warnings].join('\n');
+    expect(lines).toMatch(/Truce with player \d+: my orders leave \d+ above the agreed cap of 7 on Hornwood \(#159\)/);
+    const c = payload<CheckPayload & { warnings: string[] }>(
+      await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [{ kind: 'deploy', territory: 161, armies: 4 }] }),
+    );
+    expect(c.warnings.join('\n')).not.toMatch(/above the cap/);
+    payload(await record({ agreement_id: 'a1', caps: [{ territory: 161, max: 2 }] }));
+    const c2 = payload<CheckPayload & { warnings: string[] }>(
+      await h.call('warapp_check_plan', { game_id: GAME, player: 'Ann', orders: [{ kind: 'deploy', territory: 161, armies: 4 }] }),
+    );
+    expect(c2.warnings.join('\n')).toMatch(/leave 7 on Sheepshead Hills \(#161\), above the cap of 2 you agreed with player \d+ \(agreement a1\)/);
+  });
+
+  it('warapp_get_relations shows the caps and flags cap-exceeded for my own stack above one, without touching the trust', async () => {
+    h = await liveHarness({ feed: [game('2')], warapp: live(boardAt()) });
+    payload(await record({ with: 'Bob', status: 'agreed' }));
+    payload(await record({ agreement_id: 'a1', caps: [{ territory: 161, max: 2 }, { territory: 159, max: 6 }] }));
+    const p = payload<RelationsPayload & { agreements: Array<{ caps: unknown[]; flags: Array<{ by?: string; armies?: number; cap?: number }> }> }>(
+      await h.call('warapp_get_relations', { game_id: GAME, player: 'Ann' }),
+    );
+    const a = p.agreements[0]!;
+    expect(a.caps).toHaveLength(2);
+    expect(a.flags.filter((f) => (f as { kind: string }).kind === 'cap-exceeded')).toEqual([
+      expect.objectContaining({ kind: 'cap-exceeded', by: 'me', territories: [expect.objectContaining({ id: 161 })], armies: 3, cap: 2 }),
+    ]);
+    expect(a.trust?.level).toBe('clear');
+  });
+});

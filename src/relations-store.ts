@@ -9,6 +9,7 @@
 // An agreement's `exceptions` (partner-approved attacks that are no break: territory ids, turns, a
 // direction) may carry a short `note` — the owner's own words, never a chat message, with every player
 // name scrubbed to `Player <id>` before it is written (`scrubNames`). Files written before it have none.
+// So may a territory cap in `caps` (an amendment: territory id, max, the turn it was set).
 //
 // `commitments` (part B4): what my chat messages promised (warapp_send_chat's declared commitments,
 // never the text), recorded once a message is sent; warapp_submit_turn warns when orders break one.
@@ -25,10 +26,12 @@ import { withPathLock } from './path-lock.js';
 import {
   AGREEMENT_STATUSES,
   EXCEPTION_DIRECTIONS,
+  MAX_CAPS,
   MAX_EXCEPTION_NOTE,
   MAX_EXCEPTIONS,
   MAX_NOTICE_TURNS,
   type Agreement,
+  type AgreementCap,
   type AgreementException,
   type AgreementScope,
   type AgreementStatus,
@@ -121,7 +124,17 @@ export function agreementOf(v: unknown): Agreement | undefined {
   if (typeof v.retaliated === 'boolean') a.retaliated = v.retaliated;
   const exceptions = Array.isArray(v.exceptions) ? v.exceptions.map(exceptionOf).filter((e): e is AgreementException => e !== undefined).slice(-MAX_EXCEPTIONS) : [];
   if (exceptions.length) a.exceptions = exceptions;
+  const caps = Array.isArray(v.caps) ? v.caps.map(capOf).filter((c): c is AgreementCap => c !== undefined).slice(-MAX_CAPS) : [];
+  if (caps.length) a.caps = caps;
   return a;
+}
+
+/** A territory cap read back, or `undefined` when it is unusable (files before it have none). */
+function capOf(v: unknown): AgreementCap | undefined {
+  if (!isRec(v) || !isInt(v.territory) || !isInt(v.max) || v.max < 0 || !isInt(v.addedTurn)) return undefined;
+  const c: AgreementCap = { territory: v.territory, max: v.max, addedTurn: v.addedTurn };
+  if (typeof v.note === 'string' && v.note.length) c.note = v.note.slice(0, MAX_EXCEPTION_NOTE);
+  return c;
 }
 
 /** A partner-approved exception read back, or `undefined` when it is unusable (files before it have none). */

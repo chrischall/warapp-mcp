@@ -53,6 +53,7 @@ import { DEFAULT_FOGGED_ATTACKERS, foggedStack } from '../analysis/commander-fog
 import { captureCheck, checkPlanLog } from './decision-capture.js';
 import type { CardPlayKind } from '../protocol/methods.js';
 import { farSummary, opponentScope } from '../analysis/scale.js';
+import { territoryCapOverruns } from '../analysis/plan/relations.js';
 
 const VIEWS = ['compact', 'full'] as const;
 const MAX_ENEMY_DEPLOY = 10_000;
@@ -688,10 +689,21 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const avoidedHits = [...new Set(moves.map((m) => m.to))].filter(
         (to) => !mine.has(to) && (avoidT.has(to) || avoidP.has(ownerOf(to) ?? Number.NaN)),
       );
+      // A territory cap I promised a truce partner, which these orders go over (armies moved off are taken to leave).
+      const capOver = territoryCapOverruns(binding, {
+        mine,
+        armiesOf: (t) => board.territories.find((x) => x.territoryId === t)?.armies ?? 0,
+        deploys,
+        moves,
+      });
       const warnings = [
         // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
         ...[standInLine(standInOf(ctx))].filter((w): w is string => w !== undefined),
         ...intel.warnings,
+        ...capOver.map(
+          (c) =>
+            `These orders leave ${c.armies} on ${name(c.territory).name} (#${c.territory}), above the cap of ${c.max} you agreed with player ${c.player}${c.agreement ? ` (agreement ${c.agreement})` : ''}: deploy or move less there, or record the cap lifted (caps_remove) once the partner agrees.`,
+        ),
         ...(avoidedHits.length
           ? [`These orders attack ${avoidedHits.map((t) => name(t)).join(', ')}, which you asked to avoid (avoid_territories / avoid_players).`]
           : []),

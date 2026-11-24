@@ -16,7 +16,9 @@ import {
   AGREEMENT_STATUSES,
   agreementState,
   breachWatch,
+  capSelfCheck,
   EXCEPTION_DIRECTIONS,
+  MAX_CAPS,
   MAX_EXCEPTION_NOTE,
   MAX_NOTICE_TURNS,
   newAgreement,
@@ -29,8 +31,10 @@ import {
   TRUCE_OUTGROW_RATIO,
   trust,
   truceEndgame,
+  withCaps,
   withExceptions,
   type Agreement,
+  type AgreementCap,
   type AgreementException,
   type AgreementScope,
   type AgreementTerms,
@@ -225,6 +229,16 @@ function agreementView(a: Agreement, game: Game, map: GameMap, turn: number, run
             inForce: e.fromTurn <= turn && turn <= e.toTurn,
             recordedTurn: e.recordedTurn,
             ...(e.note !== undefined ? { note: untrustedText(e.note) } : {}),
+          })),
+        }
+      : {}),
+    ...(a.caps?.length
+      ? {
+          caps: a.caps.map((c) => ({
+            territory: name(c.territory),
+            max: c.max,
+            addedTurn: c.addedTurn,
+            ...(c.note !== undefined ? { note: untrustedText(c.note) } : {}),
           })),
         }
       : {}),
@@ -528,7 +542,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           'its state this turn (`proposed`, `active`, in `notice` with the turn it ends, or `over` and why: ended, broken, ' +
           'the partner eliminated or turned AI, only two players left, its end condition met, its notice run), and for a ' +
           'live one: watch `flags` from your own board history — `broken` (the partner took or attacked a covered territory ' +
-          'of yours — not one a `theirs` exception you recorded allowed that turn), `cap-exceeded` (a partner stack on the covered border above the agreed cap), `massing` (its visible ' +
+          'of yours — not one a `theirs` exception you recorded allowed that turn), `cap-exceeded` (a partner stack on the covered border above the agreed cap; with `by: "me"`, a stack of yours above a territory cap you promised — never counted in the trust), `massing` (its visible ' +
           'armies near the covered border grew two turns running, or an event the fog leaves ambiguous), `outgrowing` (its ' +
           `estimated income above ${TRUCE_OUTGROW_RATIO}× yours) and \`kept\` (quiet turns) — and \`trust\`: \`clear\`, or \`watch\` ` +
           'on any flag but kept, on their notice, and in the endgame (no other opponent still a match for either of you). ' +
@@ -609,7 +623,8 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         const endgame = live_ ? endgameOf(incomes, a.with) : null;
         agreements.push({
           agreement: a,
-          flags,
+          // My own stack above a cap I promised: shown beside the partner's flags, never in its trust.
+          flags: live_ ? [...flags, ...capSelfCheck(a, boards, me.id)] : flags,
           ...(live_ ? { trust: trust(a, flags, { endgame: endgame === true }), endgame } : {}),
           ...(await recordFor(ctx.dataDir, a.with, env)),
         });
@@ -660,7 +675,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
     'warapp_record_agreement',
     {
       title: 'Record an agreement in a war.app game',
-      _meta: mintMeta('change', ['record a truce', 'we agreed a truce', 'they broke the truce', 'give notice', 'truce exception']),
+      _meta: mintMeta('change', ['record a truce', 'we agreed a truce', 'they broke the truce', 'give notice', 'truce exception', 'promise a territory cap']),
       description: untrustedDescription(
         'Record a truce you made, proposed or received in a war.app (Warzone) free-for-all, or a change to one, in this ' +
           "machine's agreement ledger. Nothing is sent to war.app or to any player (so there is no confirmation " +
@@ -676,7 +691,11 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           '(mine: the partner agreed I may attack its covered territories there — warapp_plan_turn targets them and ' +
           'warapp_submit_turn sends the attack without break_agreement; theirs: I agreed it may attack or take mine — ' +
           'warapp_get_relations raises no `broken` flag for it) and an optional `note` (player names scrubbed). The player ' +
-          'record counts exceptions apart from breaks. An agreement exists only because you record it here: chat is never read ' +
+          'record counts exceptions apart from breaks. `caps` amends a proposed, agreed or in-notice truce without rewriting ' +
+          'its terms: each `{territory, max, note?}` promises at most `max` of your armies on that territory (dated; again ' +
+          'on the same territory replaces it), and `caps_remove` lifts one — warapp_plan_turn keeps it like the border cap ' +
+          '(the excess one step back, a warning when its hold needs more), warapp_check_plan warns when orders exceed it, ' +
+          'and warapp_get_relations flags your own stack above it. An agreement exists only because you record it here: chat is never read ' +
           'into one. With the cross-game player record on (owner decision D5: on unless WARAPP_PLAYER_RECORD=off, local and ' +
           'hosted), each agreement is also kept per partner under a salted hash, name-free (no id, no name, no game, no ' +
           'message): the format, the turns agreed and ended, the shape of the terms, the outcome, a break\'s turn, flag and ' +
@@ -715,6 +734,20 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           .max(10)
           .optional()
           .describe('Partner-approved exceptions to add: attacks the partner agreed to, which are no break. Any status.'),
+        caps: z
+          .array(
+            z.object({
+              territory: playerRef.describe('A territory (name or id) of yours.'),
+              max: z.coerce.number().int().min(0).describe('The most armies you keep on it.'),
+              note: z.string().max(MAX_EXCEPTION_NOTE).optional().describe("The owner's own words on what was agreed (player names are scrubbed)."),
+            }),
+          )
+          .max(MAX_CAPS)
+          .optional()
+          .describe(
+            'Territory caps you promised the partner, as a dated amendment (the terms are not rewritten): at most `max` of your armies on `territory`. A cap on a territory already capped replaces it. Proposed, agreed or in notice.',
+          ),
+        caps_remove: z.array(playerRef).max(MAX_CAPS).optional().describe('Territories (names or ids) whose cap is lifted.'),
       }),
     },
     async (args) => {
@@ -749,6 +782,7 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
         args.until_turn !== undefined ||
         args.until_player_out !== undefined ||
         args.against !== undefined;
+      const capsGiven = !!args.caps?.length || !!args.caps_remove?.length;
       const otherPlayer = (ref: string | number, what: string, partner: number): number => {
         const p = resolvePlayer(game.players, ref);
         if (p.id === me.id || p.id === partner) refuse(`${what} must be a third player, not you or the partner`, `Name the player ${what === '`against`' ? 'the truce is aimed at' : 'whose fall ends it'}.`);
@@ -815,8 +849,8 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           before = found;
           if (args.with !== undefined && resolvePlayer(game.players, args.with).id !== agreement.with)
             refuse(`Agreement ${agreement.id} is with player ${agreement.with}`, 'Omit `with` when updating, or record a new agreement.');
-          if (args.status === undefined && !termsGiven && args.retaliated === undefined && !args.exceptions?.length)
-            refuse('Nothing to record: give a new `status`, terms, `retaliated` or `exceptions`', 'Pass the status the agreement moved to.');
+          if (args.status === undefined && !termsGiven && args.retaliated === undefined && !args.exceptions?.length && !capsGiven)
+            refuse('Nothing to record: give a new `status`, terms, `retaliated`, `exceptions` or `caps`', 'Pass the status the agreement moved to.');
           if (termsGiven) {
             if (agreement.status !== 'proposed-by-me' && agreement.status !== 'proposed-by-them')
               refuse(`The terms of agreement ${agreement.id} (${agreement.status}) can no longer change`, 'End it and record a new agreement with the new terms.');
@@ -838,6 +872,19 @@ export function registerRelationsTools(server: McpServer, ctx: LiveContext, opts
           }
         }
         if (args.exceptions?.length) agreement = withExceptions(agreement, exceptionsFrom());
+        if (capsGiven) {
+          if (TERMINAL_STATUSES.has(agreement.status))
+            refuse(`Agreement ${agreement.id} is ${agreement.status}: caps apply only while it is proposed, agreed or in notice`, 'Record a new agreement to promise a cap.');
+          const remove = (args.caps_remove ?? []).map((t) => resolveTerritory(map, t).id);
+          for (const t of remove)
+            if (!agreement.caps?.some((c) => c.territory === t))
+              refuse(`Agreement ${agreement.id} has no cap on territory ${t}`, 'warapp_get_relations lists the caps recorded.');
+          const caps = (args.caps ?? []).map((c): AgreementCap => {
+            const note = exceptionNote(c.note, game);
+            return { territory: resolveTerritory(map, c.territory).id, max: c.max, addedTurn: turn, ...(note ? { note } : {}) };
+          });
+          agreement = withCaps(agreement, caps, remove);
+        }
         return { agreement, before, created };
       };
 
