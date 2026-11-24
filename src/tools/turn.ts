@@ -150,13 +150,13 @@ import {
 import { writeGameRecord } from '../replay.js';
 import { gameOutlook } from '../analysis/outlook.js';
 import { farSummary, opponentScope } from '../analysis/scale.js';
-import { coalitionAdvice } from '../analysis/coalition.js';
+import { atWarWith, coalitionAdvice, leaderBonuses, surrenderStreak } from '../analysis/coalition.js';
 import { holdsSeat } from '../player-states.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import { cardArmyCeiling, cardClock } from '../strategy/card-clock.js';
 import { hasCostlyBonus, noteContext, notesFor } from '../strategy/notes.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
-import { recordOutlook } from '../outlook-log.js';
+import { readOutlookLog, recordOutlook } from '../outlook-log.js';
 import { bootTimes, captureChat, capturePlan, captureObservation, captureSent, cardAdviceLog, handLog, submitChecksLog } from './decision-capture.js';
 import { chatTruces } from '../analysis/chat-read.js';
 import { readDecisionLog, scrubNames, type LoggedChatMessage, type LoggedSent, type SentOrders, type SubmitChecks } from '../decision-log.js';
@@ -2524,7 +2524,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'warnings and the reasoning. Its `orders` array is exactly what warapp_submit_turn takes — review it with ' +
           'the user first. Every plan reads the game profile (`profile`: format 1v1/ffa/teams, phase, standing ' +
           'ahead/even/behind/unknown on income) and returns the `outlook` (winning/losing/even/stalemate from ' +
-          'armies + 3 × income held over 3 turns of boards — and, #436, where that reads even, `lean` ahead/behind on my income against the strongest opponent\'s (its range, and its estimate calibrated on past games), or unknown when the range spans both lines or a lead rests on thin evidence; absent when the incomes read even too; `income`, `pace` (both incomes per turn) and `surrenderLine` (advice only: my income under 2/3 of the strongest estimate for 3 turns with no bonus in reach closing the gap; never acted on) — with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; `leaning: behind` when even for 3 turns while a bonus of yours fell on each; thresholds unmeasured, so advice, not a verdict; ' +
+          'armies + 3 × income held over 3 turns of boards — and, #436, where that reads even, `lean` ahead/behind on my income against the strongest opponent\'s (its range, and its estimate calibrated on past games), or unknown when the range spans both lines or a lead rests on thin evidence; absent when the incomes read even too; `income`, `pace` (both incomes per turn) and `surrenderLine` (advice only: my income under 2/3 of the strongest estimate for 3 turns with no bonus in reach closing the gap; never acted on) — and, #445, in a free-for-all of 3+ still playing once it is crossed, `coalition`: for 2 turns while the trailing players out-earn the leader (now or once a bonus of its we border breaks) and its lead is not growing, "Try a coalition first" replaces the surrender warning, with the viable partners ranked (bordering the leader, not at war with me, not a truce breaker on the record) and #415 `propose` drafts for the top 2 naming the bonus to break (never sent; `send` only with WARAPP_CHAT_AUTOMATION on, still confirm-gated) — with its `basis` and `evidence`: the two incomes compared and how much of each opponent\'s frontier was read, `thin` when under half, so even is not safe; `leaning: behind` when even for 3 turns while a bonus of yours fell on each; thresholds unmeasured, so advice, not a verdict; ' +
           'an opponent is bounded above by all it can have received (its start, or an even share of the map; each turn\'s most it could earn; ' +
           'a fixed Reinforcement card by the card clock) — a scenario\'s starts, a Gift card or a progressive Reinforcement card leave it unbounded, and then `winning` is never read; ' +
           'once winning or losing, payback tests count the turns the game has left instead of 10). With no `goal` the profile picks and tunes it (`goalSource` ' +
@@ -3136,30 +3136,54 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         warnings.push(`siege_target is ignored: it applies only with goal "siege" (this plan's goal is ${goal ?? 'chosen by the game profile'}).`);
       // #317: a surrender waiting on my acceptance is the first thing said, before the commander's line.
       // #436: the surrender line, advice only (the server never acts on it): said up front once crossed.
-      // #445: in a free-for-all of three or more, a coalition against the leader comes before the surrender advice.
-      const ranking = plan.profile.ranking;
-      // #445 (owner, 2026-11-22): a player that broke a truce is never a partner; the cross-game record says who.
-      const breakers = new Set<number>();
-      if (outlook.surrenderLine?.crossed && plan.profile.format === 'ffa' && ranking && ctx.dataDir)
-        for (const r of ranking.players) {
-          if (r.playerId === me.id || r.playerId === ranking.leader) continue;
-          const rec = await readPlayerRecord(ctx.dataDir, r.playerId, opts.env);
-          if (rec && rec !== 'off' && rec !== 'unreadable' && rec.tallies.brokenByThem > 0) breakers.add(r.playerId);
-        }
+      // #445 (owner, 2026-11-23): in a free-for-all with three or more still playing, once the line is crossed, a
+      // coalition against the leader replaces the surrender advice for COALITION_GRACE_TURNS turns, while the trailing
+      // players out-earn the leader (now or after a breakable bonus of its falls) and its lead over me is not growing.
+      const line = outlook.surrenderLine;
+      const playing = game.players.filter((p) => holdsSeat(p.state));
       const coalition =
-        outlook.surrenderLine?.crossed && plan.profile.format === 'ffa' && ranking && ranking.leader !== me.id
-          ? (() => {
+        line?.crossed && plan.profile.format === 'ffa' && line.team === undefined && line.opponents && playing.length >= 3 && turn !== null && line.playerId !== me.id
+          ? await (async () => {
+              const leader = line.playerId;
+              const trailing = line.opponents!.filter((o) => o.playerId !== leader).map((o) => o.playerId);
+              // A player that broke a truce with me in any game is never a partner (owner, 2026-11-22): the record says who.
+              const breakers = new Set<number>();
+              if (ctx.dataDir)
+                for (const p of trailing) {
+                  const rec = await readPlayerRecord(ctx.dataDir, p, opts.env);
+                  if (rec && rec !== 'off' && rec !== 'unreadable' && rec.tallies.brokenByThem > 0) breakers.add(p);
+                }
+              const ledger = ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
+              const atWar = atWarWith(ledger, trailing);
               const leaderLand = new Set<number>();
-              for (const t of board.territories) if (t.owner.kind === 'player' && t.owner.playerId === ranking.leader) leaderLand.add(t.territoryId);
+              for (const t of board.territories) if (t.owner.kind === 'player' && t.owner.playerId === leader) leaderLand.add(t.territoryId);
               const beside = new Set<number>();
               for (const t of board.territories)
-                if (t.owner.kind === 'player' && t.owner.playerId !== ranking.leader && neighborsOf(graph, t.territoryId).some((n) => leaderLand.has(n))) beside.add(t.owner.playerId);
-              const out = new Set(game.players.filter((p) => !holdsSeat(p.state)).map((p) => Number(p.id)));
-              return coalitionAdvice({ rows: ranking.players, me: me.id, leader: ranking.leader, bordersLeader: beside, excluded: out, breakers });
+                if (t.owner.kind === 'player' && t.owner.playerId !== leader && neighborsOf(graph, t.territoryId).some((n) => leaderLand.has(n))) beside.add(t.owner.playerId);
+              const log = ctx.dataDir ? await readOutlookLog(ctx.dataDir, game.id, me.id) : undefined;
+              const streak = log ? surrenderStreak(log.turns, turn) : undefined;
+              return coalitionAdvice({
+                me: me.id,
+                myIncome: line.myIncome,
+                leader: { playerId: leader, estimate: line.theirIncome },
+                opponents: line.opponents!,
+                playersLeft: playing.length,
+                bordersLeader: beside,
+                out: new Set(game.players.filter((p) => !holdsSeat(p.state)).map((p) => Number(p.id))),
+                atWar,
+                breakers,
+                bonuses: leaderBonuses(graph, board, leader, new Set([me.id, ...trailing])),
+                turnsBelow: Math.max(line.turnsBelow, streak?.turns ?? 0),
+                ...(streak ? { leads: streak.leads } : {}),
+                turn,
+                gameId: game.id,
+                automation: ctx.chatAutomation ?? chatAutomationMode(opts.env ?? process.env),
+              });
             })()
           : null;
-      if (coalition?.viable) warnings.unshift(coalition.advice);
-      if (outlook.surrenderLine?.crossed) warnings.unshift(outlook.surrenderLine.advice);
+      // The coalition, while in force, replaces the surrender advice; otherwise the surrender advice leads.
+      if (coalition?.inForce) warnings.unshift(coalition.advice);
+      else if (line?.crossed) warnings.unshift(...(coalition ? [line.advice, coalition.advice] : [line.advice]));
       const owedLine = surrenderOwedLine(surrenders);
       if (owedLine) warnings.unshift(owedLine);
       // The owner, 2026-11-17: while an older build stands in for a client this server cannot read, say so first.
