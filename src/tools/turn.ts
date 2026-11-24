@@ -2398,21 +2398,23 @@ async function bombPlanView(a: Parameters<typeof airliftPlanView>[0]): Promise<R
     tripwires: a.setup.trip.tripwires,
     deploys: best.plan.deploys,
     moves: best.plan.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
-    orderPriority: a.cards.plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+    orderPriority: playsCardType(a.orders, a.myCards, CARD_ORDER_PRIORITY),
     ...(a.enemyDeploy !== undefined ? { floor: a.enemyDeploy } : {}),
     killedBy: false,
   });
   if (checked?.risk && a.plainCommanderSafe)
     return none('The best Bomb plan would leave your commander takeable (warapp_submit_turn would refuse it), so none is offered.');
   const card = free[0]!.id;
-  const delayDiscard = a.playedDelay && a.delayOrder !== undefined ? [{ kind: 'discard' as const, card: a.playedDelay }] : [];
-  const orders = [
-    ...a.orders.filter((o) => (o.kind === 'discard' || o.kind === 'card') && o !== a.delayOrder),
-    ...delayDiscard,
-    { kind: 'card' as const, card, target: best.bomb.target },
-    ...best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
-    ...best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
-  ];
+  // #558: the advised Order Delay is discarded only when the plain card choice had to shed it.
+  const orders = alternativeOrders({
+    orders: a.orders,
+    delayOrder: a.delayOrder,
+    playedDelay: a.playedDelay,
+    delayMustGo: a.playedDelay !== undefined && a.cards.discards.some((c) => c.id === a.playedDelay),
+    cardPlays: [{ kind: 'card' as const, card, target: best.bomb.target }],
+    deploys: best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
+    moves: best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
+  });
   const minus = (x: readonly number[], y: readonly number[]) => x.filter((v) => !y.includes(v)).sort((p, q) => p - q);
   return {
     bombPlan: {
@@ -2431,7 +2433,7 @@ async function bombPlanView(a: Parameters<typeof airliftPlanView>[0]): Promise<R
         borders: { saved: minus(a.plan.conceded, best.plan.conceded), conceded: minus(best.plan.conceded, a.plan.conceded) },
       },
       cardsSpent: 1,
-      cardsLeft: held.length - 1,
+      cardsLeft: cardsLeftAfter({ held: held.length, free: free.length, spent: 1 }),
       considered: found.considered,
       ...(checked ? { commander: { safe: !checked.risk, ...(checked.risk ? { needs: checked.risk.needs } : {}) } } : {}),
       note: BOMB_PLAN_NOTE,

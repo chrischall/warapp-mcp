@@ -6,6 +6,7 @@
 export interface Orderish {
   kind: string;
   card?: unknown;
+  [field: string]: unknown;
 }
 
 /** Whether the orders play a card of `type` (by the hand's card ids): an advised Order Priority included. */
