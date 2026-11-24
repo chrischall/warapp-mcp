@@ -228,7 +228,7 @@ export function registerNotificationTools(server: McpServer, ctx: LiveContext, o
         "Your war.app (Warzone) in-app notifications (the client's notifications screen, war.app's " +
           'GetInAppNotifications), 30 per page, by id only: each with `id` (what warapp_dismiss_notification takes), ' +
           '`kind` (`game-ended` when the title is war.app\'s "Game … has ended." line, else `other`), `gameId` (the ' +
-          'game its link names, or null), `time` and `unread`. The title and body are never shown (they carry other ' +
+          'game its link names, or null), `time` (plus `localTime` when WARAPP_TIMEZONE is set) and `unread`. The title and body are never shown (they carry other ' +
           "players' names). " +
           '`total` is how many notifications war.app holds; pass `next` back as `start` for the next page; ' +
           '`unread_only` keeps the unread ones of the page. A game-ended notification runs the end-of-game pass on ' +

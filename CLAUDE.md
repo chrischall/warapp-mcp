@@ -869,6 +869,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   ends with the shared fields GUID, owner (in-game id), so the owner is the LAST field and the
   kind comes from the registered class name. Fogged territories report no units.
   `BoardState.specialUnits` keys owners by GameFeed id like territory owners.
+- **Local times (`WARAPP_TIMEZONE`, `src/local-time.ts`).** One output-layer wrapper (`withLocalTimes` in `registerAllTools`) adds a sibling in the owner's IANA zone beside every timestamp field of every tool's JSON (`time` → `localTime`, `xTime` → `xLocalTime`, else `<key>LocalTime`; ISO or GameFeed US-format UTC values under keys ending time/at/created/since); UTC fields unchanged, unset or invalid (one stderr note) → byte-identical answers. Hosted: set it on the registration.
 - **Known mods (mega-game part 4, `src/known-mods.ts`).** `settings.modIds` (`Mods[].ModID`, the same hunk as #524) lets
   `modsWarning` (plan_turn, check_plan, submit preview) name a mod whose published source was read and that changes no turn
   rule — only the Local Deployment Helper (336: zeroes overlapping bonuses at creation, which arrive as `OverriddenBonuses`;

@@ -79,6 +79,12 @@
           "format": "string"
         },
         {
+          "name": "WARAPP_TIMEZONE",
+          "description": "An IANA time zone name (e.g. America/New_York). When set, every timestamp in a tool's answer gains a sibling in that zone (time -> localTime, e.g. \"Tue 24 Nov, 6:14 am EST\"); the UTC fields are unchanged. Unset or invalid: UTC only.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "WARAPP_DECISION_LOG",
           "description": "A per-game log of each turn's view, the plan, the orders sent and, once the game ends, the true figures (player ids and numbers, no names or chat), for offline review and replay. On by default; set off to turn it off, or full to keep every turn uncompacted.",
           "isRequired": false,

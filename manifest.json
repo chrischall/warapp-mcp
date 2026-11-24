@@ -42,7 +42,8 @@
         "WARAPP_PLAYER_PROFILE": "${user_config.player_profile}",
         "WARAPP_DECISION_LOG": "${user_config.decision_log}",
         "WARAPP_CHAT_AUTOMATION": "${user_config.chat_automation}",
-        "WARAPP_CHAT_BLOCKS_TURN": "${user_config.chat_blocks_turn}"
+        "WARAPP_CHAT_BLOCKS_TURN": "${user_config.chat_blocks_turn}",
+        "WARAPP_TIMEZONE": "${user_config.timezone}"
       }
     }
   },
@@ -112,6 +113,12 @@
       "type": "string",
       "title": "Chat can block a turn (optional)",
       "description": "Whether unread chat that may change the turn (a truce message from a partner, a threat aimed at you from a neighbour, a surrender waiting on your acceptance, a teammate asking about this turn) stops a turn submission until it is read. Off by default: the submit preview only warns. 'on' refuses until the messages are marked seen or the submit says chat_reviewed.",
+      "required": false
+    },
+    "timezone": {
+      "type": "string",
+      "title": "Your time zone (optional)",
+      "description": "An IANA time zone name (e.g. America/New_York). When set, every time in a tool's answer (chat, notifications, game times) also shows in your zone beside the UTC one (localTime). Unset or not a zone: UTC only.",
       "required": false
     }
   },
