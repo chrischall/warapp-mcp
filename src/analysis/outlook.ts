@@ -232,6 +232,22 @@ export interface BonusInReach {
   defenders: number;
 }
 
+/** #445: one opponent's income on the latest turn: the tracked figure (`low`) and its estimate (#419 calibration). */
+export interface OpponentIncome {
+  playerId: number;
+  low: number;
+  estimate: number;
+  calibrated: boolean;
+}
+
+/**
+ * #436: a turn is under the surrender line when my income is under {@link INCOME_BEHIND_RATIO} × the strongest
+ * side's estimate AND under its tracked figure (calibration deepens a deficit, never creates one). Shared with
+ * the #445 coalition's grace count, which reads the logged turns.
+ */
+export const underSurrenderLine = (mine: number, theirs: { estimate: number; low: number }): boolean =>
+  mine < INCOME_BEHIND_RATIO * theirs.estimate && mine < theirs.low;
+
 /** #436: the surrender line — ADVICE ONLY; the server never acts on it. */
 export interface SurrenderLine {
   crossed: boolean;
@@ -248,6 +264,11 @@ export interface SurrenderLine {
   /** The largest bonus in reach that would bring my income to the line. */
   closer?: BonusInReach;
   advice: string;
+  /**
+   * #445, a free-for-all once crossed: every opponent's income estimate on the latest turn, near or far (the
+   * coalition check reads them). Absent otherwise.
+   */
+  opponents?: OpponentIncome[];
 }
 
 /** #436: the pace line — both incomes and their change per turn over the turns judged. */
@@ -602,6 +623,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     return undefined;
   };
 
+  let latestOpponents: OpponentIncome[] | undefined;
   const turns: OutlookTurn[] = run.map((turn) => {
     const board = byTurn.get(turn)!.board;
     // #208: what the tracker reads of each opponent's income off my boards up to this turn.
@@ -932,9 +954,8 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     };
     // #436: each opponent's income range and estimate, summed per side; the strongest side by estimate.
     type IncomeSide = { playerId: number; team?: number; players?: number[]; low: number; high: number; estimate: number; calibrated: boolean };
-    const strongestIncome = (from: readonly (typeof rows)[number][], evRows: readonly OutlookEvidenceRow[]): IncomeSide | undefined => {
-    const incomeSides = new Map<string, IncomeSide>();
-    for (const r of from) {
+    // One opponent's income range and estimate (#445 reads them one by one: `opponentIncomes`).
+    const incomeOf = (r: (typeof rows)[number], evRows: readonly OutlookEvidenceRow[]) => {
       const tr = trackedOf(r.playerId);
       const row = evRows.find((x) => x.playerId === r.playerId)!;
       const low = row.income;
@@ -944,6 +965,12 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       const capped = (n: number) => Math.min(Math.max(r.capIncome, low), n);
       const estimate = open ? low : factor !== undefined ? capped(Math.max(r.seen.income, Math.round(tr!.income! / factor))) : low;
       const high = open ? low : capped(Math.max(estimate, low, row.thin ? r.paceIncome : low));
+      return { low, high, estimate, factor };
+    };
+    const strongestIncome = (from: readonly (typeof rows)[number][], evRows: readonly OutlookEvidenceRow[]): IncomeSide | undefined => {
+    const incomeSides = new Map<string, IncomeSide>();
+    for (const r of from) {
+      const { low, high, estimate, factor } = incomeOf(r, evRows);
       const t = teamOf(r.playerId);
       const key = t === undefined ? `p${r.playerId}` : `t${t}`;
       const side = incomeSides.get(key);
@@ -967,6 +994,18 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
     return [...incomeSides.values()].sort((a, b) => b.estimate - a.estimate || b.high - a.high || a.playerId - b.playerId)[0];
     };
     const theirs = strongestIncome(rows, evidenceRows);
+    // #445: on the latest turn of a free-for-all, every opponent's income estimate, near or far (the surrender
+    // line's coalition check reads them; nothing in the outlook does).
+    if (turn === run.at(-1) && !teamGame) {
+      const allRows = scope.large && scope.far.length ? [...rows, ...scope.far.map(rowOf)] : rows;
+      const allEv = scope.large && scope.far.length ? allRows.map(evidenceRowOf) : evidenceRows;
+      latestOpponents = allRows
+        .map((r) => {
+          const x = incomeOf(r, allEv);
+          return { playerId: r.playerId, low: Math.min(x.low, x.estimate), estimate: x.estimate, calibrated: x.factor !== undefined };
+        })
+        .sort((a, b) => a.playerId - b.playerId);
+    }
     // Owner decision (2026-11-23, #530): the surrender line keeps judging the strongest opponent ANYWHERE, every
     // opponent's estimate included, so a runaway leader far from my land still counts. Only in a large game does
     // that differ from the outlook's own (nearby) comparison.
@@ -1211,7 +1250,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       : undefined;
   const below = (t: OutlookTurn) => {
     const x = lineSide(t);
-    return !!x && x.mine < INCOME_BEHIND_RATIO * x.theirs.estimate && x.mine < x.theirs.low;
+    return !!x && underSurrenderLine(x.mine, x.theirs);
   };
   let turnsBelow = 0;
   for (let i = turns.length - 1; i >= 0 && below(turns[i]!) && (i === turns.length - 1 || turns[i + 1]!.turn === turns[i]!.turn + 1); i--) turnsBelow++;
@@ -1244,6 +1283,7 @@ export function gameOutlook(input: OutlookInput): GameOutlook {
       calibrated: lastIncome.calibrated,
       ...(closer ? { closer } : {}),
       advice,
+      ...(crossed && latestOpponents?.length ? { opponents: latestOpponents } : {}),
     };
   }
   const measure = teamGame
