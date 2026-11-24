@@ -9,6 +9,7 @@
 import { adviseOrderDelay, CARD_BLOCKADE, CARD_ORDER_DELAY, CARD_REINFORCEMENT, isMyCard, readActiveCards, readTurnReinforcementPlays, type Card, type CardChoice, type CardGame } from '../cards.js';
 import { blockadeOffer, bombAdvice, bombExposure, wallOffer, wallThreats, type CardBoard } from '../analysis/card-threats.js';
 import { bonusTerritories } from '../analysis/bonuses.js';
+import { sanctionsSettings } from '../analysis/cards-in-effect.js';
 import { diplomacyOpponents, supportAdvice, type SupportView } from './card-support-advice.js';
 export { giftInOrders, intelOrders } from './card-support-advice.js';
 import type { TruceCover } from '../analysis/card-support.js';
@@ -154,6 +155,8 @@ export interface CardAdviceInput {
   sanctionsApplied?: boolean;
   /** #434: the card plays not yet verified live (default `UNVERIFIED_CARD_PLAYS`); tests inject their own. */
   unverifiedPlays?: ReadonlySet<string>;
+  /** My next income as the plan projects it: what a self-Sanctions boost (a negative percentage) is measured on. */
+  nextIncome?: number;
 }
 
 /**
@@ -368,11 +371,11 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
         );
       }
       if (a.card === 'Sanctions' && a.target === me.id) {
-        const pct = (game.settings?.raw.SanctionsCard as Record<string, unknown> | undefined)?.Percentage;
-        const cut = typeof pct === 'number' ? ` by ${Math.round(pct * 100)}%` : '';
+        const pct = sanctionsSettings(game.settings)?.percentage ?? null;
+        const change = pct === null ? 'cut' : pct < 0 ? `raised by ${Math.round(-pct * 100)}%` : `cut by ${Math.round(pct * 100)}%`;
         if (!input.sanctionsApplied)
           warnings.push(
-            `Sanctions are on you${until}: your income is cut${cut}, which the modelled income does not apply — deploy what the game shows ` +
+            `Sanctions are on you${until}: your income is ${change}, which the modelled income does not apply — deploy what the game shows ` +
               '(warapp_submit_turn takes a lower total when Sanctions are in the game).',
           );
       }
@@ -390,7 +393,7 @@ export function adviseCards(input: CardAdviceInput): { view: CardAdviceView; war
       a.card === 'Diplomacy' && a.players?.includes(me.id) && turn !== null && a.untilTurn === turn + 1 ? a.players.filter((p) => p !== me.id) : [],
     ),
   );
-  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, lastTurn, truces: input.truces ?? [], ...(input.unverifiedPlays ? { unverifiedPlays: input.unverifiedPlays } : {}) });
+  const support = supportAdvice({ game, me, plan, cards: own.filter((c) => !gone.has(c.id)), cb, atPeace, lastTurn, truces: input.truces ?? [], ...(input.unverifiedPlays ? { unverifiedPlays: input.unverifiedPlays } : {}), ...(input.nextIncome !== undefined ? { nextIncome: input.nextIncome } : {}) });
   Object.assign(view, support.view);
   warnings.push(...support.warnings);
   return { view, warnings };

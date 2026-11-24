@@ -29,7 +29,7 @@ import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, t
 import { loadLiveGame, standInLine, standInOf, type LiveContext } from './live-context.js';
 import { BRIDGE_NOTE, playerArg, resolveMe } from './live.js';
 import { mapOf } from './map.js';
-import { resolveTerritory } from './resolve.js';
+import { resolvePlayer, resolveTerritory } from './resolve.js';
 import {
   BELOW_PLAN_BASIS,
   boardHistory,
@@ -47,6 +47,7 @@ import {
 import { resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
+import { CARD_SANCTIONS, sanctionsPlayed } from './sanctions-played.js';
 import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
 import { COMMANDER_SIZING, commanderCheckOn, defaultFoggedCount, foggedAttackersArg, foggedCommanderOn, foggedCommanderText, myLargestStack } from './commander-check.js';
 import { DEFAULT_FOGGED_ATTACKERS, foggedStack } from '../analysis/commander-fog.js';
@@ -143,7 +144,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'income). An opponent whose estimate one observation broke (see warapp_plan_turn) is tried at the larger of what it ' +
           'implied and your own income (`enemyDeploy` source `untrusted`), said in the first warning. Each `enemyDeploy` entry ' +
           "shows the Reinforcement card the clock says it may hold apart as `cardBonus` (in `deploy` unless `assume_enemy_cards` is " +
-          '"none"; a progressive card\'s source in `cardBonusBasis`, as warapp_plan_turn has it) and, under Sanctions, `sanctionApplied` (its income before and after the cut). ' +
+          '"none"; a progressive card\'s source in `cardBonusBasis`, as warapp_plan_turn has it) and, under Sanctions, `sanctionApplied` (its income before and after the cut).' +
+          'A Sanctions card in the orders is projected onto next turn in `sanctionsPlayed` (`nextIncome`: yours from this turn\'s ' +
+          'income when the game\'s percentage is negative and you play it on yourself, an opponent\'s estimate when positive), and ' +
+          'a card on the wrong side for its sign is a warning (warapp_submit_turn refuses it). ' +
           '`belowPlan` compares these orders with the default plan made now on the same board (warapp_plan_turn with no ' +
           'options, the award of picks read as it reads it), or with its border guess when the deploys given are the ' +
           "guess's (`belowPlanAgainst`: plan or guess): each border they leave below what that plan leaves standing there, " +
@@ -271,6 +275,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         if (card) uses.push({ card, kind });
       };
       let orderPriority = false;
+      const sanctionsTargets: number[] = [];
       const airlifts: CommanderAirlift[] = [];
       /** My Bombs' targets: carried out at their phase (30) by the stress test. */
       const bombs: number[] = [];
@@ -320,6 +325,14 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           // By GUID it is looked up in my hand; by type name the name is enough (this is a what-if).
           const guid = normalizeGuid(o.card.trim());
           const type = guid !== undefined ? hand.find((c) => c.id === guid)?.type : cardTypeByName(o.card);
+          // Owner request 2026-11-24: a Sanctions play's income change is projected on next turn (below).
+          if (type === CARD_SANCTIONS && o.player !== undefined) {
+            try {
+              sanctionsTargets.push(resolvePlayer(game.players, o.player).id);
+            } catch {
+              // A player not in the game: warapp_submit_turn refuses it; nothing is projected.
+            }
+          }
           const unsimulated = type !== undefined ? UNSIMULATED_CARDS.get(type) : undefined;
           if (unsimulated) {
             let on = '';
@@ -450,6 +463,14 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         so.commerce?.source === 'standing'
           ? { income, warnings: [] as string[], applied: false }
           : sanctionMyIncome(income, effect, { localDeployments: settings.localDeployments === true });
+
+      const played = sanctionsPlayed(sanctionsTargets, {
+        settings: game.settings,
+        me: me.id,
+        friends,
+        myIncome: sanction.income,
+        estimateOf: (p) => so.estimates.find((e) => e.playerId === p)?.estimate,
+      });
 
       const report = stressPlan({
         graph,
@@ -787,6 +808,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           ? [`These orders use ${[...refused].join(', ')}: war.app would refuse them in this game, and warapp_submit_turn does; the test ran them anyway.`]
           : []),
         ...sanction.warnings,
+        ...played.warnings,
         // #505: orders that delay the nearest bonus say by how many turns (advice only).
         ...[bonusDelayWarning(belowPlan?.bonusDelay)].filter((w): w is string => w !== undefined),
         ...effect.unsure,
@@ -854,6 +876,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         orderPriority,
         // #277: what I may deploy this turn, after any Sanctions on me (as warapp_plan_turn reports it).
         income: sanction.income,
+        // Owner request 2026-11-24: the Sanctions these orders play, with the income they change next turn.
+        ...(played.entries.length ? { sanctionsPlayed: played.entries } : {}),
         deployed,
         warnings,
         // #386: the intel warapp_record_intel kept and what this check did with it (absent when none is kept).

@@ -9,6 +9,7 @@
 // is the type id). Several ids (a team) sum the pieces, as the client's merged team hand does. Pure; never throws.
 
 import { cardTypeByName, cardTypeName, readHand, type Card } from './cards.js';
+import { sanctionsSettings, type SanctionsSettings } from './analysis/cards-in-effect.js';
 import { currentStanding } from './live.js';
 import type { GameSettings } from './normalize.js';
 import { fields, isObj } from './protocol/decoded.js';
@@ -41,7 +42,23 @@ export interface CardState {
   maxCardsHold: number | null;
   /** Pieces toward the next card of each type in play; `null` when they could not be read. */
   pieces: CardPieces[] | null;
+  /**
+   * Owner request 2026-11-24: each card in play whose settings change how it plays — its `Duration`, and for
+   * Sanctions the `percentage` (a fraction; negative raises the target's income), its `effect` and whom it goes
+   * on (`targets`). Absent when no card in play has one.
+   */
+  settings?: CardSetting[];
   note: string;
+}
+
+/** One card's settings, as the game's settings give them. */
+export interface CardSetting {
+  type: number;
+  name: string;
+  duration?: number;
+  percentage?: number | null;
+  effect?: SanctionsSettings['effect'];
+  targets?: SanctionsSettings['targets'];
 }
 
 const MAX_DEPTH = 32;
@@ -144,15 +161,35 @@ export function cardState(info: unknown, ids: number | readonly number[], settin
         return type === undefined ? [] : [{ type, name: cardTypeName(type), pieces: read.get(type) ?? 0, of: c.pieces }];
       })
     : null;
+  const settingsOf = cardSettings(settings, clock.cards.map((c) => c.card));
   return {
     held,
     total: hand.length,
     maxCardsHold: clock.maxCardsHold,
     pieces,
+    ...(settingsOf.length ? { settings: settingsOf } : {}),
     note:
       'Whole cards are read from the live board (verified). ' +
       (pieces
         ? 'Pieces are read from it too, by their shape: UNVERIFIED live — check one against the web client before relying on it.'
         : 'Pieces could not be read from the live board (their encoding is unverified), so none are shown.'),
   };
+}
+
+/** The settings of the cards in play (`names`, as the clock lists them) that carry a duration, and Sanctions always. */
+function cardSettings(settings: GameSettings | undefined, names: readonly string[]): CardSetting[] {
+  return names
+    .flatMap((name): CardSetting[] => {
+      const type = cardTypeByName(name);
+      if (type === undefined) return [];
+      if (name === 'Sanctions') {
+        const san = sanctionsSettings(settings);
+        if (!san) return [];
+        return [{ type, name: cardTypeName(type), ...(san.duration !== null ? { duration: san.duration } : {}), percentage: san.percentage, effect: san.effect, targets: san.targets }];
+      }
+      const raw = settings?.raw[`${name}Card`];
+      const d = isObj(raw) ? Number(raw.Duration) : NaN;
+      return Number.isInteger(d) && d >= 1 ? [{ type, name: cardTypeName(type), duration: d }] : [];
+    })
+    .sort((a, b) => a.type - b.type);
 }

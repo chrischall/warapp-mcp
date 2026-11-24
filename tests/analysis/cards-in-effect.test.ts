@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardsInEffect, sanctionedIncome, type EffectPlayer } from '../../src/analysis/cards-in-effect.js';
+import { cardsInEffect, sanctionedIncome, sanctionsSettings, type EffectPlayer } from '../../src/analysis/cards-in-effect.js';
 import type { ActiveCard } from '../../src/cards.js';
 import type { GameSettings } from '../../src/normalize.js';
 
@@ -108,5 +108,30 @@ describe('sanctionedIncome (the client bundle: round half up of (1 − p) × inc
   it('a negative percentage raises it, capped at 10000', () => {
     expect(sanctionedIncome(10, [-0.5])).toBe(15);
     expect(sanctionedIncome(9000, [-0.5])).toBe(10000);
+  });
+});
+
+describe("sanctionsSettings (the game's SanctionsCard: Percentage a fraction in [-1, 1], Duration in turns)", () => {
+  const of = (card: unknown, cards = ['Sanctions']): ReturnType<typeof sanctionsSettings> => sanctionsSettings({ cards, raw: { SanctionsCard: card } });
+  it('reads a positive percentage as a cut that goes on opponents', () => {
+    expect(of({ Duration: 2, Percentage: 0.5 })).toEqual({ percentage: 0.5, duration: 2, effect: 'cut', targets: 'opponents' });
+  });
+  it('reads a negative percentage as a boost that goes on your own side (the client guide: play it on yourself)', () => {
+    expect(of({ Duration: 1, Percentage: -0.3 })).toEqual({ percentage: -0.3, duration: 1, effect: 'boost', targets: 'your side' });
+  });
+  it('reads a numeric string as GameFeed may send a scalar', () => {
+    expect(of({ Duration: '1', Percentage: '-0.3' })).toMatchObject({ percentage: -0.3, duration: 1, effect: 'boost' });
+  });
+  it('reads 0 as a card that does nothing', () => {
+    expect(of({ Duration: 1, Percentage: 0 })).toMatchObject({ effect: 'none', targets: 'anyone' });
+  });
+  it('reads a missing or out-of-range percentage as unknown (the bundle refuses one outside -1..1)', () => {
+    expect(of({ Duration: 1 })).toEqual({ percentage: null, duration: 1, effect: 'unknown', targets: 'unknown' });
+    expect(of({ Duration: 1, Percentage: -30 })).toMatchObject({ percentage: null, effect: 'unknown' });
+    expect(of({ Duration: 0, Percentage: 'x' })).toMatchObject({ percentage: null, duration: null });
+  });
+  it('is undefined when the Sanctions card is not in play', () => {
+    expect(of('none', [])).toBeUndefined();
+    expect(sanctionsSettings(undefined)).toBeUndefined();
   });
 });

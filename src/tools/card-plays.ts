@@ -12,6 +12,7 @@ import { inGameId, type LiveTerritory } from '../live.js';
 import type { GameMap, GameSettings, Player } from '../normalize.js';
 import type { CardPlayFields, CardPlayKind, OrderCommander } from '../protocol/methods.js';
 import { untrustedText } from './common.js';
+import { percentText, sanctionsSettings } from '../analysis/cards-in-effect.js';
 import { resolveBonus, resolvePlayer, resolveTerritory } from './resolve.js';
 
 type Ref = string | number;
@@ -57,7 +58,7 @@ const FIELD_HELP: Readonly<Record<CardPlayKind, string>> = {
   Bomb: "`target`: a territory next to one of yours, not yours or a teammate's (its armies are halved)",
   Reconnaissance: '`target`: the territory to see',
   Spy: "`player`: the player whose territories to see (0 or \"neutral\": the neutral, when the game's Spy card allows it)",
-  Sanctions: "`player`: the player whose income it cuts",
+  Sanctions: "`player`: the player whose income it changes — an opponent when the game's percentage is positive (a cut), yourself or a teammate when it is negative (a boost)",
   Gift: '`target`: your territory to give, and `player`: who receives it',
   Diplomacy: '`players`: the two players who may not attack each other (usually you and one opponent)',
   Surveillance: '`bonus`: the bonus to see',
@@ -224,14 +225,6 @@ function canSpyOnNeutral(settings: GameSettings | undefined): boolean {
   return v === true || (typeof v === 'string' && v.toLowerCase() === 'true');
 }
 
-/** The Sanctions percentage (`SanctionsCard.Percentage`), when the settings carry one. */
-function sanctionsPercentage(settings: GameSettings | undefined): number | undefined {
-  const raw = settings?.raw.SanctionsCard;
-  if (typeof raw !== 'object' || raw === null) return undefined;
-  const pct = (raw as Record<string, unknown>).Percentage;
-  return typeof pct === 'number' ? pct : undefined;
-}
-
 /**
  * Resolve a targeted card play's fields against the map, the players and the live board, refusing
  * what war.app's validator (the client bundle's `GameValidateOrders`) or the card's rules exclude.
@@ -267,23 +260,44 @@ export function resolveCardTargets(kind: CardPlayKind, cardName: string, input: 
       return { fields: { player: p.inGameId }, player: p, warnings };
     }
     case 'Sanctions': {
-      // GameValidateOrders refuses only a player not playing (219); the target is our rule: a sanction
-      // cuts income, so never on me or a teammate — unless the game's percentage is negative (a boost).
+      // GameValidateOrders refuses only a player not playing (219), and the client offers every player still
+      // playing, me included. The side is our rule, read from the game's percentage (`sanctionsSettings`):
+      // a positive one cuts income, so never on me or a teammate; a negative one raises it (the client's own
+      // guide: play it on yourself), so never on an opponent; one that cannot be read keeps my side out.
       const p = player(ctx, input.player!, cardName);
       requirePlaying(ctx, p, cardName, 'error 219');
-      const pct = sanctionsPercentage(ctx.settings);
+      const san = sanctionsSettings(ctx.settings);
+      const pct = san?.percentage ?? null;
       const friendly = isMe(ctx, p) || isTeammate(ctx, p);
-      if (pct !== undefined && pct < 0) {
-        if (!friendly) {
+      const side = isMe(ctx, p) ? 'yourself' : `your teammate ${who(p)}`;
+      const turns = san?.duration ? ` for ${san.duration} turn${san.duration === 1 ? '' : 's'}` : '';
+      if (pct === null) {
+        if (friendly) {
           throw new McpToolError(
-            `This game's Sanctions percentage is negative (${Math.round(pct * 100)}%): a sanction raises the target's income, so it does not go on an opponent (${who(p)}).`,
-            { hint: 'Play it on yourself or a teammate, or keep it.' },
+            `This game's Sanctions percentage could not be read from its settings, so whether the card cuts or raises income is not known: it is not played on ${side}.`,
+            { hint: 'warapp_get_game shows the card settings (`cards.settings`). Sanction an opponent, or keep the card.' },
           );
         }
-      } else if (friendly) {
-        throw new McpToolError(`Sanctions cut the target's income, so they do not go on ${isMe(ctx, p) ? 'yourself' : `your teammate ${who(p)}`}.`, {
-          hint: 'Sanction an opponent — usually the leader.',
-        });
+      } else if (pct < 0) {
+        if (!friendly) {
+          throw new McpToolError(
+            `This game's Sanctions percentage is negative (${percentText(pct)}): a sanction raises the target's income by ${percentText(-pct)}, so it does not go on an opponent (${who(p)}).`,
+            { hint: 'Play it on yourself (or a teammate), or keep it.' },
+          );
+        }
+        warnings.push(
+          `Sanctions on ${isMe(ctx, p) ? 'yourself' : `your teammate ${who(p)}`}: this game's percentage is ${percentText(pct)}, so it raises ` +
+            `${isMe(ctx, p) ? 'your' : 'their'} income by ${percentText(-pct)}${turns}, from the turn after this one (war.app caps an income at 10,000).`,
+        );
+      } else if (pct > 0) {
+        if (friendly) {
+          throw new McpToolError(
+            `This game's Sanctions percentage is ${percentText(pct)}: it cuts the target's income by ${percentText(pct)}, so it does not go on ${side}.`,
+            { hint: 'Sanction an opponent — usually the leader.' },
+          );
+        }
+      } else {
+        warnings.push("This game's Sanctions percentage is 0%: the card changes nobody's income.");
       }
       return { fields: { player: p.inGameId }, player: p, warnings };
     }

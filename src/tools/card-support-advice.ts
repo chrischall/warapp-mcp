@@ -4,6 +4,7 @@
 // live, #296 and #369) — except (#434) a spy card whose play is verified live, which warapp_plan_turn puts
 // into its orders (`intelOrders`). Players and territories by id only.
 
+import { sanctionedIncome, sanctionsSettings } from '../analysis/cards-in-effect.js';
 import { airliftAdvice, diplomacyAdvice, giftAdvice, intelAdvice, sanctionsAdvice, type IntelCard, type Strength, type TruceCover } from '../analysis/card-support.js';
 import type { CardBoard } from '../analysis/card-threats.js';
 import { visibleIncomeFor } from '../analysis/plan/shared.js';
@@ -29,9 +30,22 @@ const CARD_SANCTIONS = 9;
 
 type CardOrder = { kind: 'card'; card: string } & Record<string, unknown>;
 
+/** A self-Sanctions boost: my next income before and after it, and the turns it lasts (`null`: not given). */
+export interface SanctionsIncome {
+  percentage: number;
+  turns: number | null;
+  before: number;
+  after: number;
+  gain: number;
+}
+
 export interface SupportView {
   diplomacy?: { player: number; borders: number[]; armies: number; overTruce?: string; skipped?: string[]; chain?: true; order: CardOrder };
-  sanctions?: { player: number; skipped?: string[]; order: CardOrder };
+  /**
+   * `income` (owner request 2026-11-24): a negative percentage makes the card a boost on me — my next income
+   * before and after it, by the client's rule (absent under Local Deployment, where the pools are not modelled).
+   */
+  sanctions?: { player: number; skipped?: string[]; income?: SanctionsIncome; order: CardOrder };
   /** `redeploy` (#434): no border falls without it; an idle or cut-off stack goes to the strike stack or the thinnest border. */
   airlift?: { from: number; to: number; armies: number; teammate?: number; redeploy?: { source: 'idle' | 'disconnected'; target: 'strike' | 'border' }; order: CardOrder };
   /**
@@ -72,11 +86,18 @@ const PLAY_IT =
   'Advice only, not in the orders: pass its `order` to warapp_submit_turn to play it (the encoding is read from the client, not yet verified live).';
 const IN_ORDERS = 'In the orders: its encoding is verified live. Drop it from the orders to keep the card.';
 
-/** The Sanctions percentage (`SanctionsCard.Percentage`), when the settings carry one. */
-function percentage(game: Pick<Game, 'settings'>): number | undefined {
-  const raw = game.settings?.raw.SanctionsCard;
-  const pct = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>).Percentage : undefined;
-  return typeof pct === 'number' ? pct : undefined;
+/** A self-Sanctions boost on my next income (the client's rule), or why it is not modelled. */
+function selfBoost(pct: number, turns: number | null, input: SupportInput): { income?: SanctionsIncome; line: string } {
+  const lasting = turns ? ` for ${turns} turn${turns === 1 ? '' : 's'}` : '';
+  if (input.game.settings?.localDeployments === true)
+    return { line: `Under Local Deployment the boost's split across the pools is not modelled, so the income it adds${lasting} is not counted.` };
+  if (input.nextIncome === undefined) return { line: `It raises your income${lasting} from next turn.` };
+  const before = input.nextIncome;
+  const after = sanctionedIncome(before, [pct]);
+  return {
+    income: { percentage: pct, turns, before, after, gain: after - before },
+    line: `Your next income ${before} → ${after} (+${after - before})${lasting} (the client's rule, rounded to the nearest; at most 10,000).`,
+  };
 }
 
 /**
@@ -116,6 +137,8 @@ interface SupportInput {
   truces: readonly TruceCover[];
   /** #434: the card plays not yet verified live (default `UNVERIFIED_CARD_PLAYS`); a spy card outside it goes into the orders. */
   unverifiedPlays?: ReadonlySet<string>;
+  /** My next income as the plan projects it: what a self-Sanctions boost is measured on. */
+  nextIncome?: number;
 }
 
 /**
@@ -163,11 +186,19 @@ export function supportAdvice(input: SupportInput): { view: SupportView; warning
     for (const t of input.truces)
       pass.set(t.player, `your truce with it is ${t.state === 'notice' ? 'in notice' : 'in force'} — a sanction on a partner invites a break`);
     for (const p of input.atPeace) pass.set(p, 'a Diplomacy card between you is in force — it cannot attack you, so sanction a player who can');
-    const pct = percentage(input.game);
+    // Owner request 2026-11-24: the percentage's sign decides the side — a cut on an opponent, a boost on me.
+    const sanSettings = sanctionsSettings(input.game.settings);
+    const pct = sanSettings?.percentage ?? undefined;
     const s = sanctionsAdvice({ me: me.id, players: strengths(input), ...(pct !== undefined ? { percentage: pct } : {}), ...(pass.size ? { pass } : {}) });
     if (s?.player !== undefined) {
-      view.sanctions = { player: s.player, ...(s.skipped?.length ? { skipped: s.skipped } : {}), order: { kind: 'card', card: san.id, player: s.player } };
-      warnings.push(`${s.why} ${PLAY_IT}`);
+      const boost = pct !== undefined && pct < 0 && s.player === me.id ? selfBoost(pct, sanSettings!.duration, input) : undefined;
+      view.sanctions = {
+        player: s.player,
+        ...(s.skipped?.length ? { skipped: s.skipped } : {}),
+        ...(boost?.income ? { income: boost.income } : {}),
+        order: { kind: 'card', card: san.id, player: s.player },
+      };
+      warnings.push(`${s.why}${boost ? ` ${boost.line}` : ''} ${PLAY_IT}`);
     } else if (s) warnings.push(s.why);
   }
 

@@ -276,6 +276,29 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
     expect((payload(r) as unknown as Preview).preview.warnings?.join('\n')).toMatch(/moves from it in these orders will not run/);
   });
 
+  it('allows Sanctions on myself when the percentage is negative (-30%), says the boost, and sends it on me', async () => {
+    const boost = settings({ SanctionsCard: { ...piece, Duration: 1, Percentage: -0.3 } });
+    const s = server(DIPLOMACY_HAND);
+    h = await liveHarness({ feed: [game({ settings: boost }), game({ settings: boost }), game({ settings: boost, turns: '3' })], pages: ME_PAGE, warapp: s.warapp });
+    const { preview } = await confirmed({ game_id: GAME, orders: [{ kind: 'card', card: 'Sanctions', player: 'Ann' }, DEPLOY] });
+    const view = (preview as unknown as Preview).preview;
+    const san = view.willSend.orders.find((o) => (o.card as { name: string }).name === 'Sanctions')!;
+    expect(san).toMatchObject({ player: { id: Number(ANN.feed) } });
+    expect(view.warnings?.join('\n')).toMatch(/Sanctions on yourself: this game's percentage is -30%, so it raises your income by 30% for 1 turn/);
+    expect(Array.from(s.sent[0]!)).toEqual(
+      expectedBytes([{ kind: 'deploy', territoryId: 159, armies: 5 }, { kind: 'card', card: 'Sanctions', cardId: SAN, player: ANN.inGame }], 3),
+    );
+  });
+
+  it('refuses negative Sanctions on an opponent, by id as well as by name', async () => {
+    const boost = settings({ SanctionsCard: { ...piece, Duration: 1, Percentage: -0.3 } });
+    const s = server(DIPLOMACY_HAND);
+    h = await liveHarness({ feed: [game({ settings: boost })], pages: ME_PAGE, warapp: s.warapp });
+    const no = await h.call('warapp_submit_turn', { game_id: GAME, orders: [{ kind: 'card', card: 'Sanctions', player: BOB.feed }, DEPLOY] });
+    expect(textOf(no)).toMatch(/percentage is negative \(-30%\): a sanction raises the target's income by 30%, so it does not go on an opponent/);
+    expect(s.sent).toHaveLength(0);
+  });
+
   it('allows Sanctions on a teammate when the percentage is negative (a boost), and refuses an opponent then', async () => {
     const boost = settings({ SanctionsCard: { ...piece, Duration: 1, Percentage: -0.5 } });
     const s = server(DIPLOMACY_HAND);
@@ -421,7 +444,14 @@ describe('submit_turn plays the targeted cards (PLAN-TEAMS part D, UNVERIFIED li
       message: /on one team.*error 214/,
     },
     { name: 'Sanctions on a teammate', orders: [{ kind: 'card', card: 'Sanctions', player: 'Cat' }], hand: DIPLOMACY_HAND, team: true, message: /not go on your teammate/ },
-    { name: 'Sanctions on myself', orders: [{ kind: 'card', card: 'Sanctions', player: 'Ann' }], hand: DIPLOMACY_HAND, message: /not go on yourself/ },
+    { name: 'Sanctions on myself', orders: [{ kind: 'card', card: 'Sanctions', player: 'Ann' }], hand: DIPLOMACY_HAND, message: /percentage is 60%: it cuts the target's income by 60%, so it does not go on yourself/ },
+    {
+      name: 'Sanctions on myself when the percentage cannot be read',
+      orders: [{ kind: 'card', card: 'Sanctions', player: 'Ann' }],
+      hand: DIPLOMACY_HAND,
+      settings: settings({ SanctionsCard: { ...piece, Duration: 1 } }),
+      message: /percentage could not be read .*not played on yourself/,
+    },
     { name: 'a Spy on a teammate', orders: [{ kind: 'card', card: 'Spy', player: 'Cat' }], team: true, message: /cannot target your teammate.*error 80/ },
     { name: 'a Spy on myself', orders: [{ kind: 'card', card: 'Spy', player: 'Ann' }], message: /cannot target yourself.*error 80/ },
     {

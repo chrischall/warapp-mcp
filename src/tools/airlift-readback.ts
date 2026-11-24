@@ -62,11 +62,12 @@ export function checkAirlifts(sent: readonly AirliftLine[], read: MyOrders | nul
 
 const line = (a: AirliftLine) => `${a.armies}${a.commander ? ' + commander' : ''} from ${a.from} to ${a.to}`;
 
-/** The error message for a mismatch: what is missing or altered, by id. */
-export function mismatchMessage(r: AirliftReadBack, turn: number, game: number): string {
+/** The error message for a mismatch: what is missing or altered, by id (`more`: other card plays' parts). */
+export function mismatchMessage(r: AirliftReadBack, turn: number, game: number, more: readonly string[] = []): string {
   const parts = [
     ...r.missing.map((a) => `the Airlift of ${line(a)} is missing`),
     ...r.altered.map((x) => `the Airlift of ${line(x.sent)} reads back as ${line(x.read)}`),
+    ...more,
   ];
   return (
     `Your orders for game ${game}, turn ${turn} are committed, but war.app's copy of them does not match what was sent: ` +
