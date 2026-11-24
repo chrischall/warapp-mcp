@@ -121,9 +121,17 @@ describe('warapp_plan_turn: the wall plan', () => {
     expect(withWall.orders).toEqual(without.orders);
   });
 
-  it('says a Blockade alone is not planned', async () => {
-    const p = await plan([{ id: 'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', type: 12 }]);
-    expect(p.blockadePlan).toBeNull();
-    expect(p.blockadePlanNote).toMatch(/Only a Blockade is held/);
+  it('plans a Blockade alone too (owner decision 2026-11-24): its plan is the plain orders plus the card, else a note', async () => {
+    const BLOCK = 'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1';
+    const plain = await plan([]);
+    const p = await plan([{ id: BLOCK, type: 12 }]);
+    expect(p).toHaveProperty('blockadePlan');
+    expect(p.orders).toEqual(plain.orders);
+    if (p.blockadePlan === null) expect(p.blockadePlanNote).toMatch(/Blockade target\(s\) tried/);
+    else {
+      const b = p.blockadePlan as { card: string; orders: unknown[]; wall: { target: { id: number } } };
+      expect(b.card).toBe('Blockade');
+      expect(b.orders).toEqual([...plain.orders, { kind: 'card', card: BLOCK, target: b.wall.target.id }]);
+    }
   });
 });

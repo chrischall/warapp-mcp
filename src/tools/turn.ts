@@ -94,9 +94,9 @@ import { alternativeOrders, cardsLeftAfter, playsCardType } from './alternative-
 
 /** The territory-targeted card plays read back after a commit (owner request 2026-11-24, part B). */
 const READ_BACK_TARGETED: ReadonlySet<string> = new Set(['Bomb', 'Blockade', 'EmergencyBlockade']);
-import { planAirlift, STAGING_DISCOUNT } from '../analysis/airlift-plan.js';
+import { compareScores, planAirlift, STAGING_DISCOUNT } from '../analysis/airlift-plan.js';
 import { planBomb } from '../analysis/bomb-plan.js';
-import { planWall } from '../analysis/blockade-plan.js';
+import { planBlockade, planWall } from '../analysis/blockade-plan.js';
 import type { TurnPlan } from '../analysis/plan/shared.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
@@ -2457,20 +2457,36 @@ async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promi
   const blockades = a.myCards.filter((c) => c.type === CARD_BLOCKADE);
   if (!walls.length && !blockades.length) return undefined;
   const none = (note: string) => ({ blockadePlan: null, blockadePlanNote: note });
-  const free = walls.filter((c) => !used.has(c.id));
-  if (!free.length)
+  const multiplierOf = (key: string) => {
+    const raw = a.game.settings?.raw[key];
+    return typeof raw === 'object' && raw !== null ? Number((raw as Record<string, unknown>).MultiplyAmount) : Number.NaN;
+  };
+  // Each wall card held and not used by the plain plan: the Emergency Blockade (phase 37, the walled board planned) and
+  // the Blockade (phase 60, owner decision 2026-11-24: the plain orders plus the card); the better plan is offered.
+  const freeWalls = walls.filter((c) => !used.has(c.id));
+  const freeBlockades = blockades.filter((c) => !used.has(c.id));
+  if (!freeWalls.length && !freeBlockades.length) return none('The plain plan already plays or discards your wall cards: no wall plan.');
+  const tries: { kind: 'EmergencyBlockade' | 'Blockade'; card: string; found: ReturnType<typeof planWall>; held: number }[] = [];
+  const notes: string[] = [];
+  if (freeWalls.length) {
+    const m = multiplierOf('EmergencyBlockadeCard');
+    if (m > 0) tries.push({ kind: 'EmergencyBlockade', card: freeWalls[0]!.id, held: walls.length, found: planWall({ input: a.setup.input, plain: a.plan, cards: freeWalls.length, multiplier: m }) });
+    else notes.push("the game's settings give no Emergency Blockade multiplier");
+  }
+  if (freeBlockades.length) {
+    const m = multiplierOf('BlockadeCard');
+    if (m > 0) tries.push({ kind: 'Blockade', card: freeBlockades[0]!.id, held: blockades.length, found: planBlockade({ input: a.setup.input, plain: a.plan, cards: freeBlockades.length, multiplier: m }) });
+    else notes.push("the game's settings give no Blockade multiplier");
+  }
+  const winner = tries
+    .filter((t) => t.found.best)
+    .sort((x, y) => compareScores(x.found.best!.score, y.found.best!.score))[0];
+  if (!winner)
     return none(
-      walls.length
-        ? 'The plain plan already plays or discards your Emergency Blockade card: no wall plan.'
-        : 'Only a Blockade is held: it walls a territory after the attacks, so the plain plan\'s one-turn measure cannot value it (cards.advice.blockade still says where it pays).',
+      `No wall beats the plain plan (with the bonus a wall denies counted): ${tries.map((t) => `${t.found.considered} ${t.kind === 'Blockade' ? 'Blockade' : 'Emergency Blockade'} target(s) tried`).join(', ') || 'none tried'}${notes.length ? `; ${notes.join('; ')}` : ''}.`,
     );
-  const raw = a.game.settings?.raw.EmergencyBlockadeCard;
-  const multiplier = typeof raw === 'object' && raw !== null ? Number((raw as Record<string, unknown>).MultiplyAmount) : Number.NaN;
-  if (!(multiplier > 0)) return none("The game's settings give no Emergency Blockade multiplier, so no wall can be sized.");
-  const found = planWall({ input: a.setup.input, plain: a.plan, cards: free.length, multiplier });
-  if (!found.best)
-    return none(`No Emergency Blockade beats the plain plan (with the bonus a wall denies counted): ${found.considered} tried.`);
-  const best = found.best;
+  const found = winner.found;
+  const best = found.best!;
   const checked = await commanderCheck(a.ctx, {
     game: a.game,
     me: a.me,
@@ -2489,9 +2505,10 @@ async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promi
   });
   if (checked?.risk && a.plainCommanderSafe)
     return none('The best wall plan would leave your commander takeable (warapp_submit_turn would refuse it), so none is offered.');
-  const card = free[0]!.id;
+  const card = winner.card;
   const delayDiscard = a.playedDelay && a.delayOrder !== undefined ? [{ kind: 'discard' as const, card: a.playedDelay }] : [];
-  const orders = [
+  // A Blockade adds only its card play to the plain orders (they stand unchanged); an Emergency Blockade's plan has its own.
+  const orders = winner.kind === 'Blockade' ? [...a.orders, { kind: 'card' as const, card, target: best.wall.target }] : [
     ...a.orders.filter((o) => (o.kind === 'discard' || o.kind === 'card') && o !== a.delayOrder),
     ...delayDiscard,
     { kind: 'card' as const, card, target: best.wall.target },
@@ -2500,6 +2517,7 @@ async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promi
   ];
   return {
     blockadePlan: {
+      card: winner.kind === 'Blockade' ? 'Blockade' : 'Emergency Blockade',
       wall: {
         target: a.name(best.wall.target),
         armies: best.wall.armies,
@@ -2518,7 +2536,7 @@ async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promi
         nextIncome: best.score.nextIncome - best.plainScore.nextIncome,
       },
       cardsSpent: 1,
-      cardsLeft: walls.length - 1,
+      cardsLeft: winner.held - 1,
       considered: found.considered,
       ...(checked ? { commander: { safe: !checked.risk, ...(checked.risk ? { needs: checked.risk.needs } : {}) } } : {}),
       note: WALL_PLAN_NOTE,
@@ -2527,9 +2545,11 @@ async function blockadePlanView(a: Parameters<typeof airliftPlanView>[0]): Promi
 }
 
 const WALL_PLAN_NOTE =
-  'An alternative to `orders`, never applied: the planner on the board an Emergency Blockade leaves (the conceded border ' +
-  "neutral at its armies × the game's multiplier, before every move), its worth the bonus it denies an opponent (× 0.8, " +
-  'DRAFT for the owner) when the wall holds this turn. The play\'s encoding is UNVERIFIED live. Test it with warapp_check_plan.';
+  'An alternative to `orders`, never applied: an Emergency Blockade walls a conceded border before every move (the ' +
+  'planner plans the walled board); a Blockade walls a territory after the attacks, the plain orders unchanged, only ' +
+  "while the stress-tested line keeps it yours. Either turns it neutral at its armies × the game's multiplier and is " +
+  'worth the bonus its fall would hand an opponent (× 0.8, owner-approved 2026-11-24), less any bonus of yours it gives ' +
+  'up. The Emergency Blockade play\'s encoding is UNVERIFIED live. Test it with warapp_check_plan.';
 
 const BOMB_PLAN_NOTE =
   'An alternative to `orders`, never applied: the same planner on the board the Bomb leaves (it runs after the deploys ' +
@@ -2957,8 +2977,10 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'largest stacks; never a player at peace with you) — `bomb`, `orders` (the Bomb play included), `expected`, `delta`; ' +
           '`null` with `bombPlanNote` when none beats the plan (the Bomb play\'s encoding is unverified live). ' +
           'Holding an Emergency Blockade, `blockadePlan` walls off a border the plan concedes (neutral at its armies × the ' +
-          "game's multiplier, before every move), worth the bonus its fall would hand an opponent when the wall holds this turn " +
-          '(`wall`, `orders`, `delta`; DRAFT rule); a Blockade alone is named as not planned. ' +
+          "game's multiplier, before every move), worth the bonus its fall would hand an opponent when the wall holds this turn; " +
+          'holding a Blockade, the plain orders plus a Blockade on a territory of yours the attacks leave yours (it walls it ' +
+          'after them), worth the same denial less any bonus of yours it gives up — the better one, with `card`, `wall`, ' +
+          '`orders`, `delta`. ' +
           '`reads` (opponent profiles, as warapp_profile_opponents reads them; reported only, the plan never uses them): ' +
           'each opponent in contact with a habit at the confidence bar or a label — its labels, `lastAttackTurn` (the last turn it attacked you), those habits with `n` and ' +
           '`basis`, `gamesMet` — a likelihood, never a certainty, and never to be quoted to another player. ' +

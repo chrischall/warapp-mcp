@@ -3,7 +3,7 @@
 // card's multiplier, rounded with a half down; a Blockade only while its player still holds it. Synthetic maps only.
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
-import { planWall, wallCandidates, walledBoard } from '../../src/analysis/blockade-plan.js';
+import { planBlockade, planWall, wallCandidates, walledBoard } from '../../src/analysis/blockade-plan.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { planTurn } from '../../src/analysis/planner.js';
 import type { PlanInput } from '../../src/analysis/plan/shared.js';
@@ -100,5 +100,36 @@ describe('the Emergency Blockade plan', () => {
   it('plays nothing without a card or a multiplier', () => {
     expect(planWall({ input, plain, cards: 0, multiplier: 5 })).toEqual({ considered: 0 });
     expect(planWall({ input, plain, cards: 1, multiplier: 0 })).toEqual({ considered: 0 });
+  });
+});
+
+// Owner decision 2026-11-24 (item 3): a plain Blockade (phase 60, after the attacks) in the same plan, with the same
+// denial term, valued only when the stress-tested line keeps the territory mine through the attacks.
+describe('the Blockade plan', () => {
+  // 3 is mine (14 armies) and completes the foe's bonus 200 (+5) with its 4; the foe's 12 on 4 plus its deploy cannot
+  // take my 14 this turn (nor my 14 its 12), so 3 is still mine after the attacks and the Blockade walls it then.
+  const WALL_MAP = map(4, [[1, 2], [2, 3], [3, 4]], [[100, 6, [1, 2]], [200, 5, [3, 4]]]);
+  const kept: PlanInput = { graph: buildGraph(WALL_MAP), board: board([me(1, 2), me(2, 2), me(3, 14), foe(4, 12)]), me: ME, income: 3 };
+
+  it('walls a border the attacks leave mine, denying the bonus its fall would complete, the plain orders unchanged', () => {
+    const plain = planTurn(kept);
+    const r = planBlockade({ input: kept, plain, cards: 1, multiplier: 3 });
+    expect(r.best?.wall).toMatchObject({ target: 3, denied: 5, deniedFrom: FOE });
+    expect(r.best!.score.twoTurn).toBeCloseTo(r.best!.plainScore.safeIncome + 0.8 * 5);
+    // Its orders are the plain plan's: a Blockade only adds the card play.
+    expect(r.best!.plan).toBe(plain);
+  });
+
+  it('is worth nothing where the stress-tested line loses the territory before the wall goes up', () => {
+    const lost: PlanInput = { ...kept, board: board([me(1, 2), me(2, 2), me(3, 2), foe(4, 20)]) };
+    const r = planBlockade({ input: lost, plain: planTurn(lost), cards: 1, multiplier: 3 });
+    expect(r.best).toBeUndefined();
+  });
+
+  it('charges the bonus of mine it gives up', () => {
+    // 3 is now in my bonus 100 too: walling it loses that +6, more than the +5 × 0.8 it denies.
+    const own = map(4, [[1, 2], [2, 3], [3, 4]], [[100, 6, [1, 2, 3]], [200, 5, [3, 4]]]);
+    const input: PlanInput = { ...kept, graph: buildGraph(own) };
+    expect(planBlockade({ input, plain: planTurn(input), cards: 1, multiplier: 3 }).best).toBeUndefined();
   });
 });

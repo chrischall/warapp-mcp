@@ -11,20 +11,26 @@
 // with armies on it, not my commander's (it would be lost with it); those whose fall would complete an opponent's
 // bonus first (every other member visibly its own, a stack of its beside the territory), then the strongest wall.
 //
-// DRAFT for owner approval: the plain plan's measure reads only my income, and a conceded border is lost either way,
+// Owner-approved 2026-11-24: the plain plan's measure reads only my income, and a conceded border is lost either way,
 // so a wall's worth is the bonus it denies: `denied` (that bonus's value) enters the two-turn score as a staging
 // gain does (`scoreOf(plan, denied)`: × `STAGING_DISCOUNT`, ranked first), only for a wall the stack beside it does
 // not break this turn (luck-free: its armies plus the plan's enemy deploy against the wall).
 // The wall is built from the armies standing now: a deploy there would be multiplied too, but the planner does not
 // deploy onto a neutral, so a plan sized on this board is never short for that reason.
 //
-// A Blockade (phase 60, after every move) is not planned here: it acts only on a territory still mine at the end of
-// the turn, so it changes nothing the plain plan's one-turn measure reads (an owner decision how to value it).
+// A Blockade (phase 60, after every move; owner decision 2026-11-24): the plain plan's orders stand unchanged and the
+// card is added. Its candidates are territories of mine whose fall would complete an opponent's bonus (the same
+// denial term), not my commander's; it is valued only when the stress-tested line keeps the territory mine through
+// the attacks (no single-deploy reply `stressPlan` tries takes it — each opponent beside my land at the plan's enemy
+// deploy), since the Blockade acts only on a territory still mine then. The wall is its armies after the plan × the
+// multiplier. It is charged the positive bonuses of mine it gives up (every member mine after the plan), out of
+// both incomes; the two-turn score is that plus 0.8 × the denied bonus.
 
 import type { BoardState } from '../board.js';
 import { compareScores, scoreOf, type PlanScore } from './airlift-plan.js';
 import { armiesToTake } from './combat.js';
 import { neighborsOf } from './graph.js';
+import { stressPlan } from './stress.js';
 import { planTurn } from './planner.js';
 import type { PlanInput, TurnPlan } from './plan/shared.js';
 import { roundHalfDown } from './turn-sim.js';
@@ -121,6 +127,75 @@ export function planWall(a: { input: PlanInput; plain: TurnPlan; cards: number; 
     const score = scoreOf(plan, wall.denied > 0 && wallHolds(a.input, wall, a.plain.enemyDeploy) ? wall.denied : 0);
     if (compareScores(score, plainScore) >= 0) continue;
     if (!best || compareScores(score, best.score) < 0) best = { plan, wall, score, plainScore, considered: 0 };
+  }
+  if (best) best.considered = considered;
+  return best ? { best, considered } : { considered };
+}
+
+/** The best Blockade (phase 60) added to the plain plan's orders, or none (see the header). */
+export function planBlockade(a: { input: PlanInput; plain: TurnPlan; cards: number; multiplier: number }): { best?: WallPlan; considered: number } {
+  if (a.cards < 1 || !(a.multiplier > 0)) return { considered: 0 };
+  const { graph, board, me } = a.input;
+  const plainScore = scoreOf(a.plain);
+  const at = new Map(board.territories.map((t) => [t.territoryId, t]));
+  const isMine = (id: number) => {
+    const t = at.get(id);
+    return t?.owner.kind === 'player' && t.owner.playerId === me && t.armies !== null;
+  };
+  const deployed = new Map<number, number>();
+  for (const d of a.plain.deploys) deployed.set(d.territoryId, (deployed.get(d.territoryId) ?? 0) + d.armies);
+  const after = (id: number) =>
+    (at.get(id)?.armies ?? 0) +
+    (deployed.get(id) ?? 0) -
+    a.plain.moves.filter((m) => m.from === id).reduce((n, m) => n + m.armies, 0) +
+    a.plain.moves.filter((m) => m.to === id && m.kind === 'transfer').reduce((n, m) => n + m.armies, 0);
+  const candidates = board.territories
+    .filter((t) => isMine(t.territoryId) && !t.specialUnits?.some((u) => u.kind === 'commander' && u.playerId === me))
+    .map((t) => ({ target: t.territoryId, armies: after(t.territoryId), ...denialOf(a.input, t.territoryId) }))
+    .filter((c) => c.denied > 0 && c.armies > 0)
+    .map((c) => ({ ...c, wall: roundHalfDown(c.armies * a.multiplier) }))
+    .sort((x, y) => y.denied - x.denied || y.wall - x.wall || x.target - y.target)
+    .slice(0, MAX_WALL_CANDIDATES);
+  if (!candidates.length) return { considered: 0 };
+  // The stress-tested line: the plain plan's orders against each opponent beside my land at the plan's enemy deploy.
+  const opponents = [
+    ...new Set(
+      board.territories.flatMap((t) =>
+        t.owner.kind === 'player' && t.owner.playerId !== me && neighborsOf(graph, t.territoryId).some(isMine) ? [t.owner.playerId] : [],
+      ),
+    ),
+  ].map((id) => ({ id, deploy: a.plain.enemyDeploy }));
+  const report = stressPlan({
+    graph,
+    board,
+    me,
+    deploys: a.plain.deploys,
+    moves: a.plain.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { withCommander: true } : {}) })),
+    opponents,
+    ...(a.input.settings ? { settings: a.input.settings } : {}),
+    lookAhead: false,
+  });
+  const falls = new Set(report.atRisk.territories.map((t) => t.id));
+  const captured = new Set(a.plain.expected.captures);
+  const conceded = new Set(a.plain.conceded);
+  const mineAfter = (id: number) => (isMine(id) && !conceded.has(id)) || captured.has(id);
+  let best: WallPlan | undefined;
+  let considered = 0;
+  for (const c of candidates) {
+    considered++;
+    if (falls.has(c.target) || report.baseline.captured.includes(c.target)) continue;
+    const lost = [...graph.bonusById.values()]
+      .filter((b) => b.value > 0 && b.territoryIds.includes(c.target) && b.territoryIds.every(mineAfter))
+      .reduce((n, b) => n + b.value, 0);
+    const scored = scoreOf(a.plain, c.denied);
+    const score: PlanScore = {
+      ...scored,
+      twoTurn: scored.twoTurn - lost,
+      safeIncome: scored.safeIncome - lost,
+      nextIncome: scored.nextIncome - lost,
+    };
+    if (compareScores(score, plainScore) >= 0) continue;
+    if (!best || compareScores(score, best.score) < 0) best = { plan: a.plain, wall: c, score, plainScore, considered: 0 };
   }
   if (best) best.considered = considered;
   return best ? { best, considered } : { considered };
