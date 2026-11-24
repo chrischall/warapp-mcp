@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/chrischall/warapp-mcp/compare/v0.13.0...v0.13.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **end-of-game:** keep the winner's last board, mark surrender-into-AI seats, and show the stats version ([#547](https://github.com/chrischall/warapp-mcp/issues/547)) ([1d58b91](https://github.com/chrischall/warapp-mcp/commit/1d58b91a8204cc7d578c3e510fd8c3b95dd48199))
+
 ## [0.13.0](https://github.com/chrischall/warapp-mcp/compare/v0.12.1...v0.13.0) (2026-11-24)
 
 
