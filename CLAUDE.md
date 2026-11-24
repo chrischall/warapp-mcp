@@ -2803,7 +2803,29 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   id and name, outcome, turns, sources), pretty JSON, atomic, 0600, into a folder it makes 0700 and refuses when an
   existing one is readable by others (never chmod-ed). No request; nothing written to the data dir (reading a stored
   map touches its mtime, as every reader does). Name-free like its sources.
-- **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script: never a tool, never in CI).** Runs on
+- **Scoring the income estimates from the tool (#569, `warapp_calibration`, read-only, no war.app request).**
+  `src/analysis/income-calibration.ts` (pure) reads every finished decision log carrying the end-of-game truth
+  (`calibrationGames`, src/tools/calibration.ts: lotteries left out, format from the settings record, else the
+  join context, else the seats): one sample per logged estimate (`accuracy.estimates`, the calibration's alignment)
+  with its format, seats, phase (`PHASES`), coverage band, source, thin evidence, the tracker's income method
+  (`LoggedEstimate.method`, logged since #569 from `PlanInput.tracks`: `rise-capped` is #418's cap) and whether the
+  opponent led on true income; `errorView` (mean, median, geoMean, tails, `meanError` in armies) per breakdown;
+  `catchUp` (a true jump of `JUMP_FACTOR` 1.5× or more, turns until the estimate reaches `CATCH_UP_SHARE` ⅔ of the
+  truth, censored past the logged turns); `consequences` (a proxy: turns losing an unconceded territory with an
+  estimate under half vs without); the `WORST_LISTED` largest misses. Games numbered by their place in the report,
+  never by id; no player in the output. `samples: true` returns the rows (at most `MAX_SAMPLES`); `harness: true`
+  adds the #318 harness. Reported only (P1).
+- **The turn history (#570, `warapp_turn_history`, read-only).** Reads the game's decision log: per turn the board seen
+  (`boardSummary`, or whole with `board: true`), `ownerChanges` against the turn before (in view both times), every
+  player's visible orders (`seen`), plan, sent and `differsFromPlan` (`ordersDiffer`), outcome, cards, events, truth and
+  accuracy; paged (`DEFAULT_HISTORY_TURNS` 5, `MAX_HISTORY_TURNS` 20). The visible orders come from the LatestGameInfo's
+  last `GameTurn` (`readSeenTurn`, src/turn-orders.ts: `decodeOrder` per order, the player the order's last int — the
+  verified position for card plays, the bundle's for deploys and moves, UNVERIFIED live; other kinds by class name;
+  at most `MAX_SEEN_ORDERS`), kept by `captureSeenTurn` (src/tools/decision-capture.ts → `recordSeenTurn`) on the
+  resolved turn's entry from warapp_plan_turn (what-ifs too: a fact) and from the tool's `read_last_turn`, only when
+  the GameTurn is the turn just before the one played. Attack results are not decoded. No planner reads it.
+- **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script, never in CI; its body is
+  `src/tools/calibration-harness.ts` since #569, which `warapp_calibration`'s `harness: true` also runs).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in
   `src/analysis/calibrate.ts`: `estimateSamples` (tracker via E2's `calibrationSamples`, the fog prior and the plan's
   estimate via `planEnemyEstimates`, each ÷ the history's true income, by format and coverage band),

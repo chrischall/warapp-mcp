@@ -92,6 +92,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_analyze_board',
       'warapp_backfill_history',
       'warapp_begin_turn',
+      'warapp_calibration',
       'warapp_chat_inbox',
       'warapp_check_plan',
       'warapp_close_finished_game',
@@ -132,6 +133,7 @@ describe('server boot (bundled artifact, no node_modules)', () => {
       'warapp_surrender',
       'warapp_team_brief',
       'warapp_track_opponents',
+      'warapp_turn_history',
       'warapp_uncommit_turn',
       'warapp_wait_for_turn',
     ]);

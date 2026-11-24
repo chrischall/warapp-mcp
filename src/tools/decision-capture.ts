@@ -33,6 +33,7 @@ import type { OutlookLog } from '../outlook-log.js';
 import type { JoinScreen, OpenGame, PolicyCheck } from '../open-games.js';
 import { policyChecks, type JoinAccount } from '../open-games.js';
 import { nameFreeSettings } from '../replay.js';
+import { readSeenTurn } from '../turn-orders.js';
 import {
   type CheckPlanSummary,
   type DecisionLogMode,
@@ -64,6 +65,7 @@ import {
   recordCheck,
   recordDecision,
   recordObservations,
+  recordSeenTurn,
   recordSubmission,
   type Submission,
   type SubmitChecks,
@@ -170,6 +172,17 @@ export async function captureChat(
 ): Promise<void> {
   if (!ctx.dataDir || !chat.length) return;
   await recordChat(ctx.dataDir, gameId, me, turn, chat, { ...modeOf(ctx), ...opts });
+}
+
+/**
+ * #570: keep the resolved turn's visible orders (every player's, from the LatestGameInfo's GameTurn) on that
+ * turn's entry — only when the GameTurn is the turn just before `turn`, the one being played. Never throws.
+ */
+export async function captureSeenTurn(ctx: Ctx, game: Pick<Game, 'id' | 'players'>, me: number, info: unknown, turn: number | null): Promise<boolean> {
+  if (!ctx.dataDir || turn === null) return false;
+  const seen = readSeenTurn(info, game.players);
+  if (!seen || seen.turn !== turn - 1) return false;
+  return recordSeenTurn(ctx.dataDir, game.id, me, seen, modeOf(ctx));
 }
 
 /** Log warapp_check_plan's summary of the turn (the latest run wins). Never throws. */

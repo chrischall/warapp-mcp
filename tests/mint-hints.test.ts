@@ -23,6 +23,8 @@ const EXPECTED_INTENT: Record<string, string> = {
   warapp_get_live_board: 'lookup',
   warapp_get_my_picks: 'lookup',
   warapp_get_my_orders: 'lookup',
+  warapp_calibration: 'lookup',
+  warapp_turn_history: 'lookup',
   warapp_plan_turn: 'lookup',
   warapp_check_plan: 'lookup',
   warapp_plan_picks: 'lookup',

@@ -168,7 +168,7 @@ import { cardArmyCeiling, cardClock } from '../strategy/card-clock.js';
 import { hasCostlyBonus, noteContext, notesFor } from '../strategy/notes.js';
 import { sinceLastTurn, type SinceLast } from '../analysis/since-last.js';
 import { readOutlookLog, recordOutlook } from '../outlook-log.js';
-import { bootTimes, captureChat, capturePlan, captureObservation, captureSent, cardAdviceLog, handLog, submitChecksLog } from './decision-capture.js';
+import { bootTimes, captureChat, capturePlan, captureObservation, captureSeenTurn, captureSent, cardAdviceLog, handLog, submitChecksLog } from './decision-capture.js';
 import { chatTruces } from '../analysis/chat-read.js';
 import { readDecisionLog, scrubNames, type LoggedChatMessage, type LoggedSent, type SentOrders, type SubmitChecks } from '../decision-log.js';
 import { readPickRecord } from '../pick-list.js';
@@ -3208,6 +3208,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         await writeBoardCache(ctx.dataDir, game.id, me.id, turn, seen, whatIf ? undefined : plan.expected.nextIncome);
       // #427: the Reinforcement plays the last turn's orders showed (a fact, kept on a what-if plan too).
       if (ctx.dataDir && setup.seenPlays) await writeSeenPlays(ctx.dataDir, game.id, me.id, setup.seenPlays.turn, setup.seenPlays.players);
+      // #570: every player's visible orders on the turn just resolved, kept on that turn's decision-log entry (a fact: a what-if too).
+      await captureSeenTurn(ctx, game, me.id, info, turn);
       // #275 (b): this turn's estimates and the untrusted marks, for the next turns' tripwire. Kept on a
       // what-if plan too, unlike its neighbours: both come from the boards alone — the estimates are the
       // default ones (planEnemyEstimates never reads enemy_deploy or goal) and a mark is an observation —
