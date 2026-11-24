@@ -661,6 +661,8 @@ export interface PlanRelation {
   state: 'active' | 'notice' | 'broken';
   endsTurn?: number;
   borderCap?: number;
+  /** Territory caps I promised (the agreement's `caps`): at most `max` of my armies on `territory` (T5, like the border cap). */
+  territoryCaps?: readonly { territory: number; max: number }[];
   trust: 'clear' | 'watch';
   watch?: readonly TruceWatchReason[];
   enforced?: boolean;

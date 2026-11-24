@@ -121,6 +121,32 @@ export interface Agreement {
    * partner agreed to, for some turns, that are no break. Never a status change.
    */
   exceptions?: AgreementException[];
+  /**
+   * Per-territory caps I promised the partner (an amendment, oldest first; absent when none): never
+   * more than `max` armies of mine on `territory`. Recorded on an agreed truce without rewriting its terms.
+   */
+  caps?: AgreementCap[];
+}
+
+/** Territory caps kept per agreement. */
+export const MAX_CAPS = 20;
+
+/** One territory cap on an agreement: at most `max` of my armies on `territory`, since `addedTurn`. */
+export interface AgreementCap {
+  territory: number;
+  max: number;
+  /** The turn it was recorded (the latest time it was set). */
+  addedTurn: number;
+  /** The owner's own words, player names scrubbed to `Player <id>`; absent when none. */
+  note?: string;
+}
+
+/** `a` with `caps` set (one per territory: a new one replaces the old) and `remove` lifted; `caps` absent when none is left. */
+export function withCaps(a: Agreement, caps: readonly AgreementCap[], remove: readonly number[] = []): Agreement {
+  const gone = new Set([...remove, ...caps.map((c) => c.territory)]);
+  const next = [...(a.caps ?? []).filter((c) => !gone.has(c.territory)), ...caps].slice(-MAX_CAPS);
+  const { caps: _old, ...rest } = a;
+  return next.length ? { ...rest, caps: next } : rest;
 }
 
 /**
@@ -380,6 +406,8 @@ export interface WatchFlag {
   evidence: string;
   /** A `massing` flag raised for an event the fog left ambiguous. */
   ambiguous?: boolean;
+  /** `cap-exceeded` from {@link capSelfCheck}: my own stack above a territory cap I promised (never read by `trust`). */
+  by?: 'me';
   /** `cap-exceeded`: the largest stack over the cap and the cap. */
   armies?: number;
   cap?: number;
@@ -419,6 +447,34 @@ export interface BreachInput {
  * A covered territory under a `theirs` exception on a turn (the partner may attack it by agreement) raises
  * nothing that turn. A proposal that was never agreed has no flags.
  */
+/**
+ * A self-check of the territory caps I promised on `a` (its `caps`): on the newest board, each territory
+ * of mine holding more than its cap is one `cap-exceeded` flag `by: 'me'` — my breach, not the
+ * partner's, so it never feeds {@link trust}. Nothing for a proposal never agreed, or with no caps.
+ */
+export function capSelfCheck(a: Pick<Agreement, 'caps' | 'agreedTurn'>, boards: readonly TurnBoard[], me: number): WatchFlag[] {
+  if (!a.caps?.length || a.agreedTurn === undefined) return [];
+  const newest = [...boards].sort((x, y) => x.turn - y.turn).at(-1);
+  if (!newest) return [];
+  const at = territoryMap(newest.board);
+  const flags: WatchFlag[] = [];
+  for (const c of [...a.caps].sort((x, y) => x.territory - y.territory)) {
+    const t = visibleState(at.get(c.territory));
+    const armies = t?.armies ?? 0;
+    if (!t || ownerOn(t) !== me || armies <= c.max) continue;
+    flags.push({
+      kind: 'cap-exceeded',
+      by: 'me',
+      turn: newest.turn,
+      territories: [c.territory],
+      armies,
+      cap: c.max,
+      evidence: `my territory ${c.territory} holds ${armies}, over the cap of ${c.max} I agreed`,
+    });
+  }
+  return flags;
+}
+
 export function breachWatch(input: BreachInput): WatchFlag[] {
   const { agreement: a, graph, me } = input;
   if (a.agreedTurn === undefined) return [];
@@ -820,6 +876,7 @@ export function planRelationsFrom(input: PlanRelationsInput): { relations: PlanR
       state: broke ? 'broken' : state.phase,
       ...(state.endsTurn !== undefined ? { endsTurn: state.endsTurn } : {}),
       ...(a.terms.borderCap !== undefined ? { borderCap: a.terms.borderCap } : {}),
+      ...(a.caps?.length ? { territoryCaps: a.caps.map((c) => ({ territory: c.territory, max: c.max })) } : {}),
       trust: verdict.level,
       ...(watch.length ? { watch } : {}),
       // T9: `a.enforced` is never read in. No tool writes it, and only a Diplomacy card the decoder is
