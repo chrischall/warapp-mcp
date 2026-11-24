@@ -135,3 +135,43 @@ describe('warapp_plan_turn: the wall plan', () => {
     }
   });
 });
+
+describe('warapp_plan_turn: a wall plan offered', () => {
+  // Bob holds 161 and 157 of bonus 118; my 159 completes it for him if it falls. Both wall cards in hand.
+  const BOTH: SyntheticCard[] = [
+    { id: WALL, type: 3 },
+    { id: 'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', type: 12 },
+  ];
+  const denial = (mine: number, bob: number): SyntheticTerritory[] => [
+    { id: 159, fogLevel: 1, owner: ANN.inGame, armies: mine },
+    { id: 161, fogLevel: 1, owner: BOB.inGame, armies: 2 },
+    { id: 157, fogLevel: 1, owner: BOB.inGame, armies: 2 },
+    { id: 158, fogLevel: 1, owner: BOB.inGame, armies: bob },
+    { id: 135, fogLevel: 1, owner: ANN.inGame, armies: 5 },
+  ];
+  type Wall = { orders: unknown[]; blockadePlan: { card: string; wall: { target: { id: number }; wall: number; denies: { bonusValue: number } }; orders: unknown[]; cardsLeft: number } };
+  const plan = async (board: SyntheticTerritory[]) => {
+    const warapp = (req: DecodedRequest): Partial<ReplyFrame> => {
+      if (req.method === Method.GetLatestGameInfo) return { body: (w) => writeLatestGameInfo(w, board, [ANN.inGame, BOB.inGame], { [ANN.inGame]: BOTH }) };
+      throw new Error(`unexpected method ${req.method}`);
+    };
+    h = await liveHarness({ feed: [game()], pages: ME_PAGE, warapp });
+    const p = payload<Wall>(await h.call('warapp_plan_turn', { game_id: GAME }));
+    await h.harness.close();
+    h = undefined;
+    return p;
+  };
+
+  it('walls a thin border the stack beside it would take: an Emergency Blockade, planned on the walled board', async () => {
+    const p = await plan(denial(3, 12));
+    expect(p.blockadePlan).toMatchObject({ card: 'Emergency Blockade', wall: { target: { id: 159 }, wall: 12, denies: { bonusValue: 2 } } });
+    expect(p.blockadePlan.orders).toContainEqual({ kind: 'card', card: WALL, target: 159 });
+    expect(p.blockadePlan.cardsLeft).toBe(0);
+  });
+
+  it('a border the attacks leave mine takes a Blockade instead: the plain orders plus the card', async () => {
+    const p = await plan(denial(10, 8));
+    expect(p.blockadePlan.card).toBe('Blockade');
+    expect(p.blockadePlan.orders).toEqual([...p.orders, { kind: 'card', card: 'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', target: 159 }]);
+  });
+});

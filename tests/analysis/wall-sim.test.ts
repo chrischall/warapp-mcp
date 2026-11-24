@@ -133,3 +133,30 @@ describe('the Blockade plan', () => {
     expect(planBlockade({ input, plain: planTurn(input), cards: 1, multiplier: 3 }).best).toBeUndefined();
   });
 });
+
+describe('the walls: ranking and the stress test\'s Blockade', () => {
+  // My 2 and 3 are both conceded borders; walls sorted by the bonus they deny, then strength.
+  const M = map(5, [[1, 2], [1, 3], [2, 4], [3, 5]], [[200, 5, [2, 4]]]);
+  const input: PlanInput = { graph: buildGraph(M), board: board([me(1, 2), me(2, 3), me(3, 6), foe(4, 30), foe(5, 30)]), me: ME, income: 2 };
+
+  it('puts a wall that denies a bonus before a stronger one that denies none', () => {
+    const plain = planTurn(input);
+    const c = wallCandidates(input, { ...plain, conceded: [2, 3] }, 3);
+    expect(c.map((w) => w.target)).toEqual([2, 3]);
+  });
+
+  it('never offers a Blockade on my commander\'s territory, and ranks the others by denial', () => {
+    const withCommander = { ...me(2, 9), specialUnits: [{ kind: 'commander', playerId: ME, id: 'c' }] } as TerritoryState;
+    const M2 = map(5, [[1, 2], [1, 3], [2, 4], [3, 5]], [[200, 5, [2, 4]], [300, 4, [3, 5]]]);
+    const i2: PlanInput = { graph: buildGraph(M2), board: board([me(1, 2), withCommander, me(3, 9), foe(4, 3), foe(5, 3)]), me: ME, income: 2 };
+    const r = planBlockade({ input: i2, plain: planTurn(i2), cards: 1, multiplier: 3 });
+    expect(r.best?.wall.target).not.toBe(2);
+  });
+
+  it('a Blockade in the stress test walls the territory after the moves, never counted lost', () => {
+    const entries = [me(1, 1), me(2, 2), me(3, 6), foe(4, 3)];
+    const r = stressPlan({ graph, board: board(entries), me: ME, deploys: [], moves: [], opponents: [{ id: FOE, deploy: 2 }], settings: STD, blockades: [{ target: 3, multiplier: 2 }] });
+    expect(r.baseline.captured).toEqual([]);
+    expect(r.atRisk.territories.map((t) => t.id)).not.toContain(3);
+  });
+});
