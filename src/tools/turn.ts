@@ -164,7 +164,7 @@ import { readPickRecord } from '../pick-list.js';
 import type { BoardState } from '../board.js';
 import { commitmentWarnings } from '../analysis/commitments.js';
 import { MAX_EXCEPTION_NOTE, planRelationsFrom, truceBreaksIn, type TacitTruce, type TruceBreak } from '../analysis/relations.js';
-import { exceptionNote, recordBrokenByMe, recordPartnerApproved } from './relations.js';
+import { coordinationView, exceptionNote, recordBrokenByMe, recordPartnerApproved } from './relations.js';
 import { readPlayerRecord } from '../player-record-store.js';
 import { withTeammateOrders } from '../team-orders.js';
 import {
@@ -179,6 +179,7 @@ import {
 } from '../team-cards.js';
 import { isTeamGame, teammatesOf } from '../teams.js';
 import { readLedger, recordTruceUsage } from '../relations-store.js';
+import { coordinationDue, coordinationLine } from '../analysis/coordination.js';
 import { resolveIntel } from '../analysis/intel.js';
 import { readSiegeMemory, writeSiegeMemory } from '../siege-store.js';
 import { readBonusAttempts, writeBonusAttempts } from '../bonus-attempt-store.js';
@@ -2598,7 +2599,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           'is watch; a border cap kept; a partner-approved truce exception on this turn makes its territories normal ' +
           'targets, listed under the truce as `exceptions`), `advice` says `give-notice` when the endgame or the partner outgrowing you made ' +
           'the trust watch, a truce the board shows broken is planned as an ordinary opponent, and `tacit` lists quiet ' +
-          'borders with no agreement (a report, never a truce). In a game running the Diplomacy 2 mod (mod 191) each ally ' +
+          'borders with no agreement (a report, never a truce); `coordination` lists the joint attacks recorded with ' +
+          'warapp_record_agreement due this turn, each told in a rationale line ("Agreed with player P … they hit X, you ' +
+          'follow on Y") — report only, the orders never read it. In a game running the Diplomacy 2 mod (mod 191) each ally ' +
           'is an enforced truce in any format (`mod: "Diplomacy 2"`): the game skips attacks between allies, so none is ' +
           'planned and its threat is 0 this turn, but it still counts for next turn (a break applies at the end of the turn ' +
           'it is entered, unseen); `modAlliances` lists the allies read (UNVERIFIED live). The plan never reads what your chat promised ' +
@@ -3204,6 +3207,14 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
       // #415 task 4b: the unread messages that would block the submit (report only: no order reads them). The
       // truces from the ledger, contact from this board, the surrenders this plan read; no request of its own.
       const planLedger = ctx.dataDir ? await readLedger(ctx.dataDir, game.id, me.id) : undefined;
+      // Coordination notes due this turn (warapp_record_agreement `coordination`): told, never an order.
+      const coordDue = turn === null ? [] : (planLedger?.coordination ?? []).filter((c) => coordinationDue(c, turn));
+      const coordLines = coordDue.map((c) =>
+        coordinationLine(c, (t) => {
+          const n = name(t);
+          return `${n.name} (#${t})`;
+        }),
+      );
       const blocks = chat
         ? turnChatBlocks(chat, game, {
             meId: me.id,
@@ -3283,6 +3294,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         // #298: the contested bonuses pushed all-in or dropped after repeated failed attempts; absent with none.
         ...(plan.bonusPush ? { bonusPush: plan.bonusPush } : {}),
         ...(coalition ? { coalition } : {}),
+        ...(coordDue.length ? { coordination: coordDue.map((c) => coordinationView(c, game, map, turn ?? 0)) } : {}),
         // #276: the guard case first, on or off, with what it means for interior defence.
         profile:
           rung === 'full'
@@ -3646,7 +3658,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           ? { modAlliances: { read: truces.mod.status === 'read', allies: truces.mod.status === 'read' ? truces.mod.allies.map(playerRef) : null, note: MOD_ALLIANCES_NOTE } }
           : {}),
         warnings,
-        rationale: plan.rationale,
+        rationale: coordLines.length ? [...plan.rationale, ...coordLines] : plan.rationale,
         orders,
         // The border guess, only when there is one; why there is none, full view only.
         ...(guess
