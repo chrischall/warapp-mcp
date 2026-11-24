@@ -431,23 +431,6 @@ export interface BreachInput {
 }
 
 /**
- * What my boards say about the partner keeping `agreement`, over the consecutive turns from the
- * one it was agreed (and before it ended), as flags with their turn and evidence:
- * - `broken`: the partner took a covered territory of mine, or attacked one (my orders known,
- *   armies lost there, only the partner — visibly — borders it, and no transfer of mine in came
- *   from a source taken or hit, which may never have arrived);
- * - `cap-exceeded` (newest board): a visible partner territory beside a covered one holds more
- *   than the cap;
- * - `massing`: the partner's visible armies within {@link TRUCE_MASSING_REACH} steps of the
- *   covered border grew for the last {@link TRUCE_MASSING_TURNS} turns up to the newest board
- *   (territories visible on both boards only: a fog reveal is no growth), or an event the fog
- *   leaves ambiguous;
- * - `outgrowing`: its income passed {@link TRUCE_OUTGROW_RATIO} × mine;
- * - `kept`: the consecutive quiet turns up to the newest board (when nothing broke).
- * A covered territory under a `theirs` exception on a turn (the partner may attack it by agreement) raises
- * nothing that turn. A proposal that was never agreed has no flags.
- */
-/**
  * A self-check of the territory caps I promised on `a` (its `caps`): on the newest board, each territory
  * of mine holding more than its cap is one `cap-exceeded` flag `by: 'me'` — my breach, not the
  * partner's, so it never feeds {@link trust}. Nothing for a proposal never agreed, or with no caps.
@@ -475,6 +458,23 @@ export function capSelfCheck(a: Pick<Agreement, 'caps' | 'agreedTurn'>, boards: 
   return flags;
 }
 
+/**
+ * What my boards say about the partner keeping `agreement`, over the consecutive turns from the
+ * one it was agreed (and before it ended), as flags with their turn and evidence:
+ * - `broken`: the partner took a covered territory of mine, or attacked one (my orders known,
+ *   armies lost there, only the partner — visibly — borders it, and no transfer of mine in came
+ *   from a source taken or hit, which may never have arrived);
+ * - `cap-exceeded` (newest board): a visible partner territory beside a covered one holds more
+ *   than the cap;
+ * - `massing`: the partner's visible armies within {@link TRUCE_MASSING_REACH} steps of the
+ *   covered border grew for the last {@link TRUCE_MASSING_TURNS} turns up to the newest board
+ *   (territories visible on both boards only: a fog reveal is no growth), or an event the fog
+ *   leaves ambiguous;
+ * - `outgrowing`: its income passed {@link TRUCE_OUTGROW_RATIO} × mine;
+ * - `kept`: the consecutive quiet turns up to the newest board (when nothing broke).
+ * A covered territory under a `theirs` exception on a turn (the partner may attack it by agreement) raises
+ * nothing that turn. A proposal that was never agreed has no flags.
+ */
 export function breachWatch(input: BreachInput): WatchFlag[] {
   const { agreement: a, graph, me } = input;
   if (a.agreedTurn === undefined) return [];
