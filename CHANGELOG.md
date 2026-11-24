@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/chrischall/warapp-mcp/compare/v0.12.1...v0.13.0) (2026-11-24)
+
+
+### Features
+
+* **outlook:** advise a coalition with the trailing players before surrendering a free-for-all ([#544](https://github.com/chrischall/warapp-mcp/issues/544)) ([16a6ac6](https://github.com/chrischall/warapp-mcp/commit/16a6ac60bb766a4566abf0682ad1a4151ea52ea0))
+
+
+### Bug Fixes
+
+* **end-of-game:** stop and resume seat lines as the client does; AI-taken seats ([#543](https://github.com/chrischall/warapp-mcp/issues/543)) ([6372900](https://github.com/chrischall/warapp-mcp/commit/6372900c16a873b5ee9854d529dbd073aeca0a1c))
+
 ## [0.12.1](https://github.com/chrischall/warapp-mcp/compare/v0.12.0...v0.12.1) (2026-11-23)
 
 
