@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/chrischall/warapp-mcp/compare/v0.12.0...v0.12.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **get-game:** keep the raw history out of the compact view ([#538](https://github.com/chrischall/warapp-mcp/issues/538)) ([de62294](https://github.com/chrischall/warapp-mcp/commit/de62294f21a39d76d1788ac2902c2516d6f5e1de))
+
 ## [0.12.0](https://github.com/chrischall/warapp-mcp/compare/v0.11.0...v0.12.0) (2026-11-23)
 
 
