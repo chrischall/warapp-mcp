@@ -73,3 +73,12 @@ export function mismatchMessage(r: AirliftReadBack, turn: number, game: number):
     `${parts.join('; ')}. Nothing was resent.`
   );
 }
+
+/** The result fields a commit records beside its orders (#556): kept in the error when an Airlift reads back wrong. */
+const RECORDED_KEYS = ['agreementsBroken', 'exceptionsRecorded', 'commanderRiskAccepted', 'chatReviewed'] as const;
+
+/** One line naming what the commit recorded (a truce break, exceptions, an accepted commander risk, waived chat), or none. */
+export function recordedWithCommit(result: Record<string, unknown>): string | undefined {
+  const parts = RECORDED_KEYS.filter((k) => result[k] !== undefined).map((k) => `${k} ${JSON.stringify(result[k])}`);
+  return parts.length ? `Recorded with this commit: ${parts.join('; ')}.` : undefined;
+}

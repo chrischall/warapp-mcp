@@ -89,7 +89,8 @@ import { boardCardsInEffect, CARDS_IN_EFFECT_UNVERIFIED, sanctionMyIncome } from
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import type { SureDiplomacy } from '../analysis/cards-in-effect.js';
 import { myOrdersOf as committedOrdersOf, readMyOrderList } from '../my-orders.js';
-import { checkAirlifts, mismatchMessage, sentAirlifts } from './airlift-readback.js';
+import { checkAirlifts, mismatchMessage, recordedWithCommit, sentAirlifts } from './airlift-readback.js';
+import { alternativeOrders, cardsLeftAfter, playsCardType } from './alternative-orders.js';
 import { planAirlift } from '../analysis/airlift-plan.js';
 import type { TurnPlan } from '../analysis/plan/shared.js';
 import { breaksInOrders } from '../mod-alliances.js';
@@ -2291,7 +2292,8 @@ async function airliftPlanView(a: {
     tripwires: a.setup.trip.tripwires,
     deploys: best.plan.deploys,
     moves,
-    orderPriority: a.cards.plays.some((c) => c.type === CARD_ORDER_PRIORITY),
+    // #558: the Airlift orders carry the plain card plays, an advised Order Priority included.
+    orderPriority: playsCardType(a.orders, a.myCards, CARD_ORDER_PRIORITY),
     ...(a.enemyDeploy !== undefined ? { floor: a.enemyDeploy } : {}),
     killedBy: false,
     airlifts: best.airlifts.map(({ from, to, armies }) => ({ from, to, armies })),
@@ -2299,14 +2301,16 @@ async function airliftPlanView(a: {
   if (checked?.risk && a.plainCommanderSafe)
     return none('The best Airlift plan would leave your commander takeable (warapp_submit_turn would refuse it), so none is offered.');
   const lifts = best.airlifts.map((l, i) => ({ ...l, card: free[i]!.id }));
-  const delayDiscard = a.playedDelay && a.delayOrder !== undefined ? [{ kind: 'discard' as const, card: a.playedDelay }] : [];
-  const orders = [
-    ...a.orders.filter((o) => (o.kind === 'discard' || o.kind === 'card') && o !== a.delayOrder),
-    ...delayDiscard,
-    ...lifts.map((l) => ({ kind: 'card' as const, card: l.card, from: l.from, to: l.to, armies: l.armies })),
-    ...best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
-    ...best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
-  ];
+  // #558: the advised Order Delay is discarded only when the plain card choice had to shed it.
+  const orders = alternativeOrders({
+    orders: a.orders,
+    delayOrder: a.delayOrder,
+    playedDelay: a.playedDelay,
+    delayMustGo: a.playedDelay !== undefined && a.cards.discards.some((c) => c.id === a.playedDelay),
+    cardPlays: lifts.map((l) => ({ kind: 'card' as const, card: l.card, from: l.from, to: l.to, armies: l.armies })),
+    deploys: best.plan.deploys.map((d) => ({ kind: 'deploy' as const, territory: d.territoryId, armies: d.armies })),
+    moves: best.plan.moves.map((m) => ({ kind: 'move' as const, from: m.from, to: m.to, armies: m.armies, ...(m.commander ? { commander: true as const } : {}) })),
+  });
   const minus = (x: readonly number[], y: readonly number[]) => x.filter((v) => !y.includes(v)).sort((p, q) => p - q);
   const atRisk = (p: TurnPlan) => (p.expected.bonusesAtRisk ?? []).map((b) => b.bonusId);
   return {
@@ -2332,7 +2336,8 @@ async function airliftPlanView(a: {
         },
       },
       cardsSpent: lifts.length,
-      cardsLeft: held.length - lifts.length,
+      // #558: the Airlift cards the plain plan leaves, less those this plan spends.
+      cardsLeft: cardsLeftAfter({ held: held.length, free: free.length, spent: lifts.length }),
       keepCards: a.keepCards,
       considered: best.considered,
       ...(checked ? { commander: { safe: !checked.risk, ...(checked.risk ? { needs: checked.risk.needs } : {}) } } : {}),
@@ -4764,7 +4769,9 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         }
         const lifted = checkAirlifts(lifts, read);
         if (lifted.status === 'mismatch') {
-          throw new McpToolError(mismatchMessage(lifted, st.turnNumber, st.gameId), {
+          // #556: what the commit recorded (a truce break, exceptions, …) is said in the error, never dropped.
+          const recorded = recordedWithCommit(final as Record<string, unknown>);
+          throw new McpToolError(`${mismatchMessage(lifted, st.turnNumber, st.gameId)}${recorded ? ` ${recorded}` : ''}`, {
             hint:
               'Read the committed orders with warapp_get_my_orders. To correct them, withdraw with warapp_uncommit_turn and ' +
               'submit again (both confirm-gated); do not resend blindly.',
