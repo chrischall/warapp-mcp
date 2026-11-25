@@ -74,6 +74,19 @@ describe('income calibration (#569)', () => {
     expect(catchUp([g])).toEqual({ jumps: 2, caught: 1, meanLag: 2, medianLag: 2, lags: { '2': 1 }, censored: 1 });
   });
 
+  it('lists the catch-up lags of several players, shortest first', () => {
+    const g: CalibrationGame = {
+      format: 'ffa',
+      seats: 3,
+      turns: {
+        '3': turn([[8, 10, 'tracked', 0.5, false], [7, 10, 'tracked', 0.5, false]], { 8: 10, 7: 10 }),
+        '4': turn([[8, 10, 'tracked', 0.5, false], [7, 25, 'tracked', 0.5, false]], { 8: 30, 7: 30 }), // 7 caught at once
+        '5': turn([[8, 21, 'tracked', 0.5, false], [7, 25, 'tracked', 0.5, false]], { 8: 30, 7: 30 }), // 8 caught: lag 1
+      },
+    };
+    expect(catchUp([g])).toEqual({ jumps: 2, caught: 2, meanLag: 0.5, medianLag: 0.5, lags: { '0': 1, '1': 1 }, censored: 0 });
+  });
+
   it('splits turns that lost an unconceded territory by whether an estimate read under half', () => {
     const g: CalibrationGame = {
       format: 'ffa',

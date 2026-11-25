@@ -50,7 +50,7 @@ export async function calibrationGames(dir: string): Promise<{ games: Calibratio
 }
 
 async function formatOf(dir: string, log: DecisionLog): Promise<{ format: string; seats: number | null }> {
-  const game = await readGameRecord(dir, log.gameId).catch(() => undefined);
+  const game = await readGameRecord(dir, log.gameId);
   if (game?.players.length) {
     const seated = game.players.filter((p) => holdsSeat(p.state));
     return { format: profileFormatOf(seated), seats: seated.length };

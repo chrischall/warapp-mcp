@@ -7,7 +7,7 @@ import { decisionLogPath, readDecisionLog, recordObservations } from '../src/dec
 import { writeGameRecord } from '../src/replay.js';
 import type { Player } from '../src/normalize.js';
 import { captureSeenTurn } from '../src/tools/decision-capture.js';
-import { boardSummary, seenByPlayer } from '../src/tools/turn-history.js';
+import { boardSummary, ownerChanges, seenByPlayer } from '../src/tools/turn-history.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 
 const ANN = 4412345677; // in-game 123456
@@ -110,6 +110,20 @@ describe('warapp_turn_history (#570)', () => {
     expect(JSON.stringify(await readDecisionLog(h.dataDir, GAME))).not.toMatch(/Ann|Bob/);
   });
 
+  it("shows a turn's game events, and refuses read_last_turn when the signed-in account cannot be read", async () => {
+    h = await liveHarness({ feed: [lobbyFixture()] });
+    await seed(h.dataDir);
+    const path = decisionLogPath(h.dataDir, GAME);
+    const log = JSON.parse(readFileSync(path, 'utf8'));
+    log.events = [{ turn: 4, kind: 'booted', player: BOB, at: '2026-11-24T00:00:00.000Z' }];
+    writeFileSync(path, JSON.stringify(log));
+    const r = payload<{ turns: Array<Record<string, any>> }>(await h.call('warapp_turn_history', { game_id: GAME }));
+    expect(r.turns.find((t) => t.turn === 4)!.events).toEqual([expect.objectContaining({ kind: 'booted', player: BOB })]);
+    const out = await h.call('warapp_turn_history', { game_id: GAME, read_last_turn: true });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/Could not tell which war.app account is signed in/);
+  });
+
   it('pages, compact by default, and refuses a game with nothing kept', async () => {
     h = await liveHarness();
     await seed(h.dataDir);
@@ -166,12 +180,22 @@ describe('warapp_turn_history (#570)', () => {
       },
       unknown: { deploys: [], moves: [], cards: [], discards: 1, other: ['GameOrderReceiveCard', 'unknown'] },
     });
-    expect(boardSummary(board([[1, ANN, 2], [2, BOB, null], [3, BOB, 3], [4, 'n', 2]]), ANN)).toEqual({
+    expect(boardSummary(board([[1, ANN, 2], [2, BOB, null], [3, BOB, 3], [4, 'n', 2], [5, 99999, 1]]), ANN)).toEqual({
       mine: { territories: 1, armies: 2 },
-      others: [{ player: BOB, territories: 2, armies: 3, armiesHiddenOn: 1 }],
+      others: [
+        { player: 99999, territories: 1, armies: 1 },
+        { player: BOB, territories: 2, armies: 3, armiesHiddenOn: 1 },
+      ],
       neutral: 1,
       hidden: 0,
     });
+    // Owner changes in view on both boards, ascending; a territory hidden on either is left out.
+    expect(
+      ownerChanges(board([[3, ANN, 1], [1, ANN, 1], [2, '?', null], [4, 'n', 2]]), board([[3, BOB, 2], [1, 'n', 1], [2, BOB, 2], [4, 'n', 2]])),
+    ).toEqual([
+      [1, ANN, 'neutral'],
+      [3, ANN, BOB],
+    ]);
   });
 });
 
