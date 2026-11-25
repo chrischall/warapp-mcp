@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/chrischall/warapp-mcp/compare/v0.16.0...v0.17.0) (2026-11-25)
+
+
+### Features
+
+* **decision-log:** log the tracker's internals and keep logged games' maps ([#586](https://github.com/chrischall/warapp-mcp/issues/586)) ([#587](https://github.com/chrischall/warapp-mcp/issues/587)) ([2d7c7bd](https://github.com/chrischall/warapp-mcp/commit/2d7c7bd1ddf93c0a50e89b2195653e844886ac26))
+
 ## [0.16.0](https://github.com/chrischall/warapp-mcp/compare/v0.15.0...v0.16.0) (2026-11-25)
 
 
