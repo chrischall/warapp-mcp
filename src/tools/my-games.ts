@@ -174,10 +174,13 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
           'chat per channel (public, team, private, group) and toMe (unread private chat is addressed to you) — flags, ' +
           'not counts; null when they did not read. Games with unread private chat come right after the ones waiting on ' +
           'you, and the top-level unreadPrivateGames counts them; read them with warapp_chat_inbox. ' +
-          'A multi-day game being played or picked with your seat playing carries `boot` (pace, from the game list: its boot ' +
+          'A game being played or picked with your seat playing carries `boot` (pace, from the game list: its boot ' +
           'time, your banked time, their sum, and while it waits on you `leftMinutes`, the sum less how long your turn has ' +
-          'run, with `soon` under 6 hours; unverified live); `bootSoon` counts the games close to a boot, and brief adds ' +
-          '" — boot in …" to them. ' +
+          'run, with `soon` under 6 hours in a multi-day game; unverified live). #504: an opening turn (`opening`: picks, or ' +
+          'turns 1 to 4, where a missed turn delays the first bonus) is also `soon` with a quarter of that time or less left, ' +
+          'and then `openingSoon`: those games come first, soonest first, and `openingBootSoon` counts them; a real-time ' +
+          'game (`realTime`) is `soon` only at a quarter or less. `bootSoon` counts the games close to a boot, and brief adds ' +
+          '" — boot in …" (" — opening turn, boot in …") to them. ' +
           'Finished games are left out unless ' +
           '`include_finished` (`finishedLeftOut` counts them). `listed` is how many games war.app returned and ' +
           '`complete` false (with a `warning`) means the list may be partial. Use the id with the other warapp tools. ' +
@@ -228,9 +231,14 @@ export function registerMyGamesTool(server: McpServer, ctx: LiveContext, deps: {
         count: games.length,
         waitingOnYou: games.filter((g) => g.waitingOnYou).length,
         unreadPrivateGames: games.filter((g) => g.unreadChat?.private === true).length,
-        // Pace: multi-day games whose boot is under six hours away (boot time plus bank, less my turn so far).
+        // Pace: games close to a boot (boot time plus bank, less my turn so far): under six hours in a multi-day game,
+        // and (#504) an opening or real-time turn from a quarter of its time left.
         ...(games.some((g) => g.boot)
-          ? { bootSoon: games.filter((g) => g.boot?.soon).length, bootNote: BOOT_NOTE }
+          ? {
+              bootSoon: games.filter((g) => g.boot?.soon).length,
+              ...(games.some((g) => g.boot?.openingSoon) ? { openingBootSoon: games.filter((g) => g.boot?.openingSoon).length } : {}),
+              bootNote: BOOT_NOTE,
+            }
           : {}),
         surrenderPending: games.filter((g) => surrenderOwed(g.surrenderPending)).length,
         surrenderNote:

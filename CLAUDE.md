@@ -487,8 +487,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   land from GameFeed's standing else the newest cached board, no request) and `public_chat: "summary"`
   (`publicSummary`). Pace: GameInfo fields 5 (boot), 19 (real time), 24 (my banked time) and 26 ("Your turn for")
   — read from the bundle's GameInfo reader and game-list renderer (its boot label is field 5 + field 24) — give
-  `warapp_my_games`' `boot` (`bootView`: multi-day only; `leftMinutes` = boot + bank − turn so far, UNVERIFIED live)
-  and `bootSoon`; `fetchMyGames` keeps the clocks per context (`src/tools/pace.ts`; a confirmed `warapp_submit_turn` drops its game, `forgetPaceGame`, #532) and `warapp_session_status`
+  `warapp_my_games`' `boot` (`bootView`; `leftMinutes` = boot + bank − turn so far, UNVERIFIED live) and `bootSoon`
+  (`bootSoon()`: a multi-day game under 6 hours; #504 (owner 2026-11-25): an opening turn — picks or turns 1 to
+  `OPENING_LAST_TURN` (4), `isOpening` — also at `BOOT_SHARE_WARN` (a quarter) of boot + bank or less left, `openingSoon`,
+  listed first among the games waiting on me and counted as `openingBootSoon`; a real-time game, reported since #504,
+  only at a quarter and never kept for the session status, UNVERIFIED for real-time); `warapp_wait_for_turn` adds the
+  watched games' `bootSoon` from the kept clocks (no request) and puts them first in `ready`; `fetchMyGames` keeps the clocks per context (`src/tools/pace.ts`; a confirmed `warapp_submit_turn` drops its game, `forgetPaceGame`, #532) and `warapp_session_status`
   reports `pace`/`bootWarning` under 6 hours from them, reading the list itself (one request, over a working direct
   session only) when none is kept yet (owner 2026-11-23; otherwise `paceUnread` says why).
 - **Chat is game information (#415, `docs/PLAN-CHAT-STRATEGY.md`): classified, advised, never sent on its own.**

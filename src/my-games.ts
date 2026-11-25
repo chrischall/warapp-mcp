@@ -153,7 +153,7 @@ export interface MyGame {
   players: Array<{ name: string; state: string; committed: boolean }>;
   /** The game list's unread-chat flags (null when they did not read); see {@link UnreadChatView}. */
   unreadChat?: UnreadChatView | null;
-  /** Pace: a multi-day game being played or picked with my seat playing — its boot clock ({@link bootView}). */
+  /** Pace: a game being played or picked with my seat playing — its boot clock ({@link bootView}; #504: real-time too). */
   boot?: BootView;
 }
 
@@ -245,8 +245,15 @@ function bootClockOf(f: readonly unknown[]): BootClock | undefined {
 
 /** Under this many minutes left before a boot, a game is reported as close to one (and `warapp_session_status` warns). */
 export const BOOT_WARN_MINUTES = 6 * 60;
+/**
+ * #504: the last turn counted as the opening. A missed turn 1–4 delays the first bonus by a turn or more (three of
+ * the twelve games whose first bonus came after the winner's had one), so those turns are flagged earlier.
+ */
+export const OPENING_LAST_TURN = 4;
+/** #504: an opening turn (or a real-time turn) is close to a boot with this share of its allowance or less left. */
+export const BOOT_SHARE_WARN = 0.25;
 
-/** What a multi-day game's boot clock means for me ({@link bootView}). */
+/** What a game's boot clock means for me ({@link bootView}). */
 export interface BootView {
   /** The game's boot time, in minutes. */
   bootMinutes: number;
@@ -256,24 +263,66 @@ export interface BootView {
   allowanceMinutes: number;
   /** While the game waits on me: the allowance less the time my turn has run (at least 0); null otherwise. */
   leftMinutes: number | null;
-  /** `leftMinutes` under {@link BOOT_WARN_MINUTES}. */
+  /** #504: a real-time game (absent on a multi-day one). */
+  realTime?: true;
+  /** #504: an opening turn: territory picks, or turns 1 to {@link OPENING_LAST_TURN} (absent otherwise). */
+  opening?: true;
+  /**
+   * Close to a boot ({@link bootSoon}): a multi-day game under {@link BOOT_WARN_MINUTES}; #504: an opening turn, or
+   * a real-time game's turn, also at {@link BOOT_SHARE_WARN} of the allowance or less.
+   */
   soon: boolean;
+  /** #504: `soon` in an opening turn — take it first. */
+  openingSoon?: true;
 }
 
 export const BOOT_NOTE =
   "From the game list: the game's boot time plus your banked time, less how long your turn has run (the web client " +
-  'shows the first two together beside each game). Banked time is eaten once the boot time is spent. The fields are ' +
-  "read from war.app's client; the arithmetic is unverified live.";
+  'shows the first two together beside each game). Banked time is eaten once the boot time is spent. A multi-day ' +
+  `game is close to a boot under ${BOOT_WARN_MINUTES / 60} hours left; an opening turn (picks, or turns 1 to ` +
+  `${OPENING_LAST_TURN}: a missed one delays the first bonus) or a real-time turn also with a quarter of its time or ` +
+  "less left (#504). The fields are read from war.app's client; the arithmetic is unverified live, and for a real-time " +
+  'game unverified at all.';
 
-/** A multi-day game's boot view, or undefined: real-time, no boot time, the clock unread, or not a game I play. */
-export function bootView(clock: BootClock | undefined, waitingOnYou: boolean): BootView | undefined {
-  if (!clock || clock.realTime || !(clock.bootMs > 0) || clock.bootMs >= NEVER_MS) return undefined;
+/**
+ * #504: whether `leftMinutes` is close to a boot: under {@link BOOT_WARN_MINUTES} in a multi-day game, and in an
+ * opening turn or a real-time game also at a quarter of the allowance or less (a real-time turn has no six-hour line).
+ */
+export function bootSoon(
+  leftMinutes: number,
+  g: { allowanceMinutes: number; realTime?: boolean; opening?: boolean },
+): boolean {
+  const byShare = (g.opening || g.realTime) === true && leftMinutes <= g.allowanceMinutes * BOOT_SHARE_WARN;
+  return byShare || (!g.realTime && leftMinutes < BOOT_WARN_MINUTES);
+}
+
+/**
+ * A game's boot view, or undefined: no boot time, the clock unread, or not a game I play. `opening`: the game is
+ * picking territories or on turns 1–{@link OPENING_LAST_TURN} (#504; a real-time game is reported since #504 too).
+ */
+export function bootView(clock: BootClock | undefined, waitingOnYou: boolean, opening = false): BootView | undefined {
+  if (!clock || !(clock.bootMs > 0) || clock.bootMs >= NEVER_MS) return undefined;
   const min = (ms: number) => Math.max(0, Math.floor(ms / 60_000));
   const bootMinutes = min(clock.bootMs);
   const bankedMinutes = clock.bankedMs >= NEVER_MS ? 0 : min(clock.bankedMs);
   const allowanceMinutes = bootMinutes + bankedMinutes;
   const leftMinutes = waitingOnYou ? Math.max(0, allowanceMinutes - min(clock.turnForMs)) : null;
-  return { bootMinutes, bankedMinutes, allowanceMinutes, leftMinutes, soon: leftMinutes !== null && leftMinutes < BOOT_WARN_MINUTES };
+  const soon = leftMinutes !== null && bootSoon(leftMinutes, { allowanceMinutes, realTime: clock.realTime, opening });
+  return {
+    bootMinutes,
+    bankedMinutes,
+    allowanceMinutes,
+    leftMinutes,
+    ...(clock.realTime ? { realTime: true as const } : {}),
+    ...(opening ? { opening: true as const } : {}),
+    soon,
+    ...(soon && opening ? { openingSoon: true as const } : {}),
+  };
+}
+
+/** #504: picking territories, or playing turns 1 to {@link OPENING_LAST_TURN}. */
+export function isOpening(stateCode: number, lastTurn: number): boolean {
+  return stateCode === GAME_DISTRIBUTING || (stateCode === GAME_PLAYING && lastTurn + 1 >= 1 && lastTurn + 1 <= OPENING_LAST_TURN);
 }
 
 /** Minutes as `2d 3h`, `5h 20m` or `45m`. */
@@ -308,7 +357,8 @@ export function summarizeMyGames(games: readonly RawMyGame[], myInGameId: number
     const me = g.players.find((p) => p.id === myInGameId);
     const active = g.stateCode === GAME_PLAYING || g.stateCode === GAME_DISTRIBUTING;
     const waitingOnYou = active && me !== undefined && me.stateCode === PLAYER_PLAYING && !me.committed;
-    const boot = active && me?.stateCode === PLAYER_PLAYING ? bootView(g.boot, waitingOnYou) : undefined;
+    const boot =
+      active && me?.stateCode === PLAYER_PLAYING ? bootView(g.boot, waitingOnYou, isOpening(g.stateCode, g.lastTurn)) : undefined;
     return {
       id: g.id,
       name: g.name,
@@ -324,10 +374,13 @@ export function summarizeMyGames(games: readonly RawMyGame[], myInGameId: number
       ...(boot ? { boot } : {}),
     };
   });
-  // Waiting on me first, then unread private chat, then the rest (war.app's order within each).
+  // Waiting on me first — #504: an opening turn close to a boot before the rest, soonest first — then unread
+  // private chat, then the rest (war.app's order within each).
   const privateUnread = (g: MyGame) => !g.waitingOnYou && g.unreadChat?.private === true;
+  const openingSoon = (g: MyGame) => g.waitingOnYou && g.boot?.openingSoon === true;
   return [
-    ...out.filter((g) => g.waitingOnYou),
+    ...out.filter(openingSoon).sort((a, b) => (a.boot?.leftMinutes ?? 0) - (b.boot?.leftMinutes ?? 0)),
+    ...out.filter((g) => g.waitingOnYou && !openingSoon(g)),
     ...out.filter(privateUnread),
     ...out.filter((g) => !g.waitingOnYou && !privateUnread(g)),
   ];
@@ -391,7 +444,10 @@ export function briefGameLine(game: MyGame): string {
   const u = game.unreadChat;
   const others = u ? (['public', 'team', 'group'] as const).filter((c) => u[c]) : [];
   const unread = (u?.private ? ' — unread private' : '') + (others.length ? ` — unread ${others.join(', ')}` : '');
-  const soon = game.boot?.soon && game.boot.leftMinutes !== null ? ` — boot in ${minutesText(game.boot.leftMinutes)}` : '';
+  const soon =
+    game.boot?.soon && game.boot.leftMinutes !== null
+      ? ` — ${game.boot.openingSoon ? 'opening turn, ' : ''}boot in ${minutesText(game.boot.leftMinutes)}`
+      : '';
   const tail = ` — ${where} — ${game.waitingOnYou ? 'waiting on you' : 'waiting on others'}${soon}${unread}`;
   const flat = game.name.replace(/\s+/g, ' ').trim() || '(untitled)';
   const escaped = flat.startsWith('-- ') || flat.startsWith('\\') ? `\\${flat}` : flat;

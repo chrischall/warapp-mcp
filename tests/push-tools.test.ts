@@ -3,7 +3,7 @@ import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeRequest, fromHex } from '../src/protocol/codec.js';
 import type { GameUpdate } from '../src/push/listener.js';
-import { checkOf, coalesced, isWaitingOn, waitForTurn, type GameCheck } from '../src/tools/push.js';
+import { checkOf, coalesced, isWaitingOn, readyOrder, waitForTurn, type GameCheck } from '../src/tools/push.js';
 import { normalizeGame } from '../src/normalize.js';
 import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 import { fakeSocketIo, framed, gameUpdatedHex, type FakeSocketIo } from './push/fake-socket.js';
@@ -340,6 +340,22 @@ describe('warapp_wait_for_turn', () => {
     // Checked first; one is ready, so neither is subscribed (#131).
     expect(h!.calls.map((c) => new URL(c.url).searchParams.get('GameID')).sort()).toEqual([String(GAME), '23456789']);
     expect(subscribes(socket)).toEqual([]);
+  });
+
+  it('#504: without game_ids, names an opening turn close to a boot from the list it read (no extra request)', async () => {
+    const H = 3_600_000;
+    // Turn 2, 12 hours of a 72-hour boot left: past a quarter.
+    const opening: SyntheticGame = { ...mine(GAME, 3), bootTimeMs: 72 * H, turnForMs: 60 * H };
+    await setup([READY()], ME_PAGE, [opening]);
+    const p = payload(await call('warapp_wait_for_turn', {}));
+    expect(p.status).toBe('your_turn');
+    expect(p.ready).toEqual([GAME]);
+    expect(p.bootSoon).toEqual([{ id: GAME, name: `⟦G${GAME}⟧`, leftMinutes: 720, left: '12h', opening: true }]);
+  });
+
+  it('#504: readyOrder puts the games close to a boot first, in their order', () => {
+    expect(readyOrder([1, 2, 3], [{ id: 3 }, { id: 9 }, { id: 2 }])).toEqual([3, 2, 1]);
+    expect(readyOrder([1, 2], [])).toEqual([1, 2]);
   });
 
   it('without game_ids, refuses when none of my games is in play', async () => {

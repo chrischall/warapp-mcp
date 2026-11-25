@@ -4,8 +4,11 @@ import { Method, MyGamesFilterType, writeGetMyGamesParams } from '../src/protoco
 import { listMyGames, MY_GAMES_WINDOWS } from '../src/tools/my-games.js';
 import {
   anyUnreadChat,
+  bootSoon,
   bootView,
+  isOpening,
   minutesText,
+  OPENING_LAST_TURN,
   type BootClock,
   briefGameLine,
   chatGameIds,
@@ -233,12 +236,38 @@ describe('warapp_my_games', () => {
     const p = payload(await h!.call('warapp_my_games'));
     const games = p.games as Array<Record<string, unknown>>;
     expect(games.find((g) => g.id === 1101)!.boot).toEqual({ bootMinutes: 2160, bankedMinutes: 480, allowanceMinutes: 2640, leftMinutes: 240, soon: true });
-    expect(games.find((g) => g.id === 1102)).not.toHaveProperty('boot');
-    expect(p.bootSoon).toBe(1);
+    // #504: a real-time game is reported too, close to a boot only at a quarter or less of its time (here 0 left).
+    expect(games.find((g) => g.id === 1102)!.boot).toEqual({ bootMinutes: 5, bankedMinutes: 480, allowanceMinutes: 485, leftMinutes: 0, realTime: true, soon: true });
+    expect(p.bootSoon).toBe(2);
+    expect(p).not.toHaveProperty('openingBootSoon');
     expect(p.bootNote).toMatch(/banked time/);
     const s = payload(await h!.call('warapp_session_status'));
+    // A real-time game is not kept for session_status: its turn passes in minutes.
     expect(s.pace).toMatchObject({ bootSoon: [{ id: 1101, leftMinutes: expect.any(Number) }] });
+    expect((s.pace as { bootSoon: unknown[] }).bootSoon).toHaveLength(1);
     expect(s.bootWarning).toMatch(/Boot close: game 1101 in 4h/);
+  });
+
+  it('#504: an opening turn close to a boot comes first, is counted, and session_status names it first', async () => {
+    const H = 3_600_000;
+    const seat = (committed = false) => [{ id: ME.inGame, name: 'Ann', state: P_PLAYING, committed }];
+    // Turn 6, 2 hours left: close by the six-hour line. Turn 2, 12 hours of 72 left: close by the quarter.
+    const late: SyntheticGame = { id: 1201, name: 'Late', lastTurn: 5, state: PLAYING, bootTimeMs: 72 * H, turnForMs: 70 * H, players: seat() };
+    const early: SyntheticGame = { id: 1202, name: 'Early', lastTurn: 1, state: PLAYING, bootTimeMs: 72 * H, turnForMs: 60 * H, players: seat() };
+    await harness([late, early]);
+    const p = payload(await h!.call('warapp_my_games'));
+    const games = p.games as Array<{ id: number; boot: Record<string, unknown> }>;
+    expect(games.map((g) => g.id)).toEqual([1202, 1201]);
+    expect(games[0]!.boot).toMatchObject({ opening: true, openingSoon: true, leftMinutes: 720 });
+    expect(p.bootSoon).toBe(2);
+    expect(p.openingBootSoon).toBe(1);
+    expect(p.bootNote).toMatch(/opening turn/);
+    const s = payload(await h!.call('warapp_session_status'));
+    expect((s.pace as { bootSoon: Array<{ id: number; opening?: true }> }).bootSoon).toEqual([
+      expect.objectContaining({ id: 1202, opening: true }),
+      expect.objectContaining({ id: 1201 }),
+    ]);
+    expect(s.bootWarning).toMatch(/Boot close: game 1202 in 12h \(opening turn\), game 1201 in 2h .*a missed one delays the first bonus/);
   });
 
   it('lists my games through GetMyGames, waiting-on-me first, states and turns named', async () => {
@@ -267,7 +296,8 @@ describe('warapp_my_games', () => {
       // The game list's unread-chat flags (each false by default in the synthetic list).
       unreadChat: { public: false, team: false, private: false, group: false, toMe: false },
       // Pace: the synthetic list's 3-day boot, no bank, my turn just begun.
-      boot: { bootMinutes: 4320, bankedMinutes: 0, allowanceMinutes: 4320, leftMinutes: 4320, soon: false },
+      // #504: turn 2 is an opening turn; with all its time left it is not close to a boot.
+      boot: { bootMinutes: 4320, bankedMinutes: 0, allowanceMinutes: 4320, leftMinutes: 4320, opening: true, soon: false },
       // #317: this fake answers no GameRefresh, so the details are unread: unknown, never "none".
       surrenderPending: null,
     });
@@ -678,7 +708,7 @@ describe('readMyGames / summarizeMyGames', () => {
   });
 });
 
-describe('pace: the boot clock (multi-day games)', () => {
+describe('pace: the boot clock', () => {
   const H = 3_600_000;
   const clock = (over: Partial<BootClock> = {}): BootClock => ({ bootMs: 36 * H, bankedMs: 8 * H, turnForMs: 0, realTime: false, ...over });
 
@@ -689,8 +719,7 @@ describe('pace: the boot clock (multi-day games)', () => {
     expect(bootView(clock({ turnForMs: 10 * H }), true)!.soon).toBe(false);
   });
 
-  it('says nothing for a real-time game, a game with no boot time, or an unread clock', () => {
-    expect(bootView(clock({ realTime: true }), true)).toBeUndefined();
+  it('says nothing for a game with no boot time or an unread clock', () => {
     expect(bootView(clock({ bootMs: 0 }), true)).toBeUndefined();
     expect(bootView(clock({ bootMs: 922_336_666_814_565 }), true)).toBeUndefined();
     expect(bootView(undefined, true)).toBeUndefined();
@@ -701,6 +730,64 @@ describe('pace: the boot clock (multi-day games)', () => {
     expect(briefGameLine(g)).toBe('G — turn 3 — waiting on you — boot in 4h');
     expect(minutesText(2640)).toBe('1d 20h');
     expect(minutesText(45)).toBe('45m');
+  });
+});
+
+describe('#504: an opening turn close to a boot', () => {
+  const H = 3_600_000;
+  // A 3-day boot, no bank: a quarter is 18 hours.
+  const clock = (over: Partial<BootClock> = {}): BootClock => ({ bootMs: 72 * H, bankedMs: 0, turnForMs: 0, realTime: false, ...over });
+
+  it('is picks or turns 1 to 4', () => {
+    expect(OPENING_LAST_TURN).toBe(4);
+    expect(isOpening(5, -1)).toBe(true); // distributing territories
+    expect(isOpening(3, 0)).toBe(true); // turn 1
+    expect(isOpening(3, 3)).toBe(true); // turn 4
+    expect(isOpening(3, 4)).toBe(false); // turn 5
+    expect(isOpening(3, -1)).toBe(false);
+    expect(isOpening(2, -1)).toBe(false); // a lobby
+  });
+
+  it('flags an opening turn from a quarter of its time left, a later turn only under six hours', () => {
+    // 12 hours left of 72: past a quarter, not yet under six hours.
+    const opening = bootView(clock({ turnForMs: 60 * H }), true, true)!;
+    expect(opening).toEqual({ bootMinutes: 4320, bankedMinutes: 0, allowanceMinutes: 4320, leftMinutes: 720, opening: true, soon: true, openingSoon: true });
+    expect(bootView(clock({ turnForMs: 60 * H }), true, false)).toEqual({ bootMinutes: 4320, bankedMinutes: 0, allowanceMinutes: 4320, leftMinutes: 720, soon: false });
+    // Exactly a quarter left is flagged; one minute more is not.
+    expect(bootView(clock({ turnForMs: 54 * H }), true, true)!.openingSoon).toBe(true);
+    expect(bootView(clock({ turnForMs: 54 * H - 60_000 }), true, true)).not.toHaveProperty('openingSoon');
+    // Under six hours an opening turn is flagged whatever the share (a short boot).
+    expect(bootView(clock({ bootMs: 20 * H, turnForMs: 14 * H + 60_000 }), true, true)).toMatchObject({ leftMinutes: 359, openingSoon: true });
+    // Not waiting on me: no time left counts, nothing flagged.
+    expect(bootView(clock({ turnForMs: 60 * H }), false, true)).toMatchObject({ leftMinutes: null, opening: true, soon: false });
+  });
+
+  it('flags a real-time turn only at a quarter of its time or less (no six-hour line)', () => {
+    const rt = (turnForMs: number) => bootView({ bootMs: 5 * 60_000, bankedMs: 0, turnForMs, realTime: true }, true, false)!;
+    expect(rt(60_000)).toEqual({ bootMinutes: 5, bankedMinutes: 0, allowanceMinutes: 5, leftMinutes: 4, realTime: true, soon: false });
+    expect(rt(4 * 60_000)).toMatchObject({ leftMinutes: 1, soon: true });
+    expect(bootSoon(1, { allowanceMinutes: 5, realTime: true })).toBe(true);
+    expect(bootSoon(2, { allowanceMinutes: 5, realTime: true })).toBe(false);
+    expect(bootSoon(359, { allowanceMinutes: 4320 })).toBe(true);
+    expect(bootSoon(360, { allowanceMinutes: 4320 })).toBe(false);
+  });
+
+  it('puts an opening turn close to a boot first among the games waiting on me, soonest first', () => {
+    const me = 77;
+    const raw = (id: number, lastTurn: number, turnForMs: number) => ({
+      id,
+      name: `G${id}`,
+      lastTurn,
+      stateCode: 3,
+      players: [{ id: me, name: 'Me', stateCode: 2, committed: false }],
+      boot: clock({ turnForMs }),
+    });
+    const out = summarizeMyGames([raw(1, 9, 70 * H), raw(2, 1, 60 * H), raw(3, 0, 0), raw(4, 2, 66 * H)], me);
+    // Game 1 (turn 10, 2 h left) is close to a boot but not an opening turn: it keeps its place after the openings.
+    expect(out.map((g) => g.id)).toEqual([4, 2, 1, 3]);
+    expect(out.map((g) => g.boot?.openingSoon === true)).toEqual([true, true, false, false]);
+    expect(briefGameLine(out[0]!)).toBe('G4 — turn 3 — waiting on you — opening turn, boot in 6h');
+    expect(briefGameLine(out[2]!)).toBe('G1 — turn 10 — waiting on you — boot in 2h');
   });
 });
 
