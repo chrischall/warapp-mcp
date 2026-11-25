@@ -62,6 +62,14 @@ export const finishedPath = (dir: string, salt: string, me: number, gameId: numb
 export const processedPath = (dir: string) => join(finishedDir(dir), 'processed.json');
 const KEY = /^[0-9a-f]{32}$/;
 
+/**
+ * The version of what the end-of-game pass collects and processes from a history. Bump it whenever the capture
+ * or its processing (profiles, map record, lessons, decision-log truth, stats) gains or changes a metric:
+ * warapp_backfill_history's `reread: 'outdated'` then reads again the history of every game whose record was
+ * kept under an older one (a record kept before this field reads as 0). 1: the first versioned capture.
+ */
+export const COLLECTOR_VERSION = 1;
+
 /** What a pass left: the capture, or why the history did not come. */
 export type FinishedStatus = 'captured' | 'history-unreadable' | 'read-failed';
 
@@ -75,6 +83,8 @@ type Side = { owner: string; armies: number | null };
 /** The record as stored (players by key). */
 export interface FinishedRecord {
   version: 1;
+  /** {@link COLLECTOR_VERSION} when the record was kept; absent on records kept before it (read as 0). */
+  collector?: number;
   status: FinishedStatus;
   failure?: FinishedFailure;
   /** The history layout the boards were read in (#315). */
@@ -187,6 +197,53 @@ export async function readFinishedState(path: string): Promise<'missing' | 'unre
     const v: unknown = JSON.parse(text);
     if (!isRec(v) || v.version !== VERSION || typeof v.status !== 'string' || !STATUSES.has(v.status)) return 'unreadable';
     return { status: v.status as FinishedStatus };
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/** What one game's record says, for warapp_backfill_history's per-game report: figures and codes only. */
+export interface FinishedSummary {
+  status: FinishedStatus;
+  /** {@link COLLECTOR_VERSION} it was kept under (0: before the field). */
+  collector: number;
+  /** Why the history did not come (`history-unreadable` / `read-failed`): the reason code, and the request's error kind. */
+  failure?: { reason: string; kind?: string };
+  /** History boards read (`turns`), boards kept, and the stats' version (absent: none kept). */
+  turns?: number;
+  boards?: number;
+  statsVersion?: number;
+  kinds?: GameKind[];
+  /** My result. */
+  result?: FinishedOutcome;
+}
+
+/** The record at `path` summarised: `missing`, `unreadable` (as {@link readFinishedState}), or its summary. Never throws. */
+export async function readFinishedSummary(path: string): Promise<'missing' | 'unreadable' | FinishedSummary> {
+  let text: string;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable';
+  }
+  try {
+    const v: unknown = JSON.parse(text);
+    if (!isRec(v) || v.version !== VERSION || typeof v.status !== 'string' || !STATUSES.has(v.status)) return 'unreadable';
+    const r = v as unknown as FinishedRecord;
+    const f = isRec(r.failure) ? r.failure : undefined;
+    const stats = isRec(r.stats) ? r.stats : undefined;
+    return {
+      status: r.status,
+      collector: typeof r.collector === 'number' && Number.isInteger(r.collector) && r.collector >= 0 ? r.collector : 0,
+      ...(f && typeof f.reason === 'string'
+        ? { failure: { reason: f.reason, ...('kind' in f && typeof f.kind === 'string' ? { kind: f.kind } : {}) } }
+        : {}),
+      ...(Array.isArray(r.turns) ? { turns: r.turns.length } : {}),
+      ...(Array.isArray(r.boards) ? { boards: r.boards.length } : {}),
+      ...(stats && typeof stats.version === 'number' ? { statsVersion: stats.version } : {}),
+      ...(Array.isArray(r.kinds) ? { kinds: r.kinds.filter((k): k is GameKind => typeof k === 'string') } : {}),
+      ...(isRec(r.outcome) && typeof r.outcome.result === 'string' ? { result: r.outcome.result as FinishedOutcome } : {}),
+    };
   } catch {
     return 'unreadable';
   }
@@ -326,6 +383,7 @@ export function finishedRecordOf(p: RecordParts): FinishedRecord {
   const stored = kept ? storeBoards(kept.boards, p.game?.players.map((x) => x.id) ?? [p.me], key) : undefined;
   return {
     version: VERSION,
+    collector: COLLECTOR_VERSION,
     status: p.status,
     ...(p.failure ? { failure: p.failure } : {}),
     ...(p.layout ? { layout: p.layout } : {}),

@@ -117,7 +117,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   an account or salt refusal keeps it for a retry. `warapp_backfill_history` (not confirm-gated: this server's
   state only, never war.app) runs `sweepFinished` with `limit` (default 10, max 25) and an optional `window` (at
   most `MAX_FINISHED_RECORDS`), so each game's history is still read once; it then fills the winners' income curves
-  of map-record entries kept before #419 from the kept histories (`winnerCurves`, no request).
+  of map-record entries kept before #419 from the kept histories (`winnerCurves`, no request). It lists every game
+  considered one by one (`games`, `gameStanding`: recorded — status, failure code, history turns, boards, stats version,
+  `collector` and `outdated` — not-processed, processed-record-pruned, record-unreadable; and `thisCall` read / reread /
+  waiting), from this server's state alone; `game_ids` limits it (others in `notFinishedOrNotMine`). **Re-reads (owner
+  request 2026-11-25):** every record carries `collector` = `COLLECTOR_VERSION` (src/finished-store.ts; absent on
+  records kept before it, read as 0) — bump it whenever the capture or its processing gains or changes a metric — and
+  `reread` (`failed`, `outdated`, `all`) reads the history AGAIN, past the processed marks (`EndOfGameOptions.reread`,
+  once per game per process): the record and everything processed from it are rebuilt, each store replacing the
+  game's share; a re-read that does not capture never replaces a captured record (`keptPrevious`).
 - **The plan stress test is `warapp_check_plan`** (read-only; it writes nothing but its verdict to the decision log
   (#437), not the board cache either). `src/analysis/turn-sim.ts` resolves one turn from every player's orders by the wiki's rules
   (`docs/STRATEGY.md` "Turn resolution" links each page: deploys first, then attacks and transfers
