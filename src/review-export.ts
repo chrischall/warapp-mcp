@@ -197,7 +197,7 @@ export async function reviewGame(dir: string, gameId: number, opts: ReviewOption
   const me = cached ?? found.me;
   const finished = typeof found.record === 'object' ? found.record : null;
 
-  const mapId = finished?.mapId ?? game?.settings?.mapId;
+  const mapId = finished?.mapId ?? game?.settings?.mapId ?? log?.mapId;
   const stored = mapId !== undefined ? await readStoredMap(dir, mapId, { maxAgeMs: Number.POSITIVE_INFINITY }) : undefined;
   const key = salt && me !== undefined ? finishedGameKey(salt, me, gameId) : undefined;
   const mapRecord =

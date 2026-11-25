@@ -19,6 +19,7 @@
 // `pickWarningCode`), `capturePicksSent` (warapp_submit_picks after a send) and `capturePicksAward` (the award
 // `loadAward` reads on turn 1, once).
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import type { HeadroomRow } from '../analysis/headroom.js';
 import type { OutlookLean, OutlookState } from '../analysis/outlook.js';
 import type { stressPlan } from '../analysis/stress.js';
@@ -32,6 +33,7 @@ import type { BoardState } from '../board.js';
 import type { OutlookLog } from '../outlook-log.js';
 import type { JoinScreen, OpenGame, PolicyCheck } from '../open-games.js';
 import { policyChecks, type JoinAccount } from '../open-games.js';
+import { pinStoredMap } from '../map-store.js';
 import { nameFreeSettings } from '../replay.js';
 import { readSeenTurn } from '../turn-orders.js';
 import {
@@ -113,12 +115,14 @@ export async function capturePlan(
 ): Promise<void> {
   if (!ctx.dataDir) return;
   const opts = modeOf(ctx);
-  await recordDecision(
+  const mapId = a.graph.map.id;
+  const wrote = await recordDecision(
     ctx.dataDir,
     a.gameId,
     a.me,
     {
       turn: a.turn,
+      mapId,
       board: a.board,
       ...(a.plannedBoard ? { plannedBoard: a.plannedBoard } : {}),
       input: a.input,
@@ -133,6 +137,8 @@ export async function capturePlan(
     },
     opts,
   );
+  // #586: keep the map of every game with a decision log, so its turns can be replayed offline.
+  if (wrote || existsSync(decisionLogPath(ctx.dataDir, a.gameId))) await pinStoredMap(ctx.dataDir, mapId, a.gameId);
   if (a.turn < 2) return;
   try {
     await fillOutcome(

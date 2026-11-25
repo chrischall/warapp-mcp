@@ -58,9 +58,10 @@ import { open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type AccuracySummary, estimateOff, type LoggedTurn, type TruthResult, type TurnAccuracy, type TurnTruth } from './analysis/decision-truth.js';
 import type { OutlookLean, OutlookReading, OutlookState } from './analysis/outlook.js';
+import type { IncomeJump, IncomeRise, IncomeTrip, ObservedLow, OpponentTrack } from './analysis/opponents.js';
 import type { EnemyDeployEstimate, PlanInput, TurnPlan } from './analysis/plan/shared.js';
 import type { BoardState, TerritoryState } from './board.js';
-import { writeJsonAtomic } from './map-store.js';
+import { unpinGames, writeJsonAtomic } from './map-store.js';
 import { withPathLock } from './path-lock.js';
 import { serverBuild } from './build-id.js';
 import type { SeenOrder, SeenTurn } from './turn-orders.js';
@@ -164,6 +165,55 @@ export interface LoggedEstimate {
    * end-of-game truth scores each stage, not only the final estimate. Absent in entries written before #568.
    */
   stages?: EstimateStages;
+  /**
+   * #586: the tracker's own figures for this opponent that turn ({@link LoggedTrack}), so a finished game can show
+   * which step held an estimate below the truth after a jump. Kept through compaction (the replay `input` that also
+   * holds the track is not). Absent when no track was used, and in entries written before #586.
+   */
+  track?: LoggedTrack;
+}
+
+/** #586: one reading of the tracker's income window ({@link ObservedTurn}), figures only. */
+export interface LoggedTrackTurn {
+  /** The turn whose orders the reading shows. */
+  turn: number;
+  observed: number;
+  raw: number;
+  low: number;
+  high: number;
+  /** What it could earn that turn: the reading's ceiling. */
+  cap: number;
+  /** The share of its frontier the turn read; `null` when unmeasured. */
+  coverage: number | null;
+  /** #418: what a capture with every source in view proved. */
+  captureFloor?: number;
+  /** #418: every army it could deploy was in view. */
+  accounted?: true;
+  /** #271: a pattern of captures out of the fog set this much income. */
+  fogCaptures?: number;
+}
+
+/**
+ * #586: the tracker's figures behind one estimate ({@link OpponentTrack}), ids and numbers only (no warning or note
+ * text): its income and the window that gave it, each window turn's reading, and what held or lowered it.
+ */
+export interface LoggedTrack {
+  /** The tracker's income (`null` before any observed turn). */
+  income: number | null;
+  /** The window's readings, oldest first. */
+  window: LoggedTrackTurn[];
+  /** With `carried`: what the bonuses broken since (or a lower cap) took off. */
+  lowered?: number;
+  /** #418: the rise cap held it (`read`, `before`, `proven`, `low`). */
+  rise?: IncomeRise;
+  /** #567: a window turn's low end above the income. */
+  observedLow?: ObservedLow;
+  /** #418: the over-read tripwire's latest step. */
+  trip?: IncomeTrip;
+  /** #250: the income rests on one turn far above those before it. */
+  jump?: { turn: number; observed: number; before: number; verdict: IncomeJump['verdict'] };
+  /** #420: its largest top-up seen. */
+  topUp?: number;
 }
 
 /**
@@ -615,6 +665,8 @@ export interface DecisionLog {
   accuracySummary?: AccuracySummary;
   /** Turns of the game the history itself lacks (never because of the finished record's cut). */
   truthMissing?: number[];
+  /** #586: the game's map id, set by a planned turn (its stored map is pinned while the log is kept). */
+  mapId?: number;
 }
 
 /** One planned turn as handed to {@link recordDecision}. */
@@ -637,6 +689,8 @@ export interface DecisionRecord {
   estimates?: readonly EnemyDeployEstimate[];
   /** The game's players, for scrubbing names; only ids are ever written. */
   players?: readonly { id: number; name?: string }[];
+  /** #586: the game's map id. */
+  mapId?: number;
   /** #437: the plan's first mover (`null`: unknown). */
   firstMover?: LoggedFirstMover | null;
   /** #437: my hand and the card advice offered. */
@@ -787,9 +841,13 @@ export function decodeInput(logged: LoggedInput, board: BoardState, graph: PlanI
 /** The estimates as logged: ids, figures and flags only. */
 export function loggedEstimates(
   estimates: readonly EnemyDeployEstimate[],
-  tracks?: readonly { playerId: number; incomeMethod?: string | null }[],
+  tracks?: readonly LoggableTrack[],
 ): LoggedEstimate[] {
   const methods = new Map((tracks ?? []).flatMap((t) => (t.incomeMethod ? [[t.playerId, t.incomeMethod] as const] : [])));
+  const internals = new Map((tracks ?? []).flatMap((t) => {
+    const logged = loggedTrack(t);
+    return logged ? [[t.playerId, logged] as const] : [];
+  }));
   return [...estimates]
     .sort((a, b) => a.playerId - b.playerId)
     .map((e) => ({
@@ -800,7 +858,43 @@ export function loggedEstimates(
       thin: !!e.thinEvidence,
       ...(methods.has(e.playerId) ? { method: methods.get(e.playerId)! } : {}),
       stages: estimateStages(e),
+      ...(internals.has(e.playerId) ? { track: internals.get(e.playerId)! } : {}),
     }));
+}
+
+/** A track as {@link loggedEstimates} reads it: the id and method, and the tracker's figures when it has them. */
+export type LoggableTrack = { playerId: number; incomeMethod?: string | null } & Partial<
+  Pick<OpponentTrack, 'income' | 'incomeTurns' | 'turns' | 'incomeLowered' | 'incomeRise' | 'observedLow' | 'incomeTrip' | 'incomeJump' | 'topUp'>
+>;
+
+/** #586: {@link LoggedTrack} of one track; `undefined` for a track with no income field (one built by hand). */
+export function loggedTrack(t: LoggableTrack): LoggedTrack | undefined {
+  if (t.income === undefined) return undefined;
+  const window = new Set(t.incomeTurns ?? []);
+  const turns = (t.turns ?? []).filter((x) => window.has(x.from));
+  return {
+    income: t.income,
+    window: turns.map((x) => ({
+      turn: x.from,
+      observed: x.observed,
+      raw: x.raw,
+      low: x.low,
+      high: x.high,
+      cap: x.cap,
+      coverage: x.coverage?.share ?? null,
+      ...(x.captureFloor !== undefined ? { captureFloor: x.captureFloor } : {}),
+      ...(x.accounted ? { accounted: true as const } : {}),
+      ...(x.fogCaptures ? { fogCaptures: x.fogCaptures.income } : {}),
+    })),
+    ...(t.incomeLowered ? { lowered: t.incomeLowered } : {}),
+    ...(t.incomeRise ? { rise: { ...t.incomeRise } } : {}),
+    ...(t.observedLow ? { observedLow: { ...t.observedLow } } : {}),
+    ...(t.incomeTrip ? { trip: { ...t.incomeTrip } } : {}),
+    ...(t.incomeJump
+      ? { jump: { turn: t.incomeJump.turn, observed: t.incomeJump.observed, before: t.incomeJump.before, verdict: t.incomeJump.verdict } }
+      : {}),
+    ...(typeof t.topUp === 'number' ? { topUp: t.topUp } : {}),
+  };
 }
 
 /** My income as `input` gives it, card armies out; `undefined` when it holds none. */
@@ -890,6 +984,7 @@ function logOf(c: unknown, gameId: number): DecisionLog | undefined {
     ...(isRec(c.join) ? { join: c.join as unknown as JoinContext } : {}),
     ...(isRec(c.opponents) ? { opponents: c.opponents as Record<string, OpponentSeen> } : {}),
     ...(isRec(c.picks) ? { picks: c.picks as unknown as PicksLog } : {}),
+    ...(isInt(c.mapId) ? { mapId: c.mapId } : {}),
   };
 }
 
@@ -1017,7 +1112,7 @@ export async function recordDecision(
           [String(rec.turn)]: { ...entry, ...(was?.chat ? { chat: was.chat } : {}), ...(was?.checks ? { checks: was.checks } : {}) },
         };
         encodeBoards(turns, boards);
-        return { ...log, turns };
+        return { ...log, ...(rec.mapId !== undefined ? { mapId: rec.mapId } : {}), turns };
       },
       opts,
     );
@@ -1973,5 +2068,7 @@ export async function pruneDecisionLogs(
       // Gone already, or not removable: leave it.
     }
   }
+  // #586: a pruned log no longer keeps its map pinned.
+  await unpinGames(dir, removed);
   return removed;
 }

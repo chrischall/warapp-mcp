@@ -88,9 +88,12 @@ describe('decision log capture (#412 task 2)', () => {
     // #412 task 3: the per-opponent estimates the plan worked from, ids and figures only, for the end-of-game truth.
     expect(e.decision?.estimates?.length).toBeGreaterThan(0);
     for (const x of e.decision!.estimates!) {
-      expect(Object.keys(x).sort()).toEqual(['coverage', 'estimate', 'player', 'source', 'stages', 'thin']);
+      // #586: the tracker's own figures beside them when a track was used (and its method once it observed a turn).
+      const keys = Object.keys(x).filter((k) => k !== 'track' && k !== 'method').sort();
+      expect(keys).toEqual(['coverage', 'estimate', 'player', 'source', 'stages', 'thin']);
       // #568: the stages are figures only.
       for (const v of Object.values(x.stages!)) expect(v === null || typeof v === 'number').toBe(true);
+      if (x.track) expect(JSON.stringify(x.track)).not.toMatch(/[A-Za-z]{4,} [A-Za-z]/);
     }
     const text = fileText();
     expect(text).not.toMatch(/\bAnn\b/);
