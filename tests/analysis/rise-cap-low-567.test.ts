@@ -1,4 +1,4 @@
-// Issue #567 part 1 (DRAFT rule): the #418 rise cap yields to a turn read from at least
+// Issue #567 part 1 (owner decision 2026-11-25): the #418 rise cap yields to a turn read from at least
 // RISE_LOW_COVERAGE of its frontier: the hold never stays below that turn's low end (every ambiguous
 // army read as a move, at most its could-earn cap). Every board here is synthetic.
 import { describe, expect, it } from 'vitest';

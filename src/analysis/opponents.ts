@@ -635,7 +635,7 @@ export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried'
 export const RISE_CAP = 1.3;
 
 /**
- * #567 (DRAFT, owner decision pending): a turn read from at least this share of its frontier
+ * #567 (owner decision 2026-11-25): a turn read from at least this share of its frontier
  * ({@link ObservedTurn.coverage}) is evidence enough that its low end (every ambiguous army read as a move,
  * at most its could-earn cap) was deployed: the {@link RISE_CAP} hold never stays below it. Offline, on the
  * calibration records, no turn read at 60% or more had a low end above the truth.
