@@ -159,6 +159,17 @@ export const UNTRUSTED_PREVIEW_NOTE =
 export const shownAccount = (name: string | undefined, id: number | string): string =>
   `${name === undefined ? 'you' : untrustedText(name)} (${id})`;
 
+/**
+ * A player as a warning sentence names it (#573): its name, delimited (their own words), and its GameFeed id;
+ * the bare id when the game does not list the player or names it not.
+ */
+export const playerNamer =
+  (players: readonly { id: number; name?: string | null }[]) =>
+  (id: number): string => {
+    const name = players.find((p) => p.id === id)?.name;
+    return name ? `${untrustedText(name)} (${id})` : String(id);
+  };
+
 export const untrustedDescription = (description: string): string =>
   `${description} ${UNTRUSTED_DESCRIPTION_SUFFIX}`;
 

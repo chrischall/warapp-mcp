@@ -23,7 +23,7 @@ import { assumedWarning, awardView, loadAward, openingThreat } from './award.js'
 import { readLedger } from '../relations-store.js';
 import { resolveIntel } from '../analysis/intel.js';
 import { allyAttackLine, attacksOnAllies, modAllianceWarnings } from './mod-alliances.js';
-import { avoidPlayersArg, avoidTerritoriesArg, gameIdArg, graphOf, knownIncomeArg, namer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
+import { avoidPlayersArg, avoidTerritoriesArg, gameIdArg, graphOf, knownIncomeArg, namer, playerNamer, readAnnotations, respond, untrustedDescription, untrustedText, viewArg } from './common.js';
 import { lookupMeta } from './hints.js';
 import { HEADROOM_COMPACT, headroomView, readTripwires, safeHeadroom, teamsOf, tripwireWarnings, untrustedDeploy } from './survival.js';
 import { loadLiveGame, standInLine, standInOf, type LiveContext } from './live-context.js';
@@ -522,6 +522,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
 
       const name = namer(map);
       const playerName = new Map(game.players.map((p) => [p.id, p.name]));
+      /** #573: a player in a warning sentence, by name (delimited) and id, as warapp_track_opponents names it. */
+      const playerNamed = playerNamer(game.players);
       const who = (id: number) => ({ id, name: playerName.get(id) ?? String(id) });
       const bonusOf = (id: number) => {
         const b = map.bonuses.find((x) => x.id === id);
@@ -783,12 +785,12 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
         ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, (w) => untrustedOf.get(w.player) ?? untrustedDeploy(w, income), (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
         // #567: a known income that moved another opponent's estimate through #444's scale, by how much.
-        ...[statedShiftWarning(so.statedShifts)].filter((w): w is string => w !== null),
+        ...[statedShiftWarning(so.statedShifts, playerNamed)].filter((w): w is string => w !== null),
         // #567: an opponent tried at an income its tracker holds below what a turn surely read (not one given known_income).
         ...(enemy_deploy === undefined
           ? (tracks ?? [])
               .filter((t) => t.observedLow && t.income !== null && !knownOf.has(t.playerId) && inView.has(t.playerId))
-              .map((t) => observedLowWarning(String(t.playerId), t.income!, t.observedLow!, t.incomeMethod))
+              .map((t) => observedLowWarning(playerNamed(t.playerId), t.income!, t.observedLow!, t.incomeMethod))
           : []),
         ...(award ? assumedWarning(award) : []),
         // #270: the static seats whose territories the test read as neutrals.

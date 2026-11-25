@@ -112,6 +112,7 @@ import {
   avoidTerritoriesArg,
   graphOf,
   namer,
+  playerNamer,
   readAnnotations,
   respond,
   shownAccount,
@@ -3346,7 +3347,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...[armyCapPoolsUncertainty(setup.incomeCap, settings.localDeployments)].filter((r): r is string => r !== undefined),
         ...(tracks ?? []).flatMap((t) => t.warnings),
         // #567: a known income that moved another opponent's estimate through #444's scale, by how much.
-        ...[statedShiftWarning(setup.statedShifts)].filter((w): w is string => w !== null),
+        ...[statedShiftWarning(setup.statedShifts, playerNamer(game.players))].filter((w): w is string => w !== null),
         ...plan.warnings,
         ...promised,
         ...modsWarning(game.settings),
