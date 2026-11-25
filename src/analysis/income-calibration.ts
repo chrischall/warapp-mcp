@@ -8,7 +8,7 @@
 //
 // Reported only: nothing plans on it (owner decision P1). Name-free: games are numbered by their place in
 // the report (an ordinal, never the id), opponents are never named or numbered. No I/O, no clock.
-import type { DecisionEntry, EstimateStages } from '../decision-log.js';
+import type { DecisionEntry, EstimateStages, LoggedTrack } from '../decision-log.js';
 import { CALIBRATION_HIGH, CALIBRATION_LOW, COVERAGE_BUCKETS, coverageBucket, type CoverageBucket } from './game-lessons.js';
 
 /** A true income jump at least this many times the turn before starts a catch-up count. */
@@ -67,6 +67,65 @@ export interface IncomeSample {
   leader: boolean;
   /** #568: each pipeline stage's figure that turn (logged since #568); `null` before. */
   stages: EstimateStages | null;
+  /** #586: the step that held it under {@link CATCH_UP_SHARE} of the truth ({@link heldByOf}); `null` when it was not low. */
+  heldBy: HeldBy | null;
+}
+
+/**
+ * #586: the step that held a low estimate (under {@link CATCH_UP_SHARE} of the truth) down, read from the
+ * tracker's logged figures (#587's `track`), first match in this order:
+ * - `after-tracker`: the tracker's income reached it; a later stage (blend, thin evidence, a known income) did not;
+ * - `rise-cap`: a window reading reached it and #418's rise cap held the income;
+ * - `tripwire`: a window reading reached it and #418's over-read tripwire stepped it down;
+ * - `window`: a window reading reached it and the income still did not (a carry lowered by broken bonuses, …);
+ * - `ceiling`: a reading reached it before the could-earn cap, which cut it;
+ * - `ambiguous`: only the high end reached it (the ambiguous armies #123 reads as moves, not deploys);
+ * - `readings`: nothing the boards showed reached it (fog, a thin frontier);
+ * - `no-track`: the estimate used no track (the prior or the visible income alone);
+ * - `unlogged`: logged before #586 kept the track: no step can be named.
+ */
+export const HELD_BY = ['after-tracker', 'rise-cap', 'tripwire', 'window', 'ceiling', 'ambiguous', 'readings', 'no-track', 'unlogged'] as const;
+export type HeldBy = (typeof HELD_BY)[number];
+
+/** #586: {@link HELD_BY}'s step for one estimate; `null` when it reached {@link CATCH_UP_SHARE} of the truth. Pure. */
+export function heldByOf(
+  estimate: number,
+  truth: number,
+  track: LoggedTrack | undefined,
+  stages?: Pick<EstimateStages, 'tracked'> | null,
+): HeldBy | null {
+  const target = CATCH_UP_SHARE * truth;
+  if (truth <= 0 || estimate >= target) return null;
+  if (!track) return stages && stages.tracked === null ? 'no-track' : 'unlogged';
+  if (track.income === null || !track.window.length) return 'no-track';
+  if (track.income >= target) return 'after-tracker';
+  const most = (f: (x: LoggedTrack['window'][number]) => number) => Math.max(...track.window.map(f));
+  if (most((x) => x.observed) >= target) return track.rise ? 'rise-cap' : track.trip ? 'tripwire' : 'window';
+  if (most((x) => Math.max(x.raw, x.high)) >= target && most((x) => x.cap) < target) return 'ceiling';
+  if (most((x) => Math.min(x.high, x.cap)) >= target) return 'ambiguous';
+  return 'readings';
+}
+
+/** #586: the low estimates by the step that held them ({@link heldByOf}). */
+export interface HeldByView {
+  /** Estimates under {@link CATCH_UP_SHARE} of the truth. */
+  low: number;
+  /** Per step named, its count and share of the low estimates a step could be named for. */
+  steps: Partial<Record<Exclude<HeldBy, 'unlogged'>, { n: number; share: number }>>;
+  /** Low estimates logged before #586 kept the track. */
+  unlogged: number;
+}
+
+export function heldByView(samples: readonly IncomeSample[]): HeldByView {
+  const low = samples.filter((s) => s.heldBy !== null);
+  const named = low.filter((s) => s.heldBy !== 'unlogged');
+  const steps: HeldByView['steps'] = {};
+  for (const step of HELD_BY) {
+    if (step === 'unlogged') continue;
+    const n = named.filter((s) => s.heldBy === step).length;
+    if (n) steps[step] = { n, share: r3(n / named.length) };
+  }
+  return { low: low.length, steps, unlogged: low.length - named.length };
 }
 
 /** Estimate ÷ truth over a set of samples, with the signed error in armies. */
@@ -138,6 +197,7 @@ export function incomeSamples(games: readonly CalibrationGame[]): IncomeSample[]
           method: logged.get(a.player)?.method ?? null,
           leader: top !== null && a.truth >= top,
           stages: logged.get(a.player)?.stages ?? null,
+          heldBy: heldByOf(a.estimate, a.truth, logged.get(a.player)?.track, logged.get(a.player)?.stages ?? null),
         });
       }
     }
@@ -368,6 +428,8 @@ export interface IncomeCalibration {
   byStage: Partial<Record<Stage, ErrorView>>;
   /** #568: the tracked stage corrected by its coverage band, per damping (leave one game out). */
   trackedWhatIf: WhatIfRow[];
+  /** #586: the low estimates by the tracker step that held them. */
+  heldBy: HeldByView;
 }
 
 function groupBy<K extends string>(samples: readonly IncomeSample[], key: (s: IncomeSample) => K, order?: readonly K[]): Partial<Record<K, ErrorView>> {
@@ -411,5 +473,6 @@ export function incomeCalibration(games: readonly CalibrationGame[]): IncomeCali
     worst,
     byStage: stageErrors(samples),
     trackedWhatIf: trackedWhatIf(samples),
+    heldBy: heldByView(samples),
   };
 }

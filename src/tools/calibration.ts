@@ -72,9 +72,12 @@ export function registerCalibrationTool(server: McpServer, dataDir: () => string
         'overall and by format, seats, phase (turns 1–4, 5–10, 11+), frontier coverage band, estimate source, thin ' +
         'evidence, the tracker\'s income method (rise-capped or not; logged since #569), leader vs trailer, and phase ' +
         'by coverage; the catch-up lag after a true income jump of 1.5× or more (turns until the estimate reaches two ' +
-        'thirds of the truth; only jumps on a planned turn, the rest counted as unwatched); a consequences proxy (turns that lost a territory the plan did not concede, with an ' +
+        'thirds of the truth; only jumps on a planned turn, the rest counted as unwatched); a consequences proxy ' +
+        '(turns that lost a territory the plan did not concede, with an ' +
         'estimate under half the truth vs without); the largest misses; each pipeline stage\'s figure ÷ the truth ' +
-        '(visible, observed, tracked, prior, stated, blend, thin, known; logged since #568); and what correcting the ' +
+        '(visible, observed, tracked, prior, stated, blend, thin, known; logged since #568); for each estimate under ' +
+        'two thirds of the truth, the tracker step that held it (rise cap, tripwire, window, could-earn ceiling, ' +
+        'ambiguous armies, readings, a later stage, or no track; logged since #586); and what correcting the ' +
         'tracked figure by its coverage band would have read at dampings 0 to 1 (leave one game out). `samples: true` adds the scored rows ' +
         `(at most ${MAX_SAMPLES}), name-free, as a fixture set; \`harness: true\` also runs the #318 harness over the ` +
         'cached boards (tracker, fog prior and plan estimate by coverage band, and the opening benchmark), which can ' +
