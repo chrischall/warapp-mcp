@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.15.0](https://github.com/chrischall/warapp-mcp/compare/v0.14.0...v0.15.0) (2026-11-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **estimates:** a `known_income` entry given to `warapp_plan_turn` or `warapp_check_plan` without a `source` now defaults to `"board"` and no longer scales the other opponents' fog prior ([#444](https://github.com/chrischall/warapp-mcp/issues/444)). Pass `source: "chat"` for a stated income to keep that. Incomes kept by `warapp_record_intel` still count as chat. The output contract is unchanged: `stated.ratio` is still mean ÷ mine, and the new `stated.scale` holds the factor applied.
+
+### Features
+
+* **calibration:** log each estimate stage and score it against the truth ([#568](https://github.com/chrischall/warapp-mcp/issues/568)) ([#582](https://github.com/chrischall/warapp-mcp/issues/582)) ([845013a](https://github.com/chrischall/warapp-mcp/commit/845013aa2e19a27768ad3345fc3eab9725ae7309))
+* **estimates:** let a well-read turn's low end lift the 1.3x rise cap ([#576](https://github.com/chrischall/warapp-mcp/issues/576)) ([1c82012](https://github.com/chrischall/warapp-mcp/commit/1c82012c9ab1700ff7d2936c5025db8be2fff865))
+* **estimates:** only chat-stated incomes from two players rescale the other opponents ([#574](https://github.com/chrischall/warapp-mcp/issues/574)) ([8f3b1eb](https://github.com/chrischall/warapp-mcp/commit/8f3b1ebdc61ba63cf781d2fd178c8f02cf4faf62))
+* **estimates:** show the uncapped observed income and when a known income rescaled others ([#572](https://github.com/chrischall/warapp-mcp/issues/572)) ([6469951](https://github.com/chrischall/warapp-mcp/commit/64699512b29e0427fb1fc6ecdd8eb4501cb6dce4))
+* warapp_calibration and warapp_turn_history ([#569](https://github.com/chrischall/warapp-mcp/issues/569), [#570](https://github.com/chrischall/warapp-mcp/issues/570)) ([#571](https://github.com/chrischall/warapp-mcp/issues/571)) ([a167dba](https://github.com/chrischall/warapp-mcp/commit/a167dba262545d478945e9764d3e16c6903a2329))
+
+
+### Bug Fixes
+
+* **check-plan:** name players in the [#567](https://github.com/chrischall/warapp-mcp/issues/567) warnings by name and id ([#577](https://github.com/chrischall/warapp-mcp/issues/577)) ([2c5b887](https://github.com/chrischall/warapp-mcp/commit/2c5b88783a0a019a276fdd3b35e433bd15da4fdc))
+
+
+### Documentation
+
+* **#567:** drop the DRAFT wording now the owner has approved the rule ([#580](https://github.com/chrischall/warapp-mcp/issues/580)) ([4943e64](https://github.com/chrischall/warapp-mcp/commit/4943e642b408a4dc940db321401b4eeaefc9a0db))
+
 ## [0.14.0](https://github.com/chrischall/warapp-mcp/compare/v0.13.1...v0.14.0) (2026-11-24)
 
 
