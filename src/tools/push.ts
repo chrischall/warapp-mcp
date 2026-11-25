@@ -14,6 +14,7 @@ import { currentTurn, gameIdArg, readAnnotations, respond, untrustedDescription 
 import { lookupMeta, mintMeta } from './hints.js';
 import { failureText, FROZEN_TAB_HINT, type LiveContext } from './live-context.js';
 import { fetchMyGames } from './my-games.js';
+import { paceStatus } from './pace.js';
 import { requireMe } from './write-kit.js';
 import { surrenderOwed } from '../surrender-pending.js';
 import { fetchDetailsSeats, readPendingSurrenders, SURRENDER_PENDING_NOTE, surrenderOwedLine, type PendingSurrenderView } from './surrender-pending.js';
@@ -63,6 +64,13 @@ function endedReason(game: Game, playerId: number): string | undefined {
   const me = game.players.find((p) => p.id === playerId);
   if (me?.state !== undefined && me.state !== 'Playing') return `You are out of this game (your state: ${me.state}).`;
   return undefined;
+}
+
+/** #504: the ready games with the ones close to a boot first, in `bootSoon`'s order (opening turns first). */
+export function readyOrder(ready: readonly number[], bootSoon: ReadonlyArray<{ id: number }>): number[] {
+  const set = new Set(ready);
+  const first = bootSoon.map((g) => g.id).filter((id) => set.has(id));
+  return [...first, ...ready.filter((id) => !first.includes(id))];
 }
 
 export function checkOf(game: Game, playerId: number, surrenders?: PendingSurrenderView[] | null): GameCheck {
@@ -333,6 +341,9 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
           'details, unverified live: null when unreadable, never "none"; empty without a read for a lobby, a finished ' +
           'game or one you no longer play in; after one failed read it stops asking for the ' +
           'rest of the wait and says why in `surrenderUnread`), unless `ignore_surrenders`. ' +
+          '#504: `bootSoon` names the watched games close to a boot as the last game list read saw them (no request of its ' +
+          'own; omitted without one): opening turns first (`opening`: picks or turns 1 to 4, from a quarter of the time ' +
+          'left), then under 6 hours; take those turns first. ' +
           'Pass the game ids to watch (1–20), or omit them to watch every game ' +
           'of yours being played or picked (the first 20, as warapp_my_games lists them). Reports progress while it ' +
           'waits and stops when the call is cancelled. Then plan with warapp_plan_turn (or pick with ' +
@@ -429,10 +440,14 @@ export function registerPushTools(server: McpServer, ctx: LiveContext, push: Pus
         ...(progress ? { progress } : {}),
       });
       const st = push.status();
+      // #504: the watched games close to a boot, from the last game list read (no request of its own).
+      const watched = new Set(ids);
+      const bootSoon = (paceStatus(ctx, Date.now())?.bootSoon ?? []).filter((g) => watched.has(g.id));
       return respond(undefined, VIEWS, () => ({
         status: out.status,
         watching: ids,
-        ...(out.status === 'your_turn' ? { ready: out.games.filter((g) => g.waitingOnYou).map((g) => g.id) } : {}),
+        ...(out.status === 'your_turn' ? { ready: readyOrder(out.games.filter((g) => g.waitingOnYou).map((g) => g.id), bootSoon) } : {}),
+        ...(bootSoon.length ? { bootSoon } : {}),
         // #317: the games where a surrender waits on my acceptance, whatever the status.
         ...(out.games.some((g) => g.surrenderOwed) ? { surrenders: out.games.filter((g) => g.surrenderOwed).map((g) => g.id) } : {}),
         games: out.games.map((g) => (out.chatActivity.includes(g.id) ? { ...g, chatActivity: true as const } : g)),
