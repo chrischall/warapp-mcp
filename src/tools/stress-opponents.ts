@@ -3,7 +3,7 @@
 // check (#274), so both size a reply alike.
 import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart, type PlannerSettings } from '../analysis/index.js';
 import type { MapGraph } from '../analysis/graph.js';
-import type { CardBonusBasis, EnemyDeployEstimate, FogPace } from '../analysis/plan/shared.js';
+import type { CardBonusBasis, EnemyDeployEstimate, FogPace, KnownIncome } from '../analysis/plan/shared.js';
 import { statedShifts } from '../analysis/plan/estimates.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import type { TurnBoard } from '../analysis/opponents.js';
@@ -45,7 +45,7 @@ export interface StressOpponentsInput {
    */
   assumeCards?: AssumeEnemyCards;
   /** #368/#444: the stated incomes applied (`known_income`): each replaces its player's estimate and scales the others' prior. */
-  known?: readonly { player: number; income: number }[];
+  known?: readonly KnownIncome[];
 }
 
 /** check_plan's `assume_enemy_cards`: the clock's card on top of each estimate, or none. */

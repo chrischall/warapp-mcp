@@ -21,7 +21,7 @@ describe('resolveIntel', () => {
     const r = resolveIntel(stored, 1 + INCOME_STALE_TURNS + 1, {});
     expect(r.avoidTerritories).toEqual([157]);
     expect(r.avoidPlayers).toEqual([7]);
-    expect(r.knownIncome).toEqual([{ player: 7, income: 20 }]);
+    expect(r.knownIncome).toEqual([{ player: 7, income: 20, source: 'chat' }]);
     expect(r.report).toEqual({
       applied: {
         avoidTerritories: [{ territory: 157, promisedTo: 9 }],
@@ -38,7 +38,7 @@ describe('resolveIntel', () => {
 
   it('keeps an income exactly INCOME_STALE_TURNS old', () => {
     const r = resolveIntel({ ...emptyIntel(), incomes: [{ player: 8, income: 11, turn: 1 }] }, 1 + INCOME_STALE_TURNS, {});
-    expect(r.knownIncome).toEqual([{ player: 8, income: 11 }]);
+    expect(r.knownIncome).toEqual([{ player: 8, income: 11, source: 'chat' }]);
     expect(r.report!.stale).toEqual([]);
   });
 

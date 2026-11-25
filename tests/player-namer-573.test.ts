@@ -31,7 +31,7 @@ describe('playerNamer (#573)', () => {
 
   it('the stated-shift warning names both players through it', () => {
     expect(statedShiftWarning([{ player: 2011, was: 91, now: 19, by: [{ id: 9999, income: 27 }] }], named)).toBe(
-      "The known income given (player 9999's 27) moved another opponent's estimate: player ⟦Ann⟧ (2011) ~91 → ~19 (#444: a stated income scales the fog prior of every opponent who stated none). To size them without it, leave that known_income out.",
+      "The known income given (player 9999's 27) moved another opponent's estimate: player ⟦Ann⟧ (2011) ~91 → ~19 (#444: incomes stated in chat scale the fog prior of every opponent who stated none). To size them without it, give those incomes source \"board\" or leave them out.",
     );
   });
 

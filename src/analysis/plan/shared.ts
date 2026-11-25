@@ -638,7 +638,21 @@ export interface PlanInput {
    * Reinforcement card the clock adds kept on top. Ignored under `options.enemyDeploy`, and for a player
    * with none of its territories in view (a warning names it).
    */
-  knownIncome?: readonly { player: number; income: number }[];
+  knownIncome?: readonly KnownIncome[];
+}
+
+/**
+ * #567: where a known income came from. `chat`: a player stated it (warapp_record_intel keeps such
+ * statements) — it replaces that player's estimate and feeds #444's scale of the others' fog prior.
+ * `board`: the user's what-if or board evidence — it replaces only that player's estimate. Absent: `board`.
+ */
+export type KnownIncomeSource = 'chat' | 'board';
+
+/** #368/#567: an income the user knows for one player, by GameFeed id, and where it came from. */
+export interface KnownIncome {
+  player: number;
+  income: number;
+  source?: KnownIncomeSource;
 }
 
 /** Why a truce's trust is `watch` ({@link PlanRelation.watch}). */
@@ -1389,11 +1403,12 @@ export interface EnemyIncomePrior {
    */
   out?: readonly { id: number; state: string }[];
   /**
-   * #444: the incomes stated in chat (`known_income`) applied this turn — players in view — whose mean
-   * is below `mine` (`myIncome`): every other opponent's prior is scaled by `ratio` (their mean ÷ mine),
-   * never below what is in view or tracked, never above the prior unscaled. Absent otherwise.
+   * #444: the incomes stated in chat (`known_income` with `source: 'chat'`, or kept by warapp_record_intel)
+   * applied this turn — two or more players in view (#567) — whose mean is below `mine` (`myIncome`): every
+   * other opponent's prior is scaled by `scale` (`ratio`, their mean ÷ mine, to the `STATED_DAMPING` power,
+   * #567), never below what is in view or tracked, never above the prior unscaled. Absent otherwise.
    */
-  stated?: { players: readonly { id: number; income: number }[]; mine: number; ratio: number };
+  stated?: { players: readonly { id: number; income: number }[]; mine: number; ratio: number; scale: number };
   /**
    * #419: the pace past winners set at this turn ({@link FogPace}): while its frontier is mostly hidden (#368's
    * thin evidence), an opponent's upper bound is the larger of the prior and this pace (capped, scaled and

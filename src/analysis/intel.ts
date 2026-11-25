@@ -6,6 +6,8 @@
 // `avoid_players` or `known_income` replaces the stored list of its kind for that call, and a stored
 // income older than `INCOME_STALE_TURNS` turns is not applied (the estimate stands, with a warning). Pure.
 
+import type { KnownIncome } from './plan/shared.js';
+
 /** Why a player is not to be attacked: a fixed list, so the ledger holds no free text. */
 export const AVOID_REASONS = ['promised', 'asked-by-them', 'joint-enemy', 'kingmaker', 'other'] as const;
 export type AvoidReason = (typeof AVOID_REASONS)[number];
@@ -45,7 +47,7 @@ export const intelIsEmpty = (i: StoredIntel | undefined): boolean =>
 
 /** The per-call arguments, as the tools take them. */
 export interface IntelArgs<T> {
-  knownIncome?: readonly { player: number; income: number }[];
+  knownIncome?: readonly KnownIncome[];
   avoidTerritories?: readonly T[];
   avoidPlayers?: readonly number[];
 }
@@ -65,7 +67,7 @@ export interface IntelReport {
 }
 
 export interface ResolvedIntel<T> {
-  knownIncome?: { player: number; income: number }[];
+  knownIncome?: KnownIncome[];
   avoidTerritories?: (T | number)[];
   avoidPlayers?: number[];
   /** Absent when nothing is stored. */
@@ -112,7 +114,7 @@ export function resolveIntel<T>(stored: StoredIntel | undefined, turn: number | 
         else fresh.push(i);
       }
       report.applied.knownIncome = fresh.map((i) => ({ player: i.player, income: i.income, statedTurn: i.turn }));
-      if (fresh.length) out.knownIncome = fresh.map((i) => ({ player: i.player, income: i.income }));
+      if (fresh.length) out.knownIncome = fresh.map((i) => ({ player: i.player, income: i.income, source: 'chat' as const }));
     }
   }
 

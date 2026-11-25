@@ -1197,7 +1197,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           const said = st.players.map((x) => `player ${x.id} states ${x.income}`).join(', ');
           const mid = e.stated.midpoint;
           warnings.push(
-            `Player ${p}'s fog prior is scaled by the incomes stated in chat (known_income: ${said}), ${Math.round(st.ratio * 100) / 100}× my ${st.mine}: ~${e.stated.scaled} in place of ~${e.stated.full}, never below what is in view or tracked${
+            `Player ${p}'s fog prior is scaled by the incomes stated in chat (known_income: ${said}), ${Math.round(st.scale * 100) / 100}× my ${st.mine} (the square root of their mean's ${Math.round(st.ratio * 100) / 100}× mine, #567): ~${e.stated.scaled} in place of ~${e.stated.full}, never below what is in view or tracked${
               mid !== null ? `; with no track it is sized at the midpoint ~${mid} between ~${e.stated.lower} and ~${e.stated.scaled} (#368)` : ''
             }.`,
           );

@@ -31,6 +31,14 @@ export const knownIncomeArg = z
     z.object({
       player: z.coerce.number().int().describe('The player\'s GameFeed id (as warapp_get_game lists it).'),
       income: z.coerce.number().int().min(0).max(10_000).describe('The income it earns per turn, card armies aside.'),
+      source: z
+        .enum(['chat', 'board'])
+        .optional()
+        .describe(
+          'Where the figure came from (#567): "board" (the default) — your own what-if or board evidence — replaces only this ' +
+            "player's estimate; \"chat\" — the player stated it — also scales the fog prior of the opponents who stated none, once " +
+            'two or more players in view have stated one (#444). Incomes warapp_record_intel kept count as "chat".',
+        ),
     }),
   )
   .max(50)

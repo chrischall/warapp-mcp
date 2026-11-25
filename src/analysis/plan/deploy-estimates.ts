@@ -218,7 +218,7 @@ export function enemyDeployEstimates(
         : null;
     const priorFull = prior && fogBeside ? Math.min(Math.max(0, Math.floor(priorBase!)), priorCap ?? couldEarn) : null;
     // #444: incomes other players stated scale this one's prior down by their ratio to mine (never up).
-    const statedRatio = prior?.stated && !prior.stated.players.some((x) => x.id === playerId) ? prior.stated.ratio : null;
+    const statedRatio = prior?.stated && !prior.stated.players.some((x) => x.id === playerId) ? prior.stated.scale : null;
     const priorFigure = priorFull !== null && statedRatio !== null ? Math.min(priorFull, Math.ceil(priorFull * statedRatio - 1e-9)) : priorFull;
     // #419: the past winners' pace, as the prior is figured (capped, scaled, only beside the fog), when above it.
     const paceIncome = prior?.winnerPace ? fogPaceIncome(prior.winnerPace, prior.myIncome) : null;
