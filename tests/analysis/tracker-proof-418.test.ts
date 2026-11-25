@@ -110,9 +110,11 @@ describe('1. the under-read floor: a capture with every source in view proves a 
       [5, 0, false, 25],
       [44, 42, true, 25],
     ]);
-    expect(t!.income).toBe(42);
-    expect(t!.incomeRise).toEqual({ read: 44, before: 5, proven: 42 });
-    expect(incomeBasis(t!)).toContain('held at the +42 a capture with every source in view proved');
+    // #567: that turn was read from 60% or more of its frontier, so its low end (44, above the proof) stands too.
+    expect(t!.turns[1]!.low).toBe(44);
+    expect(t!.turns[1]!.coverage!.share).toBeGreaterThanOrEqual(0.6);
+    expect(t!.income).toBe(44);
+    expect(t!.incomeRise).toBeUndefined();
   });
 });
 

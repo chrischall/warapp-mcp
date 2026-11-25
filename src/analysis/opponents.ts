@@ -634,6 +634,14 @@ export type IncomeMethod = 'max-observed' | 'stock-flow' | 'visible' | 'carried'
  */
 export const RISE_CAP = 1.3;
 
+/**
+ * #567 (DRAFT, owner decision pending): a turn read from at least this share of its frontier
+ * ({@link ObservedTurn.coverage}) is evidence enough that its low end (every ambiguous army read as a move,
+ * at most its could-earn cap) was deployed: the {@link RISE_CAP} hold never stays below it. Offline, on the
+ * calibration records, no turn read at 60% or more had a low end above the truth.
+ */
+export const RISE_LOW_COVERAGE = 0.6;
+
 /** #418: my armies in view against its own, at or above which I lead it on the board ({@link ObservedTurn.leadIncome}). */
 export const LEAD_ARMIES = 3;
 
@@ -707,7 +715,9 @@ export function incomeBasis(
     return t.incomeRise
       ? t.incomeRise.proven !== undefined
         ? `max observed over ${span}, ${range}, held at the +${t.incomeRise.proven} a capture with every source in view proved (above ${RISE_CAP}× the ~${t.incomeRise.before} before it): no turn read in full reached ${t.incomeRise.read}`
-        : `max observed over ${span}, ${range}, held to ${RISE_CAP}× the ~${t.incomeRise.before} before it: no turn read in full reached ${t.incomeRise.read}`
+        : t.incomeRise.low !== undefined
+          ? `max observed over ${span}, ${range}, held at the +${t.incomeRise.low} a turn read from ${Math.round(RISE_LOW_COVERAGE * 100)}% or more of its frontier surely deployed (above ${RISE_CAP}× the ~${t.incomeRise.before} before it): no turn read in full reached ${t.incomeRise.read}`
+          : `max observed over ${span}, ${range}, held to ${RISE_CAP}× the ~${t.incomeRise.before} before it: no turn read in full reached ${t.incomeRise.read}`
       : `max observed over ${span}, ${range}, a rise held to ${RISE_CAP}× a turn`;
   if (t.incomeMethod === 'tripped')
     return t.incomeTrip
@@ -1104,6 +1114,8 @@ export interface IncomeRise {
   read: number;
   before: number;
   proven?: number;
+  /** #567: the low end of a turn read from {@link RISE_LOW_COVERAGE} or more of its frontier, when it set the hold. */
+  low?: number;
 }
 
 /** #567: a turn's low end above the tracked income ({@link OpponentTrack.observedLow}). */
@@ -1300,12 +1312,21 @@ function carryIncome(observed: readonly ObservedTurn[]): Carry | null {
         const before = Math.max(prev.income, x.visibleIncome);
         // #418: proof may always raise an estimate: the hold never goes below a capture floor in the window.
         const proof = Math.max(0, ...window.map((w) => w.captureFloor ?? 0));
-        const limit = Math.max(disproved ? prev.income : Math.ceil(before * RISE_CAP - 1e-9), proof);
+        // #567: nor below the low end of a turn read from RISE_LOW_COVERAGE or more of its frontier.
+        const low = disproved
+          ? 0
+          : Math.max(0, ...window.filter((w) => (w.coverage?.share ?? 0) >= RISE_LOW_COVERAGE).map((w) => Math.min(w.low, w.cap)));
+        const limit = Math.max(disproved ? prev.income : Math.ceil(before * RISE_CAP - 1e-9), proof, low);
         // #418 review: the lead is judged against the carry before the rise (or its visible income), never
         // against the reading being judged: an over-read above my income must not switch its own cap off.
         carry =
           (x.leadIncome ?? 0) > before && !fresh.confirmed && fresh.income > limit
-            ? { ...fresh, income: limit, set: limit, rise: { read: fresh.income, before, ...(proof >= limit ? { proven: proof } : {}) } }
+            ? {
+                ...fresh,
+                income: limit,
+                set: limit,
+                rise: { read: fresh.income, before, ...(proof >= limit ? { proven: proof } : low >= limit ? { low } : {}) },
+              }
             : fresh;
       }
     }
