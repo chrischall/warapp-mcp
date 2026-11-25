@@ -1491,7 +1491,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   last defender surely killed, at least the fewest armies that kill every defender however split, beyond its
   stacks beside it less the guard; a possible Bomb halves the defenders) floors the turn's reading
   (`ObservedTurn.captureFloor`, `proven`), confirms a carry it reaches and is never held below by the rise cap
-  (`incomeRise.proven`); the could-earn cap still applies. Proof may lower one only on a turn with every army
+  (`incomeRise.proven`); the could-earn cap still applies. #567 (DRAFT, owner decision pending): nor below
+  the low end (at most its cap) of a turn in the window read from `RISE_LOW_COVERAGE` (0.6) or more of its
+  frontier (`incomeRise.low`); calibration replay 0 of 166 tracker samples changed, golden 0 of 6253. Proof may lower one only on a turn with every army
   it could have deployed in view (`everyArmyInView` → `ObservedTurn.accounted`: its land shown with armies on
   both boards and nothing beside it hidden — a territory of its in deep fog beside none of its land is the
   one gap —, no third player beside it, no neutral beside it shrunk or taken, no territory of its lost, my
