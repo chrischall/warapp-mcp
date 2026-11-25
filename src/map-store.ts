@@ -20,6 +20,10 @@
 // - `<dataDir>/maps/games.json`: `{ version: 1, games: [[gameId, mapId], …] }`, newest last, at most
 //   MAX_GAME_INDEX entries — which map a game is on, so a game seen before a restart is still asked
 //   `GetMap=false`.
+// - `<dataDir>/maps/pinned.json` (#586): `{ version: 1, pins: [[gameId, mapId], …] }`, newest last, at most
+//   MAX_PINNED_GAMES entries — the maps of games with a decision log (src/decision-log.ts), pinned when a turn
+//   is planned and unpinned when the log is pruned. A pinned map is never evicted and does not count toward
+//   MAX_STORED_MAPS, so a logged game can still be replayed offline after many other maps were used.
 //
 // Files are 0600 in a 0700 folder and written atomically; every read is loose (a bad file is ignored,
 // and replaced by the next write) and nothing here throws. Another process sharing the data directory
@@ -37,6 +41,8 @@ export const MAX_STORED_MAPS = 40;
 export const MAX_MAP_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** Game → map entries kept in the index; the oldest goes first. */
 export const MAX_GAME_INDEX = 500;
+/** #586: games whose map is pinned; the oldest pin goes first. As many as the decision log keeps games (1000). */
+export const MAX_PINNED_GAMES = 1000;
 
 const VERSION = 1;
 const MAP_FILE = /^\d+\.json$/;
@@ -49,6 +55,7 @@ const isIntArray = (v: unknown): v is number[] => Array.isArray(v) && v.every(is
 export const mapsDir = (dir: string) => join(dir, 'maps');
 export const mapStorePath = (dir: string, mapId: number) => join(mapsDir(dir), `${mapId}.json`);
 const indexPath = (dir: string) => join(mapsDir(dir), 'games.json');
+const pinsPath = (dir: string) => join(mapsDir(dir), 'pinned.json');
 
 /** Write `body` as JSON at `path` atomically (0600; folder 0700). */
 export async function writeJsonAtomic(path: string, folder: string, body: unknown): Promise<void> {
@@ -152,12 +159,16 @@ export async function readStoredMapEntry(dir: string, mapId: number, opts: ReadS
   }
 }
 
-/** Delete the least recently used maps beyond {@link MAX_STORED_MAPS}, keeping `keep`. Best effort. */
+/**
+ * Delete the least recently used maps beyond {@link MAX_STORED_MAPS}, keeping `keep` and every pinned map (#586),
+ * which do not count toward the cap. Best effort.
+ */
 async function evictMaps(dir: string, keep: number): Promise<void> {
   const folder = mapsDir(dir);
+  const pinned = new Set((await readPins(dir)).map(([, m]) => `${m}.json`));
   const files: { name: string; at: number }[] = [];
   for (const name of await readdir(folder)) {
-    if (!MAP_FILE.test(name)) continue;
+    if (!MAP_FILE.test(name) || pinned.has(name)) continue;
     try {
       files.push({ name, at: (await stat(join(folder, name))).mtimeMs });
     } catch {
@@ -244,6 +255,59 @@ export async function rememberGameMap(dir: string, gameId: number, mapId: number
       const games = (await readIndex(dir)).filter(([g]) => g !== gameId);
       games.push([gameId, mapId]);
       await writeJsonAtomic(indexPath(dir), mapsDir(dir), { version: VERSION, games: games.slice(-MAX_GAME_INDEX) });
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** #586: the pins, loosely: unusable entries are dropped. */
+async function readPins(dir: string): Promise<[number, number][]> {
+  try {
+    const raw: unknown = JSON.parse(await readFile(pinsPath(dir), 'utf8'));
+    if (!isRec(raw) || raw.version !== VERSION || !Array.isArray(raw.pins)) return [];
+    return raw.pins.filter((e): e is [number, number] => Array.isArray(e) && e.length === 2 && isInt(e[0]) && isInt(e[1]));
+  } catch {
+    return [];
+  }
+}
+
+/** #586: the map ids pinned by a game's decision log. Never throws. */
+export async function pinnedMapIds(dir: string): Promise<Set<number>> {
+  return new Set((await readPins(dir)).map(([, m]) => m));
+}
+
+/**
+ * #586: pin `mapId` for `gameId` (a game with a decision log), so the stored map is never evicted while the log is
+ * kept; an existing pin for the game is moved to the newest. `true` when written (`false` when already pinned so,
+ * or on failure); never throws.
+ */
+export async function pinStoredMap(dir: string, mapId: number, gameId: number): Promise<boolean> {
+  try {
+    return await withPathLock(pinsPath(dir), async () => {
+      const pins = await readPins(dir);
+      if (pins.some(([g, m]) => g === gameId && m === mapId)) return false;
+      const next = pins.filter(([g]) => g !== gameId);
+      next.push([gameId, mapId]);
+      await writeJsonAtomic(pinsPath(dir), mapsDir(dir), { version: VERSION, pins: next.slice(-MAX_PINNED_GAMES) });
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** #586: drop the pins of `gameIds` (their decision logs were pruned). `true` when written; never throws. */
+export async function unpinGames(dir: string, gameIds: readonly number[]): Promise<boolean> {
+  if (!gameIds.length) return false;
+  const gone = new Set(gameIds);
+  try {
+    return await withPathLock(pinsPath(dir), async () => {
+      const pins = await readPins(dir);
+      const next = pins.filter(([g]) => !gone.has(g));
+      if (next.length === pins.length) return false;
+      await writeJsonAtomic(pinsPath(dir), mapsDir(dir), { version: VERSION, pins: next });
       return true;
     });
   } catch {

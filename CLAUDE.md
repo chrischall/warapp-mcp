@@ -2688,7 +2688,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   `state.dataDir` persists): `<dataDir>/maps/<mapId>.json` holds the normalized map with its BASE
   bonus values (overrides are per game, applied by `mapOf`), at most `MAX_STORED_MAPS`, the least
   recently used evicted (a memory hit marks the file used, and stores it again if it has gone, so a
-  game played all session keeps its map for replay); `<dataDir>/maps/games.json` says which map a game is on (bounded), so a
+  game played all session keeps its map for replay; #586: the map of a game with a decision log is pinned in
+  `<dataDir>/maps/pinned.json` by `capturePlan` — the log keeps `mapId` — never evicted and not counted toward the cap, and
+  unpinned when `pruneDecisionLogs` drops the log); `<dataDir>/maps/games.json` says which map a game is on (bounded), so a
   known game is re-fetched with `GetMap=false` after a restart too. That index is written only for
   a caller that wants the map, on a game not finished (map statistics and `GetMap=false` callers
   spend no entry; a game read back from it after a restart moves to the newest). **A map is not immutable:** its maker can publish an edit under the same id and
@@ -2827,7 +2829,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   adds the #318 harness. #568: each logged estimate also keeps its pipeline `stages` (`EstimateStages`, `estimateStages`: visible, observed,
   tracked, prior, stated, blend, thin, known, card — figures only), the report scores each (`byStage`) and `trackedWhatIf` says what
   dividing the tracked figure by its coverage band's geomean (other games only, at least `WHAT_IF_MIN_SAMPLES`) would have read at
-  each damping in `WHAT_IF_DAMPINGS`, overall and by band. Reported only. Reported only (P1).
+  each damping in `WHAT_IF_DAMPINGS`, overall and by band. #586: each logged estimate also keeps the tracker's own figures (`LoggedEstimate.track`, `loggedTrack`: its income, each income-window turn's observed/raw/low/high/cap/coverage with any capture floor, `accounted` or fog-capture income, and the carry lowered, rise cap, #567 low, tripwire step, #250 jump verdict and top-up — numbers only, no warning or note text), so a finished game shows which step held an estimate down after a jump; it outlives compaction, which drops the replay input that also holds the track. Reported only (P1).
 - **The turn history (#570, `warapp_turn_history`, read-only).** Reads the game's decision log: per turn the board seen
   (`boardSummary`, or whole with `board: true`), `ownerChanges` against the turn before (in view both times), every
   player's visible orders (`seen`), plan, sent and `differsFromPlan` (`ordersDiffer`), outcome, cards, events, truth and
