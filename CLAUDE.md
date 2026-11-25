@@ -2827,7 +2827,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   (`LoggedEstimate.method`, logged since #569 from `PlanInput.tracks`: `rise-capped` is #418's cap) and whether the
   opponent led on true income; `errorView` (mean, median, geoMean, tails, `meanError` in armies) per breakdown;
   `catchUp` (a true jump of `JUMP_FACTOR` 1.5× or more, turns until the estimate reaches `CATCH_UP_SHARE` ⅔ of the
-  truth, censored past the logged turns); `consequences` (a proxy: turns losing an unconceded territory with an
+  truth, censored past the logged turns; #586: only a jump on a turn that logged that opponent's estimate counts — the
+  truth covers every turn, the estimates only planned ones, so the rest is `unwatched`, never lag); `consequences` (a proxy: turns losing an unconceded territory with an
   estimate under half vs without); the `WORST_LISTED` largest misses. Games numbered by their place in the report,
   never by id; no player in the output. `samples: true` returns the rows (at most `MAX_SAMPLES`); `harness: true`
   adds the #318 harness. #568: each logged estimate also keeps its pipeline `stages` (`EstimateStages`, `estimateStages`: visible, observed,
