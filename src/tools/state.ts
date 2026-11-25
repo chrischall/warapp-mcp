@@ -21,7 +21,7 @@ import { CONFIRM_INJECTION_RULE, McpToolError, toolAnnotations, type EnvSource }
 import { mintUploadSlot, resolveUploadSource, type BlobStore, type UploadSource } from '@chrischall/mcp-utils/export';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { MAX_FINISHED_RECORDS } from '../finished-store.js';
+import { COLLECTOR_VERSION, MAX_FINISHED_RECORDS } from '../finished-store.js';
 import { profileEnabled } from '../profile-store.js';
 import {
   applyImport,
@@ -235,7 +235,15 @@ function registerBackfillTool(server: McpServer, ctx: LiveContext, env: EnvSourc
         'it) and kept name-free for the opponent profiles, map records and lessons — what warapp_my_games does two ' +
         'games per call. `window` widens how many of your newest finished games are considered (default 250, at ' +
         `most ${MAX_FINISHED_RECORDS}). Reports what it processed and how many remain; safe to call again until ` +
-        '`remaining` is 0. It also gives map records kept before the winners\' income curves were those curves, from the ' +
+        '`remaining` is 0. `games` lists every game considered one by one, from this server\'s state (no request): ' +
+        'recorded (captured, read-failed or history-unreadable, with the failure code, history turns, boards kept, ' +
+        'stats version, collector version and `outdated` when kept under an older collector), not-processed, ' +
+        'processed-record-pruned or record-unreadable, and what this call did to it (read, reread, waiting). ' +
+        '`game_ids` limits it to those games. `reread` reads the history AGAIN (one more GameFeed request per game) ' +
+        'for games already processed — `failed` (read-failed or history-unreadable), `outdated` (kept under an older ' +
+        'collector version, so newer metrics get captured) or `all` — and rebuilds the record and what was processed ' +
+        'from it (each store replaces the game\'s share; nothing counts twice); a re-read that fails never replaces a ' +
+        'captured record (`keptPrevious`). It also gives map records kept before the winners\' income curves were those curves, from the ' +
         'histories already kept (`winnerCurves`, no request). Writes only this server\'s state and never writes to war.app. ' +
         BRIDGE_NOTE,
       annotations: toolAnnotations({ title: 'Backfill finished war.app games', readOnly: false, destructive: false, idempotent: true, openWorld: true }),
@@ -248,9 +256,21 @@ function registerBackfillTool(server: McpServer, ctx: LiveContext, env: EnvSourc
           .max(MAX_FINISHED_RECORDS)
           .optional()
           .describe(`How many of your newest finished games to consider (default ${sweepWindow()}, max ${MAX_FINISHED_RECORDS}).`),
+        game_ids: z
+          .array(z.number().int().positive())
+          .min(1)
+          .max(MAX_FINISHED_RECORDS)
+          .optional()
+          .describe('Only these games (each a finished game of yours; others are listed in `notFinishedOrNotMine`).'),
+        reread: z
+          .enum(['failed', 'outdated', 'all'])
+          .optional()
+          .describe(
+            "Read again the history of games already processed: `failed` (read-failed or history-unreadable), `outdated` (kept under an older collector version) or `all`. One GameFeed request per game; default none.",
+          ),
       }),
     },
-    async ({ limit, window }) => {
+    async ({ limit, window, game_ids, reread }) => {
       if (!ctx.dataDir) refuse('This server has no data directory, so no history can be kept.', 'Nothing to do here.');
       if (!profileEnabled(env)) refuse('The end-of-game pass is off (WARAPP_PLAYER_PROFILE=off), so nothing was read.', 'Turn profiling on to backfill.');
       const { me, games } = await fetchMyGames(ctx);
@@ -261,7 +281,12 @@ function registerBackfillTool(server: McpServer, ctx: LiveContext, env: EnvSourc
       const r = await sweepFinished({ client: ctx.client, dataDir: ctx.dataDir, env }, token, ids, {
         limit: limit ?? BACKFILL_DEFAULT,
         window: size,
+        report: true,
+        ...(game_ids ? { only: game_ids } : {}),
+        ...(reread ? { reread } : {}),
       });
+      const finished = new Set(ids);
+      const notMine = game_ids ? [...new Set(game_ids)].filter((id) => !finished.has(id)) : [];
       // #419: entries kept before the winners' curves were, given them from the kept histories (no request).
       const winnerCurves = await backfillWinnerCurves(ctx.dataDir);
       return respond(undefined, ['compact'], () => ({
@@ -271,7 +296,10 @@ function registerBackfillTool(server: McpServer, ctx: LiveContext, env: EnvSourc
         remaining: r.pending,
         finishedGames: ids.length,
         window: size,
-        ...(ids.length > size ? { outsideWindow: ids.length - size } : {}),
+        ...(ids.length > size && !game_ids ? { outsideWindow: ids.length - size } : {}),
+        collectorVersion: COLLECTOR_VERSION,
+        games: r.games ?? [],
+        ...(notMine.length ? { notFinishedOrNotMine: notMine } : {}),
       }));
     },
   );

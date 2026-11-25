@@ -40,6 +40,7 @@ import { recordLessons, recordLessonsExcluded, recordMapExcluded, recordMapGame 
 import { endingOf, foldGame, markHistoryFolded, profileFileState, type FoldSeat } from '../profile-store.js';
 import type { WarappClient } from '../client.js';
 import {
+  COLLECTOR_VERSION,
   END_STATS_VERSION,
   MAX_FINISHED_RECORDS,
   finishedPath,
@@ -47,6 +48,7 @@ import {
   markProcessed,
   readFinishedRecord,
   readFinishedState,
+  readFinishedSummary,
   readProcessed,
   storedStats,
   touchFinished,
@@ -54,6 +56,7 @@ import {
   type FinishedFailure,
   type FinishedRecord,
   type FinishedStatus,
+  type FinishedSummary,
   type StoredEndStats,
 } from '../finished-store.js';
 import { playerKey } from '../player-record-store.js';
@@ -113,6 +116,8 @@ export interface EndOfGameResult {
    * record kept before them from an `include_history` read), by GameFeed id.
    */
   stats?: EndStatsView;
+  /** A re-read that did not capture the history: the record kept before it stands (`reread`). */
+  keptPrevious?: true;
   /**
    * #523: the stats were added to a record kept before them, or (#541/#542) recomputed on one whose stats an older
    * version computed (an `include_history` call; nothing else re-run).
@@ -173,6 +178,13 @@ export interface EndOfGameOptions {
   keep?: number;
   /** Games whose records this pass's prune must keep (the sweep's window). */
   protectIds?: readonly number[];
+  /**
+   * Read the history again for a game already processed (warapp_backfill_history's `reread`, an explicit call;
+   * never a trigger): one more request, past the processed marks, then the record and everything processed from
+   * it are rebuilt (each store replaces the game's share, so nothing counts twice). A captured record is never
+   * replaced by a failed re-read (`keptPrevious`).
+   */
+  reread?: boolean;
 }
 
 const SAFE = /^[a-z_]{1,40}$/;
@@ -262,15 +274,16 @@ export async function endOfGame(
         await closeOnly();
         return { status: 'record-unreadable' };
       }
-      if (state !== 'missing' && state.status === 'captured') return await keptOrBackfilled(dataDir, path, salt, me, opts.history ?? seen, opts.history);
-      if (state !== 'missing' && (!opts.retry || !opts.history)) return { status: 'already-processed' };
+      const reread = opts.reread === true;
+      if (state !== 'missing' && state.status === 'captured' && !reread) return await keptOrBackfilled(dataDir, path, salt, me, opts.history ?? seen, opts.history);
+      if (state !== 'missing' && !reread && (!opts.retry || !opts.history)) return { status: 'already-processed' };
       // The one history read: the caller's, else one request, sent once (no transport retry) and never retried.
       let game: Game | undefined = opts.history;
       let failure: FinishedFailure | undefined;
       if (!game) {
-        if (state === 'missing' && (await isMarked(dataDir, salt, me, gameId))) return { status: 'already-processed' };
-        // The request is spent from here on, whatever follows: never again in this process.
-        const key = attemptKey(dataDir, me, gameId);
+        if (state === 'missing' && !reread && (await isMarked(dataDir, salt, me, gameId))) return { status: 'already-processed' };
+        // The request is spent from here on, whatever follows: never again in this process (a re-read once).
+        const key = `${attemptKey(dataDir, me, gameId)}${reread ? '|reread' : ''}`;
         if (attempted.has(key)) return { status: 'attempted' };
         remember(attempted, key);
         try {
@@ -299,6 +312,9 @@ export async function endOfGame(
       read = game;
       const shown = game ?? seen;
       const { record, history } = await buildRecord(dataDir, salt, me, gameId, game, shown, failure);
+      // A re-read that failed never replaces a capture kept before it.
+      if (reread && state !== 'missing' && state.status === 'captured' && record.status !== 'captured')
+        return { status: record.status, keptPrevious: true, ...(record.failure ? { failure: record.failure } : {}) };
       kept = excludedKind(record.kinds ?? []);
       try {
         const protect = opts.protectIds ? new Set(opts.protectIds.map((id) => finishedPath(dataDir, salt, me, id))) : undefined;
@@ -693,22 +709,130 @@ export async function sweepFinished(
     limit = END_OF_GAME_PER_CALL,
     keep = MAX_FINISHED_RECORDS,
     window: size,
-  }: { limit?: number; keep?: number; window?: number } = {},
-): Promise<{ processed: { gameId: number; status: EndOfGameStatus; turns?: number }[]; pending: number }> {
+    only,
+    reread,
+    report,
+  }: {
+    limit?: number;
+    keep?: number;
+    window?: number;
+    /** Only these games (warapp_backfill_history's `game_ids`): each must be in `gameIds`; the window still protects. */
+    only?: readonly number[];
+    /** Also read again the games already processed that this scope names (warapp_backfill_history; never a trigger). */
+    reread?: RereadScope;
+    /** Return each game's state one by one (`games`). */
+    report?: boolean;
+  } = {},
+): Promise<SweepResult> {
   // warapp_backfill_history may widen the window, never past the record bound (every game in it is protected).
   const window = gameIds.slice(0, Math.max(1, Math.min(size ?? sweepWindow(keep), keep)));
+  const scope = only ? gameIds.filter((id) => only.includes(id)) : window;
   // #412: with profiling off no pass runs, but these games are over: their decision logs leave `active`
   // (no request; a log already closed costs one head read).
-  if (deps.dataDir && !profileEnabled(deps.env)) await finishDecisionLogs(deps.dataDir, window, me, { mode: decisionLogModeOf(deps.env) });
-  const todo: number[] = [];
-  for (const id of window) if (await needsEndOfGame(deps.dataDir, deps.env, id, me)) todo.push(id);
-  await refreshProcessed(deps, me, window).catch(() => undefined);
-  const processed: { gameId: number; status: EndOfGameStatus; turns?: number }[] = [];
-  for (const id of todo.slice(0, limit)) {
-    const r = await endOfGame(deps, id, me, undefined, { fold: true, keep, protectIds: window });
-    processed.push({ gameId: id, status: r.status, ...(r.turns !== undefined ? { turns: r.turns } : {}) });
+  if (deps.dataDir && !profileEnabled(deps.env)) await finishDecisionLogs(deps.dataDir, scope, me, { mode: decisionLogModeOf(deps.env) });
+  const before = new Map<number, GameStanding>();
+  if (report || reread) for (const id of scope) before.set(id, await gameStanding(deps, me, id));
+  const todo: { id: number; reread: boolean }[] = [];
+  for (const id of scope) {
+    if (await needsEndOfGame(deps.dataDir, deps.env, id, me)) todo.push({ id, reread: false });
+    else if (reread && rereadWanted(before.get(id)!, reread)) todo.push({ id, reread: true });
   }
-  return { processed, pending: Math.max(0, todo.length - limit) };
+  await refreshProcessed(deps, me, window).catch(() => undefined);
+  const processed: SweepResult['processed'] = [];
+  const protectIds = only ? [...new Set([...window, ...scope])] : window;
+  for (const t of todo.slice(0, limit)) {
+    const r = await endOfGame(deps, t.id, me, undefined, { fold: true, keep, protectIds, ...(t.reread ? { reread: true } : {}) });
+    processed.push({
+      gameId: t.id,
+      status: r.status,
+      ...(t.reread ? { reread: true as const } : {}),
+      ...(r.turns !== undefined ? { turns: r.turns } : {}),
+      ...(r.failure ? { failure: failureCode(r.failure) } : {}),
+      ...(r.keptPrevious ? { keptPrevious: true as const } : {}),
+    });
+  }
+  const out: SweepResult = { processed, pending: Math.max(0, todo.length - limit) };
+  if (report) {
+    const thisCall = new Map(processed.map((p) => [p.gameId, p]));
+    const waiting = new Set(todo.slice(limit).map((t) => t.id));
+    const games: GameReport[] = [];
+    for (const id of scope) {
+      const now = thisCall.has(id) ? await gameStanding(deps, me, id) : before.get(id)!;
+      const p = thisCall.get(id);
+      games.push({
+        gameId: id,
+        ...now,
+        ...(p ? { thisCall: p.reread ? 'reread' : 'read' } : waiting.has(id) ? { thisCall: 'waiting' } : {}),
+      });
+    }
+    out.games = games;
+  }
+  return out;
+}
+
+/** warapp_backfill_history's `reread`: which games already processed to read again. */
+export type RereadScope = 'failed' | 'outdated' | 'all';
+
+/** The sweep's answer. */
+export interface SweepResult {
+  processed: {
+    gameId: number;
+    status: EndOfGameStatus;
+    /** Read again (`reread`). */
+    reread?: true;
+    turns?: number;
+    /** Why the history did not come: the reason code, and the request's error kind. */
+    failure?: { reason: string; kind?: string };
+    /** A re-read that failed: the capture kept before it stands. */
+    keptPrevious?: true;
+  }[];
+  pending: number;
+  /** With `report`: every game in scope, one by one. */
+  games?: GameReport[];
+}
+
+/** What this server holds for one finished game: its record summarised, or why there is none. */
+export type GameStanding =
+  | ({ state: 'recorded'; outdated: boolean } & FinishedSummary)
+  /** No record, and no processed mark: its pass has not run. */
+  | { state: 'not-processed' }
+  /** Processed (the lasting mark), its record since pruned by the store bound. */
+  | { state: 'processed-record-pruned' }
+  /** A record that does not parse: never overwritten. */
+  | { state: 'record-unreadable' }
+  /** No data directory, profiling off, or the salt unreadable: nothing can be told. */
+  | { state: 'unknown' };
+
+export type GameReport = { gameId: number; thisCall?: 'read' | 'reread' | 'waiting' } & GameStanding;
+
+/** One game's standing from this server's state alone (no request). Never throws. */
+export async function gameStanding(deps: Pick<EndOfGameDeps, 'dataDir' | 'env'>, me: number, gameId: number): Promise<GameStanding> {
+  const { dataDir, env } = deps;
+  if (!dataDir || !profileEnabled(env)) return { state: 'unknown' };
+  try {
+    const salt = await playerRecordSalt(dataDir);
+    if (!salt) return { state: 'not-processed' };
+    const summary = await readFinishedSummary(finishedPath(dataDir, salt, me, gameId));
+    if (summary === 'unreadable') return { state: 'record-unreadable' };
+    if (summary !== 'missing') return { state: 'recorded', outdated: summary.collector < COLLECTOR_VERSION, ...summary };
+    return (await isMarked(dataDir, salt, me, gameId)) ? { state: 'processed-record-pruned' } : { state: 'not-processed' };
+  } catch {
+    return { state: 'unknown' };
+  }
+}
+
+/** Whether `reread` names a game in this standing. */
+function rereadWanted(s: GameStanding, scope: RereadScope): boolean {
+  if (s.state === 'processed-record-pruned') return scope === 'all';
+  if (s.state !== 'recorded') return false;
+  if (scope === 'all') return true;
+  if (scope === 'failed') return s.status !== 'captured';
+  return s.outdated;
+}
+
+/** A failure as the sweep reports it: codes only. */
+function failureCode(f: FinishedFailure): { reason: string; kind?: string } {
+  return { reason: f.reason, ...('kind' in f && f.kind ? { kind: f.kind } : {}) };
 }
 
 /** Mark the window's records most recently used, so a prune drops a record outside the window first. */

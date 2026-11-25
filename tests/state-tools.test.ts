@@ -1,6 +1,6 @@
 // warapp_upload_slots + warapp_import_state (the hosted import of a state bundle) and
 // warapp_backfill_history. A fake in-memory blob store and synthetic data dirs only.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -206,6 +206,105 @@ describe('warapp_backfill_history', () => {
     expect((await h!.call('warapp_backfill_history', { limit: 26 })).isError).toBe(true);
     const r = payload(await h!.call('warapp_backfill_history', { limit: 25, window: 5 }));
     expect(r).toMatchObject({ processedCount: 5, remaining: 0, window: 5, outsideWindow: 25 });
+  });
+
+  /** The finished records on disk (the processed marks left out), rewritten by `edit`. */
+  type Backfill = { games: Record<string, unknown>[]; processed: Record<string, unknown>[]; processedCount: number; collectorVersion: number };
+  const backfill = async (args?: Record<string, unknown>) => payload(await h!.call('warapp_backfill_history', args)) as unknown as Backfill;
+  const editRecords = (edit: (r: Record<string, unknown>) => Record<string, unknown> | null) => {
+    const dir = join(h!.dataDir!, 'finished');
+    for (const f of readdirSync(dir).filter((x) => /^[0-9a-f]{32}\.json$/.test(x))) {
+      const next = edit(JSON.parse(readFileSync(join(dir, f), 'utf8')) as Record<string, unknown>);
+      if (next === null) rmSync(join(dir, f));
+      else writeFileSync(join(dir, f), JSON.stringify(next));
+    }
+  };
+
+  it('lists every game considered one by one: what it holds and what this call did', async () => {
+    await harness();
+    const r = await backfill({ limit: 2 });
+    expect(r.collectorVersion).toBe(1);
+    expect(r.games).toHaveLength(30);
+    expect(r.games[0]).toEqual({
+      gameId: 2029,
+      state: 'recorded',
+      outdated: false,
+      status: 'history-unreadable',
+      collector: 1,
+      failure: { reason: 'absent' },
+      kinds: ['legacy'],
+      result: 'won',
+      thisCall: 'read',
+    });
+    expect(r.games[2]).toEqual({ gameId: 2027, state: 'not-processed', thisCall: 'waiting' });
+    expect(r.processed[0]).toMatchObject({ gameId: 2029, status: 'history-unreadable', failure: { reason: 'absent' } });
+    // A later call reads nothing for them and still lists them.
+    const again = await backfill({ game_ids: [2029] });
+    expect(again.games).toEqual([expect.objectContaining({ gameId: 2029, state: 'recorded' })]);
+    expect(again.games[0]).not.toHaveProperty('thisCall');
+    expect(historyReads()).toBe(2);
+  });
+
+  it('game_ids: only those games; one not a finished game of mine is named apart', async () => {
+    await harness();
+    const r = await backfill({ game_ids: [2010, 2011, 99] });
+    expect(r.games.map((g) => g.gameId)).toEqual([2011, 2010]);
+    expect(r).toMatchObject({ processedCount: 2, remaining: 0, notFinishedOrNotMine: [99] });
+    expect(r).not.toHaveProperty('outsideWindow');
+    expect(historyReads()).toBe(2);
+  });
+
+  it('reread failed: one more history read each, once per process', async () => {
+    await harness();
+    await h!.call('warapp_backfill_history', { game_ids: [2029, 2028] });
+    expect(historyReads()).toBe(2);
+    const r = await backfill({ game_ids: [2029], reread: 'failed' });
+    expect(r.processed).toEqual([{ gameId: 2029, status: 'history-unreadable', reread: true, failure: { reason: 'absent' } }]);
+    expect(r.games[0]).toMatchObject({ gameId: 2029, thisCall: 'reread' });
+    expect(historyReads()).toBe(3);
+    // The same process does not spend it twice.
+    const twice = await backfill({ game_ids: [2029], reread: 'failed' });
+    expect(twice.processed).toEqual([{ gameId: 2029, status: 'attempted', reread: true }]);
+    expect(historyReads()).toBe(3);
+  });
+
+  it('reread outdated: only records kept under an older collector version', async () => {
+    await harness();
+    await h!.call('warapp_backfill_history', { game_ids: [2029, 2028] });
+    const none = await backfill({ game_ids: [2029, 2028], reread: 'outdated' });
+    expect(none.processedCount).toBe(0);
+    // A record kept before the field reads as collector 0: outdated.
+    editRecords(({ collector: _, ...r }) => r);
+    const listed = await backfill({ game_ids: [2029, 2028] });
+    expect(listed.games.every((g) => g.outdated && g.collector === 0)).toBe(true);
+    const r = await backfill({ game_ids: [2029, 2028], reread: 'outdated' });
+    expect(r.processedCount).toBe(2);
+    expect(r.games.every((g) => !g.outdated && g.collector === 1)).toBe(true);
+    expect(historyReads()).toBe(4);
+  });
+
+  it('a record the bound pruned reads processed-record-pruned; reread all reads it again', async () => {
+    await harness();
+    await h!.call('warapp_backfill_history', { game_ids: [2029] });
+    editRecords(() => null);
+    const listed = await backfill({ game_ids: [2029] });
+    expect(listed.games).toEqual([{ gameId: 2029, state: 'processed-record-pruned' }]);
+    expect(historyReads()).toBe(1);
+    const r = await backfill({ game_ids: [2029], reread: 'failed' });
+    expect(r.processedCount).toBe(0);
+    const all = await backfill({ game_ids: [2029], reread: 'all' });
+    expect(all.processed).toEqual([expect.objectContaining({ gameId: 2029, reread: true, status: 'history-unreadable' })]);
+    expect(historyReads()).toBe(2);
+  });
+
+  it('a re-read that fails never replaces a captured record', async () => {
+    await harness();
+    await h!.call('warapp_backfill_history', { game_ids: [2029] });
+    editRecords((r) => ({ ...r, status: 'captured', failure: undefined }));
+    const r = await backfill({ game_ids: [2029], reread: 'all' });
+    expect(r.processed).toEqual([{ gameId: 2029, status: 'history-unreadable', reread: true, failure: { reason: 'absent' }, keptPrevious: true }]);
+    expect(r.games[0]).toMatchObject({ state: 'recorded', status: 'captured' });
+    expect(historyReads()).toBe(2);
   });
 
   it('is a write to local state only, never destructive', async () => {
