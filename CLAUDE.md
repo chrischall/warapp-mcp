@@ -1292,7 +1292,7 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   above the prior; the #123 bound keeps the unscaled one); a tracked one keeps its track as the floor
   (thin evidence's upper bound is the scaled prior), an untracked one is sized at #368's midpoint between
   its visible/observed figure and the scaled prior (`EnemyDeployEstimate.stated`); a warning names it;
-  check_plan passes them through `stressOpponents`. Each observed
+  check_plan passes them through `stressOpponents`. #567 (reporting only): a warning in plan_turn and check_plan names every opponent a known income moved this way, with its estimate before and after (`statedShifts` / `statedShiftWarning`; `statedScaled` on check_plan's `enemyDeploy` and plan_turn's `enemyDeployDetail`), and a track whose income window holds a turn whose low end (at most its cap) is above the income held carries `observedLow` (`observedLowOf`; track_opponents' `income.observedLow`, the same entries) and a warning; neither changes an estimate (golden byte-identical). Each observed
   deploy also carries `stacks` (`DeployObservation`): every stack of the opponent held in view on both
   boards that grew, its growth split into what a neighbour in view of its own visibly sent (each shrink
   claimed once, first by the stacks with no hidden neighbour, whose rest can only be deploy, then by those
