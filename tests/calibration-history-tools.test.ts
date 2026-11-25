@@ -4,9 +4,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BoardState } from '../src/board.js';
 import { decisionLogPath, readDecisionLog, recordObservations } from '../src/decision-log.js';
+import { writeGameRecord } from '../src/replay.js';
 import type { Player } from '../src/normalize.js';
 import { captureSeenTurn } from '../src/tools/decision-capture.js';
-import { liveHarness, payload, textOf, type Harness } from './helpers.js';
+import { boardSummary, seenByPlayer } from '../src/tools/turn-history.js';
+import { liveHarness, lobbyFixture, payload, textOf, type Harness } from './helpers.js';
 
 const ANN = 4412345677; // in-game 123456
 const BOB = 7176543229; // in-game 765432
@@ -119,6 +121,58 @@ describe('warapp_turn_history (#570)', () => {
     expect(none.isError).toBe(true);
     expect(textOf(none)).toMatch(/No turn history is kept for game 999/);
   });
+
+  it('read_last_turn: refuses an account not seated; a seated one is warned when the board cannot be read', async () => {
+    // The lobby fixture with ANN in its first seat; the fake war.app answers no live board.
+    const lobby = lobbyFixture() as { players: { id: string }[] };
+    lobby.players[0]!.id = String(ANN);
+    const page = (id: number) => ({ 'https://war.app/InviteToken': `<p>Your invite token is ${id}</p>` });
+    h = await liveHarness({ feed: [lobby], pages: page(99999) });
+    await seed(h.dataDir);
+    const out = await h.call('warapp_turn_history', { game_id: GAME, read_last_turn: true });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/not a player in game/);
+    await h.harness.close();
+    h = await liveHarness({ feed: [lobby], pages: page(ANN) });
+    await seed(h.dataDir);
+    const seated = await h.call('warapp_turn_history', { game_id: GAME, read_last_turn: true });
+    expect(seated.isError, textOf(seated)).toBeFalsy();
+    const r = payload<{ turns: unknown[]; warnings: string[] }>(seated);
+    expect(r.turns).toHaveLength(2);
+    expect(r.warnings.join('\n')).toMatch(/live board (could not be read|carried no resolved turn)/);
+  });
+
+  it('seenByPlayer groups moves, cards, discards and other orders; boardSummary counts hidden armies', () => {
+    expect(
+      seenByPlayer([
+        { player: ANN, kind: 'move', from: 1, to: 2, armies: 4, mode: 'attack', percent: true, commander: true },
+        { player: ANN, kind: 'move', from: 2, to: 3, armies: 1, mode: 'attack-transfer' },
+        { player: ANN, kind: 'card', card: 'Reinforcement' },
+        { player: ANN, kind: 'card' },
+        { player: null, kind: 'discard' },
+        { player: null, kind: 'other', cls: 'GameOrderReceiveCard' },
+        { player: null, kind: 'other' },
+      ]),
+    ).toEqual({
+      [ANN]: {
+        deploys: [],
+        moves: [
+          { from: 1, to: 2, armies: 4, mode: 'attack', percent: true, commander: true },
+          { from: 2, to: 3, armies: 1 },
+        ],
+        cards: ['Reinforcement', 'card'],
+        discards: 0,
+        other: [],
+      },
+      unknown: { deploys: [], moves: [], cards: [], discards: 1, other: ['GameOrderReceiveCard', 'unknown'] },
+    });
+    expect(boardSummary(board([[1, ANN, 2], [2, BOB, null], [3, BOB, 3], [4, 'n', 2]]), ANN)).toEqual({
+      mine: { territories: 1, armies: 2 },
+      others: [{ player: BOB, territories: 2, armies: 3, armiesHiddenOn: 1 }],
+      neutral: 1,
+      hidden: 0,
+    });
+  });
 });
 
 describe('warapp_calibration (#569)', () => {
@@ -141,6 +195,31 @@ describe('warapp_calibration (#569)', () => {
     const r = payload<{ report: unknown; empty: string }>(await h.call('warapp_calibration'));
     expect(r.report).toBeNull();
     expect(r.empty).toMatch(/No finished game/);
+  });
+
+  it('leaves out lotteries and logs without the truth, filters by format, and runs the harness on request', async () => {
+    h = await liveHarness();
+    await seed(h.dataDir);
+    const path = decisionLogPath(h.dataDir, GAME);
+    const seeded = JSON.parse(readFileSync(path, 'utf8'));
+    const flags = { format: 'ffa', seats: 4 };
+    const policy = { broke: [], passed: [], unchecked: [] };
+    const write = (id: number, log: Record<string, unknown>) => writeFileSync(decisionLogPath(h!.dataDir, id), JSON.stringify({ ...seeded, gameId: id, ...log }));
+    // A lottery, a finished game with no truth, and an FFA scored from its join flags (no game record, no seats).
+    write(4568, { join: { at: '2026-11-24T00:00:00.000Z', settingsKey: null, flags, policy, lottery: true } });
+    write(4569, { turns: { '3': { ...seeded.turns['3'], accuracy: undefined } } });
+    const { seats: _s, ...noSeats } = seeded;
+    writeFileSync(decisionLogPath(h.dataDir, 4570), JSON.stringify({ ...noSeats, gameId: 4570, join: { at: '2026-11-24T00:00:00.000Z', settingsKey: null, flags, policy } }));
+    // A 1v1 whose format comes from its settings record (the seated players), the seats aside.
+    write(4571, {});
+    await writeGameRecord(h.dataDir, { id: 4571, name: 'G', state: 'Finished', numberOfTurns: 4, players, settings: { raw: {} } } as never);
+    const r = payload<{ sources: Record<string, number>; report: any; harness: any }>(await h.call('warapp_calibration', { format: 'ffa', harness: true }));
+    expect(r.sources).toMatchObject({ finishedLogs: 5, scoredGames: 1, lotteriesLeftOut: 1, withoutTruth: 1, format: 'ffa', otherFormats: 2 });
+    expect(Object.keys(r.report.byFormat)).toEqual(['ffa']);
+    expect(r.report.bySeats).toHaveProperty('3-6');
+    expect(r.harness.counts).toMatchObject({ scored: 0, benchmarked: 0, samples: 0 });
+    expect(r.harness.approximations.length).toBeGreaterThan(0);
+    expect(h.calls).toHaveLength(0);
   });
 });
 
