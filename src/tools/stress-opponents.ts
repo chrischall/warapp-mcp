@@ -4,6 +4,7 @@
 import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart, type PlannerSettings } from '../analysis/index.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { CardBonusBasis, EnemyDeployEstimate, FogPace } from '../analysis/plan/shared.js';
+import { statedShifts } from '../analysis/plan/estimates.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import type { TurnBoard } from '../analysis/opponents.js';
 import type { BoardState } from '../board.js';
@@ -85,7 +86,7 @@ export function stressOpponents(input: StressOpponentsInput) {
   // PLAN-TEAMS D3: the cards in effect the decoder is sure of.
   const effect = boardCardsInEffect(game, me, turn, info);
   const previousOrders = previous && turn !== null ? input.boards.find((b) => b.turn === turn - 1)?.orders : undefined;
-  const { estimates } = planEnemyEstimates({
+  const estimateArgs: Parameters<typeof planEnemyEstimates>[0] = {
     graph,
     board,
     me: me.id,
@@ -115,8 +116,11 @@ export function stressOpponents(input: StressOpponentsInput) {
     },
     turn,
     ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
-    ...(input.known?.length && input.enemyDeploy === undefined ? { known: input.known } : {}),
-  });
+  };
+  const known = input.known?.length && input.enemyDeploy === undefined ? input.known : undefined;
+  const { estimates, prior } = planEnemyEstimates({ ...estimateArgs, ...(known ? { known } : {}) });
+  // #567: the opponents a known income moved through #444's scale, against the estimates made without it.
+  const shifts = known ? statedShifts(planEnemyEstimates(estimateArgs).estimates, estimates, prior) : [];
   const myTeam = carriesTeam(me.team) ? me.team : undefined;
   const teamOf = new Map(game.players.map((p) => [p.id, p.team]));
   const friend = (id: number) => id === me.id || (myTeam !== undefined && teamOf.get(id) === myTeam);
@@ -153,5 +157,5 @@ export function stressOpponents(input: StressOpponentsInput) {
   // (two at least; enemy_deploy is a what-if, not the game's standing).
   const rivals = opponents.filter((o) => inView.has(o.id));
   const leader = teams.size === 0 && rivals.length >= 2 && rivals.every((o) => earnedIncome > estimateOf(o.id));
-  return { board, seats, tracks, incomeOnBoard, income, earnedIncome, effect, estimates, estimateOf, friend, opponents, teams, inView, leader, commerce };
+  return { board, seats, tracks, incomeOnBoard, income, earnedIncome, effect, estimates, estimateOf, friend, opponents, teams, inView, leader, commerce, statedShifts: shifts };
 }

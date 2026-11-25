@@ -61,6 +61,7 @@ import {
   type PlanRelation,
   type PlanInput,
 } from '../analysis/index.js';
+import { statedShifts, statedShiftWarning } from '../analysis/plan/estimates.js';
 import { parseGameId } from '../client.js';
 import { COMMANDER_STRENGTH, type CombatSettings, luckFraction, straightKills } from '../analysis/combat.js';
 import { guardOffExposure } from '../analysis/guard-off.js';
@@ -2093,7 +2094,7 @@ export async function livePlanSetup(
     game, me, turn, graph, board: seen, boards: history.boards, myIncome: boardIncome, tracks, diplomacy: effect.diplomacy,
   });
   // The per-opponent estimates the plan works from (as planTurn reads them), for the tripwire and the border guess.
-  const { estimates } = planEnemyEstimates({
+  const estimateArgs: Parameters<typeof planEnemyEstimates>[0] = {
     graph,
     board,
     me: me.id,
@@ -2107,7 +2108,12 @@ export async function livePlanSetup(
     game: gameContext,
     turn,
     ...(effect.sanctionsOnOthers.length ? { sanctions: effect.sanctionsOnOthers } : {}),
-  });
+  };
+  const { estimates } = planEnemyEstimates(estimateArgs);
+  // #567: the opponents a known income moves through #444's scale (the planner's own estimates carry it).
+  const known = a.args?.knownIncome?.length && a.args.enemyDeploy === undefined ? a.args.knownIncome : undefined;
+  const scaled = known ? planEnemyEstimates({ ...estimateArgs, known }) : undefined;
+  const shifts = scaled ? statedShifts(estimates, scaled.estimates, scaled.prior) : [];
   // #275 (b): the opponents whose estimate an observation broke: their held-bonus borders are sized for
   // the larger of what tripped it and my own income (the board's, card armies out).
   const teams = teamsOf(game.players);
@@ -2226,7 +2232,7 @@ export async function livePlanSetup(
   return {
     graph, seen, award, board, opening, mover, settings, rules, owners, hand, myHand, myCards, teamClaimed, handUnknown, inGame, cards,
     boardIncome, income, trend, previousOrders, tracks, outlookInput, outlook, picking, opponents, gameContext, truces, input,
-    effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true, estimates, trip, teams, commerce,
+    effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true, estimates, trip, teams, commerce, statedShifts: shifts,
     // #427: the last turn's Reinforcement plays, for warapp_plan_turn to keep (only when plays show).
     seenPlays: playsShown ? lastPlays : undefined,
   };
@@ -3341,6 +3347,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(setup.capUnknown ? [`Income ${income} is not cut by the army cap: an army count of yours is unreadable on the board.`] : []),
         ...[armyCapPoolsUncertainty(setup.incomeCap, settings.localDeployments)].filter((r): r is string => r !== undefined),
         ...(tracks ?? []).flatMap((t) => t.warnings),
+        // #567: a known income that moved another opponent's estimate through #444's scale, by how much.
+        ...[statedShiftWarning(setup.statedShifts)].filter((w): w is string => w !== null),
         ...plan.warnings,
         ...promised,
         ...modsWarning(game.settings),
@@ -3780,10 +3788,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ...(() => {
           const allies = new Set(teammatesOf(game.players, me).map((p) => p.id));
           const rows = estimates
-            .filter((e) => e.playerId !== me.id && !allies.has(e.playerId) && inScope(e.playerId) && (e.card || e.sanctioned?.applied))
             .map((e) => ({
+              e,
+              // #567: the uncapped low end its tracker read above the income it holds, and a #444 move (reported only).
+              low: enemy_deploy === undefined && !knownIncome?.some((k) => k.player === e.playerId) ? tracks?.find((t) => t.playerId === e.playerId)?.observedLow : undefined,
+              shift: setup.statedShifts.find((x) => x.player === e.playerId),
+            }))
+            .filter(({ e, low, shift }) => e.playerId !== me.id && !allies.has(e.playerId) && inScope(e.playerId) && (e.card || e.sanctioned?.applied || low || shift))
+            .map(({ e, low, shift }) => ({
               player: playerRef(e.playerId),
-              deploy: e.estimate,
+              deploy: shift ? shift.now : e.estimate,
+              ...(low ? { observedLow: low } : {}),
+              ...(shift ? { statedScaled: { was: shift.was, by: shift.by.map((b) => b.id) } } : {}),
               ...(e.card ? { cardBonus: e.card.armies, cardDue: e.card.due, ...(e.card.basis ? { cardBonusBasis: e.card.basis } : {}) } : {}),
               ...(e.sanctioned?.applied && e.sanctioned.after !== undefined
                 ? { sanctionApplied: { player: e.playerId, percentage: sanctionPercentage(e.sanctioned.percentages), before: e.sanctioned.before, after: e.sanctioned.after } }

@@ -46,6 +46,8 @@ import {
 } from './turn.js';
 import { resolveTeamsFor } from './team-source.js';
 import { stressOpponents } from './stress-opponents.js';
+import { observedLowWarning } from '../analysis/opponents.js';
+import { statedShiftWarning } from '../analysis/plan/estimates.js';
 import { sanctionPercentage } from '../analysis/cards-in-effect.js';
 import { CARD_SANCTIONS, sanctionsPlayed } from './sanctions-played.js';
 import type { CommanderAirlift, CommanderSafety } from '../analysis/commander-safety.js';
@@ -780,6 +782,14 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(modRead ? modAllianceWarnings(modRead) : []),
         // #275 (b): an untrusted estimate is the first thing said (not under an explicit enemy_deploy).
         ...(enemy_deploy === undefined ? tripwireWarnings(trip.tripwires, (w) => untrustedOf.get(w.player) ?? untrustedDeploy(w, income), (p) => estimates.find((x) => x.playerId === p)?.estimate) : []),
+        // #567: a known income that moved another opponent's estimate through #444's scale, by how much.
+        ...[statedShiftWarning(so.statedShifts)].filter((w): w is string => w !== null),
+        // #567: an opponent tried at an income its tracker holds below what a turn surely read (not one given known_income).
+        ...(enemy_deploy === undefined
+          ? (tracks ?? [])
+              .filter((t) => t.observedLow && t.income !== null && !knownOf.has(t.playerId) && inView.has(t.playerId))
+              .map((t) => observedLowWarning(String(t.playerId), t.income!, t.observedLow!, t.incomeMethod))
+          : []),
         ...(award ? assumedWarning(award) : []),
         // #270: the static seats whose territories the test read as neutrals.
         ...[...seatTerritories(award?.board ?? seen, seats)]
@@ -897,6 +907,16 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             ...(o.sanctioned?.applied && o.sanctioned.after !== undefined
               ? { sanctionApplied: { player: o.id, percentage: sanctionPercentage(o.sanctioned.percentages), before: o.sanctioned.before, after: o.sanctioned.after } }
               : {}),
+            // #567: the uncapped low end its tracker read above the income it holds (reported only).
+            ...(() => {
+              const t = tracks?.find((x) => x.playerId === o.id);
+              return t?.observedLow && enemy_deploy === undefined && !knownOf.has(o.id) ? { observedLow: t.observedLow } : {};
+            })(),
+            // #567: its estimate without the known incomes that scaled its fog prior (#444).
+            ...(() => {
+              const sh = so.statedShifts.find((x) => x.player === o.id);
+              return sh ? { statedScaled: { was: sh.was, by: sh.by.map((b) => b.id) } } : {};
+            })(),
           })),
         // Whether the replies carry the card the clock adds (default "clock").
         assumeEnemyCards: assumeCards,
