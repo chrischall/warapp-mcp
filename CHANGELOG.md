@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/chrischall/warapp-mcp/compare/v0.15.0...v0.16.0) (2026-11-25)
+
+
+### Features
+
+* **backfill:** list each finished game one by one, and re-read older games ([#583](https://github.com/chrischall/warapp-mcp/issues/583)) ([#584](https://github.com/chrischall/warapp-mcp/issues/584)) ([f148dae](https://github.com/chrischall/warapp-mcp/commit/f148dae52fa127bdf335213f31e524dc6769fdb0))
+
 ## [0.15.0](https://github.com/chrischall/warapp-mcp/compare/v0.14.0...v0.15.0) (2026-11-25)
 
 
