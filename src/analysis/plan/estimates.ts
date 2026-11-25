@@ -159,6 +159,7 @@ export function planEnemyEstimates(input: {
     reinforcement: ctx.reinforcement,
     ...(ctx.reinforcementPlays ? { plays: ctx.reinforcementPlays } : {}),
     ...(previousBoard && input.previousOrders ? { previousOrders: input.previousOrders } : {}),
+    ...(ctx.trackCalibration ? { calibration: ctx.trackCalibration } : {}),
   });
   const priced = applyKnown(
     applyArmyPrice(applySanctions(estimates, input.sanctions ?? [], turn), input.settings?.armyCostMultiplier ?? 0),

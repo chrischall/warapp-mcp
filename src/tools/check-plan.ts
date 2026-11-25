@@ -13,7 +13,7 @@ import { neutralizeSeats, seatTerritories, staticSeats } from '../analysis/stati
 import type { SimEvent, SimOrder } from '../analysis/turn-sim.js';
 import { profileFormatOf } from '../analysis/opponent-profile.js';
 import { handOwners } from './card-advice.js';
-import { fogPaceFor, mapMatchOf } from './past-games.js';
+import { fogPaceFor, mapMatchOf, outlookCalibrationFor } from './past-games.js';
 import { sanctionMyIncome } from './card-effects.js';
 import { cardTypeByName, cardTypeName, normalizeGuid, readHand, type Card } from '../cards.js';
 import { claimedCardUses, claimedCardWarning, teamCardClaims, teamHandLeft, unclaimedFirst } from '../team-cards.js';
@@ -256,6 +256,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
       const settings = plannerSettings(game.settings);
       // #419: the past winners' pace, as warapp_plan_turn reads it (thin evidence's upper bound).
       const mapPace = await fogPaceFor(ctx.dataDir, undefined, game.settings?.mapId ?? map.id, mapMatchOf(profileFormatOf(game.players), game.settings), turn === null ? null : turn - 1);
+      // #568: past games' calibration of the tracked figures, as warapp_plan_turn reads it.
+      const trackCalibration = await outlookCalibrationFor(ctx.dataDir, undefined, profileFormatOf(game.players));
 
       const deploys: { territoryId: number; armies: number }[] = [];
       const moves: SimOrder[] = [];
@@ -403,6 +405,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         info,
         ...(opening ? { opening } : {}),
         ...(mapPace ? { mapPace } : {}),
+        ...(trackCalibration ? { trackCalibration } : {}),
         ...(enemy_deploy !== undefined ? { enemyDeploy: enemy_deploy } : {}),
         assumeCards,
         // #444: the stated incomes scale the other opponents' prior, as warapp_plan_turn has them.

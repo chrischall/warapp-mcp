@@ -13,6 +13,34 @@ import { byNum } from './util.js';
 import { LOW_COVERAGE, MIN_ENEMY_DEPLOY, OWNERS_SHOWN_FOG, PRIOR_EVIDENCE_TURNS, TRACKED_MIN_TURNS, bombPossibleOn, fogPaceIncome, localFreeOn, reinforcementArmiesFor } from './shared.js';
 import type { EnemyDeployEstimate, EnemyIncomePrior, PlannerSettings, ReinforcementClock, ReinforcementPlays } from './shared.js';
 import { observeDeploy, ownerShown, trackCoverage, visibleState } from './observe.js';
+import { coverageBucket, type CoverageBucket } from '../game-lessons.js';
+import type { OutlookCalibration } from '../outlook.js';
+
+/** #436's gate, repeated for the planner (#568): a band's calibration counts only from this many samples. */
+const MIN_TRACK_CALIBRATION_SAMPLES = 5;
+/**
+ * #568 (owner decision 2026-11-27): the tracked figure is divided by its band's past estimate ÷ truth
+ * to this power — the square root, as #567's `STATED_DAMPING` damps a stated ratio — so a band that read 0.3×
+ * truth raises the tracked figure ~1.8×, not ~3.3×: the factor is a geometric mean over a spread wide enough
+ * that the full correction would put half the estimates above the truth.
+ */
+export const TRACK_CALIBRATION_DAMPING = 0.5;
+
+/**
+ * #568: the factor a tracked figure read from `share` of its frontier is divided by: its coverage band's past
+ * geometric mean of estimate ÷ truth (`calibration`, from lessons.json) to the {@link TRACK_CALIBRATION_DAMPING}
+ * power; `undefined` when the band has under {@link MIN_TRACK_CALIBRATION_SAMPLES} samples or read at least the
+ * truth (the correction only ever raises).
+ */
+export function trackCalibrationFactor(
+  calibration: OutlookCalibration | undefined,
+  share: number | null,
+): { band: CoverageBucket; geoMean: number; n: number; factor: number } | undefined {
+  const band = coverageBucket(share);
+  const c = calibration?.[band];
+  if (!c || c.n < MIN_TRACK_CALIBRATION_SAMPLES || !(c.geoMean > 0) || c.geoMean >= 1) return undefined;
+  return { band, geoMean: c.geoMean, n: c.n, factor: c.geoMean ** TRACK_CALIBRATION_DAMPING };
+}
 
 /**
  * The army count every visible player territory holds, when they all hold the same one (the
@@ -117,6 +145,8 @@ export function enemyDeployEstimates(
     previousOrders?: MyOrders | undefined;
     /** #427: the Reinforcement plays seen in the turns' orders (card plays not fogged). */
     plays?: ReinforcementPlays | undefined;
+    /** #568: past games' tracker estimate ÷ truth per coverage band ({@link trackCalibrationFactor}). */
+    calibration?: OutlookCalibration | undefined;
   } = {},
 ): EnemyDeployEstimate[] {
   const owner = new Map<number, number>();
@@ -302,6 +332,20 @@ export function enemyDeployEstimates(
     const observedCap = observation ? couldEarn : null;
     const observedRaw = observation?.deploy ?? null;
     const observed = observation ? Math.min(observation.deploy, observedCap!) : null;
+    // #294: what its tracked figure was read from (#368: while that is little, thin evidence below).
+    const coverage = usable ? trackCoverage(usable.turns.filter((x) => usable.incomeTurns.includes(x.from))) : null;
+    // #568: the tracker reads low under fog (every observed deploy a lower bound); past games' estimate ÷
+    // truth in its coverage band raises the tracked figure from here on (never above what it could earn, never
+    // lowered). The #123 bound above keeps the tracker's own figure.
+    let trackCalibration: EnemyDeployEstimate['trackCalibration'] = null;
+    if (usable && tracked !== null && tracked > 0) {
+      const c = trackCalibrationFactor(when.calibration, coverage ? coverage.share : null);
+      const figure = c ? Math.min(Math.max(couldEarn, tracked), Math.round(tracked / c.factor)) : tracked;
+      if (c && figure > tracked) {
+        trackCalibration = { raw: tracked, band: c.band, geoMean: c.geoMean, n: c.n, factor: c.factor, figure };
+        tracked = figure;
+      }
+    }
     // A usable track replaces the single-turn observed figure (S3; #235 1c: its newest reading too).
     const seenSource: EnemyDeployEstimate['source'] =
       tracked !== null
@@ -337,8 +381,6 @@ export function enemyDeployEstimates(
     const priorUsed = priorBlend ? priorBlend.figure : priorFigure;
     const source: EnemyDeployEstimate['source'] =
       exact !== null ? 'exact' : priorUsed !== null && priorUsed > seen ? 'prior' : seenSource;
-    // #294: what its tracked figure was read from (#368: while that is little, thin evidence below).
-    const coverage = usable ? trackCoverage(usable.turns.filter((x) => usable.incomeTurns.includes(x.from))) : null;
     // #444: an untracked opponent whose prior a stated income scaled: #368's midpoint between what is in
     // view (or observed) and that prior.
     const statedMid = statedRatio !== null && source === 'prior' && !usable ? seen + Math.ceil((priorUsed! - seen) / 2 - 1e-9) : null;
@@ -471,6 +513,7 @@ export function enemyDeployEstimates(
       cardPlayed,
       ...(cardSeen ? { cardSeen: true as const } : {}),
       ...(cardInTrack ? { cardInTrack } : {}),
+      ...(trackCalibration ? { trackCalibration } : {}),
       ...(priorFull !== null && priorFigure! < priorFull ? { stated: { full: priorFull, scaled: priorFigure!, lower: seen, midpoint: statedMid } } : {}),
     };
   });
