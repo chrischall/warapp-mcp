@@ -296,6 +296,14 @@
       "description": "Give the end-of-game pass to up to 25 finished games per call (each history read once), writing only this server's state"
     },
     {
+      "name": "warapp_calibration",
+      "description": "Score the opponent income estimates this server planned with against finished games' truth, by format, phase, coverage, source and more (read-only, no war.app request)"
+    },
+    {
+      "name": "warapp_turn_history",
+      "description": "A game turn by turn as you saw it: the board, every player's visible orders, the plan, the orders sent and the outcome"
+    },
+    {
       "name": "warapp_wait_for_turn",
       "description": "Wait until one of your games is waiting on you, woken by war.app's push notifications"
     },

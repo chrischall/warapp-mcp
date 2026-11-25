@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { BoardState } from '../src/board.js';
 import { calibrationSources } from '../src/calibration-source.js';
+import { calibrationHarness } from '../src/tools/calibration-harness.js';
 import { finishedDir, finishedPath, finishedRecordOf, writeFinishedRecord } from '../src/finished-store.js';
 import { writeStoredMap } from '../src/map-store.js';
 import { normalizeMap, type Game } from '../src/normalize.js';
@@ -86,6 +87,26 @@ describe('calibrationSources (#318)', () => {
     expect(alone.settings.mapId).toBe(77);
     expect(alone.map.id).toBe(77);
     expect(r.skipped).toEqual({});
+  });
+
+  it('#569: the harness (warapp_calibration harness: true, scripts/calibrate.mjs) runs over the same records, aggregates only', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'warapp-mcp-calsrc-'));
+    const salt = (await playerSaltForWrite(dir))!;
+    await writeStoredMap(dir, MAP);
+    for (const id of [511, 512]) {
+      await writeGameRecord(dir, game(id));
+      await keep(dir, salt, id);
+    }
+    await writeBoardCache(dir, 511, ANN, 1, board(BOB));
+    unlinkSync(gameRecordPath(dir, 512));
+    const r = await calibrationHarness(dir, { turns: 1 });
+    expect(r.counts.histories).toEqual({ captured: 2 });
+    expect(r.counts.recordOnly).toBe(1);
+    expect(r.counts.benchmarked).toBeGreaterThan(0);
+    expect(r.benchmark).toHaveProperty('all');
+    expect(r.byEra).toBeDefined();
+    const text = JSON.stringify(r);
+    for (const id of ['511', '512', String(ANN), String(BOB), 'Ann', 'Bob', 'Secret']) expect(text).not.toContain(id);
   });
 
   it('skips a record without a stored map or settings, and says why', async () => {

@@ -43,6 +43,8 @@ import { registerLeaveGameTool } from './leave-game.js';
 import { registerCloseFinishedGameTool } from './close-finished-game.js';
 import { registerWhereTool } from './where.js';
 import { registerStateTools } from './state.js';
+import { registerCalibrationTool } from './calibration.js';
+import { registerTurnHistoryTool } from './turn-history.js';
 import { blobStoreFromEnv, type BlobStore } from '@chrischall/mcp-utils/export';
 import { registerProfileOpponentsTool } from './profile-opponents.js';
 import { pushListenerFor, type PushListener } from '../push/listener.js';
@@ -214,6 +216,10 @@ function registerEveryTool(server: McpServer, deps: ToolDeps): void {
     ...(deps.env ? { env: deps.env } : {}),
     store: deps.blobStore === undefined ? blobStoreFromEnv(deps.env ?? process.env) : deps.blobStore,
   });
+  // #569: the income estimates scored against finished games' truth — this server's state only, read-only.
+  registerCalibrationTool(server, () => dataDir(deps.env));
+  // #570: a game turn by turn as I saw it, beside the plan and the orders sent (the decision log), read-only.
+  registerTurnHistoryTool(server, live);
   // Hosted only: the war.app sign-in mcp-host's authFlow captures the AuthToken from (#333 part B).
   // Locally warapp_link_session stays the way to the direct transport.
   if (hosted) registerSignInTool(server, deps.signIn ? { signIn: deps.signIn } : {});

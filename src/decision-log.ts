@@ -63,6 +63,7 @@ import type { BoardState, TerritoryState } from './board.js';
 import { writeJsonAtomic } from './map-store.js';
 import { withPathLock } from './path-lock.js';
 import { serverBuild } from './build-id.js';
+import type { SeenOrder, SeenTurn } from './turn-orders.js';
 import { VERSION } from './version.js';
 
 export const DECISION_LOG_VERSION = 1;
@@ -153,6 +154,11 @@ export interface LoggedEstimate {
   coverage: number | null;
   /** #368: sized on thin evidence (toward the midpoint). */
   thin: boolean;
+  /**
+   * #569: the tracker's income method for this opponent that turn (`rise-capped` when #418's cap held a rise,
+   * `carried`, `max-observed`, …); absent when no track was used, and in entries written before #569.
+   */
+  method?: string;
 }
 
 export interface LoggedDecision {
@@ -383,6 +389,11 @@ export interface DecisionEntry {
   accuracy?: TurnAccuracy;
   /** #415: the messages from other players read when the turn was planned (ids and labels only). */
   chat?: LoggedChatMessage[];
+  /**
+   * #570: every visible order of every player on this turn, as the player saw it once it resolved (the next
+   * turn's LatestGameInfo): ids and counts only, players by GameFeed id. Absent when never read.
+   */
+  seen?: { orders: SeenOrder[]; omitted?: number };
 }
 
 export type DecisionLogStatus = 'active' | 'finished' | 'compacted';
@@ -729,10 +740,21 @@ export function decodeInput(logged: LoggedInput, board: BoardState, graph: PlanI
 }
 
 /** The estimates as logged: ids, figures and flags only. */
-export function loggedEstimates(estimates: readonly EnemyDeployEstimate[]): LoggedEstimate[] {
+export function loggedEstimates(
+  estimates: readonly EnemyDeployEstimate[],
+  tracks?: readonly { playerId: number; incomeMethod?: string | null }[],
+): LoggedEstimate[] {
+  const methods = new Map((tracks ?? []).flatMap((t) => (t.incomeMethod ? [[t.playerId, t.incomeMethod] as const] : [])));
   return [...estimates]
     .sort((a, b) => a.playerId - b.playerId)
-    .map((e) => ({ player: e.playerId, estimate: e.estimate, source: e.source, coverage: e.coverage?.share ?? null, thin: !!e.thinEvidence }));
+    .map((e) => ({
+      player: e.playerId,
+      estimate: e.estimate,
+      source: e.source,
+      coverage: e.coverage?.share ?? null,
+      thin: !!e.thinEvidence,
+      ...(methods.has(e.playerId) ? { method: methods.get(e.playerId)! } : {}),
+    }));
 }
 
 /** My income as `input` gives it, card armies out; `undefined` when it holds none. */
@@ -748,6 +770,7 @@ function decisionOf(
   outlookLean: OutlookLean | undefined,
   estimates: readonly EnemyDeployEstimate[] | undefined,
   income: number | undefined,
+  tracks?: PlanInput['tracks'],
 ): LoggedDecision {
   return encodeValue({
     goal: plan.goal,
@@ -763,7 +786,7 @@ function decisionOf(
     warnings: plan.warnings,
     outlook: outlook ?? null,
     ...(outlookLean ? { outlookLean } : {}),
-    ...(estimates ? { estimates: loggedEstimates(estimates) } : {}),
+    ...(estimates ? { estimates: loggedEstimates(estimates, tracks) } : {}),
     ...(income !== undefined ? { income } : {}),
   }) as LoggedDecision;
 }
@@ -926,7 +949,7 @@ export async function recordDecision(
         kind: 'planned',
         input,
         planner: { version: VERSION, ...(build ? { build } : {}) },
-        decision: decisionOf(rec.plan, rec.outlookState, rec.outlookLean, rec.estimates, earnedIncome(rec.input)),
+        decision: decisionOf(rec.plan, rec.outlookState, rec.outlookLean, rec.estimates, earnedIncome(rec.input), rec.input.tracks),
         times: encodeValue({ plannedAt: iso(rec.now), ...rec.times }) as DecisionTimes,
         ...(rec.firstMover !== undefined ? { firstMover: rec.firstMover ? { ...rec.firstMover } : null } : {}),
         ...(rec.cards ? { cards: encodeValue(rec.cards) as LoggedCards } : {}),
@@ -1322,6 +1345,28 @@ export async function recordCheck(
       (log) => {
         const was = log.turns[String(turn)] ?? {};
         return { ...log, turns: { ...log.turns, [String(turn)]: { ...was, checks: { ...was.checks, checkPlan: kept } } } };
+      },
+      opts,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #570: keep the resolved turn's visible orders on that turn's entry (an entry is started when none exists).
+ * Read again, the newest read wins. `true` when written. Never throws.
+ */
+export async function recordSeenTurn(dir: string, gameId: number, playerId: number, seen: SeenTurn, opts: DecisionLogOptions = {}): Promise<boolean> {
+  try {
+    const kept = { orders: seen.orders, ...(seen.omitted ? { omitted: seen.omitted } : {}) };
+    return await updateDecisionLog(
+      dir,
+      gameId,
+      playerId,
+      (log) => {
+        const was = log.turns[String(seen.turn)] ?? {};
+        return { ...log, turns: { ...log.turns, [String(seen.turn)]: { ...was, seen: kept } } };
       },
       opts,
     );
