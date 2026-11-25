@@ -203,6 +203,46 @@ export function applyKnown(estimates: EnemyDeployEstimate[], known: readonly { p
 }
 
 /**
+ * #567: an opponent whose estimate moved because a known (stated) income scaled its fog prior (#444):
+ * `was` its estimate without the known incomes, `now` with them; `by` the incomes that scaled it.
+ */
+export interface StatedShift {
+  player: number;
+  was: number;
+  now: number;
+  by: readonly { id: number; income: number }[];
+}
+
+/**
+ * #567: the opponents whose estimate the #444 scale moved: each in `scaled` (estimates made with the known
+ * incomes) whose fog prior was scaled (`stated`) and whose estimate differs from `plain` (made without them).
+ * A player whose own income was given (`known`) is left out: its figure is the one supplied. Ascending ids. Pure.
+ */
+export function statedShifts(
+  plain: readonly EnemyDeployEstimate[],
+  scaled: readonly EnemyDeployEstimate[],
+  prior: EnemyIncomePrior | undefined,
+): StatedShift[] {
+  if (!prior?.stated) return [];
+  const before = new Map(plain.map((e) => [e.playerId, e.estimate]));
+  return scaled
+    .filter((e) => e.stated && !e.known && before.has(e.playerId) && before.get(e.playerId) !== e.estimate)
+    .map((e) => ({ player: e.playerId, was: before.get(e.playerId)!, now: e.estimate, by: prior.stated!.players }))
+    .sort((a, b) => a.player - b.player);
+}
+
+/** #567: the warning naming each opponent a known income moved (#444), and by how much; `null` with none. */
+export function statedShiftWarning(shifts: readonly StatedShift[], name: (id: number) => string = String): string | null {
+  if (!shifts.length) return null;
+  const by = shifts[0]!.by.map((x) => `player ${name(x.id)}'s ${x.income}`).join(', ');
+  const moved = shifts.map((x) => `player ${name(x.player)} ~${x.was} → ~${x.now}`).join(', ');
+  return (
+    `The known income${shifts[0]!.by.length === 1 ? '' : 's'} given (${by}) moved ${shifts.length === 1 ? 'another opponent\'s estimate' : 'other opponents\' estimates'}: ${moved} (#444: ` +
+    'a stated income scales the fog prior of every opponent who stated none). To size them without it, leave that known_income out.'
+  );
+}
+
+/**
  * #332: in a commerce game with a rising army price (multiplier m > 0), what each estimate read off the board
  * (`visible`, `exact`: its base and bonuses, in gold) buys in armies, its Reinforcement card's armies kept on top.
  * An observed, tracked or prior figure is already armies and is left as it is. Unchanged with m = 0.

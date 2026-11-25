@@ -441,6 +441,14 @@ export interface OpponentTrack {
    */
   incomeRise?: IncomeRise;
   /**
+   * #567: the highest low end any turn of its income window read (each turn's `low`, at most its could-earn
+   * `cap`) — every ambiguous army read as a move, so the least that turn deployed — when it is above
+   * `income`: the #418 rise cap or the tripwire's ceiling holds the estimate below what a turn surely read.
+   * `high` that turn's high end (at most its cap), `coverage` the share of its frontier the turn read
+   * (`null` when none was measured). Reported only: the estimate is unchanged. Absent otherwise.
+   */
+  observedLow?: ObservedLow;
+  /**
    * #418: with `incomeMethod` `'tripped'`: the over-read tripwire's latest step — the carry it stepped
    * down `from`, the reading `proven` on turn `turn`, a turn with every army it could deploy in view.
    * Absent otherwise.
@@ -1096,6 +1104,41 @@ export interface IncomeRise {
   read: number;
   before: number;
   proven?: number;
+}
+
+/** #567: a turn's low end above the tracked income ({@link OpponentTrack.observedLow}). */
+export interface ObservedLow {
+  low: number;
+  high: number;
+  turn: number;
+  coverage: number | null;
+}
+
+/**
+ * #567: the turn of `window` whose low end (at most its could-earn cap) is highest, the newest on a tie,
+ * when that low end is above `income`; else `null`. Pure.
+ */
+export function observedLowOf(window: readonly ObservedTurn[], income: number | null): ObservedLow | null {
+  if (income === null) return null;
+  let top: ObservedTurn | null = null;
+  for (const x of window) if (!top || Math.min(x.low, x.cap) >= Math.min(top.low, top.cap)) top = x;
+  if (!top || Math.min(top.low, top.cap) <= income) return null;
+  return { low: Math.min(top.low, top.cap), high: Math.min(top.high, top.cap), turn: top.from, coverage: top.coverage?.share ?? null };
+}
+
+/** #567: the warning that a tracked income is held below what a turn of its window surely read. */
+export function observedLowWarning(player: string, income: number, o: ObservedLow, method: IncomeMethod | null): string {
+  const read = o.coverage !== null ? `, from ${Math.round(o.coverage * 100)}% of its frontier` : '';
+  const range = o.high > o.low ? `, up to +${o.high}` : '';
+  const why =
+    method === 'tripped'
+      ? 'the over-read tripwire keeps the readings before its step at most the stepped figure (#418)'
+      : `a rise no turn read in full confirmed is held to ${RISE_CAP}× a turn (#418)`;
+  return (
+    `Player ${player}'s income is held at ~${income}, but turn ${o.turn} read it deploying at least +${o.low}${range}${read} (#567): ` +
+    `${why}, so the plan sizes its borders for ~${income}. To test the low end, pass known_income ${o.low} for it to ` +
+    'warapp_check_plan (a known income also scales the other opponents\' fog prior, #444).'
+  );
 }
 
 /** #418: one step of the over-read tripwire ({@link OpponentTrack.incomeTrip}). */
@@ -1874,6 +1917,9 @@ export function trackOpponents(
       if (earnedAtLeast.exceedsTotal)
         warnings.push(`${head}; it could be banking more than your total visible armies (${visibleArmies}).`);
     }
+    // #567: a turn of the window surely read more than the income held: said, never applied.
+    const observedLow = observed.length >= TRACKED_MIN_TURNS ? observedLowOf(incomeWindow, income) : null;
+    if (observedLow) warnings.push(observedLowWarning(nameOf(playerId), income!, observedLow, estimate!.method));
     if (jump)
       warnings.push(
         `Player ${nameOf(playerId)}'s ${incomeJumpText(jump, income!, observed.filter((x) => x.from >= jump.since && x.from < jump.turn))}`,
@@ -2156,6 +2202,7 @@ export function trackOpponents(
       incomeLowered: carried ? carried.set - carried.income : 0,
       ...(incomeRise ? { incomeRise } : {}),
       ...(incomeTrip ? { incomeTrip } : {}),
+      ...(observedLow ? { observedLow } : {}),
       unexplained,
       inferred,
       topUp: observed.reduce<number | null>((n, x) => (x.topUp === undefined ? n : Math.max(n ?? 0, x.topUp)), null),
