@@ -8,7 +8,7 @@
 //
 // Reported only: nothing plans on it (owner decision P1). Name-free: games are numbered by their place in
 // the report (an ordinal, never the id), opponents are never named or numbered. No I/O, no clock.
-import type { DecisionEntry } from '../decision-log.js';
+import type { DecisionEntry, EstimateStages } from '../decision-log.js';
 import { CALIBRATION_HIGH, CALIBRATION_LOW, COVERAGE_BUCKETS, coverageBucket, type CoverageBucket } from './game-lessons.js';
 
 /** A true income jump at least this many times the turn before starts a catch-up count. */
@@ -65,6 +65,8 @@ export interface IncomeSample {
   method: string | null;
   /** The opponent had the highest true income of my opponents that turn. */
   leader: boolean;
+  /** #568: each pipeline stage's figure that turn (logged since #568); `null` before. */
+  stages: EstimateStages | null;
 }
 
 /** Estimate ÷ truth over a set of samples, with the signed error in armies. */
@@ -135,6 +137,7 @@ export function incomeSamples(games: readonly CalibrationGame[]): IncomeSample[]
           thin: a.thin,
           method: logged.get(a.player)?.method ?? null,
           leader: top !== null && a.truth >= top,
+          stages: logged.get(a.player)?.stages ?? null,
         });
       }
     }
@@ -242,6 +245,92 @@ export function consequences(games: readonly CalibrationGame[]): Consequences {
   return c;
 }
 
+/** #568: the stages scored, in pipeline order (`card` is armies on top of an income, not scored alone). */
+export const STAGES = ['visible', 'observed', 'tracked', 'prior', 'stated', 'blend', 'thin', 'known'] as const;
+export type Stage = (typeof STAGES)[number];
+
+/**
+ * #568: each stage's figure ÷ the truth, over the samples that logged it and where the stage applied (a figure
+ * above 0; the truth is the income, card armies apart, so the card is left out). Pure.
+ */
+export function stageErrors(samples: readonly IncomeSample[]): Partial<Record<Stage, ErrorView>> {
+  const out: Partial<Record<Stage, ErrorView>> = {};
+  for (const stage of STAGES) {
+    const rows = samples.flatMap((s) => {
+      const v = s.stages?.[stage];
+      return typeof v === 'number' && v > 0 ? [{ ratio: r3(v / s.truth), error: v - s.truth }] : [];
+    });
+    const view = errorView(rows);
+    if (view) out[stage] = view;
+  }
+  return out;
+}
+
+/** #568: the dampings the what-if tries (0: no correction; 1: the full band factor). */
+export const WHAT_IF_DAMPINGS = [0, 0.25, 0.5, 0.75, 1] as const;
+/** #568: a band's factor counts only from this many samples of the other games. */
+export const WHAT_IF_MIN_SAMPLES = 5;
+
+/** #568: the tracked stage corrected by its band at one damping, against the truth. */
+export interface WhatIfRow {
+  damping: number;
+  /** The corrected tracked figures ÷ truth (every sample with a tracked stage). */
+  error: ErrorView | null;
+  /** Samples a band factor raised. */
+  raised: number;
+  /** The same by coverage band (does the correction help in the 50–75% band too?). */
+  byBand: Partial<Record<CoverageBucket, ErrorView>>;
+}
+
+/**
+ * #568: what dividing the tracked figure by its coverage band's geometric mean of tracked ÷ truth, to each
+ * damping in {@link WHAT_IF_DAMPINGS}, would have read. Leave one game out: a game's samples are corrected by
+ * the bands of the other games only (at least {@link WHAT_IF_MIN_SAMPLES} samples, a band under 1×), so a game
+ * never calibrates itself. Only ever raises, as the draft rule does. The tracked stage alone, not the whole
+ * pipeline (the prior, its blend and thin evidence would move with it). Pure.
+ */
+export function trackedWhatIf(samples: readonly IncomeSample[]): WhatIfRow[] {
+  const rows = samples.flatMap((s) => (typeof s.stages?.tracked === 'number' && s.stages.tracked > 0 ? [{ s, tracked: s.stages.tracked }] : []));
+  const sums = new Map<string, { n: number; log: number }>();
+  const key = (game: number, band: CoverageBucket) => `${game}|${band}`;
+  for (const { s, tracked } of rows) {
+    const k = key(s.game, s.band);
+    const v = sums.get(k) ?? { n: 0, log: 0 };
+    v.n++;
+    v.log += Math.log(tracked / s.truth);
+    sums.set(k, v);
+  }
+  const bandTotals = new Map<CoverageBucket, { n: number; log: number }>();
+  for (const [k, v] of sums) {
+    const band = k.slice(k.indexOf('|') + 1) as CoverageBucket;
+    const t = bandTotals.get(band) ?? { n: 0, log: 0 };
+    bandTotals.set(band, { n: t.n + v.n, log: t.log + v.log });
+  }
+  const factorFor = (game: number, band: CoverageBucket): number | undefined => {
+    const all = bandTotals.get(band);
+    const own = sums.get(key(game, band)) ?? { n: 0, log: 0 };
+    const n = (all?.n ?? 0) - own.n;
+    if (n < WHAT_IF_MIN_SAMPLES) return undefined;
+    const g = Math.exp(((all?.log ?? 0) - own.log) / n);
+    return g < 1 ? g : undefined;
+  };
+  return WHAT_IF_DAMPINGS.map((damping) => {
+    let raised = 0;
+    const scored = rows.map(({ s, tracked }) => {
+      const g = factorFor(s.game, s.band);
+      const v = g === undefined ? tracked : Math.max(tracked, Math.round(tracked / g ** damping));
+      if (v > tracked) raised++;
+      return { band: s.band, ratio: r3(v / s.truth), error: v - s.truth };
+    });
+    const byBand: Partial<Record<CoverageBucket, ErrorView>> = {};
+    for (const band of COVERAGE_BUCKETS) {
+      const view = errorView(scored.filter((x) => x.band === band));
+      if (view) byBand[band] = view;
+    }
+    return { damping, error: errorView(scored), raised, byBand };
+  });
+}
+
 /** The whole report. */
 export interface IncomeCalibration {
   games: number;
@@ -262,6 +351,10 @@ export interface IncomeCalibration {
   consequences: Consequences;
   /** The {@link WORST_LISTED} largest misses either way (by |ln ratio|). */
   worst: IncomeSample[];
+  /** #568: each pipeline stage's figure ÷ truth, over the estimates that logged their stages. */
+  byStage: Partial<Record<Stage, ErrorView>>;
+  /** #568: the tracked stage corrected by its coverage band, per damping (leave one game out). */
+  trackedWhatIf: WhatIfRow[];
 }
 
 function groupBy<K extends string>(samples: readonly IncomeSample[], key: (s: IncomeSample) => K, order?: readonly K[]): Partial<Record<K, ErrorView>> {
@@ -303,5 +396,7 @@ export function incomeCalibration(games: readonly CalibrationGame[]): IncomeCali
     catchUp: catchUp(games),
     consequences: consequences(games),
     worst,
+    byStage: stageErrors(samples),
+    trackedWhatIf: trackedWhatIf(samples),
   };
 }

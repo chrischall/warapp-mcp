@@ -73,7 +73,9 @@ export function registerCalibrationTool(server: McpServer, dataDir: () => string
         'evidence, the tracker\'s income method (rise-capped or not; logged since #569), leader vs trailer, and phase ' +
         'by coverage; the catch-up lag after a true income jump of 1.5× or more (turns until the estimate reaches two ' +
         'thirds of the truth); a consequences proxy (turns that lost a territory the plan did not concede, with an ' +
-        'estimate under half the truth vs without); and the largest misses. `samples: true` adds the scored rows ' +
+        'estimate under half the truth vs without); the largest misses; each pipeline stage\'s figure ÷ the truth ' +
+        '(visible, observed, tracked, prior, stated, blend, thin, known; logged since #568); and what correcting the ' +
+        'tracked figure by its coverage band would have read at dampings 0 to 1 (leave one game out). `samples: true` adds the scored rows ' +
         `(at most ${MAX_SAMPLES}), name-free, as a fixture set; \`harness: true\` also runs the #318 harness over the ` +
         'cached boards (tracker, fog prior and plan estimate by coverage band, and the opening benchmark), which can ' +
         'take a while on many games. Games are numbered by their place in the report, never by id, and no player is ' +

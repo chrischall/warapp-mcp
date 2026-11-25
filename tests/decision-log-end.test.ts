@@ -266,7 +266,7 @@ describe('end-of-game truth in the log (#412 task 3)', () => {
         { playerId: 3, estimate: 9, source: 'prior', coverage: { share: 0.25 }, thinEvidence: { midpoint: 9 } },
         { playerId: 2, estimate: 5, source: 'visible', coverage: null, thinEvidence: null },
       ] as never),
-    ).toEqual([
+    ).toMatchObject([
       { player: 2, estimate: 5, source: 'visible', coverage: null, thin: false },
       { player: 3, estimate: 9, source: 'prior', coverage: 0.25, thin: true },
     ]);

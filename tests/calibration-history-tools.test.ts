@@ -254,7 +254,7 @@ describe('loggedEstimates keeps the tracker method (#569)', () => {
       { playerId: 9, estimate: 12, source: 'tracked', coverage: { share: 0.4 }, thinEvidence: undefined },
       { playerId: 8, estimate: 5, source: 'visible', coverage: null },
     ] as never;
-    expect(loggedEstimates(est, [{ playerId: 9, incomeMethod: 'rise-capped' }])).toEqual([
+    expect(loggedEstimates(est, [{ playerId: 9, incomeMethod: 'rise-capped' }])).toMatchObject([
       { player: 8, estimate: 5, source: 'visible', coverage: null, thin: false },
       { player: 9, estimate: 12, source: 'tracked', coverage: 0.4, thin: false, method: 'rise-capped' },
     ]);

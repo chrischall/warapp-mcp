@@ -159,6 +159,51 @@ export interface LoggedEstimate {
    * `carried`, `max-observed`, …); absent when no track was used, and in entries written before #569.
    */
   method?: string;
+  /**
+   * #568: the figure each stage of the estimate pipeline gave this opponent (income, card armies apart), so the
+   * end-of-game truth scores each stage, not only the final estimate. Absent in entries written before #568.
+   */
+  stages?: EstimateStages;
+}
+
+/**
+ * #568: the stages of one deploy estimate (`enemyDeployEstimates`), ids and figures only. `null`: the stage did
+ * not apply that turn.
+ */
+export interface EstimateStages {
+  /** Base income plus the bonuses it visibly holds in full. */
+  visible: number;
+  /** The single-turn observed deploy (#57), capped at what it could earn. */
+  observed: number | null;
+  /** The tracker's figure (#119/#418) the estimate read. */
+  tracked: number | null;
+  /** The fog prior (#119), before any #444 scaling. */
+  prior: number | null;
+  /** The prior scaled by stated incomes (#444). */
+  stated: number | null;
+  /** #235's prior shrunk toward the evidence. */
+  blend: number | null;
+  /** #368's thin-evidence figure. */
+  thin: number | null;
+  /** A known income (#368) that replaced the estimate. */
+  known: number | null;
+  /** The Reinforcement card the clock added (0: none). */
+  card: number;
+}
+
+/** #568: the stages of an estimate as the decision log keeps them. */
+export function estimateStages(e: EnemyDeployEstimate): EstimateStages {
+  return {
+    visible: e.base + e.bonusIncome,
+    observed: e.observed,
+    tracked: e.tracked,
+    prior: e.stated ? e.stated.full : e.prior,
+    stated: e.stated ? e.stated.scaled : null,
+    blend: e.priorBlend ? e.priorBlend.figure : null,
+    thin: e.thinEvidence ? e.thinEvidence.figure : null,
+    known: e.known ? e.known.income : null,
+    card: e.card ? e.card.armies : 0,
+  };
 }
 
 export interface LoggedDecision {
@@ -754,6 +799,7 @@ export function loggedEstimates(
       coverage: e.coverage?.share ?? null,
       thin: !!e.thinEvidence,
       ...(methods.has(e.playerId) ? { method: methods.get(e.playerId)! } : {}),
+      stages: estimateStages(e),
     }));
 }
 
