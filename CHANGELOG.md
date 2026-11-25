@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.18.0](https://github.com/chrischall/warapp-mcp/compare/v0.17.0...v0.18.0) (2026-11-25)
+
+
+### Features
+
+* **calibration:** name the tracker step that held each low estimate ([#586](https://github.com/chrischall/warapp-mcp/issues/586)) ([#592](https://github.com/chrischall/warapp-mcp/issues/592)) ([0495300](https://github.com/chrischall/warapp-mcp/commit/0495300f01372d601625a0b47db11e8d575bf5dc))
+* **pace:** flag an opening turn close to its boot ([#504](https://github.com/chrischall/warapp-mcp/issues/504)) ([#589](https://github.com/chrischall/warapp-mcp/issues/589)) ([44bc32e](https://github.com/chrischall/warapp-mcp/commit/44bc32ec5715a8951c9ecdd5974b8e2bf77a00ee))
+
+
+### Bug Fixes
+
+* **calibration:** count a catch-up only from a jump on a planned turn ([#586](https://github.com/chrischall/warapp-mcp/issues/586)) ([#591](https://github.com/chrischall/warapp-mcp/issues/591)) ([a2b9459](https://github.com/chrischall/warapp-mcp/commit/a2b9459905ba0733bb176f9e1e6819b1de981802))
+
 ## [0.17.0](https://github.com/chrischall/warapp-mcp/compare/v0.16.0...v0.17.0) (2026-11-25)
 
 
