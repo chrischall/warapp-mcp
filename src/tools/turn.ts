@@ -99,7 +99,7 @@ const READ_BACK_TARGETED: ReadonlySet<string> = new Set(['Bomb', 'Blockade', 'Em
 import { compareScores, planAirlift, STAGING_DISCOUNT } from '../analysis/airlift-plan.js';
 import { planBomb } from '../analysis/bomb-plan.js';
 import { planBlockade, planWall } from '../analysis/blockade-plan.js';
-import type { TurnPlan } from '../analysis/plan/shared.js';
+import type { KnownIncome, TurnPlan } from '../analysis/plan/shared.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
 import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, lastTurnPlays, opponentCanHold, opponentReinforcement, reinforcementPlaysShown, seenReinforcementPlays, TEAM_HAND } from './card-advice.js';
@@ -1873,7 +1873,7 @@ export interface LivePlanArgs {
   minWinChance?: number;
   firstMover?: 'me' | 'opponent';
   /** #368: per-player incomes the caller knows (`known_income`): each replaces that opponent's estimate. */
-  knownIncome?: readonly { player: number; income: number }[];
+  knownIncome?: readonly KnownIncome[];
   /** #375: territories and players no pass attacks (`avoid_territories`, `avoid_players`). */
   avoid?: { territories: readonly number[]; players: readonly number[] };
   /** #382: under `goal: 'siege'`, the player besieged (`siege_target`, a GameFeed id). */

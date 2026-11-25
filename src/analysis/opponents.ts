@@ -1149,7 +1149,7 @@ export function observedLowWarning(player: string, income: number, o: ObservedLo
   return (
     `Player ${player}'s income is held at ~${income}, but turn ${o.turn} read it deploying at least +${o.low}${range}${read} (#567): ` +
     `${why}, so the plan sizes its borders for ~${income}. To test the low end, pass known_income ${o.low} for it to ` +
-    'warapp_check_plan (a known income also scales the other opponents\' fog prior, #444).'
+    'warapp_check_plan (a board figure: it moves no other opponent, #567).'
   );
 }
 

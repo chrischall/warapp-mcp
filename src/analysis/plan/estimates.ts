@@ -46,6 +46,7 @@ import {
   visibleState,
   type EnemyDeployEstimate,
   type EnemyIncomePrior,
+  type KnownIncome,
   type PlanGameContext,
   type PlanGoal,
   type PlanInput,
@@ -139,7 +140,7 @@ export function planEnemyEstimates(input: {
   /** G2: the Sanctions on other players the decoder is sure of ({@link applySanctions}). */
   sanctions?: readonly { player: number; percentage: number; untilTurn: number; fromTurn?: number }[];
   /** #368: per-player incomes the user knows ({@link applyKnown}): each replaces that player's estimate. */
-  known?: readonly { player: number; income: number }[];
+  known?: readonly KnownIncome[];
 }): { estimates: EnemyDeployEstimate[]; prior: EnemyIncomePrior | undefined; priorSkipped?: string } {
   const ctx = input.game ?? {};
   // #270: a static seat (out, no AI on it) deploys nothing: its territories read as neutrals.
@@ -166,24 +167,36 @@ export function planEnemyEstimates(input: {
   return { estimates: priced, prior, ...(skipped ? { priorSkipped: skipped } : {}) };
 }
 
+/** #567: the fewest players in view with an income stated in chat before #444's scale applies. */
+export const MIN_STATED_PLAYERS = 2;
 /**
- * #444: the incomes stated in chat (`known`) for players in view (not me) scale the prior of every other
- * opponent when their mean is below my income: `EnemyIncomePrior.stated`. The prior unchanged otherwise.
+ * #567: the scale is (mean stated ÷ my income) to this power: the square root, so a stated mean half mine
+ * scales the others' prior to ~0.71 of it, not 0.5. Offline evidence (13 finished FFAs, true incomes): the
+ * full ratio set the others' prior far below their truth.
+ */
+export const STATED_DAMPING = 0.5;
+
+/**
+ * #444: the incomes stated in chat (`known` with `source: 'chat'`, #567) for players in view (not me) scale
+ * the prior of every other opponent when their mean is below my income: `EnemyIncomePrior.stated`. #567: only
+ * from {@link MIN_STATED_PLAYERS} such players, and by the mean's ratio to mine to the {@link STATED_DAMPING}
+ * power (`scale`; `ratio` keeps the ratio itself). A `board` income (the default) never scales anyone. The prior
+ * unchanged otherwise.
  */
 function statedScale(
   prior: EnemyIncomePrior | undefined,
   board: BoardState,
   me: number,
-  known: readonly { player: number; income: number }[],
+  known: readonly KnownIncome[],
 ): EnemyIncomePrior | undefined {
   if (!prior || !known.length || prior.myIncome <= 0) return prior;
   const inView = new Set(board.territories.flatMap((t) => (t.owner.kind === 'player' ? [t.owner.playerId] : [])));
   const players = known
-    .filter((k) => k.player !== me && inView.has(k.player))
+    .filter((k) => k.source === 'chat' && k.player !== me && inView.has(k.player))
     .map((k) => ({ id: k.player, income: Math.max(0, Math.floor(k.income)) }));
-  if (!players.length) return prior;
-  const ratio = players.reduce((n, x) => n + x.income, 0) / players.length / prior.myIncome;
-  return ratio < 1 ? { ...prior, stated: { players, mine: prior.myIncome, ratio } } : prior;
+  if (players.length < MIN_STATED_PLAYERS) return prior;
+  const raw = players.reduce((n, x) => n + x.income, 0) / players.length / prior.myIncome;
+  return raw < 1 ? { ...prior, stated: { players, mine: prior.myIncome, ratio: raw, scale: raw ** STATED_DAMPING } } : prior;
 }
 
 /**
@@ -238,7 +251,7 @@ export function statedShiftWarning(shifts: readonly StatedShift[], name: (id: nu
   const moved = shifts.map((x) => `player ${name(x.player)} ~${x.was} → ~${x.now}`).join(', ');
   return (
     `The known income${shifts[0]!.by.length === 1 ? '' : 's'} given (${by}) moved ${shifts.length === 1 ? 'another opponent\'s estimate' : 'other opponents\' estimates'}: ${moved} (#444: ` +
-    'a stated income scales the fog prior of every opponent who stated none). To size them without it, leave that known_income out.'
+    'incomes stated in chat scale the fog prior of every opponent who stated none). To size them without it, give those incomes source "board" or leave them out.'
   );
 }
 

@@ -7,8 +7,9 @@ import { buildGraph } from '../../src/analysis/graph.js';
 import { observedLowOf, observedLowWarning, trackOpponents, type ObservedTurn } from '../../src/analysis/opponents.js';
 import { planEnemyEstimates, statedShifts, statedShiftWarning } from '../../src/analysis/plan/estimates.js';
 import type { PlannerSettings } from '../../src/analysis/planner.js';
+import type { KnownIncome } from '../../src/analysis/plan/shared.js';
 import type { GameMap } from '../../src/normalize.js';
-import { board, fogged, mine, neutral } from './helpers.js';
+import { board, fogged, mine } from './helpers.js';
 
 const ME = 10;
 const ENEMY = 20;
@@ -48,7 +49,7 @@ describe('(1) #567: the uncapped low end beside a held income', () => {
 
   it('the warning under the rise cap (a turn read from under 60% of its frontier)', () => {
     expect(observedLowWarning('Ann', 17, { low: 29, high: 50, turn: 10, coverage: 0.5 }, 'rise-capped')).toBe(
-      "Player Ann's income is held at ~17, but turn 10 read it deploying at least +29, up to +50, from 50% of its frontier (#567): a rise no turn read in full confirmed is held to 1.3× a turn (#418), so the plan sizes its borders for ~17. To test the low end, pass known_income 29 for it to warapp_check_plan (a known income also scales the other opponents' fog prior, #444).",
+      "Player Ann's income is held at ~17, but turn 10 read it deploying at least +29, up to +50, from 50% of its frontier (#567): a rise no turn read in full confirmed is held to 1.3× a turn (#418), so the plan sizes its borders for ~17. To test the low end, pass known_income 29 for it to warapp_check_plan (a board figure: it moves no other opponent, #567).",
     );
   });
 
@@ -72,7 +73,7 @@ describe('(1) #567: the uncapped low end beside a held income', () => {
 
   it('the warning under the tripwire, and with no coverage or range', () => {
     expect(observedLowWarning('Ann', 12, { low: 20, high: 20, turn: 4, coverage: null }, 'tripped')).toBe(
-      "Player Ann's income is held at ~12, but turn 4 read it deploying at least +20 (#567): the over-read tripwire keeps the readings before its step at most the stepped figure (#418), so the plan sizes its borders for ~12. To test the low end, pass known_income 20 for it to warapp_check_plan (a known income also scales the other opponents' fog prior, #444).",
+      "Player Ann's income is held at ~12, but turn 4 read it deploying at least +20 (#567): the over-read tripwire keeps the readings before its step at most the stepped figure (#418), so the plan sizes its borders for ~12. To test the low end, pass known_income 20 for it to warapp_check_plan (a board figure: it moves no other opponent, #567).",
     );
   });
 });
@@ -81,6 +82,7 @@ describe('(2) #567: a known income that moved another opponent through #444 is n
   // My T1–T4 (+5 on T1–T2); A's T5 beside my T4 and the fog, B's T6 beside my T1 and the fog; two +400 bonuses hidden.
   const A = 20;
   const B = 30;
+  const D = 50;
   const ids = [1, 2, 3, 4, 5, 6, 30, 20, 21, 22, 23, 24, 25, 26, 27];
   const edges: [number, number][] = [
     [1, 2],
@@ -95,18 +97,18 @@ describe('(2) #567: a known income that moved another opponent through #444 is n
   ];
   const g = buildGraph(makeMap(ids, edges, [[901, 5, [1, 2]], [902, 400, [20, 21, 22, 23]], [903, 400, [24, 25, 26, 27]]]));
   const fog = [20, 21, 22, 23, 24, 25, 26, 27].map((t) => fogged(t));
-  const s: BoardState = board([mine(1, 40), mine(2, 3), mine(3, 3), mine(4, 40), enemy(5, 30, A), enemy(6, 30, B), neutral(30, 2), ...fog]);
-  const game = { players: [{ id: ME }, { id: A }, { id: B }, { id: 40 }], turn: 12, symmetricStart: true };
-  const est = (known?: { player: number; income: number }[]) =>
+  const s: BoardState = board([mine(1, 40), mine(2, 3), mine(3, 3), mine(4, 40), enemy(5, 30, A), enemy(6, 30, B), enemy(30, 2, D), ...fog]);
+  const game = { players: [{ id: ME }, { id: A }, { id: B }, { id: 40 }, { id: D }], turn: 12, symmetricStart: true };
+  const est = (known?: KnownIncome[]) =>
     planEnemyEstimates({ graph: g, board: s, me: ME, income: 91, settings: { ...STD, baseIncome: 10 }, game, turn: 12, ...(known ? { known } : {}) });
 
-  it("A states 27 against my 91: B's estimate moves from ~91 to ~19, and the warning names both", () => {
+  it("A and D state 27 in chat against my 91: B's estimate moves from ~91 to ~30, and the warning names them", () => {
     const plain = est();
-    const scaled = est([{ player: A, income: 27 }]);
+    const scaled = est([{ player: A, income: 27, source: 'chat' }, { player: D, income: 27, source: 'chat' }]);
     const shifts = statedShifts(plain.estimates, scaled.estimates, scaled.prior);
-    expect(shifts).toEqual([{ player: B, was: 91, now: 19, by: [{ id: A, income: 27 }] }]);
+    expect(shifts).toEqual([{ player: B, was: 91, now: 30, by: [{ id: A, income: 27 }, { id: D, income: 27 }] }]);
     expect(statedShiftWarning(shifts)).toBe(
-      "The known income given (player 20's 27) moved another opponent's estimate: player 30 ~91 → ~19 (#444: a stated income scales the fog prior of every opponent who stated none). To size them without it, leave that known_income out.",
+      "The known incomes given (player 20's 27, player 50's 27) moved another opponent's estimate: player 30 ~91 → ~30 (#444: incomes stated in chat scale the fog prior of every opponent who stated none). To size them without it, give those incomes source \"board\" or leave them out.",
     );
   });
 
@@ -124,7 +126,7 @@ describe('(2) #567: a known income that moved another opponent through #444 is n
         (id) => `P${id}`,
       ),
     ).toBe(
-      "The known incomes given (player P1's 5, player P2's 7) moved other opponents' estimates: player P3 ~50 → ~20, player P4 ~40 → ~30 (#444: a stated income scales the fog prior of every opponent who stated none). To size them without it, leave that known_income out.",
+      "The known incomes given (player P1's 5, player P2's 7) moved other opponents' estimates: player P3 ~50 → ~20, player P4 ~40 → ~30 (#444: incomes stated in chat scale the fog prior of every opponent who stated none). To size them without it, give those incomes source \"board\" or leave them out.",
     );
   });
 
