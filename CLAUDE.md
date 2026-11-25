@@ -2816,7 +2816,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   truth, censored past the logged turns); `consequences` (a proxy: turns losing an unconceded territory with an
   estimate under half vs without); the `WORST_LISTED` largest misses. Games numbered by their place in the report,
   never by id; no player in the output. `samples: true` returns the rows (at most `MAX_SAMPLES`); `harness: true`
-  adds the #318 harness. Reported only (P1).
+  adds the #318 harness. #568: each logged estimate also keeps its pipeline `stages` (`EstimateStages`, `estimateStages`: visible, observed,
+  tracked, prior, stated, blend, thin, known, card — figures only), the report scores each (`byStage`) and `trackedWhatIf` says what
+  dividing the tracked figure by its coverage band's geomean (other games only, at least `WHAT_IF_MIN_SAMPLES`) would have read at
+  each damping in `WHAT_IF_DAMPINGS`, overall and by band. Reported only. Reported only (P1).
 - **The turn history (#570, `warapp_turn_history`, read-only).** Reads the game's decision log: per turn the board seen
   (`boardSummary`, or whole with `board: true`), `ownerChanges` against the turn before (in view both times), every
   player's visible orders (`seen`), plan, sent and `differsFromPlan` (`ordersDiffer`), outcome, cards, events, truth and
