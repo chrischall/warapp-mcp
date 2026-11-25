@@ -39,13 +39,16 @@ describe('(1) #567: the uncapped low end beside a held income', () => {
   const at = (t4: number, t5: number) => board([mine(1, 1), mine(2, 1), mine(3, 600), enemy(4, t4), enemy(5, t5), ...fog]);
   const history = (xs: [number, number][]) => xs.map(([a, b], i) => ({ turn: 8 + i, board: at(a, b) }));
 
-  it('held at 17 while turn 10 read at least +29 (two thirds of its frontier): reported, the income unchanged', () => {
+  it('a turn read from two thirds of its frontier now lifts the hold itself (#567 rise-cap rule): nothing left to report', () => {
     const [t] = trackOpponents(g, history([[1, 5], [1, 50], [1, 95], [30, 140]]), ME, STD);
-    expect(t!.income).toBe(17);
-    expect(t!.incomeMethod).toBe('rise-capped');
-    expect(t!.observedLow).toEqual({ low: 29, high: 50, turn: 10, coverage: 2 / 3 });
-    expect(t!.warnings).toContain(
-      "Player 20's income is held at ~17, but turn 10 read it deploying at least +29, up to +50, from 67% of its frontier (#567): a rise no turn read in full confirmed is held to 1.3× a turn (#418), so the plan sizes its borders for ~17. To test the low end, pass known_income 29 for it to warapp_check_plan (a known income also scales the other opponents' fog prior, #444).",
+    expect(t!.income).toBe(29);
+    expect(t!.observedLow).toBeUndefined();
+    expect(t!.warnings.join('\n')).not.toMatch(/#567/);
+  });
+
+  it('the warning under the rise cap (a turn read from under 60% of its frontier)', () => {
+    expect(observedLowWarning('Ann', 17, { low: 29, high: 50, turn: 10, coverage: 0.5 }, 'rise-capped')).toBe(
+      "Player Ann's income is held at ~17, but turn 10 read it deploying at least +29, up to +50, from 50% of its frontier (#567): a rise no turn read in full confirmed is held to 1.3× a turn (#418), so the plan sizes its borders for ~17. To test the low end, pass known_income 29 for it to warapp_check_plan (a known income also scales the other opponents' fog prior, #444).",
     );
   });
 
