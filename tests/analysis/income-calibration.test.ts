@@ -71,7 +71,7 @@ describe('income calibration (#569)', () => {
         '7': turn([[7, 21, 'tracked', 0.5, false]], { 7: 60 }), // jump ×2, never caught
       },
     };
-    expect(catchUp([g])).toEqual({ jumps: 2, caught: 1, meanLag: 2, medianLag: 2, lags: { '2': 1 }, censored: 1 });
+    expect(catchUp([g])).toEqual({ jumps: 2, caught: 1, meanLag: 2, medianLag: 2, lags: { '2': 1 }, censored: 1, unwatched: 0 });
   });
 
   it('lists the catch-up lags of several players, shortest first', () => {
@@ -84,7 +84,26 @@ describe('income calibration (#569)', () => {
         '5': turn([[8, 21, 'tracked', 0.5, false], [7, 25, 'tracked', 0.5, false]], { 8: 30, 7: 30 }), // 8 caught: lag 1
       },
     };
-    expect(catchUp([g])).toEqual({ jumps: 2, caught: 2, meanLag: 0.5, medianLag: 0.5, lags: { '0': 1, '1': 1 }, censored: 0 });
+    expect(catchUp([g])).toEqual({ jumps: 2, caught: 2, meanLag: 0.5, medianLag: 0.5, lags: { '0': 1, '1': 1 }, censored: 0, unwatched: 0 });
+  });
+
+  it('leaves out a jump no estimate was logged on: the turns before planning began are not lag (#586)', () => {
+    const truthOnly = (income: number): CalibrationGame['turns'][string] =>
+      ({ truth: { board: 0, mine: { income: 10, armies: 0, territories: 0 }, opponents: [{ player: 7, income }] } }) as never;
+    const g: CalibrationGame = {
+      format: 'ffa',
+      seats: 4,
+      turns: {
+        '4': truthOnly(10),
+        '5': truthOnly(30), // jump ×3, nothing planned: unwatched, not a 20-turn lag
+        '24': turn([[7, 15, 'tracked', 0.4, true]], { 7: 40 }),
+        '25': turn([[7, 15, 'tracked', 0.4, true]], { 7: 80 }), // jump ×2 on a logged turn
+        '26': turn([[7, 60, 'tracked', 0.4, true]], { 7: 80 }), // caught: lag 1
+        '27': truthOnly(80),
+        '28': truthOnly(200), // jump after the last logged estimate: not counted at all
+      },
+    };
+    expect(catchUp([g])).toEqual({ jumps: 1, caught: 1, meanLag: 1, medianLag: 1, lags: { '1': 1 }, censored: 0, unwatched: 1 });
   });
 
   it('splits turns that lost an unconceded territory by whether an estimate read under half', () => {

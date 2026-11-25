@@ -147,7 +147,7 @@ export function incomeSamples(games: readonly CalibrationGame[]): IncomeSample[]
 
 /** The catch-up after true income jumps: how many turns until the estimate reached {@link CATCH_UP_SHARE} of the truth. */
 export interface CatchUp {
-  /** Jumps seen on a turn whose estimate was logged at or after it. */
+  /** Jumps on a turn that logged an estimate of that opponent (the only ones whose lag can be read). */
   jumps: number;
   /** Jumps the estimate caught within the logged turns, and the turns that took (0: the jump turn itself). */
   caught: number;
@@ -157,16 +157,24 @@ export interface CatchUp {
   lags: Record<string, number>;
   /** Jumps never caught before the logged turns ended. */
   censored: number;
+  /**
+   * Jumps on a turn that logged no estimate of that opponent, at or before its last logged one: left out (#586).
+   * The truth covers every turn of a finished game, the estimates only the turns planned, so a jump before
+   * planning began, or on a turn played without a plan, would count the unplanned turns as lag.
+   */
+  unwatched: number;
 }
 
 /**
  * Per game and opponent, a turn whose true income is at least {@link JUMP_FACTOR} × the turn before (both
  * read, the earlier above 0) is a jump; its lag is the turns from it to the first logged estimate of that
- * opponent at or after it that reaches {@link CATCH_UP_SHARE} of that turn's truth. Pure.
+ * opponent at or after it that reaches {@link CATCH_UP_SHARE} of that turn's truth. A jump on a turn with no
+ * estimate of that opponent logged is `unwatched` and left out (#586). Pure.
  */
 export function catchUp(games: readonly CalibrationGame[]): CatchUp {
   const lagsList: number[] = [];
   let censored = 0;
+  let unwatched = 0;
   for (const g of games) {
     const turns = turnKeys(g.turns);
     const truth = new Map<number, Map<number, number>>(); // player → turn → income
@@ -183,6 +191,10 @@ export function catchUp(games: readonly CalibrationGame[]): CatchUp {
       for (const [t, income] of [...series].sort((a, b) => a[0] - b[0])) {
         const before = series.get(t - 1);
         if (before === undefined || before <= 0 || income < JUMP_FACTOR * before || t > last) continue;
+        if (!estimates.has(t)) {
+          unwatched++;
+          continue;
+        }
         let lag: number | null = null;
         for (const u of [...estimates.keys()].filter((u) => u >= t).sort((a, b) => a - b)) {
           const truthU = series.get(u) ?? income;
@@ -207,6 +219,7 @@ export function catchUp(games: readonly CalibrationGame[]): CatchUp {
     medianLag: n ? (n % 2 ? sorted[n >> 1]! : (sorted[(n >> 1) - 1]! + sorted[n >> 1]!) / 2) : null,
     lags,
     censored,
+    unwatched,
   };
 }
 
