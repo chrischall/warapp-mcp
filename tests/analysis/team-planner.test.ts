@@ -196,8 +196,9 @@ describe('C3.4: focus on the opponent my teammate attacks', () => {
   const attacks = (p: ReturnType<typeof plan>) => p.moves.filter((m) => m.kind === 'attack').map((m) => m.to);
 
   it('breaks the bonus of the opponent my teammate is attacking, of two equal breaks', () => {
-    expect(attacks(plan(6, 8))).toEqual([2]);
-    const focused = plan(6, 8, entered({ moves: [{ from: 5, to: 6, armies: 4, mode: 'attack-transfer' }] }));
+    // #593: an income of 8 now funds both breaks (a deploy on conceded 1 pays the second); 7 funds one.
+    expect(attacks(plan(6, 7))).toEqual([2]);
+    const focused = plan(6, 7, entered({ moves: [{ from: 5, to: 6, armies: 4, mode: 'attack-transfer' }] }));
     expect(attacks(focused)).toEqual([3]);
     expect(focused.rationale.join('\n')).toMatch(
       /Team focus \(PLAN-TEAMS C3\.4\): T3 \(#3\) \(player 21\) ranks above T2 \(#2\) \(player 20\), which is otherwise equal: my teammate \(player 11\) attacks player 21/,
@@ -220,7 +221,7 @@ describe('C3.4: focus on the opponent my teammate attacks', () => {
     );
   });
   it('a transfer is no attack, and an unequal option still wins', () => {
-    const transfer = plan(6, 8, entered({ moves: [{ from: 5, to: 4, armies: 4, mode: 'transfer' }] }));
+    const transfer = plan(6, 7, entered({ moves: [{ from: 5, to: 4, armies: 4, mode: 'transfer' }] }));
     expect(attacks(transfer)).toEqual([2]);
     expect(transfer.rationale.join('\n')).not.toMatch(/Team focus/);
   });

@@ -2459,6 +2459,15 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       });
       return true;
     };
+    /** #593 follow-up: run a break's capture with `t` marked as a break, so a conceded border beside it may fund it. */
+    const asBreak = (t: number, f: () => boolean) => {
+      ps.breakTarget = t;
+      try {
+        return f();
+      } finally {
+        ps.breakTarget = undefined;
+      }
+    };
     /** The member a break of `b` takes: its cheapest visible member (#72: a break only has to land), then the least frontier, then id. */
     const breakOptionOf = (b: Breakable) =>
       bonusTerritories(g, b.bonusId)
@@ -2538,13 +2547,13 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
             const was = worstCase.get(o.t);
             targets.set(o.t, { ...tg, cost: o.cost });
             worstCase.set(o.t, defenceAt(o.t) + reinforcementAt(o.t));
-            if (!tryCapture(o.t, reasonOf(`${breakReason(b)}, sized to land against player ${b.player}'s ~${reinforcementAt(o.t)} deploy (#201: I lead this free-for-all)`))) {
+            if (!asBreak(o.t, () => tryCapture(o.t, reasonOf(`${breakReason(b)}, sized to land against player ${b.player}'s ~${reinforcementAt(o.t)} deploy (#201: I lead this free-for-all)`)))) {
               targets.set(o.t, tg);
               if (was === undefined) worstCase.delete(o.t);
               else worstCase.set(o.t, was);
               return;
             }
-          } else if (!tryCapture(o.t, reasonOf(breakReason(b)))) return;
+          } else if (!asBreak(o.t, () => tryCapture(o.t, reasonOf(breakReason(b))))) return;
           ps.anchor ??= moves[moves.length - 1]!.from;
           warnRetake(b, o);
         }),
@@ -2607,7 +2616,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           const was = worstCase.get(o.t);
           if (raised) targets.set(o.t, { ...tg, cost: o.cost });
           worstCase.set(o.t, Math.max(was ?? 0, defenceAt(o.t) + partial));
-          const ok = tryCapture(o.t, reason);
+          const ok = asBreak(o.t, () => tryCapture(o.t, reason));
           if (raised) targets.set(o.t, tg);
           if (!ok) {
             if (was === undefined) worstCase.delete(o.t);

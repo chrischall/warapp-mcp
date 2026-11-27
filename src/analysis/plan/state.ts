@@ -282,6 +282,12 @@ export interface PlanState {
   front?: FrontView;
   /** Territories a pass assumes fall this turn (finishing a player off): they threaten nothing. */
   assumeGone: (n: number) => boolean;
+  /**
+   * #593 follow-up (the Kenya case): the territory a break (rule 4a, a visible or probable enemy bonus) is
+   * capturing right now. A conceded border beside it may be its source, funded from this turn's deploy
+   * (`concededSource`), as a lead step's may (#214). Unset otherwise.
+   */
+  breakTarget: number | undefined;
   /** Why the last tryCapture refused (R3, No-Split on a source that could take it); else size. */
   refusal: Refusal;
   /**
@@ -373,6 +379,7 @@ export function newPlanState(): PlanState {
     staged: new Map(),
     anchor: undefined,
     assumeGone: () => false,
+    breakTarget: undefined,
     refusal: undefined,
     evenTradesOnly: false,
     plainRepulsed: false,
