@@ -2092,8 +2092,12 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     paying that size; a combined capture is sized the same (`worstCase` while tried). Sent at the whole deploy or more
     it is a worst case; else #120 may still size it up from idle armies, and its "assumes" warning says "(sized for a
     partial deploy of N (#593))" with the win chance against the whole deploy. #240's sure size and the hold's keep
-    (#121) apply as to any capture; #298's dropped members are never tried. Not done: a conceded border's deploy for
-    such a break (item 2's second ask: it needs rule 1b's withdrawal undone, as `stand-still.ts` does). Golden: 91 of
+    (#121) apply as to any capture; #298's dropped members are never tried. A break (visible, the FFA
+    leader's sized one, or a fogged one) may also go out of a conceded border, not my commander's, funded by a deploy
+    there sized for the attack alone (item 2's second ask, `ps.breakTarget` / `breakConceded` in `plan/captures.ts`;
+    a "… is conceded, but the deploy there leaves with the attack …" line); a plain capture from a conceded border
+    still spends only the armies there. Golden with it: 22 of 6253 plans changed, 20 in their orders, attack targets
+    +15/−6, concessions fewer in 2 and more in none. Golden: 91 of
     6253 plans changed (48 synthetic, 43 suite), 15 in their orders, captures +5/−1, next income up on 1 and down on 1
     (a +1 completion displaced by a probable +2 break), concessions unchanged; 21 plans carry a #593 attack (7 new, 7
     resized, 7 relabelled). Replay of 16 finished 1v1s (271 turns, adapting): 18 turns attack a fogged bonus (13 → 21

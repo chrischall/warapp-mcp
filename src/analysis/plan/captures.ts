@@ -321,7 +321,14 @@ export function captureHelper(
    * taking one alone.
    */
   const fundedOnConceded = new Set<number>();
-  const concededSource = (x: number, t: number, cost: number) => concededSourceBase(x, t, cost) || leadConceded(x, t);
+  /**
+   * #593 follow-up (owner, 2026-11-27; the Kenya case): a break (`ps.breakTarget`) may attack out of a conceded border
+   * too, funded from this turn's deploy: the deploy is sized for the attack and leaves with it, so nothing is spent on
+   * the border's hold. Left out, a border conceded for its own sake beside an enemy bonus's member never deployed to
+   * break it. Never my commander's territory.
+   */
+  const breakConceded = (x: number, t: number) => ps.breakTarget === t && conceded.has(x) && !myCommanders.has(x);
+  const concededSource = (x: number, t: number, cost: number) => concededSourceBase(x, t, cost) || leadConceded(x, t) || breakConceded(x, t);
   /**
    * #212: a lead step (#203) may attack out of a border held under `balanced` — locked so its armies
    * stay put for its hold — when this turn's deploy covers the attack and the hold together. Left
@@ -573,6 +580,8 @@ export function captureHelper(
     const farBinds = far !== null && farKeep > 0 && farKeep >= keepOf(src, t);
     // #214: judged on the state the source was opened under, before the attack spends it.
     const viaLead = !fromHold && !force && need > 0 && src !== fromConceded && leadConceded(src, t) && !concededSourceBase(src, t, tg.cost);
+    const viaBreak =
+      !viaLead && !fromHold && !force && need > 0 && src !== fromConceded && breakConceded(src, t) && !concededSourceBase(src, t, tg.cost);
     deploy(src, need);
     // No-Split: the whole stack goes, every army deployed there so far included (#124).
     const sent = noSplit ? Math.max(tg.cost, avail.get(src)!) : tg.cost;
@@ -614,6 +623,10 @@ export function captureHelper(
       fundedOnConceded.add(t);
       rationale.push(
         `${label(src)} is conceded, but the deploy there leaves with the attack on ${label(t)}: a lead step into a bonus (rule 4f's order) may be funded on a conceded source, the deploy sized for the attack alone (#214).`,
+      );
+    } else if (viaBreak) {
+      rationale.push(
+        `${label(src)} is conceded, but the deploy there leaves with the attack on ${label(t)}: a break may be funded on a conceded source, the deploy sized for the attack alone (#593).`,
       );
     } else if (farBinds) rationale.push(twoStepCite(src, far!, (c) => `The attack on ${label(t)} leaves ${label(src)} ${c}.`));
     else if (forHold > 0) {

@@ -69,15 +69,17 @@ describe('#420: the total hold cap', () => {
     expect(p.expected.captures).toContain(11);
   });
 
-  it('even on 8: a hold of 5 is past the 4, so it is conceded where the plan without the cap holds it', () => {
+  it('even on 8: past the 4 the cap concedes holds of 5, and the armies break B902 where the plan without the cap holds T1', () => {
     const p = planTurn(input(8, 3));
     const off = planTurn(input(8, 3, { holdCap: false }));
     expect(p.profile.standing).toBe('even');
-    expect(p.conceded).toContain(1);
-    expect(deployOn(p, 1)).toBe(0);
-    expect(capLines(p)[0]).toMatch(/T1 \(#1\) cannot be held within the hold cap \(#420: plain holds take at most 4 of my 8 income/);
+    expect(capLines(p).length).toBeGreaterThan(0);
+    expect(capLines(p).every((l) => /cannot be held within the hold cap \(#420: plain holds take at most 4 of my 8 income/.test(l))).toBe(true);
+    // #593: a break may go out of a conceded border, funded by a deploy there; taking T11 leaves T1 nothing to fear.
+    expect(p.moves.some((m) => m.from === 1 && m.to === 11 && m.kind === 'attack')).toBe(true);
     expect(off.conceded).not.toContain(1);
     expect(deployOn(off, 1)).toBeGreaterThanOrEqual(5);
+    expect(off.moves.some((m) => m.to === 11)).toBe(false);
     expect(capLines(off)).toEqual([]);
   });
 
