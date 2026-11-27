@@ -325,13 +325,6 @@ export interface PlanOptions {
   /** Research only (the arena, scripts/arena.mjs): named experimental rule changes, off by default. */
   experiments?: readonly string[];
   /**
-   * #421: `false` holds no strike share out of captures (`planShare` replans so when holding it would
-   * lower next income). Default: in contact on a flat income, 25% of income goes to the strike stack.
-   */
-  strikeShare?: boolean;
-  /** #382: `false` keeps the profile from picking the siege (adapting with no goal). Default: it picks it when it fits. */
-  siegeAuto?: boolean;
-  /**
    * #201: the outlook (#178, `gameOutlook`) from my boards over the last turns. Once it reports the
    * game decided (winning or losing), payback tests count the turns the game has left and the
    * forecasts below read it; adapting only.

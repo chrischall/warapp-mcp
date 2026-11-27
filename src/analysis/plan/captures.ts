@@ -5,7 +5,6 @@
 import { bonusTerritories } from '../bonuses.js';
 import { armiesToTake, straightKills } from '../combat.js';
 import { neighborsOf } from '../graph.js';
-import { poolShortfall } from '../local-deploy.js';
 import { noLossNeutral } from './after-leftover.js';
 import { deadAdvanceLine, deadAdvanceOf } from './dead-advance.js';
 import { visibleState } from './observe.js';
@@ -626,8 +625,7 @@ export function captureHelper(
     }
     return true;
   };
-  // #421: the strike share is said on its own line (planner.ts), not as the caller's reserve.
-  if (reserve - pc.strikeShare) rationale.push(`Hold a reserve of ${reserve - pc.strikeShare} out of captures.`);
+  if (reserve) rationale.push(`Hold a reserve of ${reserve} out of captures.`);
 
   // ---- 3a. combined (multi-source) captures (R4) ----
   /**
@@ -967,9 +965,9 @@ export function bonusPasses(
     warnings, rationale, deployed, avail, captured, combined, moves, survivorsAt, captureOrder, staged, incoming,
   } = ps;
   const { heldNow, gainWith } = book;
-  const { heldBorders, keptIncome, keptHeld, stayAt } = hd;
+  const { heldBorders, keptIncome, stayAt } = hd;
   const {
-    targets, leadSteps, leadTry, leadNote, bonusTarget, frontierDelta, targetScoreCost, frontierOf, frontierNeeds, startHold,
+    targets, leadSteps, leadTry, leadNote, bonusTarget, frontierDelta, targetScoreCost, frontierOf, startHold,
     toFinish, byCloseness, committing, denials, emptyEnemies,
   } = tgt;
   const { worstCase, tryCapture, siblings, fundedOnConceded, bareOn } = prev;
@@ -1140,42 +1138,6 @@ export function bonusPasses(
   /** The start of rule 4d's rationale line for a stopped `t` (one per attempt that differed). */
   const stoppedLine = (t: number) => `Do not take ${label(t)}: it adds a border facing an enemy without completing a bonus,`;
   /**
-   * #297: in a 1v1, the gate budget's veto: a capture of `t` that opens another border facing the opponent (a gate,
-   * each sized for its stack plus the whole floating deploy) is stopped when the frontier would then need more next
-   * turn than the next income, and more than it needs without that capture. Its rationale line, else `null`. Rule
-   * 4d runs it in a 1v1 in place of its start-of-turn escape, and rule 4e's contact fallback runs it where rule 4d is
-   * only a cost (#114): a gate the income cannot hold is lost next turn, armies and all.
-   */
-  const gateStop = (t: number): string | null => {
-    if (pc.profile.format !== '1v1' || !guarded || inFocus(t)) return null;
-    if (pc.opts.experiments?.includes('no-gate-stop')) return null;
-    const held = heldNow();
-    if (completedBy(held).some((id) => g.bonusById.get(id)!.value > 0 && bonusTs.get(id)!.includes(t))) return null;
-    const stays = (x: number) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0));
-    const without = new Set([...held].filter((x) => x !== t));
-    if (frontierDelta(without, [t], stays).enemy <= 0) return null;
-    const f = frontierOf(held, stays);
-    const next = keptIncome(held);
-    // #433: under Local Deployment a bonus's armies deploy only on its own territories, so the gates get only the
-    // free income and the pools of the bonuses they are in: the whole income read "not short" when that was short.
-    const pooled = s.localDeployments ? poolShortfall(g, keptHeld(held), next, frontierNeeds(held, stays)) : null;
-    const short = pooled ? pooled.short : Math.max(0, f.holdCost - next);
-    if (short <= 0 || f.holdCost <= frontierOf(without, stays).holdCost) return null;
-    const byPools = pooled !== null && f.holdCost <= next;
-    if (!stopped.some((x) => x.t === t))
-      stopped.push({ t, holdCost: f.holdCost, income: next, ...(byPools ? { deployable: pooled.deployable } : {}) });
-    return byPools
-      ? `${stoppedLine(t)} and in this 1v1 it opens another gate${gateFoe(t)}: the gates would then need ${f.holdCost} next turn against its one floating deploy; under Local Deployment only ${pooled.deployable} of the next income of ${next} can be deployed on them (the free income and the pools of the bonuses they are in): ${short} short (#297, #433).`
-      : `${stoppedLine(t)} and in this 1v1 it opens another gate${gateFoe(t)}: the gates would then need ${f.holdCost} next turn against its one floating deploy, more than the next income of ${next} (#297).`;
-  };
-  /** #297: " facing player P" for the opponent beside `t` (in a 1v1, the one opponent), else nothing. */
-  const gateFoe = (t: number): string => {
-    const o = neighborsOf(g, t)
-      .map((n) => state.get(n)?.owner)
-      .find((x) => x?.kind === 'player' && pc.foe(x.playerId));
-    return o?.kind === 'player' ? ` facing player ${o.playerId}` : '';
-  };
-  /**
    * #426: whether only the fog faces `t` once taken: no neighbour not mine is a player's territory shown with
    * its armies (a stack in view). A player's territory whose armies the fog hides, or one not shown at all,
    * is the fog.
@@ -1190,11 +1152,10 @@ export function bonusPasses(
    * Rule 4d's frontier budget, judged with `t` just captured: under a guarded goal, a capture
    * that adds a border facing an enemy without completing a bonus (and not focused) is stopped
    * when holding the frontier next turn would then need more than the next income, and more than
-   * it needed at the start of the turn (in a 1v1, more than without it: {@link gateStop}, #297). Returns the rationale line when stopped, else `null`.
+   * it needed at the start of the turn. Returns the rationale line when stopped, else `null`.
    */
   const outgrows = (t: number): string | null => {
     if (!guarded || inFocus(t)) return null;
-    if (pc.opts.experiments?.includes('no-frontier-veto')) return null;
     const held = heldNow();
     if (completedBy(held).some((id) => g.bonusById.get(id)!.value > 0 && bonusTs.get(id)!.includes(t))) return null;
     const stays = (x: number) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0));
@@ -1203,12 +1164,8 @@ export function bonusPasses(
     const f = frontierOf(held, stays);
     const next = keptIncome(held);
     const start = startHold();
-    // #297: in a 1v1 the start-of-turn hold is no excuse — a capture that opens another gate the next income
-    // cannot hold is stopped even when this turn's other orders bring the total back under where it started.
-    // #433: nor, under Local Deployment, is a next income the gates' pools and free income cannot carry there.
-    const gate = pc.profile.format === '1v1' ? gateStop(t) : null;
-    if (f.holdCost <= next && !gate) return null;
-    if (f.holdCost <= start && !gate) return null;
+    if (f.holdCost <= next) return null;
+    if (f.holdCost <= start) return null;
     // #281: land a static seat left, which a live stack beside it takes free next turn: the border
     // comes either way, so the hold cost alone never refuses it (the capture still spends only what
     // stands above its source's hold).
@@ -1230,18 +1187,14 @@ export function bonusPasses(
     // The owner's cap (2026-11-22): only while the hold the capture adds is at most the next income (1×);
     // over it, rule 4d decides as before (a golden synthetic board let one through at 85 against an income of 9).
     const adds = f.holdCost - frontierOf(without, stays).holdCost;
-    if (!gate && adds <= next && noLossNeutral(pc, tgt, t) && fogOnlyFaces(t)) {
+    if (adds <= next && noLossNeutral(pc, tgt, t) && fogOnlyFaces(t)) {
       denied.set(
         t,
         `Take ${label(t)} though holding the frontier next turn would then need ${f.holdCost} (the next income is ${next}): its defenders kill none of the attackers, only the fog faces its new border and the ${adds} it adds are within that income, so all it risks is the armies that land there (#426).`,
       );
       return null;
     }
-    // Only the 1v1 gate budget stops it (rule 4d's start-of-turn escape would have let it through): its own line.
-    if (gate && (f.holdCost <= start || f.holdCost <= next)) return gate;
-    const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.${
-      gate ? ` In this 1v1 that is another gate${gateFoe(t)} (#297).` : ''
-    }`;
+    const why = `${stoppedLine(t)} and the frontier would then need ${f.holdCost} next turn to hold (${f.enemyBorders} enemy-facing borders), more than the next income of ${next} and more than the ${start} it needed at the start of the turn.`;
     if (!stopped.some((x) => x.t === t)) stopped.push({ t, holdCost: f.holdCost, income: next });
     return why;
   };
@@ -1379,5 +1332,5 @@ export function bonusPasses(
     // cost, once every step has had its sure try (a bare step never takes a sure one's deploy).
     if (closest) run(todo.filter((t) => leadSteps.has(t) && !captured.has(t)), true);
   };
-  return { snapshot, complete, unstaged, stage, stopped, stoppedLine, denied, outgrows, gateStop, givenUp, completableNow, tryExpand, advance };
+  return { snapshot, complete, unstaged, stage, stopped, stoppedLine, denied, outgrows, givenUp, completableNow, tryExpand, advance };
 }

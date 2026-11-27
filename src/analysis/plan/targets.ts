@@ -456,7 +456,8 @@ export function frontierCosts(
    * held; facing an enemy when a visible enemy is next to it, and then `need` is the deploys it
    * needs next turn to hold (the R3 arithmetic: threat = movable + max(deploy, growth) per player).
    */
-  const deployOnce = pc.opts.experiments?.includes('deploy-once') === true;
+  // #603: the opponent's one floating deploy counts once, at the border it adds most to, not on every border.
+  const deployOnce = pc.opts.experiments?.includes('legacy-frontier') !== true;
   const borderOf = (x: number, held: ReadonlySet<number>, have: number) => {
     if (neighborsOf(g, x).every((n) => held.has(n))) return { border: false, enemy: false, need: 0, needStack: 0, player: -1 };
     // G2: next turn's threat — a player a Diplomacy card shields me from only this turn counts.
@@ -474,7 +475,7 @@ export function frontierCosts(
    * enemy under a guarded goal (`expand` and `complete-bonus` ignore defence, as in R3).
    */
   const borderCost = (b: ReturnType<typeof borderOf>, withNeed = true) =>
-    b.border ? NEUTRAL_BORDER_COST + (guarded && withNeed ? b.needStack : 0) : 0;
+    b.border ? NEUTRAL_BORDER_COST + (guarded && withNeed ? b.need : 0) : 0;
   /**
    * The marginal frontier of adding `adds` to `base` (#71), in armies: the cost of every border
    * the capture touches after it (the captures and their held neighbours) minus their cost
@@ -608,17 +609,6 @@ export function bonusScoring(
     s.wastelands && s.wastelands.count > 0 && s.wastelands.size > 0 && g.territoryById.size > 0
       ? Math.min(1, s.wastelands.count / g.territoryById.size)
       : 0;
-  /**
-   * #432: a visible neutral at the game's wasteland size or more, when the game has wastelands larger than its
-   * ordinary neutrals (`neutralArmies`, when the settings give it).
-   */
-  const isWasteland = (st: { owner: { kind: string }; armies: number | null }): boolean =>
-    s.wastelands !== undefined &&
-    s.wastelands.count > 0 &&
-    s.wastelands.size > (s.neutralArmies ?? 0) &&
-    st.owner.kind === 'neutral' &&
-    st.armies !== null &&
-    st.armies >= s.wastelands.size;
   const wasteCost = wasteShare > 0 ? (costOf(s.wastelands!.size) ?? Infinity) : 0;
   const wasteLoss = wasteShare > 0 ? Math.min(wasteCost - 1, straightKills(s.wastelands!.size, rates.defensiveKillRate)) + 1 : 0;
   /** Every positive bonus worth completing (net > 0) still missing members: its armies to finish (rule 4e). */
@@ -722,8 +712,6 @@ export function bonusScoring(
     // #125: the economy test charges the armies lost, not the armies sent.
     let loss = 0;
     let worstLoss = 0;
-    /** #432: its missing members in view that are wastelands. */
-    const wastelands: number[] = [];
     const known = (t: number, armies: number) => {
       const c = costAt(t, armies) ?? Infinity;
       cost += c;
@@ -770,7 +758,6 @@ export function bonusScoring(
       const c = costAt(t) ?? Infinity;
       cost += c;
       worst = Math.max(worst, c);
-      if (isWasteland(st)) wastelands.push(t);
       const l = econCostAt(t);
       loss += l;
       worstLoss = Math.max(worstLoss, l);
@@ -818,10 +805,7 @@ export function bonusScoring(
     cost += fogged * fogEach + foggedNeutral * neutralEach;
     loss += fogged * fogLoss + foggedNeutral * neutralEachLoss;
     const fogNeutral: FogNeutral | undefined = foggedNeutral ? { count: foggedNeutral, each: neutralEach, size: neutralSize! } : undefined;
-    // #432: while the gate budget is short, no bonus is built through a wasteland: its armies go to the gates —
-    // unless this turn's captures can complete it (owner decision 2026-11-22: a completing wasteland is taken).
-    const wasteStop = !isFocus && pc.shortGates !== undefined && wastelands.length > 0 && !remaining.every(bonusTarget);
-    const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net && !wasteStop);
+    const economic = isFocus || (loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net);
     // #435: a shared bonus I am nearer to but that is not worth working stays as C3.3 left it — skipped
     // with its members plain expansion, never marked uneconomic (45701358 turn 1: a 344-member super-bonus,
     // 6 members to my teammate's 5, would otherwise have stopped expansion into all its members).
@@ -835,12 +819,6 @@ export function bonusScoring(
     if (b.value > 0) finishCost.set(b.id, { cost, value: b.value, net, fogged, fogEach, ...(fogNeutral ? { fogNeutral } : {}) });
     for (const t of remaining) (economic ? economicMember : uneconomicMember).add(t);
     if (!remaining.some(bonusTarget)) continue;
-    if (!economic && wasteStop && loss <= paybackTurns * net && worstLoss <= WASTELAND_FACTOR * net) {
-      rationale.push(
-        `Skip bonus ${b.name} (#${b.id}): finishing it means taking the wasteland${wastelands.length === 1 ? '' : 's'} ${wastelands.map(label).join(', ')} (${s.wastelands!.size} armies or more) while the gates facing player ${pc.shortGates!.player} are ${pc.shortGates!.deficit} short (#432).`,
-      );
-      continue;
-    }
     if (!economic) {
       rationale.push(
         `Skip bonus ${b.name} (#${b.id}): uneconomic for +${net === b.value ? b.value : `${b.value} (net +${net})`} (${toFinish(cost, { fogged, fogEach, fogNeutral })}, losing ~${loss}; ${worstLoss} lost on its costliest territory).`,

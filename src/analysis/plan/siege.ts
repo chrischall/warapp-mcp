@@ -15,7 +15,6 @@ import type { TerritoryState } from '../../board.js';
 import { bonusTerritories } from '../bonuses.js';
 import { neighborsOf, type MapGraph } from '../graph.js';
 import type { OpponentTrack } from '../opponents.js';
-import type { GameFormat, GamePhase, GameStanding } from '../profile.js';
 import { captureCost, ownerShown, TRACKED_MIN_TURNS, type PlannerSettings } from './shared.js';
 
 /** A target's break is scored this many times a 1v1 break, so breaks outrank completions and advances. */
@@ -172,8 +171,6 @@ export interface Siege {
   breakMembers: ReadonlySet<number>;
   /** The other opponents in contact with me and their incomes (the profile's siege weighs them). */
   rivals: { player: number; income: number }[];
-  /** Set when the profile chose the siege (no explicit goal): the break that made it fit. */
-  auto?: SiegeFitBreak;
   /** The turn planned (absent when unknown: no memory then). */
   turn?: number;
   /** The siege's earlier turns kept (oldest first; empty on its first turn). */
@@ -192,8 +189,6 @@ export interface SiegeReport {
   fallenTo: number | null;
   /** The siege so far (absent when the turn is unknown). */
   memory?: SiegeMemoryReport;
-  /** Set when the profile chose the siege: why it fits (an explicit `goal: 'siege'` leaves it out). */
-  auto?: string;
   /** The target's bonuses this plan's captures break. */
   brokenThisTurn: { bonusId: number; value: number }[];
   /** Its breakable bonuses, cheapest per income lost first. */
@@ -318,62 +313,6 @@ export function siegeOf(o: {
 }
 
 // ---- The profile's siege (#382 item 2) ----
-/** A sure break fits a siege when it costs at most this many turns of the income it takes away. */
-export const SIEGE_FIT_TURNS = 2;
-/** … one turn only when the target retook that bonus on this many earlier siege turns or more. */
-export const SIEGE_RETAKEN_TURNS = 2;
-/** In a free-for-all the target must earn this multiple of every other opponent in contact with me. */
-export const SIEGE_FFA_DOMINANCE = 1.5;
-
-/** The break that makes a siege fit: the cheapest sure break per income lost within its payback. */
-export interface SiegeFitBreak {
-  bonusId: number;
-  value: number;
-  cost: number;
-  /** Turns of its value the break is counted for ({@link SIEGE_FIT_TURNS}, or 1 when retaken). */
-  turns: number;
-  retaken: boolean;
-}
-
-/**
- * Whether the profile picks the siege (no explicit goal; #382). It fits when, against the siege's target:
- * - the format is a 1v1 or a free-for-all (a team game focuses its fire by `teams-focus`), in contact
- *   (phase `contact` or `late`);
- * - I am not ahead (ahead, the assault and the 1v1 pressure rules play; an unknown standing is no fit);
- * - in a free-for-all the target is the leader on strength (not me) and earns at least
- *   {@link SIEGE_FFA_DOMINANCE} × every other opponent in contact with me (one war, not two fronts);
- * - a sure break (every member in view, a member next to mine) costs at most {@link SIEGE_FIT_TURNS} turns of
- *   its bonus — one when the target retook it on {@link SIEGE_RETAKEN_TURNS} earlier siege turns — and at most
- *   my income, so one turn's deploys can pay for a break every turn (a siege that cannot afford its breaks only
- *   holds the assault back: corpus case 921, where it idled a 23-army stack beside a sure capture).
- * Once the assault trigger fires the siege hands back (`handBack`): the profile's own goal plays the assault.
- */
-export function siegeFit(
-  s: Siege,
-  o: { format: GameFormat; phase: GamePhase; standing: GameStanding; leader: number | null | undefined },
-): { fits: true; fit: SiegeFitBreak } | { fits: false; handBack?: SiegeTrigger } {
-  if (o.format === 'teams' || (o.phase !== 'contact' && o.phase !== 'late')) return { fits: false };
-  if (o.standing !== 'even' && o.standing !== 'behind') return { fits: false };
-  if (o.format === 'ffa' && (o.leader !== s.target || s.rivals.some((r) => r.income * SIEGE_FFA_DOMINANCE > s.opponentIncome))) return { fits: false };
-  const retakes = (b: number) => s.earlier.filter((t) => t.breaks.includes(b)).length;
-  const fits = s.breaks.flatMap((b) => {
-    if (b.probable || b.cost === null) return [];
-    const retaken = retakes(b.bonusId) >= SIEGE_RETAKEN_TURNS;
-    const turns = retaken ? 1 : SIEGE_FIT_TURNS;
-    return b.cost <= turns * b.value && b.cost <= s.myIncome ? [{ bonusId: b.bonusId, value: b.value, cost: b.cost, turns, retaken }] : [];
-  });
-  if (!fits.length) return { fits: false };
-  if (s.ready) return { fits: false, handBack: s.trigger! };
-  return { fits: true, fit: fits[0]! };
-}
-
-/** The line that says why the profile chose the siege. */
-export function siegeFitLine(s: Siege, bonusName: (b: number) => string): string | undefined {
-  const f = s.auto;
-  if (!f) return undefined;
-  return `The profile chose the siege on player ${s.target} (#382): in contact, not ahead, ${s.rivals.length ? `every other opponent beside me earning at most 1/${SIEGE_FFA_DOMINANCE} of its income, ` : ''}and ${bonusName(f.bonusId)} (+${f.value}) for ${f.cost} breaks within ${f.turns} turn${f.turns === 1 ? '' : 's'} of its income${f.retaken ? ` (counted one turn: retaken after ${SIEGE_RETAKEN_TURNS} earlier breaks)` : ''}. Breaking it costs less than it takes away, so attrition beats an assault until the trigger fires; an explicit goal overrides it.`;
-}
-
 /** The rationale lines a siege adds (first in the plan's rationale). */
 export function siegeLines(s: Siege, label: (t: number) => string, bonusName: (b: number) => string): string[] {
   const ratio = s.ratio === null ? 'it earns nothing' : `my ${s.myIncome} is ${s.ratio}× its income`;
@@ -401,7 +340,7 @@ export function siegeLines(s: Siege, label: (t: number) => string, bonusName: (b
 }
 
 /** The report of a siege once the plan's captures are known. */
-export function siegeReport(s: Siege, g: MapGraph, captured: ReadonlySet<number>, bonusName?: (b: number) => string): SiegeReport {
+export function siegeReport(s: Siege, g: MapGraph, captured: ReadonlySet<number>): SiegeReport {
   const brokenThisTurn = s.breaks
     .filter((b) => bonusTerritories(g, b.bonusId).some((t) => captured.has(t)))
     .map((b) => ({ bonusId: b.bonusId, value: b.value }));
@@ -430,7 +369,6 @@ export function siegeReport(s: Siege, g: MapGraph, captured: ReadonlySet<number>
     ratio: s.ratio,
     fallenTo: s.fallenTo,
     ...(memory ? { memory } : {}),
-    ...(s.auto ? { auto: siegeFitLine(s, bonusName ?? ((b) => `bonus ${b}`))! } : {}),
     brokenThisTurn,
     breaks: s.breaks,
     ready: s.ready,

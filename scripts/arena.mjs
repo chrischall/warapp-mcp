@@ -18,9 +18,8 @@ const seed0 = Number(opt('--seed', '1'));
 const VARIANTS = {
   planner: () => plannerBot('planner'),
   spreader: () => spreaderBot('spreader'),
-  'no-strike-share': () => plannerBot('no-strike-share', { strikeShare: false }),
   'no-hold-cap': () => plannerBot('no-hold-cap', { holdCap: false }),
-  'no-siege': () => plannerBot('no-siege', { siegeAuto: false }),
+  legacy: () => plannerBot('legacy', { experiments: ['legacy-topup', 'legacy-frontier'] }),
   balanced: () => plannerBot('balanced', { goal: 'balanced' }),
   expand: () => plannerBot('expand', { goal: 'expand' }),
 };

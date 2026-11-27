@@ -32,7 +32,7 @@ describe('arena', () => {
     let plans = 0;
     const research = plannerBot(
       'research',
-      { experiments: ['deploy-once', 'no-short-gates', 'no-gate-stop', 'no-frontier-veto', 'legacy-topup'] },
+      { experiments: ['legacy-topup', 'legacy-frontier'] },
       () => plans++,
     );
     const r = playArena({ seed: 5, bots: [research, plannerBot('base')], maxTurns: 10, fog: true });

@@ -1938,16 +1938,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     this one, none when the newest is more than `SIEGE_MEMORY_GAP` (3) turns back; re-planning a turn replaces it; an
     `enemy_deploy` what-if writes nothing. `siege.memory` reports `startedTurn`, `turns`, `startIncome`,
     `opponentIncomeTrend`, `broken` (per bonus, its turns) and `rebroken`. `TurnPlan.siege` reports it.
-    **The profile's siege (`siegeFit`):** adapting with no goal (`PlanOptions.siegeAuto: false` turns it off) the
-    profile picks it, over its own goal (a `defend` included: the siege plans as balanced), when against the strongest
-    opponent in contact: the format is a 1v1 or an FFA (not teams), phase `contact`/`late`, standing `even` or
-    `behind`; in an FFA the target is the strength leader (`ranking.commonThreat`) and earns ≥ `SIEGE_FFA_DOMINANCE`
-    (1.5) × every other opponent in contact; and a sure break (every member in view, a member next to mine) costs
-    ≤ `SIEGE_FIT_TURNS` (2) × its bonus (1 × once retaken on `SIEGE_RETAKEN_TURNS` (2) earlier siege turns) and ≤ my
-    income. Once the trigger fires it hands back (a rationale line), and any turn the fit fails the profile's own goal
-    plays. `siege.auto` and the first rationale line say why. Golden: 6 of 611 adapting boards pick it, with the
-    same deploys and moves (the goal, rationale and siege report change), and 9 more carry the hand-back line; most
-    not-ahead contact boards have no sure break in reach.
+    **The profile no longer picks the siege (#603):** `siegeFit` and `PlanOptions.siegeAuto` are gone; the siege plays only on
+    an explicit `goal: 'siege'` (the self-play arena measured no gain from the auto-pick, 13 of 20 with it off).
   - **Single-army jabs (#361, `src/analysis/plan/jabs.ts`), at 0% luck under straight rounding only**, where one
     army kills round(1 × the offensive rate) ≥ 1 and dies: a one-for-one trade (seen live: 75 → 74, 19 → 18). On
     under `siege` (`PlanOptions.jabs` / plan_turn's `jabs`: `true` on, `false` off; off otherwise). After the #226
@@ -2254,17 +2246,9 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     "Stockpile (#421)" rationale line (`chooseStrikeStack`, `stackFacing`, `plan/strike.ts`). The golden corpus
     carries no income history, so it is byte-identical; with a flat history injected on its 1,839 plans of turn
     ≥ 5, 7 changed orders: 2 captures gained, none lost, next income never lower, no concession, warnings 1 added
-    and 1 removed. The rule lives in `plan/stockpile.ts` (`pileOf`, `stockpileOf`, `strikeShareOf`; pure, shared by
-    the estimates and strike phases). **The strike share (#421, owner decision of 2026-11-20):** in contact on a
-    flat income — wherever rule 0p.3c builds a strike stack (a 1v1 adapting with a foe's visible territory beside
-    mine, a siege on such a foe, or the stockpile) — `STRIKE_SHARE` (25%) of my income, rounded down, is held out of
-    captures (`PlanCtx.strikeShare`, added to `reserve`, which holds back captures only: holds, the #122
-    garrison and the #276 second line (`fillSecondLine`) keep their exact need first), so the leftover gives it to the stack ahead of comfort margins, with a
-    "Strike share (#421)" line. Never at the cost of next income: `planShare` (planner.ts) replans with
-    `PlanOptions.strikeShare: false` and keeps that plan when it earns more next turn (a completion the share
-    starved), saying so. Golden byte-identical (no history); with a flat history injected on every plan of turn
-    ≥ 5, 115 plans changed (the line), 5 in their orders: captures +2/−4 (advances that no longer fit), next
-    income and concessions unchanged. **The break spend (#421, owner decision of 2026-11-20):** on the pile (`pileOf`:
+    and 1 removed. The rule lives in `plan/stockpile.ts` (`pileOf`, `stockpileOf`; pure, shared by
+    the estimates and strike phases). **The strike share (#421) is gone (#603):** holding 25% of a flat income out of captures measured no gain in the
+    self-play arena (11 of 20 with it off), so `STRIKE_SHARE`, `planShare` and `PlanOptions.strikeShare` are removed. **The break spend (#421, owner decision of 2026-11-20):** on the pile (`pileOf`:
     adapting, not `defend` or No-Split, flat, my armies in view ≥ `STOCKPILE_TURNS` × income; `PlanCtx.pile`, any
     format) rule 4a's greedy runs the break of the strongest opponent's (highest income estimate, then id)
     cheapest visible bonus (every member in view, never a probable one; its cheapest member, then value, then id)
@@ -2362,28 +2346,15 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
       In that fallback a capture that completes a bonus this turn is never ranked last for opening a
       second front (rule 0p.2), and one whose bonus repays its cost within the payback horizon goes
       first among the affordable candidates (#240); every other keeps the cost order.
-      **The 1v1 gate budget (#297, `gateStop` in `plan/captures.ts`).** In a 1v1 every border of mine facing the
-      opponent is a gate, each sized for its stack plus the opponent's whole deploy (one deploy floats to whichever
-      it picks). A capture that adds a gate is stopped when the frontier would then need more next turn than the next
-      income and more than without that capture: rule 4d's start-of-turn escape does not apply in a 1v1 (its line
-      then carries the gate arithmetic, "… in this 1v1 it opens another gate …"; when 4d's own check fires its line
-      gains "In this 1v1 that is another gate …"), and the contact fallback runs it where 4d is only a cost. The plan
-      reports `gates` (1v1 only; each gate's `needs` and `armies`, `conceded` marked — a conceded gate is still a way
-      in — `need`, `onGates`, `deficit` = the per-gate shortfalls summed, `income` = the frontier's, `short` =
-      deficit − income; under Local Deployment pool-aware, #433, with `deployable`) and warns only when its own captures open a gate the income cannot hold. Measured on the
-      golden corpus against main: every non-1v1 plan byte-identical; of 4,926 1v1 plans orders changed on 12 (12
-      captures stopped, next income never lower), the warning on 280.
-      **Short gates shorten the capture horizon (#432, `plan/horizon.ts`; owner decision 2026-11-22).** Adapting, in a
-      1v1, when the gates are already short at the start of the turn (each border facing the opponent's `nextTurnAt`
-      hold less the armies and units on it, summed, above my income), every capture's payback test counts
-      `SHORT_GATES_PAYBACK_TURNS` (5) turns instead of 10 (`pc.capturePaybackTurns`: a bonus's economy, pass 3's
-      `plainEconomy`, staging, a two-move stage, a stockpile push's cap, the stand-still completion; never lengthening a
-      decided game's), with a "Gate budget short (#432)" line; holds keep `pc.paybackTurns`, so hold sizing does not
-      shift. `applyShortGates` sets it and `pc.shortGates` right after the threats phase (read it from the context when
-      called). While it reads short, a bonus with a wasteland among its missing members in view (a neutral at
-      `settings.wastelands.size` or more, when that is above `neutralArmies`) is skipped unless focused or completable
-      this turn ("… finishing it means taking the wasteland …"). Golden: 62 of 6253 plan hashes; of the 4,653 plans the
-      dump covers, 37 changed, 31 by the new line only, none in its orders.
+      **The 1v1 gate budget is a report only (#603).** `gateStop` (#297's veto) and #432's short-gates horizon
+      (`plan/horizon.ts`, `SHORT_GATES_PAYBACK_TURNS`) are removed: each summed every gate's need with the opponent's
+      one floating deploy counted on every gate, and the self-play arena measured no gain from either. The plan still
+      reports `gates` (1v1 only; each gate's `needs` and `armies`, `conceded` marked, `need`, `onGates`, `deficit`,
+      `income`, `short`; under Local Deployment pool-aware, #433, with `deployable`), with no warning. Rule 4d's
+      veto stays, but its total (`frontierOf`) now counts the floating deploy once per opponent, at the border it adds
+      most to (`needStack` per border plus the largest `need − needStack`; `experiments: ['legacy-frontier']` restores
+      the old sum); a capture's score still pays each border's full need (`frontierDelta`). Capture payback is always
+      `pc.paybackTurns` (`capturePaybackTurns` keeps the name).
   - **Game rules** (`docs/PLAN-PLANNER-4.md`, `tests/analysis/lessons-game-rules.test.ts`; the
     full-rung `settings` echo shows each):
     - **Kill rates (#28).** Every combat computation uses the game's offensive/defensive kill
@@ -2917,9 +2888,8 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   warapp_plan_turn does (adapting, its tracks and income history; an `onPlan` hook sees every plan), `spreaderBot`
   is a plain greedy expander. A game ends by elimination or at `maxTurns` on points (income, armies, territories).
   Pure and deterministic. `PlanOptions.experiments` names research-only rule switches (off by default, every plan
-  byte-identical without them): `legacy-topup`, `deploy-once` (the frontier, gate budget and short-gates horizon
-  count the floating deploy once), `no-short-gates`, `no-gate-stop`, `no-frontier-veto`. Results and the proposed
-  smaller rule set: `docs/PLAN-STREAMLINE.md`.
+  byte-identical without them): `legacy-topup` (the #420 top-up on every non-primary border) and `legacy-frontier`
+  (rule 4d's total sums every border's full need). Results and the smaller rule set: `docs/PLAN-STREAMLINE.md`.
 - **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script, never in CI; its body is
   `src/tools/calibration-harness.ts` since #569, which `warapp_calibration`'s `harness: true` also runs).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in

@@ -4,8 +4,8 @@
 // territories are worth (#70, #85, #125), where I stand on armies (#167, #201, rule 0p.3) — and the
 // rationale and warnings that state them. Pure: it reads the input and writes only
 // `state.warnings` / `state.rationale`.
-import { siegeFit, siegeOf, type Siege } from './siege.js';
-import { pileOf, strikeShareOf } from './stockpile.js';
+import { siegeOf, type Siege } from './siege.js';
+import { pileOf } from './stockpile.js';
 import type { BoardState } from '../../board.js';
 import { armiesForGold } from '../../commerce.js';
 import { holdsSeat } from '../../player-states.js';
@@ -434,9 +434,8 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   /** Rule 0p.3 (#72): behind on income in a 1v1 — strike (stay balanced, break first), never defend. */
   const strike = behind && profile.format === '1v1';
   // #382: a siege plans as balanced; `siege` below carries what differs.
-  // (`let`: the profile's siege, below, replaces the goal it picked.)
-  let goal: PlanGoal = opts.goal === 'siege' ? 'balanced' : (opts.goal ?? (behind && !strike ? 'defend' : 'balanced'));
-  let balanced = goal === 'balanced';
+  const goal: PlanGoal = opts.goal === 'siege' ? 'balanced' : (opts.goal ?? (behind && !strike ? 'defend' : 'balanced'));
+  const balanced = goal === 'balanced';
   /** Rule 0p.3: behind — size attacks at the minimum (no pressure margin). */
   const minimal = behind;
   /** #303: my income over the last turns, this one (what I deploy, card armies out) last. */
@@ -449,7 +448,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
   /** The pressure margin over an estimated deploy: none when sizing at the minimum. */
   const marginFor = (d: number) => (minimal ? 0 : pressureMargin(d));
   /** Goals that refuse to complete a bonus they cannot hold (R3); the others only warn. */
-  let guarded = balanced || goal === 'defend';
+  const guarded = balanced || goal === 'defend';
   const focus = new Set(opts.focusBonusIds ?? []);
   const reserve = Math.min(income, Math.max(0, Math.floor(opts.reserve ?? 0)));
   const custom = opts.enemyDeploy !== undefined;
@@ -506,25 +505,7 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     ...(input.siegeMemory ? { memory: input.siegeMemory } : {}),
   };
   const sieged = opts.goal === 'siege' ? siegeOf({ ...siegeArgs, target: opts.siegeTarget }) : undefined;
-  // #382 item 2: adapting with no goal, the profile picks the siege when it fits (siegeFit), and hands back
-  // once its assault trigger fires or the fit is gone.
-  let siege: Siege | undefined = sieged && 'siege' in sieged ? sieged.siege : undefined;
-  let siegeHandBack: string | undefined;
-  if (auto && opts.siegeAuto !== false && (profile.format === '1v1' || profile.format === 'ffa') && (profile.phase === 'contact' || profile.phase === 'late')) {
-    const c = siegeOf({ ...siegeArgs, target: undefined });
-    if ('siege' in c) {
-      const fit = siegeFit(c.siege, { format: profile.format, phase: profile.phase, standing: profile.standing, leader: profile.ranking?.commonThreat });
-      if (fit.fits) {
-        siege = { ...c.siege, auto: fit.fit };
-        // The siege wins over the profile's own goal (a `defend` it picked included): it plans as balanced.
-        goal = 'balanced';
-        balanced = true;
-        guarded = true;
-      }
-      else if (fit.handBack)
-        siegeHandBack = `A siege on player ${c.siege.target} would fit (#382), but its assault trigger has fired (${fit.handBack}): the profile hands back to its own goal for the assault.`;
-    }
-  }
+  const siege: Siege | undefined = sieged && 'siege' in sieged ? sieged.siege : undefined;
   // Until the trigger fires, no pass attacks the target's territories but its breakable bonuses' members.
   const held = siege && !siege.ready ? siege : undefined;
   const heldLand = new Set(
@@ -600,7 +581,6 @@ function opponentsCtx(input: PlanInput): OpponentsCtx {
     balanced,
     ...(siege ? { siege } : {}),
     ...(sieged && 'warning' in sieged ? { siegeWarning: sieged.warning } : {}),
-    ...(siegeHandBack ? { siegeHandBack } : {}),
     minimal,
     ...(trendNow ? { incomeTrend: trendNow } : {}),
     pressureFactor,
@@ -966,24 +946,15 @@ export function planContext(input: PlanInput): PlanCtx {
   const o = opponentsCtx(input);
   const b = boardCtx(input, o);
   const c = combatCtx(o, b);
-  // #421 (owner decision, 2026-11-20): in contact on a flat income the strike share is held out of
-  // captures (the reserve holds back captures only, so holds keep their exact need first).
-  const contact = new Set<number>();
-  for (const id of b.mine)
-    for (const n of neighborsOf(o.g, id)) {
-      const st = b.territories.get(n);
-      if (st?.owner.kind === 'player' && st.armies !== null && o.foe(st.owner.playerId)) contact.add(st.owner.playerId);
-    }
   const pileArgs = {
     territories: b.territories, mineSet: b.mineSet, unitsAt: b.unitsAt, foe: o.foe, income: o.income,
     ...(o.incomeTrend ? { incomeTrend: o.incomeTrend } : {}), auto: o.auto, goal: o.goal, noSplit: c.noSplit,
   };
-  const strikeShare = o.opts.strikeShare === false ? 0 : strikeShareOf({ ...pileArgs, format: o.profile.format, siege: o.siege?.target, contact });
-  const reserve = Math.min(o.income, o.reserve + strikeShare);
+  const reserve = o.reserve;
   // #421: the pile itself, for the break and all-in spends.
   const pile = pileOf(pileArgs);
   return {
-    ...o, ...b, ...c, ...standingCtx(o, b), reserve, strikeShare: reserve - o.reserve,
+    ...o, ...b, ...c, ...standingCtx(o, b), reserve,
     ...(pile ? { pile: { my: pile.my, turns: pile.turns } } : {}),
   };
 }
@@ -995,7 +966,7 @@ export function planContext(input: PlanInput): PlanCtx {
  * every plan, in this order.
  */
 export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
-  const { board, s, opts, earnedIncome: income, estimateList, profile, auto, strike, minimal, pressureFactor, decidedGame, siege } = ctx;
+  const { board, s, opts, earnedIncome: income, estimateList, profile, auto, strike, minimal, pressureFactor, decidedGame } = ctx;
   const { rates, minWin, exactCombat, bombOn, luck, weightedRounding, noSplit, armiesBehindVs } = ctx;
   const { warnings, rationale } = state;
   const profileText = `${profile.format}, ${profile.phase}, ${profile.standing}`;
@@ -1015,9 +986,7 @@ export function noteEstimates(ctx: PlanCtx, state: PlanState): void {
         ? `behind on income (${income} against ~${strongest})`
         : `behind on the board, not on income (${income} against ~${strongest}: the standing says why)`;
     rationale.push(
-      siege?.auto
-        ? `Goal siege from the game profile (${profileText}): it plans as balanced against player ${siege.target}, its cheap bonus breaks first and its other territories held back until the assault trigger fires${minimal ? `; ${behindWhy}, attacks are sized at the minimum (no extra margin beyond what the rules require)` : ''}.`
-        : strike
+      strike
           ? `Goal balanced from the game profile (${profileText}): ${behindWhy} in a 1v1 — strike: break the opponent's bonuses with minimal attacks before expansion that completes nothing (holds of my own bonuses that pay for themselves still come first), sized at the minimum (no extra margin beyond what the rules require).`
           : minimal
           ? `Goal defend from the game profile (${profileText}): ${behindWhy}, so defend first and size attacks at the minimum (no extra margin beyond what the rules require).`

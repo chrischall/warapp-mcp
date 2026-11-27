@@ -209,9 +209,6 @@
 //          builds the same stack facing the opponent beside me whose visible armies mine outnumber
 //          STOCKPILE_LEAD× (fewest first, then id; never an income estimate), never on my commander's
 //          territory, and spends it as above ("Stockpile (#421): …").
-//          #421, the strike share: in contact on a flat income (a stack built as above), STRIKE_SHARE
-//          of the income is held out of captures for the stack (holds keep their exact need first),
-//          unless that lowers next income (`planShare`) ("Strike share (#421): …").
 //          #421, the break spend: on the pile (`pc.pile`), rule 4a runs the break of the strongest
 //          opponent's cheapest visible bonus before every other capture, never skipped as a second
 //          front ("Stockpile spend (#421): …").
@@ -1099,13 +1096,10 @@
 //     territory my commander walks from — all that stands there is its transit hold (rule 1w,
 //     `commanderTransit` sizes it on the whole stack); a commander that stays keeps its worst-case
 //     hold through `keepOf`, as from any capture.
-//     #297, a 1v1 only: every border of mine facing the opponent is a gate, each sized for its stack plus the
-//     opponent's whole deploy, since that one deploy floats to whichever it picks. A capture that adds a gate is
-//     stopped when the frontier would then need more next turn than the next income and more than without it
-//     (`gateStop`, src/analysis/plan/captures.ts) — rule 4d's start-of-turn escape does not apply in a 1v1, and
-//     rule 4e's contact fallback, where 4d is only a cost (#114), runs it too. The plan reports `gates` (each gate's
-//     need and armies, conceded ones marked, the summed need, what stands on them, the per-gate deficit, the next
-//     income and the shortfall) and warns when its own captures open a gate the income cannot hold.
+//     #297, a 1v1 only: the plan reports `gates` (each border of mine facing the opponent, its need and armies,
+//     conceded ones marked, the summed need, what stands on them, the per-gate deficit, the next income and the
+//     shortfall). #603: a report only — the veto and #432's short-gates horizon are gone; rule 4d's total counts
+//     the opponent's one floating deploy once.
 //     #426 (draft): a no-loss neutral (its defenders kill none of my attackers, `noLossNeutral`) is taken
 //     by pass 3 even in an uneconomic bonus, and rule 4d lets one through when only the fog faces its new
 //     border and the hold it adds is at most 1× the next income (`outgrows`, not in a 1v1); a stack idle two
@@ -1721,7 +1715,6 @@ import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js
 import { deployBook } from './plan/orders.js';
 import { holdsPhase, priorOnlyHold, type Threatened, type Unit } from './plan/holds.js';
 import { threatsPhase } from './plan/threats.js';
-import { applyShortGates } from './plan/horizon.js';
 import { targetsPhase, type Breakable } from './plan/targets.js';
 import { capturesPhase } from './plan/captures.js';
 import { spreadBind } from './plan/spread-bind.js';
@@ -1948,10 +1941,10 @@ function planAttempts(input: PlanInput): TurnPlan {
   const turn = input.turn;
   const none = new Set<number>();
   if (!input.bonusAttempts || turn === undefined)
-    return planShare(input.stockpileAllIn?.size ? withPush(input, none, none) : input);
+    return planSettled(input.stockpileAllIn?.size ? withPush(input, none, none) : input);
   const judged = judgeAttempts(input.bonusAttempts, turn, input.graph, input.board, input.me);
   const verdicts = bonusVerdicts(judged, turn).filter((v) => input.graph.bonusById.has(v.bonusId));
-  if (!verdicts.length) return planShare(input.stockpileAllIn?.size ? withPush(input, none, none) : input);
+  if (!verdicts.length) return planSettled(input.stockpileAllIn?.size ? withPush(input, none, none) : input);
   const entries = new Map<number, BonusPushEntry>();
   for (const v of verdicts)
     if (v.kind === 'dropped') entries.set(v.bonusId, { ...v });
@@ -1976,7 +1969,7 @@ function planAttempts(input: PlanInput): TurnPlan {
   let plan: TurnPlan;
   for (;;) {
     const ids = new Set(allIn.map((v) => v.bonusId));
-    plan = planShare(withPush(input, ids, new Set([...entries.keys()])));
+    plan = planSettled(withPush(input, ids, new Set([...entries.keys()])));
     const tries = allInOutcome.get(plan);
     const taken = new Set(plan.expected.captures);
     const failing = allIn.flatMap((v) => {
@@ -2028,8 +2021,6 @@ function planAttempts(input: PlanInput): TurnPlan {
   return plan;
 }
 
-/** #421: per plan, the strike share its pass held out of captures (absent when none). */
-const shareOutcome = new WeakMap<TurnPlan, number>();
 
 /** #505: rule 4f's view of the bonuses beside a plan (kept off the plan itself, so its output is unchanged). */
 export interface PlanCloseness {
@@ -2047,23 +2038,6 @@ const closenessOutcome = new WeakMap<TurnPlan, PlanCloseness>();
 /** #505: rule 4f's nearest bonus and turns to finish for a plan `planTurn` made; `undefined` for any other object. */
 export function planCloseness(plan: TurnPlan): PlanCloseness | undefined {
   return closenessOutcome.get(plan);
-}
-
-/**
- * #421 (owner decision, 2026-11-20): the strike share is held out of captures, ahead of comfort margins,
- * but never at the cost of next income — when the plan without it earns more next turn (a completion the
- * share starves), that plan stands and says why.
- */
-function planShare(input: PlanInput): TurnPlan {
-  const plan = planSettled(input);
-  const share = shareOutcome.get(plan);
-  if (!share) return plan;
-  const without = planSettled({ ...input, options: { ...input.options, strikeShare: false } });
-  if (without.expected.nextIncome <= plan.expected.nextIncome) return plan;
-  without.rationale.push(
-    `Strike share (#421) not held this turn: holding ${share} of the income out of captures for the strike stack would lower next income from ${without.expected.nextIncome} to ${plan.expected.nextIncome} (a capture it starves completes a bonus).`,
-  );
-  return without;
 }
 
 function planSettled(input: PlanInput): TurnPlan {
@@ -2159,9 +2133,6 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
 
   // ---- 1t. threat trend, 1. defence (plan/threats.ts) ----
   const threats = threatsPhase(pc, ps, input, book.valueOf);
-  // #432: a 1v1 whose gates are short at the start judges its captures on a shorter payback horizon from here on
-  // (every capture test after this reads `pc.capturePaybackTurns`; holds keep `paybackTurns`).
-  applyShortGates(pc, ps, threats);
   const { growthOf, reinforcementAt, borders, facing, borderAt } = threats;
 
   // ---- 1. holds, #172, 1h, 1b, 1c, #122 garrisons (plan/holds.ts) ----
@@ -3688,7 +3659,6 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     if (dead.size) deadOutcome.set(plan, dead);
   }
   if (tgt.allInTries.size) allInOutcome.set(plan, tgt.allInTries);
-  if (pc.strikeShare > 0) shareOutcome.set(plan, pc.strikeShare);
   {
     const nearest = tgt.committing ? (tgt.byCloseness.find((p) => !p.focus) ?? tgt.byCloseness[0]) : undefined;
     const near = tgt.spreadNearest ?? nearest;

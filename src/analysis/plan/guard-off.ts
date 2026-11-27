@@ -119,8 +119,7 @@ export function fillSecondLine(pc: PlanCtx, ps: PlanState, book: DeployBook): vo
   for (const [id, e] of [...secondLine].sort((a, b) => a[0] - b[0])) {
     const owed = e.size - secondLineKept.get(id)!;
     if (owed <= 0) continue;
-    // #421: the strike share holds back captures only, never the second line's exact need.
-    const k = Math.min(owed, Math.max(0, ps.budget - (reserve - pc.strikeShare)), roomAt(id));
+    const k = Math.min(owed, Math.max(0, ps.budget - reserve), roomAt(id));
     if (k > 0) {
       deploy(id, k);
       // The deployed armies join the garrison: they stay, as the guard would.

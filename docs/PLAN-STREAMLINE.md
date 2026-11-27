@@ -63,14 +63,21 @@ Over 40 more games:
 | spreader vs lean | 4–36 |
 | spreader vs leaner | 4–36 |
 
-## Proposal
+## What #604 does
 
-1. **Done in this PR (#603):** size each border other than the most valuable one at the stacks beside it alone. A quiet neighbour keeps its top-up. This is the one change the arena shows wins games.
-2. **Owner decision, then a follow-up PR: remove the rules the arena shows add nothing.** These are the #297 gate budget, the #432 short-gates horizon, the #421 strike share and the #382 siege auto-pick (an explicit `goal: 'siege'` stays). Together they are several hundred lines and one more veto per capture. Six rules in that table become one principle:
+1. **Stacks alone (#603):** each border other than the most valuable one is sized at the stacks beside it alone. A quiet neighbour keeps its top-up. This is the one change the arena shows wins games.
+2. **Removed (owner's go-ahead, 2026-11-27):** the #297 gate budget's veto, the #432 short-gates horizon, the #421 strike share and the #382 siege auto-pick. An explicit `goal: 'siege'` stays, and the gate budget stays as a report. Six rules in that table become one principle:
 
    > Hold each border against the stacks beside it; hold the most valuable border against the whole deploy; spend the rest.
 
-3. **Keep, made consistent:** rule 4d's frontier veto and the #420 hold cap cost nothing in the arena, but they guard FFAs and Local Deployment, which the arena does not play. Where they sum borders' needs, count the floating deploy once. This is the `deploy-once` switch: neutral in the arena, consistent with #420.
+3. **Kept, made consistent:** rule 4d's frontier veto and the #420 hold cap cost nothing in the arena, but they guard FFAs and Local Deployment, which the arena does not play. The veto's total now counts the floating deploy once. A capture's score still pays each border's full need.
+
+**Measured: the streamlined planner (this PR) against main's planner** (fog, seats swapped, seeds 1–30):
+
+| Pairing | Games | Result |
+|---|---|---|
+| streamlined vs main | 60 | 40–20 |
+| streamlined vs spreader | 30 | 28–2 |
 
 ## Limits
 
@@ -80,7 +87,7 @@ Over 40 more games:
 
 The win rates are directional. Twenty games carry about ±3 of noise, so only the stacks-alone result (22–8 over 30, 19–1 against the spreader) is clearly real. The removals are "no measurable loss", not "a gain".
 
-Run it locally:
+Run it locally (`legacy` is today's main for the two changed rules):
 
 ```
 npm run build && node scripts/arena.mjs --games 10 --fog --pairs planner:spreader

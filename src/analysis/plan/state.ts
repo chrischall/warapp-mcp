@@ -7,7 +7,6 @@
 // plan has made so far. A phase moved out of planner.ts takes `(ctx, state)` explicitly instead of
 // closing over planPass's locals; planPass still names each field as the local it was.
 
-import type { ShortGates } from './horizon.js';
 import type { Siege } from './siege.js';
 import type { IncomeTrend } from '../income-trend.js';
 import type { BoardState, TerritoryState } from '../../board.js';
@@ -79,7 +78,6 @@ export interface OpponentsCtx {
   /** #382: why `goal: 'siege'` found no one to besiege (the plan is then `balanced`). */
   siegeWarning?: string;
   /** #382: the profile's siege fits but its trigger fired: the line that says it hands back. */
-  siegeHandBack?: string;
   /** Rule 0p.3: behind — size attacks at the minimum (no pressure margin). */
   minimal: boolean;
   /** #303: my income trend ({@link TurnPlan.incomeTrend}); absent without history. */
@@ -112,13 +110,10 @@ export interface OpponentsCtx {
   /** The turns every payback test counts (#201). */
   paybackTurns: number;
   /**
-   * #432: the turns a capture's payback test counts (pass 3, a bonus's economy, staging, a two-move stage, a push's
-   * cap, the stand-still completion): {@link paybackTurns}, or fewer while a 1v1's gates are short — set right after
-   * the threats phase, so read it from the context when called. Holds keep `paybackTurns`.
+   * The turns a capture's payback test counts (pass 3, a bonus's economy, staging, a two-move stage, a push's
+   * cap, the stand-still completion): {@link paybackTurns} (#603: #432's shorter horizon is gone).
    */
   capturePaybackTurns: number;
-  /** #432: the start-of-turn gate budget of a 1v1 is short (set right after the threats phase, with `paybackTurns`). */
-  shortGates?: ShortGates;
 }
 
 /** The territories as the board shows them, and what they are worth (cards aside). */
@@ -196,11 +191,6 @@ export interface StandingCtx {
 
 /** Everything a planning pass reads and never changes. */
 export type PlanCtx = OpponentsCtx & BoardCtx & CombatCtx & StandingCtx & {
-  /**
-   * #421: the strike share held out of captures this turn (part of `reserve`; 0 when none): in contact on a
-   * flat income, {@link STRIKE_SHARE} of the income goes to the strike stack ahead of comfort margins.
-   */
-  strikeShare: number;
   /** #421: a stockpile on a flat income (`pileOf`): my armies in view and how many turns of income they are. */
   pile?: { my: number; turns: number };
 };
