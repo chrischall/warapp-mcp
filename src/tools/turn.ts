@@ -2084,6 +2084,8 @@ export async function livePlanSetup(
     // #166: the opponent's opening simulated from the starts the award proved, as the prior.
     ...(opening ? { opening } : {}),
     ...(mapPace ? { mapPace } : {}),
+    // #568: the same calibration raises each tracked figure by its coverage band's damped factor.
+    ...(calibration ? { trackCalibration: calibration } : {}),
     // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
     ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
     // #427: the Reinforcement plays seen in the turns' orders (card plays not fogged): a play restarts the clock.
@@ -2615,6 +2617,8 @@ async function commanderCheck(
   const opening = openingThreat(award, a.game, graph, a.seen, a.turn);
   // #419: the past winners' pace, as the plan reads it.
   const mapPace = await fogPaceFor(ctx.dataDir, undefined, a.game.settings?.mapId ?? a.map.id, mapMatchOf(profileFormatOf(a.game.players), a.game.settings), a.turn === null ? null : a.turn - 1);
+  // #568: past games' calibration of the tracked figures, as the plan reads it.
+  const trackCalibration = await outlookCalibrationFor(ctx.dataDir, undefined, profileFormatOf(a.game.players));
   // stressOpponents reads a static seat's territories as neutrals (#270), on its own `board` too.
   const so = stressOpponents({
     graph,
@@ -2631,6 +2635,7 @@ async function commanderCheck(
     info: a.info,
     ...(opening ? { opening } : {}),
     ...(mapPace ? { mapPace } : {}),
+    ...(trackCalibration ? { trackCalibration } : {}),
   });
   // #275: an untrusted opponent's reply is sized at least at the figure its tripwire gave it, as
   // warapp_check_plan's stress test tries it (read only: warapp_plan_turn keeps the marks).

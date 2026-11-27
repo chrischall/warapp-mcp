@@ -4,6 +4,7 @@
 import { incomeDetail, planEnemyEstimates, symmetricStart, trackGame, trackOpponents, unevenStart, type PlannerSettings } from '../analysis/index.js';
 import type { MapGraph } from '../analysis/graph.js';
 import type { CardBonusBasis, EnemyDeployEstimate, FogPace, KnownIncome } from '../analysis/plan/shared.js';
+import type { OutlookCalibration } from '../analysis/outlook.js';
 import { statedShifts } from '../analysis/plan/estimates.js';
 import { neutralizeSeats, seatEndRules, staticSeats } from '../analysis/static-seats.js';
 import type { TurnBoard } from '../analysis/opponents.js';
@@ -37,6 +38,8 @@ export interface StressOpponentsInput {
   opening?: ReadonlyMap<number, number>;
   /** #419: the past winners' pace at this turn (`fogPaceFor`), as warapp_plan_turn reads it. */
   mapPace?: FogPace;
+  /** #568: past games' tracker estimate ÷ truth per coverage band, as warapp_plan_turn reads it. */
+  trackCalibration?: OutlookCalibration;
   /** Overrides every estimate. */
   enemyDeploy?: number;
   /**
@@ -111,6 +114,7 @@ export function stressOpponents(input: StressOpponentsInput) {
       ...(unevenStart(game.settings) ? { unevenStart: unevenStart(game.settings)! } : {}),
       ...(input.opening ? { opening: input.opening } : {}),
       ...(input.mapPace ? { mapPace: input.mapPace } : {}),
+      ...(input.trackCalibration ? { trackCalibration: input.trackCalibration } : {}),
       ...(game.settings?.fog !== undefined ? { fog: game.settings.fog } : {}),
       ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
     },

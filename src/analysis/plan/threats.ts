@@ -1136,7 +1136,14 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
           const track = input.tracks!.find((t) => t.playerId === p)!;
           const used = track.turns.filter((x) => e.trackedTurns.includes(x.from));
           rationale.push(
-            `Tracked income for player ${p}: ~${e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog${e.coverage ? `, read from ${coverageText(e.coverage)}` : ''}; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+            `Tracked income for player ${p}: ~${e.trackCalibration ? e.trackCalibration.raw : e.tracked}/turn (${incomeBasis(track)}): ${used.map((x) => `turn ${x.from} +${x.observed}`).join(', ')}, each observed deploy a lower bound under fog${e.coverage ? `, read from ${coverageText(e.coverage)}` : ''}; at least its visible base + bonuses ${track.visibleIncome}; used in place of the single-turn observed figure (warapp_track_opponents has the details).`,
+          );
+        }
+        // #568: the tracked figure raised by past games' calibration in its coverage band.
+        if (e.trackCalibration) {
+          const c = e.trackCalibration;
+          warnings.push(
+            `Player ${p}'s tracked income ~${c.raw} is raised to ~${c.figure} (#568, draft): past games' tracker read ${c.geoMean.toFixed(2)}× the true income at this frontier coverage (${c.band}, ${c.n} samples), divided by its square root (${c.factor.toFixed(2)}).`,
           );
         }
         // #427: a card play the tracker read as income, taken out of its figure.

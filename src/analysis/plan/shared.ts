@@ -17,7 +17,7 @@ import {
   type CombatSettings,
 } from '../combat.js';
 import type { MapGraph } from '../graph.js';
-import type { GameOutlook } from '../outlook.js';
+import type { GameOutlook, OutlookCalibration } from '../outlook.js';
 import type { BorderOutcome, Exchange } from '../exchange.js';
 import type { TwoStepReach } from '../lookahead.js';
 import type { MoveSlot } from '../schedule.js';
@@ -459,6 +459,12 @@ export interface PlanGameContext {
    * (`seenReinforcementPlays`, src/tools/card-advice.ts); absent otherwise (the clock alone, as before).
    */
   reinforcementPlays?: ReinforcementPlays;
+  /**
+   * #568: past games' tracker estimate ÷ truth per frontier coverage band (#436's `outlookCalibrationFor`,
+   * from lessons.json): a tracked figure is raised by its band's damped factor ({@link trackCalibrationFactor}).
+   * Absent: tracked figures as the tracker reads them.
+   */
+  trackCalibration?: OutlookCalibration;
 }
 
 /**
@@ -1327,6 +1333,12 @@ export interface EnemyDeployEstimate {
    * counted as a card. `null` when no play set it, or without a clock.
    */
   cardInTrack?: { was: number; income: number; armies: number; turns: number[] } | null;
+  /**
+   * #568: the tracked figure raised by past games' estimate ÷ truth in its coverage band (`band`,
+   * `geoMean` over `n` samples): `raw` the tracker's own figure, `factor` the damped divisor, `figure` what
+   * `tracked` and the estimate use (never above what it could earn). Absent when no band applied.
+   */
+  trackCalibration?: { raw: number; band: string; geoMean: number; n: number; factor: number; figure: number } | null;
   /**
    * G2 (PLAN-TEAMS D3): the Sanctions in effect on it that the decoder is sure of. `before`: the
    * estimate's income (card left out) before the cut; `after`: what it is now (`estimate` less its card).
