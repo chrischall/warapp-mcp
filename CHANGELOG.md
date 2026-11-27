@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/chrischall/warapp-mcp/compare/v0.19.0...v0.20.0) (2026-11-27)
+
+
+### Features
+
+* **planner:** streamlined defence, stacks-alone border sizing, self-play arena ([#603](https://github.com/chrischall/warapp-mcp/issues/603)) ([8566787](https://github.com/chrischall/warapp-mcp/commit/85667872c6ce5e2b5e7e7673d2ccb230bec377ff))
+
 ## [0.19.0](https://github.com/chrischall/warapp-mcp/compare/v0.18.0...v0.19.0) (2026-11-27)
 
 
