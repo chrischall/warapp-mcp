@@ -112,6 +112,9 @@ describe('#593: which bonuses are probable breaks', () => {
   });
 
   it('two shown non-his members, or one shown mine, is no denial', () => {
+    // Two members shown neutral on an opening turn: he is two short, not one (#599).
+    const two = territories({ t3: neutral(3, 2) }).map((t) => (t.territoryId === 4 ? neutral(4, 2) : t));
+    expect(foggedBreakables(g, state(two), foe, mineSet, new Set(), 3).some((b) => b.bonusId === 900)).toBe(false);
     const ts = territories({ t3: mine(3, 1) });
     expect(foggedBreakables(g, state(ts), foe, new Set([1, 3]), new Set(), 3).some((b) => b.bonusId === 900)).toBe(false);
   });
