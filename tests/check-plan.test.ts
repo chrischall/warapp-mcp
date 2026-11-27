@@ -72,6 +72,7 @@ interface ReplyView {
   attack?: { from: Named; to: Named; armies: number };
   attacks?: Array<{ from: Named; to: Named }>;
   attacksTried?: number;
+  movedIn?: Array<{ from: Named; armies: number }>;
   needsFirstMove: 'you' | 'opponent' | 'either';
   lost: Named[];
   lostMore?: number;
@@ -330,6 +331,24 @@ describe('warapp_check_plan', () => {
     expect(back.capturesFailed).toEqual([]);
     expect(p.plan.orders).toHaveLength(2);
     expect(p.assumptions).toBeDefined();
+  });
+
+  it('#593 5c: names the bait, a lightly held territory its big stack beside it moves into before my attack lands', async () => {
+    // Bob's 1 on Bolton Moors beside his 24 on 135: my 4 from Hornwood take the 1 as the board stands.
+    h = await live([
+      { id: 159, fogLevel: 1, owner: ANN.inGame, armies: 5 },
+      { id: 161, fogLevel: 1, owner: ANN.inGame, armies: 3 },
+      { id: 157, fogLevel: 2, owner: 0, armies: 2 },
+      { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 1 },
+      { id: 135, fogLevel: 1, owner: BOB.inGame, armies: 24 },
+    ]);
+    const p = await check({ orders: [{ kind: 'move', from: 159, to: 158, armies: 4 }], view: 'full' });
+    expect(p.plan.captures.map((t) => t.id)).toEqual([158]);
+    const gather = [p.worst!, ...p.otherReplies].find((r) => r.kind === 'gather')!;
+    expect(gather.capturesFailed.map((t) => t.id)).toEqual([158]);
+    expect(gather.movedIn).toEqual([{ from: expect.objectContaining({ id: 135 }), armies: 23 }]);
+    expect(gather.needsFirstMove).toBe('opponent');
+    expect(gather.text).toMatch(/moves 23 in from territory 135 onto territory 158, and it moves first: your capture of 158 fails/);
   });
 
   it('lists, for an attack by every stack at once, only the attacks on what was lost', async () => {

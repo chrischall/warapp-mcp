@@ -103,6 +103,7 @@ import type { KnownIncome, TurnPlan } from '../analysis/plan/shared.js';
 import { alternativePlans, STRATEGY_NOTE, stressSummary, turnOptions } from '../analysis/options.js';
 import { FACT_PARTS, FACTS_AVAILABLE, MORE_ON_REQUEST, OWN_PLAN_STEPS, pickFacts, situation } from '../analysis/situation.js';
 import { stressPlan } from '../analysis/stress.js';
+import { baitAttackWarning } from './bait.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
 import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, lastTurnPlays, opponentCanHold, opponentReinforcement, reinforcementPlaysShown, seenReinforcementPlays, TEAM_HAND } from './card-advice.js';
@@ -4896,6 +4897,18 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         );
         const hopeless = hopelessAttackWarning(attacks, label);
         if (hopeless) warnings.push(hopeless);
+        // #593 5c: an attack its stacks beside the target can reinforce before it lands.
+        const bait = baitAttackWarning({
+          graph: graphOf(map),
+          board: territories,
+          me: playerId,
+          moves: moves.map((m, i) => ({ ...m, armies: m.percent ? (options.estimates.get(i) ?? 0) : m.armies })),
+          settings: plannerSettings(game.settings),
+          label,
+          name: (id) => ({ id, name: map.territories.find((t) => t.id === id)?.name ?? String(id) }),
+          teammates,
+        });
+        if (bait) warnings.push(bait);
         // #275 (c): a border of a held bonus these orders leave falling to a deploy below my own income.
         // A warning, never a refusal; the stress test (warapp_check_plan) tries the replies in full.
         const subTeams = teamsOf(game.players);

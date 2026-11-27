@@ -524,6 +524,9 @@ What is true of the tools, the stores they keep and the protocol calls behind ea
   `attack_teammates`, checked in `src/tools/order-options.ts`) are each refused unless the game
   allows it (`AllowTransferOnly`, `AllowAttackOnly`, `AllowPercentageAttacks`, `Commanders`, a
   teammate); their encoding follows the client bundle, golden-pinned but UNVERIFIED live.
+  The preview warns of bait (#593 5c, `baitAttackWarning` in `src/tools/bait.ts`): an attack on a player's territory
+  that its owner's stacks beside it (in view, each less its guard) can reinforce first so that it fails before any
+  deploy; no deploy estimate is read there, `warapp_check_plan`'s `gather` reply adds it. A warning, never a refusal.
   The optional `override_reason` (≤ 500 chars, names scrubbed) and `override_by` (`'hand' | 'agent'`) change nothing
   sent: after a confirmed send they go into the decision log (#412, below) beside the turn's plan, only when the
   orders differ from it.

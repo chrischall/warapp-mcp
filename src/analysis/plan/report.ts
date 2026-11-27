@@ -333,7 +333,7 @@ export function reportOffence(
 ) {
   const {
     g, foe, profile, auto, goal, territories: state, label, mine, mineSet, unitsAt, uncounted, uncountedKind,
-    defenceAt, costAt, toTake, noSplit, leadLever, ffaLeader, leadText, myCommanders,
+    defenceAt, costAt, toTake, noSplit, leadLever, ffaLeader, leadText, myCommanders, guard,
   } = pc;
   const { warnings, rationale, deployed, avail, spared, unabsorbed, captured, moves } = ps;
   const { gainWith, orderOf, pools, coverOf } = book;
@@ -537,6 +537,27 @@ export function reportOffence(
       const st = state.get(n);
       return !mineSet.has(n) && !attacked.has(n) && st?.owner.kind === 'player' && foe(st.owner.playerId) && st.armies !== null;
     });
+    /**
+     * #593 5c: what its owner's stacks beside `n` can move in before an attack lands (each less its
+     * guard), and what taking it costs then: a cheap-looking territory beside a big stack is bait.
+     */
+    const baitNote = (n: number): string => {
+      const owner = state.get(n)!.owner;
+      const stacks = neighborsOf(g, n)
+        .flatMap((x) => {
+          const st = state.get(x);
+          return st && st.armies !== null && st.owner.kind === 'player' && owner.kind === 'player' && st.owner.playerId === owner.playerId && st.armies > guard
+            ? [{ x, moves: st.armies - guard }]
+            : [];
+        })
+        .sort((a, b) => b.moves - a.moves || a.x - b.x);
+      if (!stacks.length) return '';
+      const k = stacks.reduce((t, s) => t + s.moves, 0);
+      const then = costAt(n, defenceAt(n) + k);
+      return `; its stacks beside it can move ${k} in before an attack lands (${stacks.map((s) => `${label(s.x)} ${s.moves}`).join(', ')}): ${
+        then === null ? 'no attack takes it then' : `${then} to take it then`
+      } (#593)`;
+    };
     const reasonFor = (n: number): string => {
       const st = state.get(n)!;
       const p = (st.owner as { playerId: number }).playerId;
@@ -617,7 +638,7 @@ export function reportOffence(
       }
       // #593: a member of a bonus probably held behind the fog is a break candidate that was not funded.
       if (tgt.foggedMember.has(n))
-        return `${label(best.x)} could spare ${best.spare} for it, and it probably breaks a bonus behind the fog (#593), but that break, sized for a partial deploy, did not fit or ranked below what the turn funded`;
+        return `${label(best.x)} could spare ${best.spare} for it, and it probably breaks a bonus behind the fog (#593), but that break, sized for a partial deploy, did not fit or ranked below what the turn funded${baitNote(n)}`;
       return `${label(best.x)} could spare ${best.spare} for it, but it breaks no bonus and is no counter-attack, finishing blow or strike — the only reasons the plan attacks a player's territory (rule 2), besides rule 4e's fallback when nothing else is captured${
         !ffaLead
           ? ''
@@ -626,7 +647,7 @@ export function reportOffence(
             : noSplit
               ? ` (no lead strike under No-Split: an order carries the whole stack)`
               : ''
-      }`;
+      }${baitNote(n)}`;
     };
     /** #253: why rule 4h, the army cap's spend of idle armies, did not take it either. */
     const capNote = (n: number) => {
