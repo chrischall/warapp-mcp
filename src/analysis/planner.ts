@@ -549,7 +549,16 @@
 //     loss opens (none containing it, none its cut or breach counts), with a line ("… is the only way in
 //     to …"); and a territory whose loss opens held bonuses guards against a stack two steps away
 //     (#172) like a bonus member, so the gate behind a conceded border keeps a hold — save when a stack
-//     steps into that conceded border and makes it hold (#257), which cuts the reach. Its hold cost is the fewest
+//     steps into that conceded border and makes it hold (#257), which cuts the reach. #593: a hub — a member of
+//     a positive bonus of HUB_MIN_MEMBERS (4)+ members I hold in full (a bonus completed this turn too, once rule
+//     1c counts the captures) that borders HUB_DEGREE (0.75) or more of its other members — also protects
+//     HUB_WEIGHT (0.6) × that bonus's value (its fall takes the rest, which comes back only member by member),
+//     counted once per bonus in rule 1h's unit worth, with a line ("… borders N of bonus …'s M other members: its
+//     fall takes the rest … (#593)"); no cut, breach or opens counts its own bonus. A unit that pays only for its hub
+//     share is funded first like any other, even before a larger completion, and gets a contested unit's
+//     floor before the captures (#118), so it is floored, never conceded bare, when it cannot be held whole
+//     (owner, 2026-11-27).
+//     Its hold cost is the fewest
 //     deploys making `armiesToTake(armies + d) > threat`. Every border facing one
 //     opponent is sized for that opponent's whole deploy (#69): it picks where to land
 //     after I commit, so that is each border's worst case, and a sure hold of several

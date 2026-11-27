@@ -242,7 +242,7 @@ export function reconsiderAndGarrison(
 ) {
   const { g, guarded, reserve, paybackTurns, label, bonusName, mine, mineSet, unitsAt, toTake, myCommanders } = pc;
   const { warnings, rationale, deployed, locked, captured, moves } = ps;
-  const { orderOf, deploy, pools, valueCache, cutCache, breachCache, opensCache, valueOf } = book;
+  const { orderOf, deploy, pools, valueCache, cutCache, breachCache, opensCache, hubCache, valueOf } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { borders } = threats;
   const { conceded, kept, garrisoned } = hb;
@@ -259,6 +259,7 @@ export function reconsiderAndGarrison(
     cutCache.clear();
     breachCache.clear();
     opensCache.clear();
+    hubCache.clear();
     if (!conceded.size) return;
     for (const t of [...conceded].sort(byNum)) {
       // Already withdrawn from (rule 1b ran first): its armies are gone, and it stays conceded.

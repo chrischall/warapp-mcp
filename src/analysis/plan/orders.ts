@@ -10,7 +10,7 @@ import { chargeDeploys, deployPools } from '../local-deploy.js';
 import { territoryIncome } from '../player.js';
 import { opensBehind, type Opened } from '../opens.js';
 import type { BoardState } from '../../board.js';
-import { BREACH_WEIGHT, OPENS_WEIGHT, WASTELAND_FACTOR, visibleState, type PlannedMove } from './shared.js';
+import { BREACH_WEIGHT, HUB_DEGREE, HUB_MIN_MEMBERS, HUB_WEIGHT, OPENS_WEIGHT, WASTELAND_FACTOR, visibleState, type PlannedMove } from './shared.js';
 import type { PlanCtx, PlanState } from './state.js';
 import { byNum } from './util.js';
 import { secondLineOf } from './guard-off.js';
@@ -24,6 +24,18 @@ export interface Cut {
   armies: number;
   /** The income they make: the positive bonuses held in full inside them, plus their per-territory income. */
   income: number;
+}
+
+/** #593: my `t` is a hub of a bonus I hold in full ({@link deployBook}'s `hubsAt`). */
+export interface Hub {
+  bonusId: number;
+  value: number;
+  /** The bonus's other members `t` borders. */
+  borders: number;
+  /** The bonus's other members. */
+  others: number;
+  /** {@link HUB_WEIGHT} × `value`: what its protected value counts on top of the bonus. */
+  worth: number;
 }
 
 /** The deploy book: the helpers every phase deploys, moves and values territories through. */
@@ -338,6 +350,36 @@ export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardSta
     return out;
   };
   const opensCache = new Map<number, (Opened & { worth: number }) | null>();
+  /**
+   * #593: the bonuses my `t` is a hub of — positive, held in full, at least {@link HUB_MIN_MEMBERS} members, `t`
+   * bordering at least {@link HUB_DEGREE} of the others: its fall takes the rest (on 16 lost 1v1s' boards such a
+   * member lost 78% of the rest by the next turn, one bordering < 50% 20%, and none was ever retaken). Each counts
+   * {@link HUB_WEIGHT} × its value on top of the bonus. Never double-counted: #235's cut counts bonuses wholly cut
+   * off, #275's breach and #291's opens bonuses not containing `t`, so none of them counts `t`'s own bonus.
+   */
+  const hubsAt = (t: number): Hub[] => {
+    const cached = hubCache.get(t);
+    if (cached) return cached;
+    const out: Hub[] = [];
+    if (ps.holdings.has(t)) {
+      const near = new Set(neighborsOf(g, t));
+      for (const b of [...g.map.bonuses].sort((x, y) => x.id - y.id)) {
+        if (b.value <= 0) continue;
+        const ts = bonusTerritories(g, b.id);
+        if (ts.length < HUB_MIN_MEMBERS || !ts.includes(t) || !ts.every((x) => ps.holdings.has(x))) continue;
+        const others = ts.filter((x) => x !== t);
+        const borders = others.filter((x) => near.has(x)).length;
+        if (borders < HUB_DEGREE * others.length) continue;
+        out.push({ bonusId: b.id, value: b.value, borders, others: others.length, worth: Math.round(HUB_WEIGHT * b.value * 10) / 10 });
+      }
+    }
+    hubCache.set(t, out);
+    return out;
+  };
+  const hubCache = new Map<number, Hub[]>();
+  /** #593: the hub worth of bonus `bonusId` among `members` (once per bonus, however many of them are its hubs). */
+  const hubWorthOf = (bonusId: number, members: readonly number[]): number =>
+    members.map((m) => hubsAt(m).find((h) => h.bonusId === bonusId)?.worth ?? 0).reduce((a, b) => Math.max(a, b), 0);
   const protectedValue = (t: number): number => {
     // Each bonus is visited once, so it counts once however many of its borders are threatened.
     // #235: plus the income of what losing it cuts off from the rest of my holdings.
@@ -355,7 +397,8 @@ export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardSta
       }
       if (b.value === 0) continue;
       if (ts.every((x) => ps.holdings.has(x))) {
-        v += b.value;
+        // #593: a hub's fall takes the rest of the bonus, which comes back only member by member.
+        v += b.value + (hubsAt(t).find((h) => h.bonusId === b.id)?.worth ?? 0);
         continue;
       }
       // An incomplete bonus I am working on (T is in it): lost access if T is my only way in.
@@ -426,6 +469,9 @@ export function deployBook(ctx: PlanCtx, ps: PlanState, previousBoard?: BoardSta
     breachCache,
     opensAt,
     opensCache,
+    hubsAt,
+    hubCache,
+    hubWorthOf,
     stakeAt,
   };
 }

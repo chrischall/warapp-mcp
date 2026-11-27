@@ -47,13 +47,14 @@ const at = (territoryId: number, armies: number, who: number | 'neutral'): Terri
     ? { territoryId, owner: { kind: 'neutral' }, armies }
     : { territoryId, owner: { kind: 'player', playerId: who }, armies };
 
-const map = makeMap(
+/** `hub: false` drops T1–T4, so T1 borders 2 of B1's 3 other members and is no #593 hub (#215's contested path). */
+const mapOf = (hub: boolean) => makeMap(
   [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
   [
     [1, 5],
     [1, 2],
     [1, 3],
-    [1, 4],
+    ...(hub ? ([[1, 4]] as [number, number][]) : []),
     [2, 3],
     [3, 4],
     [3, 6],
@@ -79,7 +80,8 @@ const map = makeMap(
     [4, 3, [7, 8]],
   ],
 );
-const g = buildGraph(map);
+const g = buildGraph(mapOf(true));
+const gNoHub = buildGraph(mapOf(false));
 interface Shape {
   income?: number;
   /** T1's armies (2 live). */
@@ -90,6 +92,8 @@ interface Shape {
   tasmania?: number;
   movesFirst?: boolean;
   movesFirstUnverified?: boolean;
+  /** #593: false plays it on the map where T1 is no hub of B1. */
+  hub?: boolean;
 }
 const field = (o: Shape = {}): BoardState =>
   boardOf([
@@ -113,7 +117,7 @@ const field = (o: Shape = {}): BoardState =>
     at(18, 1, ME),
   ]);
 const input = (o: Shape = {}): PlanInput => ({
-  graph: g,
+  graph: o.hub === false ? gNoHub : g,
   board: field(o),
   me: ME,
   income: o.income ?? 22,
@@ -145,7 +149,8 @@ describe('#215: the live shape — a held bonus left to fall while the deploy we
   it('holds T1 whole before the advance, so it holds whoever moves first', () => {
     const p = planTurn(input());
     // 19 make T1 21 armies, 35 to take: above the 33 (4 movable + ~29) without any transfer in.
-    expect(p.rationale).toContain('Deploy 19 to T1 (#1) so it holds (protects +4): 21 armies need 35 to take, above the ~33 threat.');
+    // #593: T1 borders all three other members of B1, so it protects +4 and 60% of it again.
+    expect(p.rationale).toContain('Deploy 19 to T1 (#1) so it holds (protects +6.4): 21 armies need 35 to take, above the ~33 threat.');
     // The 3 left join it as the strike stack (rule 0p.3c): nothing goes to the advance.
     expect(deployedOn(p, 1)).toBe(22);
     expect(p.moves.some((m) => m.kind === 'attack' && m.from === 13 && m.to === 14)).toBe(false);
@@ -154,7 +159,12 @@ describe('#215: the live shape — a held bonus left to fall while the deploy we
   });
 
   it('holds it whole past its floor, and not against "the one shared deploy"', () => {
-    const p = planTurn(input());
+    // #593: on the map where T1 is B1's hub (+2.4) the unit pays for itself and is held whole as such; where it is no
+    // hub, #215's contested path holds it whole past its floor.
+    expect(planTurn(input()).rationale).toContain(
+      'Hold bonus B1 (#1) (+4) whole: its 1 threatened border needs 19 in all (it pays back within 10 turns), before any capture that completes no bonus.',
+    );
+    const p = planTurn(input({ hub: false }));
     expect(p.rationale).toContain(
       'Hold bonus B1 (#1) (+4) whole: past its floor its 1 threatened border needs 18 more (more than 3 × its worth), before any expansion that completes no bonus (1v1 in contact: an advance ranks below every hold).',
     );

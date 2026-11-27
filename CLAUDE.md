@@ -1135,6 +1135,25 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   territory beside vacated land still untaken and cheap (`breachOf`: fogged, or costing at most `VACATED_MAX_COST`;
   a "Keep … the breach force beside … (#417)" line) until it is taken. Golden: 10 of 6253 plans changed, 2 in their
   orders (a move's reason only); captures, next income and concessions unchanged.
+- **A held bonus's hub is worth more than its +V (#593, item 1; `hubsAt` in `src/analysis/plan/orders.ts`).** A member of
+  a positive bonus I hold in full with at least `HUB_MIN_MEMBERS` (4) members that borders at least `HUB_DEGREE` (0.75) of
+  the other members protects `HUB_WEIGHT` (0.6) × the bonus's value on top of the bonus (`protectedValue`): on 16 lost 1v1s'
+  history boards such a member's fall took 78% of the rest by the next turn (the whole bonus 6 of 9; every hub bordering
+  all), a member bordering < 50% took 20% (never the whole bonus), and no lost member was ever retaken (0 of 48); 0.6 is
+  that excess (owner, 2026-11-27). Rule 1h's unit worth (and #235's FFA joint-sizing judge) adds it once per bonus whatever
+  number of its hubs are threatened (`hubWorthOf`); a conceded unit's members lose it with the bonus (`residual`); a
+  rationale line names it ("… borders N of bonus …'s M other members: its fall takes the rest … (#593)"). Never
+  double-counted: #235's cut counts bonuses wholly cut off and #275's breach and #291's opens bonuses not containing the
+  territory, so none counts its own bonus. It lifts a hold only in the band rule 1a's `CONCEDE_FACTOR` × worth decides (the
+  Brazil case: needs 15 on an income of 17, protects +4 → +6.4): a hold above the income stays conceded. Owner decisions of
+  2026-11-27: a unit that pays only for its hub share is funded first like any other, even when that postpones a larger
+  completion (rule 1h.3's starve check unchanged: on the replay one turn's next income fell 19 → 15, accepted); a bonus
+  completed this turn has hubs too once rule 1c counts the captures. A unit that pays only for its hub share (`hubOnly`:
+  without it the CONCEDE_FACTOR test would make it contested) gets #118's floor before the captures like a contested one,
+  and is floored and kept, never conceded with nothing deployed, when it then cannot be held whole (owner, 2026-11-27:
+  on the replay one such turn was conceded where main floored it). #122's garrison of a completed bonus is unchanged.
+  Golden: 55 of 6253 plans changed, 4 in their orders (the leftover or a held unit's deploys moved to a hub), captures,
+  next income and concessions unchanged on all.
 - **Rule 6 behind conceded borders (owner, 2026-11-22).** With no front and no territory not mine reachable without
   crossing a border the plan concedes (the last neutral taken, the enemy past those borders: golden s246, the gap #426
   exposed), rule 6 had no target and its idle stacks stood deep inside. `distBehind` (`plan/transfers.ts`) now walks

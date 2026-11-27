@@ -224,7 +224,8 @@ describe('lessons from a lost game', () => {
     // conceded, still without attacking; its garrison stays (#118: Homeland is held in full).
     const poor = plan(hopelessBreakBoard, 20, { enemyDeploy: 30 });
     expect(poor.conceded).toContain(3);
-    expect(poor.warnings).toContain('T3 (#3) cannot be held economically (needs 26, protects +5): conceded');
+    // #593: T3 is the hub of Homeland (+5), so it protects +8; above the income it is conceded all the same.
+    expect(poor.warnings).toContain('T3 (#3) cannot be held economically (needs 26, protects +8): conceded');
     expect(deployedTo(poor, 3)).toBe(0);
     expect(attacks(poor).some((m) => m.from === 3)).toBe(false);
     expect(poor.moves.some((m) => m.from === 3)).toBe(false);
