@@ -100,6 +100,9 @@ import { compareScores, planAirlift, STAGING_DISCOUNT } from '../analysis/airlif
 import { planBomb } from '../analysis/bomb-plan.js';
 import { planBlockade, planWall } from '../analysis/blockade-plan.js';
 import type { KnownIncome, TurnPlan } from '../analysis/plan/shared.js';
+import { alternativePlans, STRATEGY_NOTE, stressSummary, turnOptions } from '../analysis/options.js';
+import { FACT_PARTS, FACTS_AVAILABLE, MORE_ON_REQUEST, OWN_PLAN_STEPS, pickFacts, situation } from '../analysis/situation.js';
+import { stressPlan } from '../analysis/stress.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
 import { adviseCards, cardGame, cardPieceOption, giftInOrders, intelOrders, handOwners, lastTurnPlays, opponentCanHold, opponentReinforcement, reinforcementPlaysShown, seenReinforcementPlays, TEAM_HAND } from './card-advice.js';
@@ -2238,6 +2241,8 @@ export async function livePlanSetup(
     effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true, estimates, trip, teams, commerce, statedShifts: shifts,
     // #427: the last turn's Reinforcement plays, for warapp_plan_turn to keep (only when plays show).
     seenPlays: playsShown ? lastPlays : undefined,
+    // #606: the earlier boards (and my orders on them) for the strategy view's summary of past turns.
+    pastBoards: history.boards,
   };
 }
 
@@ -3113,6 +3118,30 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             'Airlift cards to keep in reserve: `airliftPlan` plays only those held beyond this many (default 0). ' +
               'Changes nothing when you hold no Airlift.',
           ),
+        strategy: z
+          .boolean()
+          .optional()
+          .describe(
+            'true adds `strategy` (#606), a menu for choosing a turn yourself: `options.captures` — each territory in view beside ' +
+              'yours that is not yours, ranked by income gained per army: its defenders, the attackers that take it (and, a ' +
+              "player's, after its owner's whole deploy), the spare armies beside it, the bonuses it completes or advances and the new " +
+              'borders facing a player it opens; `options.holds` — each border facing a player: the armies to add to hold against ' +
+              'the stacks beside it alone and against them plus one whole deploy, and the held bonuses it protects; `alternatives` — ' +
+              "this plan and the planner under the goals expand and defend, each with its orders, what it expects and its stress test " +
+              "against the opponents' replies (safe, harmful replies, the worst one); `available` — the raw facts you can ask for " +
+              'with `facts`; and `steps`. Choose, combine or build your own, then check with warapp_check_plan; ' +
+              'warapp_submit_turn keeps an override reason in the decision log. Default false.',
+          ),
+        facts: z
+          .array(z.enum(FACT_PARTS))
+          .min(1)
+          .optional()
+          .describe(
+            'The raw game state behind the plan, only the parts you name (#606), as `facts`: `me` (' + FACTS_AVAILABLE.me + '), ' +
+              '`territories` (' + FACTS_AVAILABLE.territories + '), `bonuses` (' + FACTS_AVAILABLE.bonuses + '), `opponents` (' +
+              FACTS_AVAILABLE.opponents + '), `changes` (' + FACTS_AVAILABLE.changes + '), `past` (' + FACTS_AVAILABLE.past + '). ' +
+              'Ask for what your decision needs; whole past boards are in warapp_turn_history. Default none.',
+          ),
         view: viewArg(
           VIEWS,
           'compact (default) gives the plan and orders (the profile as format, phase and standing); "full" adds each ' +
@@ -3120,7 +3149,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         ),
       }),
     },
-    async ({ game_id, player, goal, siege_target, jabs, focus, reserve, enemy_deploy, known_income, fogged_attackers, avoid_territories, avoid_players, min_win_chance, first_mover, keep_cards, view }) => {
+    async ({ game_id, player, goal, siege_target, jabs, focus, reserve, enemy_deploy, known_income, fogged_attackers, avoid_territories, avoid_players, min_win_chance, first_mover, keep_cards, strategy, facts, view }) => {
       // The chat comes in the same GameFeed read: the fallback for the unread counts (part A1).
       const feed = await ctx.client.getGame(game_id, { settings: true, chat: true });
       requireTurnPhase(feed);
@@ -3512,6 +3541,80 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           guessSkip = { reason: 'commander', message };
         }
       }
+      // #606: the raw game state behind the plan, only the parts asked for (report only).
+      const factsView = facts
+        ? pickFacts(
+            situation({
+                graph,
+                board,
+                ...(setup.input.previousBoard ? { previousBoard: setup.input.previousBoard } : {}),
+                me: me.id,
+                ...(setup.teams ? { friends: new Set([...setup.teams].filter(([id, t]) => id !== me.id && t === setup.teams!.get(me.id)).map(([id]) => id)) } : {}),
+                rates: { offensiveKillRate: settings.offensiveKillRate, defensiveKillRate: settings.defensiveKillRate },
+                guard: settings.oneArmyStandsGuard !== false,
+                myIncome: income,
+                ...(setup.input.incomeHistory ? { incomeHistory: setup.input.incomeHistory } : {}),
+                pastBoards: setup.pastBoards,
+                opponents: estimates.map((e) => {
+                  const t = tracks?.find((x) => x.playerId === e.playerId);
+                  return {
+                    playerId: e.playerId,
+                    estimate: e.estimate,
+                    source: e.source,
+                    visibleIncome: e.base + e.bonusIncome,
+                    tracked: t?.income ?? null,
+                    range: e.thinEvidence ? { low: e.thinEvidence.lower, high: e.thinEvidence.upper } : null,
+                    coverage: t?.coverage?.share ?? null,
+                    ...(t ? { history: t.turns.map((x) => ({ turn: x.to, observed: x.observed })) } : {}),
+                  };
+                }),
+              }),
+            facts,
+          )
+        : undefined;
+      // #606: ranked options and alternative plans, each stress-tested (opt-in; never changes the plan above).
+      const strategyView = strategy
+        ? (() => {
+            const deployOf = (p: number) => estimates.find((e) => e.playerId === p)?.estimate ?? 0;
+            const stressOpp = estimates.map((e) => ({ id: e.playerId, deploy: e.estimate }));
+            const stress = (p: TurnPlan) => {
+              if (!stressOpp.length) return undefined;
+              try {
+                return stressSummary(
+                  stressPlan({
+                    graph,
+                    board,
+                    me: me.id,
+                    deploys: p.deploys,
+                    moves: p.moves.map((m) => ({ from: m.from, to: m.to, armies: m.armies })),
+                    opponents: stressOpp,
+                    settings,
+                    ...(setup.teams ? { teams: setup.teams } : {}),
+                    lookAhead: false,
+                    maxReplies: 1,
+                  }),
+                );
+              } catch {
+                return undefined;
+              }
+            };
+            return {
+              options: turnOptions({
+                graph,
+                board,
+                me: me.id,
+                deployOf,
+                rates: { offensiveKillRate: settings.offensiveKillRate, defensiveKillRate: settings.defensiveKillRate },
+                guard: settings.oneArmyStandsGuard !== false,
+                ...(setup.teams ? { friends: new Set([...setup.teams].filter(([id, t]) => id !== me.id && t === setup.teams!.get(me.id)).map(([id]) => id)) } : {}),
+              }),
+              alternatives: alternativePlans(setup.input, plan, stress),
+              available: FACTS_AVAILABLE,
+              steps: OWN_PLAN_STEPS,
+              note: STRATEGY_NOTE,
+            };
+          })()
+        : undefined;
       // #275 (a): the smallest single deploy that takes each border of mine after the plan's orders.
       const headroom = safeHeadroom({
         graph,
@@ -3898,6 +4001,11 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                     }: ${plan.incomeTrend.slope >= 0 ? '+' : ''}${plan.incomeTrend.slope}/turn${plan.incomeTrend.flat ? ', flat' : ''}`,
             }
           : {}),
+        // #606: the mechanics for the calling model's own choice (opt-in).
+        ...(strategyView ? { strategy: strategyView } : {}),
+        ...(factsView ? { facts: factsView } : {}),
+        // #606: every plan says what more can be asked for (the menu itself names the facts).
+        ...(strategyView ? {} : { more: MORE_ON_REQUEST }),
         // #275 (a): each border's headroom, the weakest first (compact: the first few).
         headroom: headroomView(headroom, map, myIncome, rung === 'full', !teamsKnown, (p) => estimates.find((e) => e.playerId === p)?.estimate),
         ...(rung !== 'full' && headroom.length > HEADROOM_COMPACT ? { headroomMore: headroom.length - HEADROOM_COMPACT } : {}),

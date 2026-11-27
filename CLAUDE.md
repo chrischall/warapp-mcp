@@ -2871,6 +2871,30 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   tracked, prior, stated, blend, thin, known, card — figures only), the report scores each (`byStage`) and `trackedWhatIf` says what
   dividing the tracked figure by its coverage band's geomean (other games only, at least `WHAT_IF_MIN_SAMPLES`) would have read at
   each damping in `WHAT_IF_DAMPINGS`, overall and by band. #586: each logged estimate also keeps the tracker's own figures (`LoggedEstimate.track`, `loggedTrack`: its income, each income-window turn's observed/raw/low/high/cap/coverage with any capture floor, `accounted` or fog-capture income, and the carry lowered, rise cap, #567 low, tripwire step, #250 jump verdict and top-up — numbers only, no warning or note text), so a finished game shows which step held an estimate down after a jump; it outlives compaction, which drops the replay input that also holds the track. The report's `heldBy` (`heldByOf`) names, per estimate under ⅔ of the truth, the step that held it (`HELD_BY`: after-tracker, rise-cap, tripwire, window, ceiling, ambiguous, readings, no-track; `unlogged` before #586), and each sample row carries it. Reported only (P1).
+- **Options for the calling model (#606, `src/analysis/options.ts`, pure; DRAFT).** `warapp_plan_turn`'s `strategy: true`
+  adds `strategy`: `options.captures` (`turnOptions`: each territory in view beside mine and not mine or a teammate's, its
+  defenders, `needs` = `armiesToTake`, `needsIfReinforced` with its owner's whole deploy estimate landed, `from` — my
+  territories beside it and their armies less the guard —, the bonuses it completes or advances, `incomeGain`, the new
+  player-facing borders it opens; ranked by income per army, then the nearest advance, then cost; at most `MAX_OPTIONS`
+  (15)), `options.holds` (each border facing a player: what to add against its stacks alone and against those plus one whole
+  deploy, and what it protects), `alternatives` (`alternativePlans`: the default plan, then `planTurn` under
+  `ALTERNATIVE_GOALS` (expand, defend), identical orders listed once, each with `stress` — `stressPlan` at the plan's own
+  deploy estimates, no look-ahead, one reply per opponent: `safe`, `harmful`, `considered`, `worst`) and `STRATEGY_NOTE`.
+  `available` (`FACTS_AVAILABLE`) names the facts the model can ask for, and `steps` (`OWN_PLAN_STEPS`) the tools to test and
+  dig deeper with. **Facts on request (owner, 2026-11-27: the model should not always get all of it, but should know it
+  can ask):** `facts` (any of `FACT_PARTS`) adds `facts`, only the parts named (`pickFacts` over `situation`,
+  `src/analysis/situation.ts`, pure, report only): `me` (income, its history, land, armies, bonuses held), `territories`
+  (every territory in view and each hidden one beside mine, nearest first: name, owner — `me`, `neutral`, `fog` or a
+  GameFeed id —, armies, special units, bonuses, neighbours; at most `MAX_SITUATION_TERRITORIES` (400), the rest counted),
+  `bonuses` (each positive bonus I touch or border or another player visibly holds whole: members by holder, `heldBy`,
+  `missing`, `armiesToFinish` — `armiesToTake` summed, `null` with a hidden member —, `reachable`; at most
+  `MAX_SITUATION_BONUSES` (60)), `opponents` (the plan's estimate with its source, visible and tracked figures, #368's
+  range, frontier coverage, per-turn observed deploys; land and armies in view; bonuses held; stacks beside me), `changes`
+  (against `previousBoard`: territories lost and gained, other players' stacks that changed) and `past` (the newest
+  `SITUATION_PAST_TURNS` (10) boards `livePlanSetup` read — `pastBoards` — each side's land, armies and bonuses in view,
+  and my orders that turn when kept). Every plan without `strategy` carries `more` (`MORE_ON_REQUEST`), one line naming
+  both. The plan, its `orders` and every other field are unchanged (asserted); both off by default. An override is logged
+  with its reason (#412), so the model's choices can be measured against the default.
 - **The turn history (#570, `warapp_turn_history`, read-only).** Reads the game's decision log: per turn the board seen
   (`boardSummary`, or whole with `board: true`), `ownerChanges` against the turn before (in view both times), every
   player's visible orders (`seen`), plan, sent and `differsFromPlan` (`ordersDiffer`), outcome, cards, events, truth and

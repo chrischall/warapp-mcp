@@ -206,6 +206,40 @@ describe('warapp_plan_turn', () => {
     expect(payload<Record<string, unknown>>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }))).not.toHaveProperty('pace');
   });
 
+  it('#606: strategy adds the menu, facts come by part on request, and every plan says what it can be asked for', async () => {
+    h = await liveHarness({ feed: [game('Playing', { numberOfTurns: '4' })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const plain = payload<PlanPayload & { strategy?: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(plain).not.toHaveProperty('strategy');
+    type Strat = {
+      options: { captures: { target: number; needs: number | null }[]; holds: unknown[] };
+      alternatives: { name: string; deploys: unknown[]; stress?: { safe: boolean | null } }[];
+      note: string;
+    };
+    const p = payload<PlanPayload & { strategy: Strat }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', strategy: true }));
+    expect(p.orders).toEqual(plain.orders);
+    expect(p.strategy.alternatives[0]!.name).toBe('default');
+    expect(p.strategy.alternatives.length).toBeGreaterThanOrEqual(1);
+    expect(p.strategy.options.captures.length).toBeGreaterThan(0);
+    expect(p.strategy.note).toMatch(/Mechanics, not advice/);
+    const strat = p.strategy as unknown as { available: Record<string, string>; situation?: unknown; steps: string[] };
+    expect(Object.keys(strat.available)).toEqual(['me', 'territories', 'bonuses', 'opponents', 'changes', 'past']);
+    expect(strat.situation).toBeUndefined();
+    expect(strat.steps.join(' ')).toMatch(/warapp_check_plan/);
+    // The menu names the facts, so no pointer line beside it; a plain plan carries the pointer.
+    expect(p).not.toHaveProperty('more');
+    expect((plain as unknown as { more: string }).more).toMatch(/facts:/);
+    expect(plain).not.toHaveProperty('facts');
+    // Facts come only when asked for, and only the parts named.
+    type Facts = { facts: { me?: { territories: number }; territories?: { owner: unknown }[]; past?: unknown[]; opponents?: unknown } };
+    const f = payload<PlanPayload & Facts>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', facts: ['me', 'territories', 'past'] }));
+    expect(f.orders).toEqual(plain.orders);
+    expect(f.facts.me!.territories).toBeGreaterThan(0);
+    expect(f.facts.territories!.some((t) => t.owner === 'me')).toBe(true);
+    expect(Array.isArray(f.facts.past)).toBe(true);
+    expect(f.facts).not.toHaveProperty('opponents');
+    expect(f).not.toHaveProperty('strategy');
+  });
+
   it('warns that the income may be off when a setting the model does not compute is on (#38)', async () => {
     const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };
     h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
