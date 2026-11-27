@@ -43,6 +43,24 @@ export const BREACH_WEIGHT = 0.5;
  * reaches only through it) that its protected value counts — the enemy still has to walk in, as with a breach.
  */
 export const OPENS_WEIGHT = 0.5;
+/**
+ * #593: a member of a positive bonus I hold in full with at least this many members whose fall can take the rest of
+ * the bonus (a hub, {@link HUB_DEGREE}). Smaller bonuses are left out: in a 2- or 3-member bonus every member borders
+ * most of the others, and the follow-on loss was measured on 4+ members only.
+ */
+export const HUB_MIN_MEMBERS = 4;
+/** #593: the share of the bonus's other members a hub borders (at least). */
+export const HUB_DEGREE = 0.75;
+/**
+ * #593: the share of the bonus's value a hub's protected value counts on top of the bonus itself. Measured on 16 lost
+ * 1v1s' history boards: when a held bonus of 4+ members lost its first member, a member bordering ≥ 75% of the
+ * others lost 78% of the rest by the next turn (the whole bonus 6 of 9; every one of 3 hubs bordering all), one
+ * bordering < 50% lost 20% (never the whole bonus, 0 of 19), and no lost member was ever retaken (0 of 48). The
+ * excess follow-on loss, 0.78 − 0.20 = 0.58 ≈ 0.6 (the owner's choice, 2026-11-27), is the rest of the bonus that has to
+ * be taken back member by member before it pays again. Once rule 1c counts this turn's captures, a bonus they complete has hubs too (owner,
+ * 2026-11-27).
+ */
+export const HUB_WEIGHT = 0.6;
 /** #201: the shortest payback horizon once the game is decided. */
 export const DECIDED_PAYBACK_MIN = 3;
 /** …or when one remaining territory alone costs more than this many times its value (a wasteland). */

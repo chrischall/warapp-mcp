@@ -10,6 +10,7 @@ import { twoStepReaches, type TwoStepReach } from '../lookahead.js';
 import { opensBehind } from '../opens.js';
 import {
   BREACH_WEIGHT,
+  HUB_WEIGHT,
   CITE_CLOSE,
   CITE_OPEN,
   CITE_SEP,
@@ -117,6 +118,12 @@ export interface Unit {
    * a share of what is left against the one deploy its opponent has ({@link settleContested}).
    */
   contested: boolean;
+  /**
+   * #593: it pays for itself only with its hub share — without it rule 1a's CONCEDE_FACTOR test would make it
+   * contested (#118). It keeps the contested unit's floor (deployed before the captures), so when it cannot then be
+   * held whole it is floored and kept, never conceded with nothing deployed (owner, 2026-11-27).
+   */
+  hubOnly?: boolean;
 }
 /** Why a unit is conceded: it does not pay for itself, or the armies left cannot cover it. */
 export type UnitLoss = { economic: 'payback' | 'factor' } | { economic: false; left: number };
@@ -240,7 +247,7 @@ export function holdBasics(pc: PlanCtx, ps: PlanState, book: DeployBook, threats
  */
 export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, threats: Threats, prev: HoldsUpTo0) {
   const { g, ffaLeader, paybackTurns, label, bonusName, unitsAt, toTake, myCommanders } = pc;
-  const { valueOf, stakeAt, pools } = book;
+  const { valueOf, stakeAt, pools, hubWorthOf } = book;
   const { borders, borderAt, safeAtStart } = threats;
   const { uneconomic, stayAt } = prev;
   if (!ffaLeader) return;
@@ -309,7 +316,8 @@ export function soloLeaderHolds(pc: PlanCtx, ps: PlanState, book: DeployBook, th
     if (!members.length) continue;
     let joint = 0;
     let single = 0;
-    let worth = bonus.value;
+    // #593: a hub among its threatened members adds its share once.
+    let worth = bonus.value + hubWorthOf(bonus.id, members);
     let recent = false;
     const lowered: number[] = [];
     for (const t of members) {
@@ -595,9 +603,9 @@ export function holdOrConcede(
   hb: HoldBook,
   prev: HoldsUpTo1,
 ) {
-  const { goal, paybackTurns, label, unitsAt, bombOn, toTake, myCommanders } = pc;
+  const { goal, paybackTurns, label, bonusName, unitsAt, bombOn, toTake, myCommanders } = pc;
   const { warnings, rationale, locked } = ps;
-  const { deploy, valueOf, stakeAt, cutOff, breachAt, opensAt } = book;
+  const { deploy, valueOf, stakeAt, cutOff, breachAt, opensAt, hubsAt } = book;
   const { borders, recentlyTakenFrom } = threats;
   const { threatened, conceded } = hb;
   const { stayAt } = prev;
@@ -611,6 +619,8 @@ export function holdOrConcede(
   const breachNoted = new Set<number>();
   /** #291: the gates whose opened value is already named. */
   const opensNoted = new Set<number>();
+  /** #593: the hubs whose value is already named. */
+  const hubNoted = new Set<number>();
   /** Rule 1a's pre-deploy threat warning per border, restated once the deploys are known. */
   const threatWarnings = new Map<number, { text: string; threat: number }>();
   const assessThreats = () => {
@@ -662,6 +672,14 @@ export function holdOrConcede(
           `${label(b.id)} is the only way in to ${named}${more} (+${opens.income} income): losing it opens them to the enemy, so its value counts half of that (+${opens.worth}) (#291).`,
         );
       }
+      // #593: a hub of a held bonus says what its fall takes.
+      if (!hubNoted.has(b.id))
+        for (const h of hubsAt(b.id)) {
+          hubNoted.add(b.id);
+          rationale.push(
+            `${label(b.id)} borders ${h.borders} of bonus ${bonusName(h.bonusId)}'s ${h.others} other members: its fall takes the rest, so its value counts ${HUB_WEIGHT * 100}% of the bonus more (+${h.worth}) (#593).`,
+          );
+        }
       const from = recentlyTakenFrom(b.id);
       threatened.push({
         id: b.id,
@@ -750,7 +768,7 @@ export function heldBonusUnits(
 ) {
   const { g, paybackTurns, label, bonusName, incomeAfter, toTake } = pc;
   const { warnings, rationale, locked } = ps;
-  const { deploy, undeploy, pools, roomAt, stakeAt } = book;
+  const { deploy, undeploy, pools, roomAt, stakeAt, hubWorthOf, hubsAt } = book;
   const local = pools !== null && pools.bonuses.length > 0;
   const { expectedAt } = threats;
   const { threatened, conceded, units } = hb;
@@ -788,7 +806,9 @@ export function heldBonusUnits(
       // the unit's cost and its payback test. A hold rule 1k could not fully fund still counts.
       const paying = members.filter((m) => !commanderHeld.has(m.id));
       const cost = paying.reduce((n, m) => n + m.holdCost, 0);
-      const worth = b.value + paying.reduce((n, m) => n + (m.have + stakeAt(m.id)) / paybackTurns, 0);
+      // #593: a hub among the members it pays for adds HUB_WEIGHT × its value, once.
+      const hub = hubWorthOf(b.id, paying.map((m) => m.id));
+      const worth = b.value + hub + paying.reduce((n, m) => n + (m.have + stakeAt(m.id)) / paybackTurns, 0);
       // It pays back within PAYBACK_TURNS, and (as rule 1a asks of every border) costs at
       // most CONCEDE_FACTOR × its worth, unless a member was just taken from a weak opponent.
       const recent = members.some((m) => m.recentFrom !== undefined);
@@ -808,6 +828,9 @@ export function heldBonusUnits(
         conceded: false,
         floored: false,
         contested: false,
+        ...(hub > 0 && !recent && net <= paybackTurns * b.value && net <= CONCEDE_FACTOR * worth && net > CONCEDE_FACTOR * (worth - hub)
+          ? { hubOnly: true as const }
+          : {}),
       });
     }
   };
@@ -815,7 +838,10 @@ export function heldBonusUnits(
   const inLiveUnit = (id: number) => units.some((u) => !u.conceded && u.members.some((m) => m.id === id));
   /** `t` judged on its own: its protected value less the bonuses of the units conceded with it. */
   const residual = (t: Threatened): Threatened => {
-    const lost = units.filter((u) => u.conceded && u.members.some((m) => m.id === t.id)).reduce((n, u) => n + u.value, 0);
+    // #593: a conceded bonus takes its hub share with it.
+    const lost = units
+      .filter((u) => u.conceded && u.members.some((m) => m.id === t.id))
+      .reduce((n, u) => n + u.value + (hubsAt(t.id).find((h) => h.bonusId === u.bonusId)?.worth ?? 0), 0);
     const value = Math.max(0, t.value - lost);
     return { ...t, value, worth: value + (t.have + stakeAt(t.id)) / paybackTurns };
   };
@@ -1506,7 +1532,9 @@ export function floorTier(
     // #118: CONCEDE_FACTOR and the payback test concede a floored unit only when the armies have
     // a better use: it is kept, and held whole after the captures if what is left covers it.
     const losing = units.filter((u) => u.loss);
-    floorUnits(losing);
+    // #593: a unit paying only for its hub share gets the same floor first, but still competes to be held whole; when it
+    // cannot be, `floorOrConcede` finds the floor in place and keeps it contested.
+    floorUnits([...losing, ...units.filter((u) => !u.loss && u.hubOnly)]);
     for (const u of losing) contest(u);
     type Item = { unit: Unit } | { border: Threatened };
     const items: Item[] = [
