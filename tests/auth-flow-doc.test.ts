@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestHarness, type TestHarness } from '@chrischall/mcp-utils/test';
 import { registerAllTools } from '../src/tools/index.js';
 import { HOST_TOKEN_ENV } from '../src/direct/session.js';
+import { claudeMd } from './helpers/claude-md.js';
 
 /**
  * The mcp-host `authFlow` documents for hosted direct mode (#333), checked here
@@ -233,7 +234,7 @@ describe('hiding warapp_sign_in with enabledTools is an owner choice whose costs
   const planDirect = read('../docs/PLAN-DIRECT.md');
   const registration = planDirect.slice(planDirect.indexOf('### Registration change'));
   const step3 = registration.slice(registration.indexOf('\n3. '), registration.indexOf('\n4. '));
-  const claude = read('../CLAUDE.md');
+  const claude = claudeMd();
   const bullet = claude.slice(claude.indexOf('**`warapp_sign_in` (part B'), claude.indexOf('- **End of game (#178).**'));
   const signInHeader = read('../src/tools/sign-in.ts').split('\nimport ')[0]!;
 
@@ -268,7 +269,7 @@ describe('the docs state that the flow makes a password sign-in mandatory for a 
   const step2 = registration.slice(registration.indexOf('\n2. '), registration.indexOf('\n3. '));
   const readme = read('../README.md');
   const hostedReadme = readme.slice(readme.indexOf('**Hosted (mcp-host).**'), readme.indexOf('## Tools'));
-  const claude = read('../CLAUDE.md');
+  const claude = claudeMd();
   const claudeHosted = claude.slice(claude.indexOf('**Hosted, the direct leg serves only'), claude.indexOf('- **End of game (#178).**'));
 
   it('no doc says a bot check or a connection that never signed in falls back to the bridge', () => {

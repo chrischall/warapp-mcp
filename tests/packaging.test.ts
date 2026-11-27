@@ -4,6 +4,7 @@ import { createTestHarness, type TestHarness } from '@chrischall/mcp-utils/test'
 import { registerAllTools } from '../src/tools/index.js';
 import { PRESSURE_FACTOR } from '../src/analysis/planner.js';
 import { MAX_DECISION_GAMES } from '../src/decision-log.js';
+import { claudeMd } from './helpers/claude-md.js';
 
 /**
  * Things that otherwise fail only once a tag exists: provenance needs
@@ -154,7 +155,7 @@ describe('packaging', () => {
 describe('packaging for the browser bridge (phase 2)', () => {
   const mint = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const claude = claudeMd();
   const WRITES = [
     'warapp_submit_picks',
     'warapp_submit_turn',
@@ -290,7 +291,7 @@ describe('packaging for the browser bridge (phase 2)', () => {
 describe('packaging for my games and scouting (phase 4)', () => {
   const mint = readFileSync(new URL('../mint.yaml', import.meta.url), 'utf8');
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const claude = claudeMd();
   const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
   const BRIDGED = ['warapp_my_games', 'warapp_scout_player'];
 
@@ -341,7 +342,7 @@ describe('packaging for my games and scouting (phase 4)', () => {
 describe('packaging for the smarter planner (phase 6)', () => {
   const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
   const readme = doc('../README.md');
-  const claude = doc('../CLAUDE.md');
+  const claude = claudeMd();
   const skill = doc('../skills/warapp-mcp/SKILL.md');
   const api = doc('../docs/WARAPP-API.md');
 
@@ -372,7 +373,7 @@ describe('packaging for the smarter planner (phase 6)', () => {
 });
 
 describe('packaging for open games (phase 10)', () => {
-  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const claude = claudeMd();
   const protocol = readFileSync(new URL('../docs/WEB-PROTOCOL.md', import.meta.url), 'utf8');
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 
@@ -404,7 +405,7 @@ describe('packaging for open games (phase 10)', () => {
 });
 
 describe('packaging for surrender (phase 11)', () => {
-  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const claude = claudeMd();
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
   const protocol = readFileSync(new URL('../docs/WEB-PROTOCOL.md', import.meta.url), 'utf8');
@@ -462,7 +463,7 @@ describe('packaging for surrender (phase 11)', () => {
 describe('packaging for the pick advisor (#36)', () => {
   const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
   const readme = doc('../README.md');
-  const claude = doc('../CLAUDE.md');
+  const claude = claudeMd();
   const skill = doc('../skills/warapp-mcp/SKILL.md');
 
   it('docs/STRATEGY.md cites the community picking guides by URL and marks what is encoded', () => {
@@ -493,7 +494,7 @@ describe('packaging for the pick advisor (#36)', () => {
 });
 
 describe('packaging for the speed first turn (#44)', () => {
-  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const claude = claudeMd();
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const skill = readFileSync(new URL('../skills/warapp-mcp/SKILL.md', import.meta.url), 'utf8');
   const protocol = readFileSync(new URL('../docs/WEB-PROTOCOL.md', import.meta.url), 'utf8');
@@ -530,7 +531,7 @@ describe('packaging for the speed first turn (#44)', () => {
 
 describe('packaging for uncommit (#61)', () => {
   const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
-  const claude = doc('../CLAUDE.md');
+  const claude = claudeMd();
   const readme = doc('../README.md');
   const skill = doc('../skills/warapp-mcp/SKILL.md');
   const protocol = doc('../docs/WEB-PROTOCOL.md');
@@ -588,7 +589,7 @@ describe('packaging for leaving a lobby (#217)', () => {
   });
 
   it('CLAUDE.md and the skill say how a leave is confirmed', () => {
-    expect(doc('../CLAUDE.md')).toMatch(/DeclineGame` \(65\) via `warapp_leave_game`/);
+    expect(claudeMd()).toMatch(/DeclineGame` \(65\) via `warapp_leave_game`/);
     expect(doc('../skills/warapp-mcp/SKILL.md')).toMatch(/`warapp_leave_game` with `game_id`/);
   });
 });
@@ -657,7 +658,7 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
 
   it('CLAUDE.md and the skill give the count and name every write', () => {
     for (const [name, text] of [
-      ['CLAUDE.md', doc('../CLAUDE.md')],
+      ['CLAUDE.md', claudeMd()],
       ['SKILL.md', doc('../skills/warapp-mcp/SKILL.md')],
     ] as const) {
       const at = text.indexOf(`${words[gated.length]} tools write, all confirm-gated`);
@@ -708,15 +709,15 @@ describe('docs agree on the confirm-gated writes (#133)', () => {
   });
 
   it('no doc still says the tracked income is a median (#100: the maximum)', () => {
-    for (const p of ['../CLAUDE.md', '../skills/warapp-mcp/SKILL.md', '../README.md', '../docs/PLAN-STRATEGY.md']) {
-      expect(doc(p), p).not.toMatch(/income estimate \(median/i);
+    for (const p of ['CLAUDE.md', '../skills/warapp-mcp/SKILL.md', '../README.md', '../docs/PLAN-STRATEGY.md']) {
+      expect(p === 'CLAUDE.md' ? claudeMd() : doc(p), p).not.toMatch(/income estimate \(median/i);
     }
   });
 });
 
 describe('card plays verified live (#296)', () => {
   const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
-  const claude = doc('../CLAUDE.md');
+  const claude = claudeMd();
   const protocol = doc('../docs/WEB-PROTOCOL.md');
   const teams = doc('../docs/PLAN-TEAMS.md');
   const row = (card: string) => protocol.split('\n').find((l) => l.startsWith(`| ${card} |`)) ?? '';
@@ -790,7 +791,7 @@ describe('packaging for in-app notifications and read marks (#311, N1)', () => {
 });
 
 describe('packaging for the decision log (#412)', () => {
-  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const claude = claudeMd();
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const section = (() => {
     const start = readme.indexOf('## Decision log');
@@ -831,7 +832,7 @@ describe('packaging for the decision log (#412)', () => {
 describe('packaging for chat as game information (#415)', () => {
   const doc = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
   const readme = doc('../README.md');
-  const claude = doc('../CLAUDE.md');
+  const claude = claudeMd();
   const skill = doc('../skills/warapp-mcp/SKILL.md');
   const flat = (s: string) => s.replace(/\s+/g, ' ');
 
@@ -888,7 +889,7 @@ describe('packaging for chat as game information (#415)', () => {
 });
 
 describe('packaging for the decision log v2 (#437)', () => {
-  const claude = readFileSync(new URL('../CLAUDE.md', import.meta.url), 'utf8');
+  const claude = claudeMd();
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const plan412 = readFileSync(new URL('../docs/PLAN-DECISIONS-412.md', import.meta.url), 'utf8');
   const section = (() => {
