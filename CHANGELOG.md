@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/chrischall/warapp-mcp/compare/v0.20.0...v0.21.0) (2026-11-27)
+
+
+### Features
+
+* **planner:** ranked options, alternative plans and facts on request for the calling model ([#606](https://github.com/chrischall/warapp-mcp/issues/606)) ([#607](https://github.com/chrischall/warapp-mcp/issues/607)) ([24c1dfb](https://github.com/chrischall/warapp-mcp/commit/24c1dfb36a267d0bc211b2d67cdf639e667be589))
+
 ## [0.20.0](https://github.com/chrischall/warapp-mcp/compare/v0.19.0...v0.20.0) (2026-11-27)
 
 
