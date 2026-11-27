@@ -110,9 +110,10 @@ const attackOutBoard = board([
 ]);
 
 /** Lesson 4: 20 idle armies at home, a doomed front at 3 and a holdable one at 4. */
+// #593: T16 is in view, a neutral, so Marches is no probable break behind the fog (this lesson is not about breaks).
 const spreadBoard = board([
   mine(1, 20), mine(2, 3), mine(3, 15), mine(4, 10), mine(5, 2), mine(6, 2), mine(7, 2),
-  theirs(8, 51), theirs(9, 5), theirs(10, 5), theirs(15, 6), neutral(18, 2), ...FAR,
+  theirs(8, 51), theirs(9, 5), theirs(10, 5), theirs(15, 6), neutral(16, 2), neutral(18, 2), ...FAR.filter((t) => t.territoryId !== 16),
 ]);
 
 /** Lesson 5: the stack at 15 went 51 → 76 next to my 58 at 4. */

@@ -161,12 +161,15 @@ describe('the strike stack attacks what it can take (#102)', () => {
     // T5 now holds 4 (cost 6, cheaper than both), but taking it breaks or retakes no bonus. The
     // stack can afford all three (73 stay, 35 hold against the ~56 deploy alone): T3 and T2 still
     // come first in the orders.
+    // #593: B500's fogged T4 could be its, so T3 is a probable break of rule 4a's, sized for a share of its
+    // ~56 deploy (split over its 3 territories beside T1: 19, so 40), before the stack's own attacks.
     const p = planTurn(input({ board: board([mine(1, 80), enemy(2, 9), enemy(3, 5), fogged(4), enemy(5, 4), fogged(6)]) }));
     expect(attacks(p).map((m) => [m.to, m.armies])).toEqual([
-      [3, 8],
+      [3, 40],
       [2, 15],
       [5, 6],
     ]);
+    expect(attacks(p)[0]!.reason).toMatch(/breaks probable enemy bonus B500 \(#500\).*#593/);
     expect(p.offence).toContainEqual(expect.objectContaining({ target: 5, kind: 'strike-attack', value: 0, taken: true }));
   });
 

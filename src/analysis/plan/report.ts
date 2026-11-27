@@ -625,6 +625,9 @@ export function reportOffence(
         if (lead.spare < sure)
           return `a lead strike (my army lead is ${leadText()}, over ${SECOND_FRONT_LEAD}×) needs ${sure} — sized for its ${defenceAt(n)} defenders plus player ${p}'s ~${extra} deploy — and the most a neighbour of mine can spare for it is ${lead.spare}${lead.spare > 0 ? ` (${label(lead.x)})` : ''}${deployText}`;
       }
+      // #593: a member of a bonus probably held behind the fog is a break candidate that was not funded.
+      if (tgt.foggedMember.has(n))
+        return `${label(best.x)} could spare ${best.spare} for it, and it probably breaks a bonus behind the fog (#593), but that break, sized for a partial deploy, did not fit or ranked below what the turn funded`;
       return `${label(best.x)} could spare ${best.spare} for it, but it breaks no bonus and is no counter-attack, finishing blow or strike — the only reasons the plan attacks a player's territory (rule 2), besides rule 4e's fallback when nothing else is captured${
         !ffaLead
           ? ''

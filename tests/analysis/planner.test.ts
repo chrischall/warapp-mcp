@@ -881,15 +881,15 @@ describe('planTurn — balanced', () => {
     }
   });
 
-  it('never breaks a bonus that is partly fogged or split between owners', () => {
-    for (const s of [
-      board([mine(1, 5), enemy(5, 2), enemy(6, 2), fogged(7)]),
-      board([mine(1, 5), enemy(5, 2), enemy(6, 2), enemy(7, 2, 30)]),
-    ]) {
-      const p = planTurn({ graph: eMap, board: s, me: ME, income: 5, settings: STD });
-      expect(ruleAttacks(p)).toEqual([]);
-      expect(p.offence).toEqual([]);
-    }
+  it('never breaks a bonus split between owners; a partly fogged one only as a 1v1 probable break (#593)', () => {
+    const split = planTurn({ graph: eMap, board: board([mine(1, 5), enemy(5, 2), enemy(6, 2), enemy(7, 2, 30)]), me: ME, income: 5, settings: STD });
+    expect(ruleAttacks(split)).toEqual([]);
+    expect(split.offence).toEqual([]);
+    // One opponent in view and T7 fogged: #593 names a probable break (sized for a partial deploy, it does not
+    // fit here: rule 4e's fallback takes T5 instead), never a plain visible-bonus break.
+    const fogged7 = planTurn({ graph: eMap, board: board([mine(1, 5), enemy(5, 2), enemy(6, 2), fogged(7)]), me: ME, income: 5, settings: STD });
+    expect(fogged7.rationale).toContain('Player 20 probably holds bonus B811 (#811) (+4): T5 (#5) in view is its, beside my land, and its 1 fogged member could all be its (#593).');
+    expect(fogged7.moves.some((m) => /breaks enemy bonus/.test(m.reason))).toBe(false);
   });
 
   it('aims a break at its cheapest member: a break only has to land (#72)', () => {
