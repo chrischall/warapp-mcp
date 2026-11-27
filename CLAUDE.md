@@ -2039,6 +2039,26 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
     an all-in that failed, it is dropped for `DROP_TURNS` (3) turns, this one included: not scored, and rule 4e's
     contact fallback, #203's lead steps and #272's attack out of a conceded border never go into its missing members.
     warapp_plan_turn reports `bonusPush`, and a rationale line names the failed turns. No memory, no change (golden).
+  - **A fogged opponent bonus is a probable break in a 1v1 (#593 items 2 and 5a, `plan/fogged-break.ts`; owner decisions of
+    2026-11-27: the split-over-fronts share, the opening denial kept, a line per candidate, the strike stack's size).** `breakableBonuses` breaks only a bonus with every member in view (or #72's inference): on 16
+    finished 1v1s that left 184 of 187 opponent-turns holding a bonus beside mine unbroken. Under `balanced` in a 1v1
+    (`profile.format`), `foggedBreakables` adds a positive bonus no member of which is shown with another owner (the
+    `couldHoldBonusPools` reading), with a member fogged (owner or armies hidden) and a member in view the opponent's,
+    armies shown, beside my land — "Player P probably holds bonus B … (#593)" — and, on turns `OPENING_STRIKE_FIRST`–
+    `OPENING_STRIKE_LAST` (2–4, item 5a), one with exactly one member shown neutral (a denial, "one territory short",
+    worth `ONE_SHORT_WEIGHT` (0.5) × the bonus). Its members in view are break targets (`foggedMember`); rule 4a scores
+    the cheapest as a break and sizes it for its defenders plus `partialDeploy` — the opponent's deploy estimate on it
+    split over its territories in view beside my land, rounded up (one such territory: the whole estimate) — its score
+    paying that size; a combined capture is sized the same (`worstCase` while tried). Sent at the whole deploy or more
+    it is a worst case; else #120 may still size it up from idle armies, and its "assumes" warning says "(sized for a
+    partial deploy of N (#593))" with the win chance against the whole deploy. #240's sure size and the hold's keep
+    (#121) apply as to any capture; #298's dropped members are never tried. Not done: a conceded border's deploy for
+    such a break (item 2's second ask: it needs rule 1b's withdrawal undone, as `stand-still.ts` does). Golden: 91 of
+    6253 plans changed (48 synthetic, 43 suite), 15 in their orders, captures +5/−1, next income up on 1 and down on 1
+    (a +1 completion displaced by a probable +2 break), concessions unchanged; 21 plans carry a #593 attack (7 new, 7
+    resized, 7 relabelled). Replay of 16 finished 1v1s (271 turns, adapting): 18 turns attack a fogged bonus (13 → 21
+    of 190 opponent-turns holding a bonus beside mine); 19 of 20 targets were in a bonus truly held, 8 of 19 still
+    beatable by the armies sent after his turn; 187 of 220 "probably holds" lines named a bonus truly held.
   - **Retake a lost held-bonus member (#430, `retakeMembers` in `plan/targets.ts`; owner decision of 2026-11-22).**
     Under `balanced` an opponent's territory was only a break or counter target, so a bonus I held in full on
     `previousBoard` that lost a member to a player was retaken only by the 1v1 strike stack. Now each such member is a

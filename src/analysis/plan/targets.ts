@@ -27,6 +27,7 @@ import { byNum } from './util.js';
 import { denialsOf, emptyEnemiesOf, fogVacated, VACATED_FOG_ARMIES } from './vacated.js';
 import { breakableBonuses, type Breakable } from './siege.js';
 import { ALL_IN_VALUE_TURNS, type AllInTry } from './bonus-attempts.js';
+import { foggedBreakables, type FoggedBreak } from './fogged-break.js';
 
 
 export type { Breakable } from './siege.js';
@@ -113,6 +114,14 @@ export function breakTargets(pc: PlanCtx, input: PlanInput) {
   // is that opponent's or hidden. Such a break is "probable".
   const breakable: Breakable[] = balanced ? breakableBonuses(g, state, foe, input.tracks) : [];
   const breakMember = new Set<number>(breakable.flatMap((b) => bonusTerritories(g, b.bonusId)));
+  // #593: in a 1v1, the opponent's bonuses behind the fog (a member in view its and beside mine, no member
+  // shown with another owner), and on the opening turns the ones it is one neutral short of. Their members
+  // in view are break targets (`foggedMember`), scored and sized by rule 4a (plan/fogged-break.ts).
+  const foggedBreaks: FoggedBreak[] =
+    balanced && pc.profile.format === '1v1'
+      ? foggedBreakables(g, state, foe, mineSet, new Set(breakable.map((b) => b.bonusId)), pc.turnNow)
+      : [];
+  const foggedMember = new Set<number>(foggedBreaks.flatMap((b) => b.members));
 
   // ---- counter-attacks (under `balanced`, #72) ----
   // An enemy stack next to me that shrank since the previous board by attacking me: visible on
@@ -158,7 +167,7 @@ export function breakTargets(pc: PlanCtx, input: PlanInput) {
       counterAt.set(id, { player: p, from: was!.armies!, to: st.armies, costNow, costThen });
     }
   }
-  return { breakable, breakMember, counterAt };
+  return { breakable, breakMember, counterAt, foggedBreaks, foggedMember };
 }
 
 /** Rule 2: the targets next to mine, and the lead steps into a bonus on an army lead (#203). */
@@ -175,7 +184,7 @@ export function captureTargets(
   } = pc;
   const { warnings, rationale } = ps;
   const { reinforcementAt, hiddenFoe, hiddenMovable, hiddenPool } = threats;
-  const { breakMember, counterAt } = prev;
+  const { breakMember, counterAt, foggedMember } = prev;
   // ---- 2. targets ----
   const targets = new Map<number, Target>();
   /**
@@ -401,7 +410,7 @@ export function captureTargets(
       continue;
     }
     const enemy = st.owner.kind === 'player';
-    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t))) && !pileMembers.has(t) && !retakeMembers.has(t)) {
+    if (enemy && goal !== 'complete-bonus' && !(balanced && (breakMember.has(t) || counterAt.has(t) || foggedMember.has(t))) && !pileMembers.has(t) && !retakeMembers.has(t)) {
       if (!leadStepsOn || unitsAt(t) > 0 || droppedMembers.has(t) || !g.map.bonuses.some((b) => b.value > 0 && bonusTs.get(b.id)!.includes(t))) continue;
       const defenders = defenceAt(t);
       const extra = reinforcementAt(t);

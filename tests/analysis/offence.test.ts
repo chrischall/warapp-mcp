@@ -109,10 +109,18 @@ describe('break an inferred bonus (#72)', () => {
   const s = board([mine(1, 12), enemy(5, 3), fogged(6), fogged(7), enemy(8, 20), fogged(9)]);
   const input = (tracks?: OpponentTrack[]): PlanInput => ({ graph: g, board: s, me: ME, income: 5, settings: STD, ...(tracks ? { tracks } : {}) });
 
-  it('without a track, a partly fogged bonus is never broken', () => {
+  // #593: in a 1v1 a partly fogged bonus whose fogged members could all be the opponent's is a probable
+  // break even with no inference; these tests are about #72's, so they leave #593's entries out.
+  const not593 = (p: TurnPlan) => ({
+    attacks: ruleAttacks(p).filter((m) => !/#593/.test(m.reason)),
+    offence: p.offence.filter((o) => !/#593/.test(o.why)),
+  });
+
+  it('without a track, a partly fogged bonus is no #72 inference (in this 1v1, #593 breaks it)', () => {
     const p = planTurn(input());
-    expect(ruleAttacks(p)).toEqual([]);
-    expect(p.offence).toEqual([]);
+    expect(not593(p)).toEqual({ attacks: [], offence: [] });
+    expect(attacks(p).map((m) => m.to)).toEqual([5]);
+    expect(attacks(p)[0]!.reason).toMatch(/breaks probable enemy bonus B901 \(#901\) \(\+5 from player 20; a member in view is its .*#593\)/);
   });
 
   it('in every candidate combination: its visible member is attacked at the landing size, "probable"', () => {
@@ -145,8 +153,7 @@ describe('break an inferred bonus (#72)', () => {
 
   it('a best fit tied with another of the same size (ordered only by ids) is not a break target', () => {
     const p = planTurn(input([track(ENEMY, 10, [[901], [902]])]));
-    expect(ruleAttacks(p)).toEqual([]);
-    expect(p.offence).toEqual([]);
+    expect(not593(p)).toEqual({ attacks: [], offence: [] });
   });
 
   it('with unlisted fits ("and N more"), every listed fit is not every fit: the best-fit wording', () => {
@@ -158,15 +165,13 @@ describe('break an inferred bonus (#72)', () => {
 
   it('a bonus only a weaker fit lists is not a break target', () => {
     const p = planTurn(input([track(ENEMY, 10, [[902], [901]])]));
-    expect(ruleAttacks(p)).toEqual([]);
-    expect(p.offence).toEqual([]);
+    expect(not593(p)).toEqual({ attacks: [], offence: [] });
   });
 
   it('a track over fewer than two observed turns is not trusted', () => {
     const t = track(ENEMY, 10, [[901]]);
     const p = planTurn(input([{ ...t, turns: t.turns.slice(0, 1) }]));
-    expect(ruleAttacks(p)).toEqual([]);
-    expect(p.offence).toEqual([]);
+    expect(not593(p)).toEqual({ attacks: [], offence: [] });
   });
 });
 

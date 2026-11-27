@@ -102,11 +102,12 @@ describe('an attack out of a big stack is sized for the owner deploying there fi
   });
 
   it('the strike stack: at least 16 too', () => {
-    // T2's bonus has a fogged third member, so T2 breaks nothing: the 1v1 strike stack takes it.
+    // T2's bonus has a neutral third member, so T2 breaks nothing (#593: a fogged one would make it a
+    // probable break): the 1v1 strike stack takes it.
     const g = buildGraph(makeMap([1, 2, 3, 4, 5], [...edges, [3, 5]], [[100, 3, [1, 4]], [101, 3, [2, 3, 5]]]));
     const input: PlanInput = {
       graph: g,
-      board: board([mine(1, 80), enemy(2, 5), enemy(3, 10), mine(4, 1), fogged(5)]),
+      board: board([mine(1, 80), enemy(2, 5), enemy(3, 10), mine(4, 1), neutral(5, 2)]),
       me: ME,
       income: 8,
       settings: STD,

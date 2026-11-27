@@ -830,6 +830,11 @@
 //     absorbed by its own neighbours' growth) and is now cheaper to take than it
 //     was; never under `expand`/`defend`). Fogged or unknown neighbours are never attacked — they
 //     produce a warning.
+//     #593: in a 1v1 under `balanced`, a member in view of an opponent bonus behind the fog (no member
+//     shown with another owner, one fogged, that member its with armies and beside mine) is a probable
+//     break target, and on turns 2–4 so is one of a bonus it is one neutral short of (worth
+//     ONE_SHORT_WEIGHT × the bonus); rule 4a sizes either for its defenders plus `partialDeploy` (its
+//     deploy estimate split over its territories beside my land), the rest as a break (plan/fogged-break.ts).
 //     #430 (owner decision of 2026-11-22): under `balanced`, the opponents' territories that retake
 //     a bonus I held in full on `previousBoard` are bonus targets too, in every format, when the retake
 //     completes it this turn (every missing member in view, beside mine), costs at most RETAKE_VALUE_TURNS
@@ -1677,6 +1682,7 @@ import { neighborsOf } from './graph.js';
 import { forecastBorder, mainFront, type FrontStack } from './exchange.js';
 import { byNum, pct } from './plan/util.js';
 import { SIEGE_BREAK_WEIGHT } from './plan/siege.js';
+import { ONE_SHORT_WEIGHT, partialDeploy, type FoggedBreak } from './plan/fogged-break.js';
 import { ALL_IN_VALUE_TURNS, bonusVerdicts, DROP_TURNS, judgeAttempts, type AllInTry, type BonusPushEntry } from './plan/bonus-attempts.js';
 import { planJabs } from './plan/jabs.js';
 import {
@@ -1690,6 +1696,7 @@ import {
   type TwoStepPass,
   type TwoStepShared,
   captureCost,
+  visibleState,
 } from './plan/shared.js';
 import { emptyPlan, noteEstimates, planContext } from './plan/estimates.js';
 import { neutralizeSeats, seatTerritories, staticSeats } from './static-seats.js';
@@ -2117,7 +2124,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   const tgt = targetsPhase(pc, ps, input, threats, hd);
   const {
     breakable, counterAt, targets, leadSteps, landScoreCost, offence, skipOffence, plans,
-    ratio, committing, byCloseness, retakeChecks, retakeWarning,
+    ratio, committing, byCloseness, retakeChecks, retakeWarning, foggedBreaks,
   } = tgt;
   // #215 review: rule 1a's triage (run with the strikes, below) leaves pending a border in a bonus
   // these plans may complete this turn.
@@ -2126,6 +2133,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   // ---- R3, No-Split, capture helper, 3a. combined, passes 1 and 2 (plan/captures.ts) ----
   const caps = capturesPhase(pc, ps, pass, book, threats, hd, tgt);
   const { strikes, worstCase, defendersAt, tryCapture, snapshot, complete, tryExpand, advance } = caps;
+  /** #593: the fogged breaks taken this turn, by target, with the partial deploy each was sized for. */
+  const partialSized = new Map<number, number>();
   /** #439: single-territory bonuses two moves away, each with its neutral in between. */
   const stages = twoMoveStages(pc, tgt);
   /** #416 part 4: while #319 fires, other advances and pass 3 wait for the nearest bonus's steps (plan/spread-bind.ts). */
@@ -2334,14 +2343,17 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       });
     // Capturing a member of a breakable bonus: what survives it, and whether that holds next turn.
     // A break is sized to land (#72): its score leaves out what holding it would need.
-    const breakOption = (t: number) => {
+    const breakOption = (t: number, partial?: number) => {
       // #201: the FFA leader's break is sized to land for certain against its owner's one deploy.
-      const landing = ffaLeader ? defenceAt(t) + reinforcementAt(t) : undefined;
+      // #593: a break behind the fog, against a partial deploy (its owner's estimate split over its fronts).
+      const landing = ffaLeader ? defenceAt(t) + reinforcementAt(t) : partial !== undefined ? defenceAt(t) + partial : undefined;
       const cost = (landing !== undefined ? captureCost(landing, s) : null) ?? targets.get(t)!.cost;
       const survivors = cost - straightKills(defenceAt(t), rates.defensiveKillRate);
       const counter = counterThreat(t);
       const take = toTake(survivors);
-      return { t, cost, survivors, counter, take, survives: take === null || take > counter, scoreCost: landScoreCost(t) };
+      // #593: a fogged break's score pays for the partial deploy it is sized for.
+      const scoreCost = partial !== undefined ? Math.max(1, landScoreCost(t) + cost - targets.get(t)!.cost) : landScoreCost(t);
+      return { t, cost, survivors, counter, take, survives: take === null || take > counter, scoreCost };
     };
     type BreakOption = ReturnType<typeof breakOption>;
     /**
@@ -2428,7 +2440,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const breakOptionOf = (b: Breakable) =>
       bonusTerritories(g, b.bonusId)
         .filter((t) => targets.has(t))
-        .map(breakOption)
+        .map((t) => breakOption(t))
         .sort((a, b) => a.cost - b.cost || a.scoreCost - b.scoreCost || a.t - b.t)[0];
     // #421 (owner decision, 2026-11-20): on a stockpile (`pc.pile`) the turn spends by breaking the strongest
     // opponent's cheapest visible bonus (every member in view: never a probable one) — ahead of every other
@@ -2455,7 +2467,7 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       // Its cheapest visible member (#72: a break only has to land), then the least frontier, then id.
       const options = bonusTerritories(g, b.bonusId)
         .filter((t) => targets.has(t))
-        .map(breakOption)
+        .map((t) => breakOption(t))
         .sort((a, b) => a.cost - b.cost || a.scoreCost - b.scoreCost || a.t - b.t);
       const o = options[0];
       if (!o) continue;
@@ -2512,6 +2524,85 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
           } else if (!tryCapture(o.t, reasonOf(breakReason(b)))) return;
           ps.anchor ??= moves[moves.length - 1]!.from;
           warnRetake(b, o);
+        }),
+      });
+    }
+    // #593 (items 2 and 5a): in a 1v1, a bonus behind the fog a member in view of which is the opponent's
+    // (plan/fogged-break.ts), and on the opening turns one it is a neutral short of, scored as rule 4a scores
+    // a break (a denial at ONE_SHORT_WEIGHT of the bonus) and sized for a partial deploy: the opponent's
+    // estimate on the target split over its territories in view beside my land. #240's sure size still
+    // applies (tryCapture); #298's dropped members are never tried.
+    /** The opponent's territories in view beside my land (its fronts, #593). */
+    const frontsOf = (p: number) =>
+      [...state].filter(([id, st]) => visibleState(st)?.owner.kind === 'player' && (st.owner as { playerId: number }).playerId === p && neighborsOf(g, id).some((n) => mineSet.has(n))).length;
+    for (const fb of foggedBreaks as FoggedBreak[]) {
+      const fronts = frontsOf(fb.player);
+      const sizing = (t: number) => {
+        const estimate = reinforcementAt(t);
+        return { estimate, partial: partialDeploy(estimate, fronts) };
+      };
+      const o = fb.members
+        .filter((t) => targets.has(t) && !tgt.droppedMembers.has(t))
+        .map((t) => breakOption(t, sizing(t).partial))
+        .sort((a, b) => a.cost - b.cost || a.scoreCost - b.scoreCost || a.t - b.t)[0];
+      if (!o) continue;
+      const { estimate, partial } = sizing(o.t);
+      const value = fb.shortOf !== undefined ? fb.value * ONE_SHORT_WEIGHT : fb.value;
+      const worth = strikeWorth(value, o);
+      const score = worth / Math.max(1, o.scoreCost);
+      const split =
+        fronts > 1 ? `split over the ${fronts} territories of its beside my land, #593` : `its only territory beside my land, so the whole of it, #593`;
+      const sized = `sized to land if player ${fb.player} deploys up to ${partial} of its ~${estimate} there first (${split})`;
+      const head =
+        fb.shortOf !== undefined
+          ? `denies player ${fb.player} bonus ${bonusName(fb.bonusId)} (+${fb.value}), one territory short of complete (${label(fb.shortOf)} still neutral; opening strike, #593)`
+          : `breaks probable enemy bonus ${bonusName(fb.bonusId)} (+${fb.value} from player ${fb.player}; ${fb.probable})`;
+      const reason = `${head}, ${sized}`;
+      rationale.push(
+        fb.shortOf !== undefined
+          ? `Player ${fb.player} is one territory short of bonus ${bonusName(fb.bonusId)} (+${fb.value}): ${label(o.t)} in view is its, beside my land, and ${label(fb.shortOf)} is still neutral; on an opening turn a strike there denies it (worth ${ONE_SHORT_WEIGHT} × the bonus) (#593).`
+          : `Player ${fb.player} probably holds bonus ${bonusName(fb.bonusId)} (+${fb.value}): ${label(o.t)} in view is its, beside my land, and its ${fb.fogged} fogged member${fb.fogged > 1 ? 's' : ''} could all be its (#593).`,
+      );
+      offence.set(`break:${fb.bonusId}`, { bonusId: fb.bonusId, target: o.t, kind: 'break', cost: o.cost, value: round2(worth), taken: false, why: head });
+      candidates.push({
+        kind: 'break',
+        score,
+        cost: o.cost,
+        id: fb.bonusId,
+        value,
+        focus: false,
+        borders: analyzeBonus(g, fb.bonusId)!.borderTerritoryIds.length,
+        target: o.t,
+        owner: fb.player,
+        run: spend(() => {
+          if (captured.has(o.t) || bonusTerritories(g, fb.bonusId).some((x) => captured.has(x))) return;
+          // Sized for its defenders plus the partial deploy, a combined capture included (its softeners
+          // wear that many down); no worst case once taken: #120 may still size it for the whole deploy,
+          // and its "assumes" warning gives the win chance against it.
+          const tg = targets.get(o.t)!;
+          const raised = o.cost > tg.cost;
+          const was = worstCase.get(o.t);
+          if (raised) targets.set(o.t, { ...tg, cost: o.cost });
+          worstCase.set(o.t, Math.max(was ?? 0, defenceAt(o.t) + partial));
+          const ok = tryCapture(o.t, reason);
+          if (raised) targets.set(o.t, tg);
+          if (!ok) {
+            if (was === undefined) worstCase.delete(o.t);
+            else worstCase.set(o.t, was);
+            return;
+          }
+          // Sent enough for the whole deploy (one front, or #240's sure size): a worst case, no warning.
+          const sent = moves.filter((m) => m.kind === 'attack' && m.to === o.t).reduce((n, m) => n + m.armies, 0);
+          const whole = costAt(o.t, defenceAt(o.t) + estimate);
+          if (whole !== null && sent >= whole && !combined.has(o.t)) worstCase.set(o.t, Math.max(was ?? 0, defenceAt(o.t) + estimate));
+          else {
+            if (was === undefined) worstCase.delete(o.t);
+            else worstCase.set(o.t, was);
+            const assumes = `Attack on enemy ${label(o.t)} assumes its owner does not reinforce it first.`;
+            if (was === undefined && !warnings.includes(assumes)) warnings.push(assumes);
+          }
+          partialSized.set(o.t, partial);
+          ps.anchor ??= moves[moves.length - 1]!.from;
         }),
       });
     }
@@ -3442,7 +3533,10 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     const d = defenceAt(m.to);
     const full = costAt(m.to, d + extra);
     const aim = chanceAt(m.to);
-    warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${aim >= 1 ? 'be sure' : `reach ${pct(aim)}`}` : ''}.`;
+    // #593: a fogged break sized for a partial deploy says so.
+    const part = partialSized.get(m.to);
+    const sizedFor = part !== undefined && part > 0 && part < extra ? ` (sized for a partial deploy of ${part} (#593))` : '';
+    warnings[w] = `Attack on enemy ${label(m.to)} assumes its owner does not reinforce it first${sizedFor}: if player ${st.owner.playerId} deploys its ~${extra} there, ${m.armies} attack ${d + extra} (win chance ${pct(chanceOf(m.armies, d + extra))})${full !== null ? `; ${full} would ${aim >= 1 ? 'be sure' : `reach ${pct(aim)}`}` : ''}.`;
   }
 
   // ---- #361: single-army jabs from the armies still idle beyond each hold (plan/jabs.ts) ----

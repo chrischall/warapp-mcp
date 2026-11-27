@@ -38,6 +38,10 @@ const held: SyntheticTerritory[] = [
   { id: 157, fogLevel: 1, owner: ANN.inGame, armies: 10 },
   { id: 158, fogLevel: 1, owner: BOB.inGame, armies: 3 },
   { id: 135, fogLevel: 4, owner: -1, armies: 0, fogged: true },
+  // #593: two members of 158's bonus (116) shown neutral, so Bob's 158 is neither a probable break behind
+  // the fog nor (on this turn 3) one short of complete.
+  { id: 134, fogLevel: 1, owner: 0, armies: 2 },
+  { id: 133, fogLevel: 1, owner: 0, armies: 2 },
 ];
 
 async function live(): Promise<Harness> {
