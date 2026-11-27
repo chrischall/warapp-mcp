@@ -4,8 +4,6 @@
 // - the pile (`pileOf`): my income is flat and my armies in view are at least STOCKPILE_TURNS turns of it;
 // - outside a 1v1, the pile builds a strike stack facing the opponent beside me whose armies in view mine
 //   outnumber STOCKPILE_LEAD× (`stockpileOf`, #450);
-// - once in contact on a flat income, STRIKE_SHARE of the income is held out of captures for the strike
-//   stack (`strikeShareOf`: holds keep their exact need first; owner decision of 2026-11-20);
 // - on the pile, the turn also spends by breaking the strongest opponent's cheapest visible bonus and by
 //   all-in completions of the contested bonuses (`contestedBonuses`; planner.ts).
 import type { TerritoryState } from '../../board.js';
@@ -19,8 +17,6 @@ import type { PlanGoal } from './shared.js';
 export const STOCKPILE_TURNS = 4;
 /** #421: the visible-army lead over one opponent beside me that turns a stockpile into a strike stack facing it. */
 export const STOCKPILE_LEAD = 2;
-/** #421 (owner decision, 2026-11-20): the share of a flat income held out of captures for the strike stack. */
-export const STRIKE_SHARE = 0.25;
 
 /** What the pile rules read: the board and the goal, as the estimates phase has them. */
 export interface PileArgs {
@@ -80,22 +76,6 @@ export function stockpileOf(a: PileArgs & { format: GameProfile['format']; siege
   };
 }
 
-/**
- * #421 (owner decision, 2026-11-20): in contact on a flat income — where rule 0p.3c builds a strike stack
- * (a 1v1 adapting, a siege, or the stockpile above) — {@link STRIKE_SHARE} of my income, rounded down, is
- * held out of captures for the stack. Holds still take their exact need first; the leftover deploy then
- * gives the stack what the captures left, ahead of comfort margins. 0 otherwise.
- */
-export function strikeShareOf(
-  a: PileArgs & { format: GameProfile['format']; siege: number | undefined; contact: ReadonlySet<number> },
-): number {
-  if (!a.incomeTrend?.flat || a.income <= 0) return 0;
-  const stack =
-    (a.siege !== undefined && a.contact.has(a.siege)) ||
-    (a.auto && a.format === '1v1' && a.goal !== 'defend' && a.contact.size > 0) ||
-    stockpileOf({ ...a, siege: a.siege !== undefined, facing: a.contact }) !== undefined;
-  return stack ? Math.floor(STRIKE_SHARE * a.income) : 0;
-}
 
 /**
  * #421 (owner decision, 2026-11-20): the contested bonuses an all-in completion could take on the pile — a

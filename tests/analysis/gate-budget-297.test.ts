@@ -45,16 +45,8 @@ const plan = (stacks: number, players = [{ id: ME }, { id: 20 }]): TurnPlan =>
     options: { adapt: true, enemyDeploy: 5 },
   });
 
+// #603: the gate budget no longer vetoes a capture (the self-play arena measured no gain from it); it stays a report.
 describe('#297: the gate budget in a 1v1', () => {
-  it('does not open a third gate the next income cannot hold, and says why', () => {
-    const p = plan(8);
-    expect(p.profile.format).toBe('1v1');
-    expect(p.expected.captures).not.toContain(4);
-    expect(p.rationale.join('\n')).toMatch(
-      /Do not take T4 \(#4\): it adds a border facing an enemy without completing a bonus, and the frontier would then need \d+ next turn to hold \(3 enemy-facing borders\), more than the next income of 5 and more than the \d+ it needed at the start of the turn\. In this 1v1 that is another gate facing player 20 \(#297\)\./,
-    );
-  });
-
   it('reports the gates: what they need against one floating deploy, what stands on them, the income and the shortfall', () => {
     // Here the strike on T11 and the step into T4 both land, leaving three gates (T2, T4, T11).
     const p = plan(6);
@@ -65,11 +57,13 @@ describe('#297: the gate budget in a 1v1', () => {
     expect(g.need).toBe(g.gates.reduce((n, x) => n + x.needs, 0));
     expect(g.onGates).toBe(g.gates.reduce((n, x) => n + x.armies, 0));
     expect(g.deficit).toBe(g.gates.reduce((n, x) => n + Math.max(0, x.needs - x.armies), 0));
-    // The deficit is rule 4d's hold cost on the gates, and the income the same figure the frontier is judged on.
-    expect(g.deficit).toBe(p.frontier.holdCost);
+    // The income is the same figure the frontier is judged on; rule 4d now counts the floating deploy once (#603),
+    // so its hold cost is at most the gates' summed deficit.
+    expect(p.frontier.holdCost).toBeLessThanOrEqual(g.deficit);
     expect(g.income).toBe(p.frontier.income);
     expect(g.short).toBe(Math.max(0, g.deficit - g.income));
-    expect(p.warnings.join('\n')).toMatch(/Gate budget \(#297\): this plan's capture of T4 \(#4\), T11 \(#11\) opens gates the income cannot hold — 3 gates facing player 20 need \d+ against its one floating deploy; \d+ stand on them, 6 short across them, and the next income is 5: 1 short\./);
+    // #603: no veto and no warning any more; the budget is a report.
+    expect(p.warnings.join('\n')).not.toMatch(/Gate budget/);
   });
 
   it('reports a shortfall the gates already had, conceded gates included, without a warning (no capture opened one)', () => {

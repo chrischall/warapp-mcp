@@ -77,15 +77,6 @@ describe('#433: the gate budget counts only the income that can be deployed on t
     expect(p.gates!.short).toBe(0);
     expect(p.gates!.deployable).toBeUndefined();
   });
-
-  it("under Local Deployment B901's 4 never reach a gate: T4's third gate is stopped, and says why", () => {
-    const p = plan(8, true);
-    expect(p.expected.captures).not.toContain(4);
-    expect(p.rationale.join('\n')).toMatch(
-      /Do not take T4 \(#4\): it adds a border facing an enemy without completing a bonus, and in this 1v1 it opens another gate facing player 20: the gates would then need 6 next turn against its one floating deploy; under Local Deployment only 5 of the next income of 9 can be deployed on them \(the free income and the pools of the bonuses they are in\): 1 short \(#297, #433\)\./,
-    );
-  });
-
   it("reports the shortfall the whole income hid: 'not short' at 9 is 1 short against the 5 that reach the gates", () => {
     // Here the strike on T11 and the step into T4 both land (T4 alone opens no gate more than without it).
     const p = plan(6, true);
@@ -95,8 +86,5 @@ describe('#433: the gate budget counts only the income that can be deployed on t
     expect(g.income).toBe(9);
     expect(g.deployable).toBe(5);
     expect(g.short).toBe(1);
-    expect(p.warnings.join('\n')).toMatch(
-      /Gate budget \(#297\): this plan's capture of T4 \(#4\), T11 \(#11\) opens gates the income cannot hold — 3 gates facing player 20 need 21 against its one floating deploy; 18 stand on them, 6 short across them, and the next income is 9 \(5 of it deployable on them under Local Deployment\): 1 short\./,
-    );
   });
 });

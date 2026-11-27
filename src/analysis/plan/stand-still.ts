@@ -401,7 +401,7 @@ export function neverStandStill(
   const { growthOf, facing } = threats;
   const { conceded } = hd;
   const { targets, bonusTarget, targetScoreCost, toFinish, plans, finishCost, sizeOf } = tgt;
-  const { stopped, outgrows, gateStop } = caps;
+  const { stopped, outgrows } = caps;
   /**
    * #125: the step rule 4e ranked first and could not afford this turn (its size, nothing else):
    * the leftover saves toward it (rule 5) and idle stacks stage toward it (rule 6).
@@ -706,9 +706,8 @@ export function neverStandStill(
           failed.set(st.t, { kind: 'hold', ...short });
           continue;
         }
-        // #114: in contact rule 4d is a cost (ranked above), not a veto — except the 1v1 gate budget (#297):
-        // a gate the next income cannot hold is lost next turn, armies and all.
-        const stop = contact ? gateStop(st.t) : outgrows(st.t);
+        // #114: in contact rule 4d is a cost (ranked above), not a veto (#603: nor is #297's gate budget any more).
+        const stop = contact ? null : outgrows(st.t);
         if (stop === null) {
           taken = pick;
           break;

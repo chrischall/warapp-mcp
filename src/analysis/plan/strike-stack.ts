@@ -19,7 +19,7 @@ import type { Breakable, Targets } from './targets.js';
 import type { Threats } from './threats.js';
 import { byNum, pct } from './util.js';
 import { stackFacing, type StrikeStack } from './strike.js';
-import { STRIKE_SHARE, stockpileOf } from './stockpile.js';
+import { stockpileOf } from './stockpile.js';
 
 /** Rule 0p.3c (#72, #120, #201, #421): the strike stack's border (a 1v1, a siege or a stockpile), chosen before the leftover deploy. */
 export function chooseStrikeStack(
@@ -180,13 +180,6 @@ export function chooseStrikeStack(
         ...(stockpile ? { facing: stockpile.why } : {}),
       };
   }
-  // #421 (owner decision, 2026-11-20): the share the estimates phase held out of captures.
-  if (pc.strikeShare > 0)
-    rationale.push(
-      stack
-        ? `Strike share (#421): ${pc.strikeShare} of my flat ${income} income (${STRIKE_SHARE * 100}%) was held out of captures for the strike stack on ${label(stack.id)}, ahead of comfort margins; holds took their exact need first.`
-        : `Strike share (#421): ${pc.strikeShare} of my flat ${income} income (${STRIKE_SHARE * 100}%) was held out of captures for a strike stack, but no border could carry one this turn: it goes to the leftover as usual.`,
-    );
   return { stack, smallExpansion };
 }
 

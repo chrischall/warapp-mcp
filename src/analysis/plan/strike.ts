@@ -396,7 +396,12 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
         let canEliminate = false;
         if (uncoverable) return { best, bestUnfunded, canEliminate };
         const sizes = tried.map(() => 0);
+        // An attempt is `enough` only when at least `need` targets fall (or all, under pressure), and a target
+        // falls only when attacked: sizings that attack fewer are never tried (nothing they could yield is used).
+        const need = pressure ? ts.length : Math.max(1, Math.min(ts.length - 1, Math.ceil(ts.length / 2)));
+        let attacking = 0;
         const visit = (i: number) => {
+          if (attacking + tried.length - i < need) return;
           if (i === tried.length) {
             const a = attempt([...sizes]);
             restore(reserved);
@@ -409,7 +414,9 @@ export function finishOffHelper(pc: PlanCtx, ps: PlanState, book: DeployBook, th
           }
           for (const e of sharesOf[i]!) {
             sizes[i] = e;
+            if (e !== SKIP) attacking++;
             visit(i + 1);
+            if (e !== SKIP) attacking--;
           }
         };
         if (tried.length) visit(0);

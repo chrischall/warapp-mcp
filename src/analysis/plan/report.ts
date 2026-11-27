@@ -7,7 +7,7 @@
 // (#167) and the turns to eliminate each opponent (#179). planPass runs them where they ran before:
 // the expected outcome and the offence report after Order Priority for a strike, the plan last,
 // after the move order (plan/move-order.ts).
-import { siegeFitLine, siegeLines, siegeReport } from './siege.js';
+import { siegeLines, siegeReport } from './siege.js';
 import { bonusTerritories } from '../bonuses.js';
 import { DEFAULT_DEFENSIVE_KILL_RATE, DEFAULT_OFFENSIVE_KILL_RATE, straightKills } from '../combat.js';
 import { classifyExchange, type ExchangeCase } from '../exchange.js';
@@ -148,16 +148,6 @@ export function reportExpected(
     const { short, deployable } = poolShortfall(g, keptHeld(after), frontier.income, lacks);
     return { player, gates: list, need, onGates, deficit, income: frontier.income, short, deployable };
   })();
-  // Warned only when this plan's own captures open a gate the budget cannot pay for (the shortfall alone is in the report).
-  const opened = gates ? gates.gates.filter((x) => captured.has(x.id)).map((x) => x.id) : [];
-  if (gates && gates.short > 0 && opened.length)
-    warnings.push(
-      `Gate budget (#297): this plan's capture of ${opened.map(label).join(', ')} opens ${opened.length === 1 ? 'a gate' : 'gates'} the income cannot hold — ${gates.gates.length} gates facing player ${gates.player}${
-        gates.gates.some((x) => x.conceded) ? ` (${gates.gates.filter((x) => x.conceded).length} conceded)` : ''
-      } need ${gates.need} against its one floating deploy; ${gates.onGates} stand on them, ${gates.deficit} short across them, and the next income is ${gates.income}${
-        gates.deployable !== undefined ? ` (${gates.deployable} of it deployable on them under Local Deployment)` : ''
-      }: ${gates.short} short.`,
-    );
   const startCost = startHold();
   const outgrown = frontier.holdCost > frontier.income && frontier.holdCost > startCost;
   // A capture stopped by one pass but taken by a later one (the next income grew in between) is
@@ -820,12 +810,9 @@ export function finishPlan(
   // #382: the siege's state and rationale, first.
   if (pc.siegeWarning) warnings.push(pc.siegeWarning);
   if (pc.siege) rationale.unshift(...siegeLines(pc.siege, label, pc.bonusName));
-  const chose = pc.siege ? siegeFitLine(pc.siege, pc.bonusName) : undefined;
-  if (chose) rationale.unshift(chose);
-  if (pc.siegeHandBack) rationale.push(pc.siegeHandBack);
   return {
     goal: pc.opts.goal === 'siege' || pc.siege ? 'siege' : goal,
-    ...(pc.siege ? { siege: siegeReport(pc.siege, g, captured, pc.bonusName) } : {}),
+    ...(pc.siege ? { siege: siegeReport(pc.siege, g, captured) } : {}),
     profile,
     // Deploys interleave like moves, and the order they land in shows the opponent my income and
     // the move order: next to a visible enemy first, in the back after (ascending id within each).
