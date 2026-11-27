@@ -170,19 +170,18 @@ describe('#214: a lead step toward the closest bonus funded on a conceded source
     expect(valid(p, i)).toEqual([]);
   });
 
-  it('says what was short when the deploy cannot reach the conceded source, not a conceded gate', () => {
-    // At 6 the sure T3 takes 5 of the deploy. The step on T2 from T1 (1 army, conceded) needs 10
-    // sure and still 2 at its bare cost (#214 item 1): T2 is skipped, and its line names what T1
-    // could spare and the deploy that could reach it, on the bare basis the line opens with.
+  it('#593: with T1 conceded and B901 out of reach this turn, taking player 20\'s member of it is still allowed (owner exception)', () => {
+    // At 6 the sure T3 takes 5 of the deploy and the step on T2 from T1 (1 army, conceded) needs 10 sure and
+    // still 2 at its bare cost (#214 item 1), so B901 cannot complete this turn. #593 refuses an advance into a
+    // bonus whose member T1 the plan concedes — except (owner, 2026-11-27) one that breaks the bonus for the
+    // opponent attacking that member: T3 is player 20's, and player 20 (T2, beside T1) is that attacker, so T3
+    // is taken from the held T4, sure even if he deploys there first.
     const i = input(6);
     const p = planTurn(i);
-    expect(attacks(p).map((m) => m.to)).not.toContain(2);
-    expect(deployedAt(p, 1)).toBe(0);
-    const line = p.rationale.find((l) => l.startsWith('Not attacking')) ?? '';
-    expect(line).toMatch(
-      /T2 \(#2\) \(player 20, 1 armies\): taking it needs 2 \(10 if player 20 deploys its ~5 there first\).*when its bonus's step was tried, T1 \(#1\) could spare 0 for it and this turn's deploy could add at most 1 there: 1 in all;/,
-    );
-    expect(line).not.toMatch(/is conceded/);
+    const t3 = attacks(p).filter((m) => m.to === 3);
+    expect(t3.map((m) => m.from)).toEqual([4]);
+    expect(t3[0]!.reason).toMatch(/advances bonus B901 \(#901\).*player 20's member/);
+    expect(why(p)).not.toMatch(/Do not take T3 \(#3\)/);
     expect(valid(p, i)).toEqual([]);
   });
 
@@ -270,10 +269,11 @@ describe('#214: a lead step toward the closest bonus funded on a conceded source
     expect(valid(p, i)).toEqual([]);
   });
 
-  it('advances from the held border, not the conceded one, when only one step of the closest bonus fits', () => {
-    // T2 (player 20, 3) beside the conceded T1 (2), T3 (neutral, 4) beside the held T4 (21), income
-    // 13. Both steps do not fit. Taking T2 alone sank 12 of 13 into the conceded T1 for one capture;
-    // T3 from T4 (a few deploys) leaves the rest for B902's T6 — two captures.
+  it('#593: when only one step of the closest bonus fits and its member T1 is conceded, the deploy goes to B902', () => {
+    // T2 (player 20, 3) beside the conceded T1 (2), T3 (neutral, 4) beside the held T4 (21), income 13. Both steps
+    // do not fit, so B901 cannot complete. Before #593 the plan took T3 from T4 (never T2: that sank 12 of 13 into
+    // the conceded T1); now no step of a bonus whose member the plan concedes is taken, and the deploy goes to
+    // B902's T6.
     const i = swept(
       [[1, 10, 2], [2, 20, 3], [3, 0, 4], [4, 10, 21], [5, 10, 1], [6, 0, 5], [7, 0, 7], [8, 10, 64], [9, 0, 9],
         [11, 10, 1], [12, 10, 2], [20, 20, 11], [30, 30, 14], [31, 30, 12]],
@@ -281,9 +281,10 @@ describe('#214: a lead step toward the closest bonus funded on a conceded source
     );
     const p = planTurn(i);
     expect(attacks(p).map((m) => m.to)).not.toContain(2);
-    expect(attacks(p).find((m) => m.to === 3)).toMatchObject({ from: 4 });
+    expect(attacks(p).map((m) => m.to)).not.toContain(3);
     expect(attacks(p).map((m) => m.to)).toContain(6);
     expect(deployedAt(p, 1)).toBe(0);
+    expect(why(p)).toMatch(/Do not take T3 \(#3\) toward bonus B901 \(#901\).*\(#593\)\./);
     expect(why(p)).not.toMatch(/is conceded, but the deploy there leaves with the attack/);
     expect(valid(p, i)).toEqual([]);
   });

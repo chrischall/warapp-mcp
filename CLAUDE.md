@@ -1155,6 +1155,26 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   take. Not done (owner): "the leftover rides the widest capture". Follow-up: rule 6 has no step when the only enemy
   front lies past a conceded border and the last neutral is taken (golden s246: its interior transfers vanish).
   Golden: 16 of 6253 plans changed — 6 in their orders, 2 in a move's reason only, 8 by the warning only.
+- **No advance into a bonus the plan concedes (#593 item 4, `src/analysis/plan/dead-advance.ts`).** An expansion capture
+  (`tryExpand` in `plan/captures.ts`: pass 2's advances, the `balanced` greedy's advance slots, pass 3, #439's stage,
+  rule 5b) is refused (`deadAdvanceOf`) when every positive bonus its territory is in has another member I hold that
+  this plan concedes and the capture completes none of them; its armies and deploy stay for the next candidate, with a
+  "Do not take X toward bonus B: this plan concedes its member Y … (#593)" line. Exempt: a focused territory, a no-loss
+  capture (#426), land a static seat left, a step of a bonus this turn's captures could complete (every missing member a
+  target: #214's step order must not block the completion), and a capture every attack on which leaves a conceded
+  border with no deploy (armies given up anyway). Concessions come during the greedy too (#215's pending holds), so the
+  finished plan is checked (`ps.expanded`): a kept capture into such a bonus, or a completable one left incomplete,
+  makes `planTurn` plan again with those bonuses carried (`PlanInput.deadAdvance`, `planAlive`, at most `DEAD_PASSES`
+  (3)), refused from the start whatever the replan concedes. Rule 4e's never-stand-still fallback and #272's attack out
+  of a conceded border are not bound. Item 4's wasteland half needed no change: a wasteland in view, or fogged and
+  costed by its last sighting (#428) or the picking board (#201), already counts at its full cost in "N armies to
+  finish", the economy test (its loss, #125) and rule 4f; only a fogged member never seen counts at the neutral size
+  plus #167's expected surcharge. **The owner's exception (2026-11-27):** an advance that breaks the bonus for the foe
+  attacking a conceded member is allowed (`breaksForAttacker`): the capture takes that attacker's own member of the
+  bonus, or a neutral that is the one member he would still lack once my conceded members fall. Golden (with the
+  exception): 48 of 6253 plans changed against main, 45 in their orders, next income unchanged on all (as built without
+  it: 69 plans, captures +3/−58; the exception restores 22 attacks in 22 plans). A replay of 16 lost 1v1s (271 turns): advances with a conceded sibling 38 → 3
+  (all from conceded sources), 17 → 0 on truly-behind turns; next income unchanged on every turn.
 - **#433/#427 (partial, 2026-11-20).** Local Deployment's free income floors at the game's own base income (`gameBase` in `plan/threats.ts`), not 5; the profile's standing reads my income without my own Reinforcement card (`plan/estimates.ts`), as it already did opponents'. Golden: 159 of 2000 synthetic plans and 4 suite plans re-hashed (the rest of #427 is open). **#433's gate budget (2026-11-22, DRAFT for owner approval):** under Local Deployment the 1v1 gate budget (#297) is pool-aware — a gate's shortfall is paid only by the free income and the pools of the bonuses it is in (`poolShortfall` in `src/analysis/local-deploy.ts`, over `chargeDeploys`; next turn's pools from `keptHeld`, the territories `keptIncome` counts), in `gateStop` (`plan/captures.ts`; rule 4d's `outgrows` lets it stop a capture even when the frontier's hold cost is under the whole next income) and in the reported `gates` (`short`, plus `deployable`: the income that can land on the gates; LD only). Without Local Deployment nothing changes. Golden: 506 of 6253 plans re-hashed (467 only `gates.deployable` added, 37 a gate-budget warning too, 2 in their orders: one capture each stopped, next income and concessions unchanged). Still open from #433: `reviveConceded` counting idle neighbours when a withdrawal is planned (an owner decision: cancelling a withdrawal once the deploys are sized).
 - **#427 (parts 1–2 merged in #491; part 3 2026-11-22).** (1) Bug: the tracker reads every deploy as income, so an opponent's
   Reinforcement play it saw set its tracked figure (max observed, then carried) while the clock added the next card

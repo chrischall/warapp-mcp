@@ -607,6 +607,11 @@ export interface PlanInput {
    * taken, the push capped at the payback horizon × the bonus's value (the armies already stand on the board).
    */
   stockpileAllIn?: ReadonlySet<number>;
+  /**
+   * #593, set by planTurn (callers leave it out): the bonuses an earlier plan of this turn advanced while it
+   * conceded another member of them I hold, each with those members (plan/dead-advance.ts): none is advanced.
+   */
+  deadAdvance?: ReadonlyMap<number, readonly number[]>;
   settings?: PlannerSettings;
   options?: PlanOptions;
   /** The game around the board, for the profile (rule 0p). */

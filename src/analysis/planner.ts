@@ -1243,6 +1243,15 @@
 //     2, the `balanced` advance slots, #439's stage), pass 3 and rule 5b; never the bonus's own members, a
 //     focused bonus, completions, holds, breaks, counters, the 1v1 race, strikes, rule 4e, 4g or 4h. What is
 //     bound may still attack with the armies on my other territories. A "#319 binds the deploys" line says so.
+//     #593 (plan/dead-advance.ts): no expansion capture (`tryExpand`: pass 2, the `balanced` advance slots,
+//     pass 3, #439's stage, rule 5b) advances only bonuses whose other member I hold this plan concedes,
+//     unless it completes one, is focused, is no-loss (#426), is land a static seat left, is a step of a bonus
+//     this turn's captures could complete, breaks the bonus for the foe attacking a conceded member (owner,
+//     2026-11-27: his own member, or the one he would still lack), or every attack on it leaves a conceded border with no deploy; its
+//     armies stay for the next candidate, with a "(#593)" line. A concession made after the capture, or a
+//     completable bonus the plan leaves incomplete, is caught on the finished plan: planTurn plans again with
+//     those bonuses carried (`PlanInput.deadAdvance`, `planAlive`, at most DEAD_PASSES times). Rule 4e's
+//     never-stand-still fallback is not bound.
 //  3b. One surplus per territory (#121). A border that holds at the start of the turn (its armies
 //     beat its visible threat, rule 1) and is not conceded keeps what holds it, as my commander's
 //     territory does (rule 1k): a capture from it spends only its armies above that, plus deploys
@@ -1711,7 +1720,8 @@ import { completedMembers } from './plan/completed.js';
 import { chooseStrikeStack, leadStrikes, spendStrikeStack, strikesPhase } from './plan/strike.js';
 import { contestedBonuses } from './plan/stockpile.js';
 import { warnIdleBesideFree } from './plan/free-capture.js';
-import { afterLeftoverCaptures, onlyNoLoss, plainEconomy, plainEligible } from './plan/after-leftover.js';
+import { afterLeftoverCaptures, noLossNeutral, onlyNoLoss, plainEconomy, plainEligible } from './plan/after-leftover.js';
+import { deadAdvanceOf } from './plan/dead-advance.js';
 import { fundFromSecondSizing } from './plan/second-sizing.js';
 import { leftoverDeploy } from './plan/leftover.js';
 import { fillSecondLine, guardOffRaids } from './plan/guard-off.js';
@@ -1787,7 +1797,7 @@ export function planTurn(input: PlanInput): TurnPlan {
   // territories are planned as neutrals (static armies), and it is no opponent anywhere below.
   const seats = staticSeats(input.game?.players, input.game?.endRules, input.me);
   const held = seatTerritories(input.board, seats);
-  const plan = planPushed(withoutStaticSeats(input, seats));
+  const plan = planAlive(withoutStaticSeats(input, seats));
   for (const [p, n] of [...held].sort((a, b) => a[0] - b[0]))
     plan.rationale.push(
       `Player ${p} is out (${seats.get(p)}) and no AI plays its seat: it deploys and attacks nothing, so its ${n} territor${n === 1 ? 'y is' : 'ies are'} planned as neutrals — static armies to take, no hold needed beside them (#270).`,
@@ -1825,6 +1835,39 @@ function withoutStaticSeats(input: PlanInput, seats: ReadonlyMap<number, string>
     ...(input.sanctions ? { sanctions: input.sanctions.filter((x) => !seats.has(x.player)) } : {}),
     ...(input.game && opening ? { game: { ...input.game, opening: new Map([...opening].filter(([p]) => !seats.has(p))) } } : {}),
   };
+}
+
+/** #593: per plan, the bonuses an expansion capture it kept advances though it concedes another member of them. */
+const deadOutcome = new WeakMap<TurnPlan, ReadonlyMap<number, readonly number[]>>();
+
+/** #593: at most this many plans again, each carrying the dead bonuses the ones before found. */
+const DEAD_PASSES = 3;
+
+/**
+ * #593: never advance a bonus whose other member the same plan concedes. The capture passes refuse such an
+ * advance as they go (plan/dead-advance.ts), but a concession can come after the capture (the greedy concedes
+ * pending holds as it runs): when the finished plan still advances one, it is planned again with that bonus
+ * carried, so its armies go to the next candidate from the start, until no plan does (at most DEAD_PASSES times).
+ */
+function planAlive(input: PlanInput): TurnPlan {
+  let plan = planPushed(input);
+  const carried = new Map<number, readonly number[]>(input.deadAdvance ?? []);
+  for (let i = 0; i < DEAD_PASSES; i++) {
+    const found = deadOutcome.get(plan);
+    if (!found?.size) return plan;
+    let grew = false;
+    for (const [id, ms] of found) {
+      const was = carried.get(id) ?? [];
+      const next = [...new Set([...was, ...ms])].sort(byNum);
+      if (next.length > was.length) {
+        carried.set(id, next);
+        grew = true;
+      }
+    }
+    if (!grew) return plan;
+    plan = planPushed({ ...input, deadAdvance: new Map(carried) });
+  }
+  return plan;
 }
 
 /** #298: per plan, the all-in pushes its pass sized (plan/targets.ts), by bonus id. */
@@ -3623,6 +3666,18 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
   for (const u of units)
     if (u.contested && !u.conceded) for (const m of u.members) if (!heldBorders.has(m.id)) unheld.add(m.id);
   runOutcome.set(plan, { bareSteps: [...caps.bareTaken].filter(gone).sort(byNum), held, unheld });
+  // #593: an expansion capture the finished plan keeps though it concedes another member of every bonus it
+  // advances (conceded after the capture was made): planTurn plans again with those bonuses carried.
+  {
+    const dead = new Map<number, number[]>();
+    const after = book.heldNow();
+    for (const t of [...ps.expanded].filter(gone).sort(byNum)) {
+      if (caps.givenUp(t) || noLossNeutral(pc, tgt, t)) continue;
+      for (const d of deadAdvanceOf(pc, t, after, conceded, new Map()) ?? [])
+        dead.set(d.bonusId, [...new Set([...(dead.get(d.bonusId) ?? []), ...d.members])].sort(byNum));
+    }
+    if (dead.size) deadOutcome.set(plan, dead);
+  }
   if (tgt.allInTries.size) allInOutcome.set(plan, tgt.allInTries);
   if (pc.strikeShare > 0) shareOutcome.set(plan, pc.strikeShare);
   {
