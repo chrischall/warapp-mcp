@@ -353,9 +353,42 @@ export function situation(input: SituationInput): Situation {
   };
 }
 
+/** The parts of {@link Situation} a caller can ask for by name. */
+export const FACT_PARTS = ['me', 'territories', 'bonuses', 'opponents', 'changes', 'past'] as const;
+export type FactPart = (typeof FACT_PARTS)[number];
+
+/** What each part holds, for telling the caller what it can ask for. */
+export const FACTS_AVAILABLE: Readonly<Record<FactPart, string>> = {
+  me: 'my income and its history, land, armies and bonuses held',
+  territories: 'every territory in view and each hidden one beside my land, nearest first: owner, armies, special units, bonuses, neighbours',
+  bonuses: 'each bonus that matters: who holds how much of it, what finishing it costs, the members in reach',
+  opponents: "each opponent's income estimate with how it was read (source, visible, tracked, range, coverage, per-turn deploys), its bonuses and its stacks beside me",
+  changes: 'what changed since last turn: territories lost and gained, stacks that grew or shrank',
+  past: 'each of the last 10 turns kept: every side in view, its bonuses, my orders',
+};
+
+/** Only the parts asked for (the omitted counts go with their part). */
+export function pickFacts(s: Situation, parts: readonly FactPart[]): Partial<Situation> {
+  const want = new Set(parts);
+  return {
+    ...(want.has('me') ? { me: s.me } : {}),
+    ...(want.has('territories') ? { territories: s.territories, territoriesOmitted: s.territoriesOmitted } : {}),
+    ...(want.has('bonuses') ? { bonuses: s.bonuses, bonusesOmitted: s.bonusesOmitted } : {}),
+    ...(want.has('opponents') ? { opponents: s.opponents } : {}),
+    ...(want.has('changes') ? { changes: s.changes } : {}),
+    ...(want.has('past') ? { past: s.past } : {}),
+  };
+}
+
+/** The one line every plan carries: what more the caller can ask warapp_plan_turn for. */
+export const MORE_ON_REQUEST =
+  'Ask for more when you want to weigh the plan or build your own: strategy: true adds ranked captures and holds and the plan ' +
+  'beside expand/defend alternatives, each stress-tested; facts: ["me","territories","bonuses","opponents","changes","past"] ' +
+  '(any of them) adds the raw game state behind them. Test any orders with warapp_check_plan.';
+
 /** What to do with the facts: the tools that let the model test and act on its own plan. */
 export const OWN_PLAN_STEPS = [
-  'Read the board, bonuses, opponents and changes; the plan, options and alternatives are inputs to your judgement, not the answer.',
+  'The plan, options and alternatives are inputs to your judgement, not the answer; ask warapp_plan_turn for the facts your decision needs (facts: me, territories, bonuses, opponents, changes, past).',
   'Write your own deploys and moves (any mix of the options, the alternatives or neither).',
   'Test them with warapp_check_plan (every opponent\'s replies, both move orders, one turn ahead); change and test again as needed.',
   'Look deeper when it matters: warapp_turn_history (what happened turn by turn), warapp_track_opponents and warapp_profile_opponents (how each opponent plays), warapp_plan_route (paths), warapp_get_map (the whole map), warapp_strategy (notes for this game), warapp_get_chat.',

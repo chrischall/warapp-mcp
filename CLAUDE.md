@@ -2880,19 +2880,21 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   deploy, and what it protects), `alternatives` (`alternativePlans`: the default plan, then `planTurn` under
   `ALTERNATIVE_GOALS` (expand, defend), identical orders listed once, each with `stress` — `stressPlan` at the plan's own
   deploy estimates, no look-ahead, one reply per opponent: `safe`, `harmful`, `considered`, `worst`) and `STRATEGY_NOTE`.
-  It also carries `situation` (`src/analysis/situation.ts`, pure, report only; owner, 2026-11-27: a menu is fine so long as
-  the model can pull current and past states and other metrics to plan its own turn): `me` (income, its history, land,
-  armies, bonuses held), `territories` (every territory in view and every hidden one beside mine, nearest first: name,
-  owner — `me`, `neutral`, `fog` or a GameFeed id —, armies, special units, bonuses, neighbours; at most
-  `MAX_SITUATION_TERRITORIES` (400), the rest counted), `bonuses` (each positive bonus I touch or border or another
-  player visibly holds whole: members by holder, `heldBy`, `missing`, `armiesToFinish` — `armiesToTake` summed, `null`
-  with a hidden member —, `reachable`; at most `MAX_SITUATION_BONUSES` (60)), `opponents` (the plan's estimate with its
-  source, visible and tracked figures, #368's range, frontier coverage, per-turn observed deploys; land and armies in
-  view; bonuses held; stacks beside me), `changes` (against `previousBoard`: territories lost and gained, other players'
-  stacks that changed) and `past` (the newest `SITUATION_PAST_TURNS` (10) boards `livePlanSetup` read — `pastBoards` —
-  each side's land, armies and bonuses in view, and my orders that turn when kept); `steps` (`OWN_PLAN_STEPS`) names the
-  tools to test and dig deeper with. The plan, its `orders` and every other field are unchanged (asserted); off by
-  default. An override is logged with its reason (#412), so the model's choices can be measured against the default.
+  `available` (`FACTS_AVAILABLE`) names the facts the model can ask for, and `steps` (`OWN_PLAN_STEPS`) the tools to test and
+  dig deeper with. **Facts on request (owner, 2026-11-27: the model should not always get all of it, but should know it
+  can ask):** `facts` (any of `FACT_PARTS`) adds `facts`, only the parts named (`pickFacts` over `situation`,
+  `src/analysis/situation.ts`, pure, report only): `me` (income, its history, land, armies, bonuses held), `territories`
+  (every territory in view and each hidden one beside mine, nearest first: name, owner — `me`, `neutral`, `fog` or a
+  GameFeed id —, armies, special units, bonuses, neighbours; at most `MAX_SITUATION_TERRITORIES` (400), the rest counted),
+  `bonuses` (each positive bonus I touch or border or another player visibly holds whole: members by holder, `heldBy`,
+  `missing`, `armiesToFinish` — `armiesToTake` summed, `null` with a hidden member —, `reachable`; at most
+  `MAX_SITUATION_BONUSES` (60)), `opponents` (the plan's estimate with its source, visible and tracked figures, #368's
+  range, frontier coverage, per-turn observed deploys; land and armies in view; bonuses held; stacks beside me), `changes`
+  (against `previousBoard`: territories lost and gained, other players' stacks that changed) and `past` (the newest
+  `SITUATION_PAST_TURNS` (10) boards `livePlanSetup` read — `pastBoards` — each side's land, armies and bonuses in view,
+  and my orders that turn when kept). Every plan without `strategy` carries `more` (`MORE_ON_REQUEST`), one line naming
+  both. The plan, its `orders` and every other field are unchanged (asserted); both off by default. An override is logged
+  with its reason (#412), so the model's choices can be measured against the default.
 - **The turn history (#570, `warapp_turn_history`, read-only).** Reads the game's decision log: per turn the board seen
   (`boardSummary`, or whole with `board: true`), `ownerChanges` against the turn before (in view both times), every
   player's visible orders (`seen`), plan, sent and `differsFromPlan` (`ordersDiffer`), outcome, cards, events, truth and

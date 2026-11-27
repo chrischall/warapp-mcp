@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
-import { OWN_PLAN_STEPS, situation } from '../../src/analysis/situation.js';
+import { FACT_PARTS, FACTS_AVAILABLE, MORE_ON_REQUEST, OWN_PLAN_STEPS, pickFacts, situation } from '../../src/analysis/situation.js';
 import type { GameMap } from '../../src/normalize.js';
 
 const ME = 1;
@@ -142,6 +142,13 @@ describe('situation (#606)', () => {
         myOrders: { deploys: [{ territoryId: 1, armies: 5 }], moves: [{ from: 1, to: 2, armies: 3 }] },
       },
     ]);
+  });
+
+  it('gives only the parts asked for, and names every part it can give', () => {
+    expect(pickFacts(s, ['bonuses', 'changes'])).toEqual({ bonuses: s.bonuses, bonusesOmitted: 0, changes: s.changes });
+    expect(Object.keys(pickFacts(s, FACT_PARTS))).toEqual(['me', 'territories', 'territoriesOmitted', 'bonuses', 'bonusesOmitted', 'opponents', 'changes', 'past']);
+    expect(Object.keys(FACTS_AVAILABLE)).toEqual([...FACT_PARTS]);
+    for (const part of FACT_PARTS) expect(MORE_ON_REQUEST).toContain(`"${part}"`);
   });
 
   it('ends with the steps for planning on your own, through warapp_check_plan and an override reason', () => {

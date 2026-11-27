@@ -206,7 +206,7 @@ describe('warapp_plan_turn', () => {
     expect(payload<Record<string, unknown>>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }))).not.toHaveProperty('pace');
   });
 
-  it('#606: strategy adds ranked options and stress-tested alternative plans, never changing the plan', async () => {
+  it('#606: strategy adds the menu, facts come by part on request, and every plan says what it can be asked for', async () => {
     h = await liveHarness({ feed: [game('Playing', { numberOfTurns: '4' })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
     const plain = payload<PlanPayload & { strategy?: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
     expect(plain).not.toHaveProperty('strategy');
@@ -221,11 +221,23 @@ describe('warapp_plan_turn', () => {
     expect(p.strategy.alternatives.length).toBeGreaterThanOrEqual(1);
     expect(p.strategy.options.captures.length).toBeGreaterThan(0);
     expect(p.strategy.note).toMatch(/Mechanics, not advice/);
-    const sit = (p.strategy as unknown as { situation: { me: { territories: number }; territories: { owner: unknown }[]; opponents: unknown[]; past: unknown[] } }).situation;
-    expect(sit.me.territories).toBeGreaterThan(0);
-    expect(sit.territories.some((t) => t.owner === 'me')).toBe(true);
-    expect(Array.isArray(sit.opponents) && Array.isArray(sit.past)).toBe(true);
-    expect((p.strategy as unknown as { steps: string[] }).steps.join(' ')).toMatch(/warapp_check_plan/);
+    const strat = p.strategy as unknown as { available: Record<string, string>; situation?: unknown; steps: string[] };
+    expect(Object.keys(strat.available)).toEqual(['me', 'territories', 'bonuses', 'opponents', 'changes', 'past']);
+    expect(strat.situation).toBeUndefined();
+    expect(strat.steps.join(' ')).toMatch(/warapp_check_plan/);
+    // The menu names the facts, so no pointer line beside it; a plain plan carries the pointer.
+    expect(p).not.toHaveProperty('more');
+    expect((plain as unknown as { more: string }).more).toMatch(/facts:/);
+    expect(plain).not.toHaveProperty('facts');
+    // Facts come only when asked for, and only the parts named.
+    type Facts = { facts: { me?: { territories: number }; territories?: { owner: unknown }[]; past?: unknown[]; opponents?: unknown } };
+    const f = payload<PlanPayload & Facts>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', facts: ['me', 'territories', 'past'] }));
+    expect(f.orders).toEqual(plain.orders);
+    expect(f.facts.me!.territories).toBeGreaterThan(0);
+    expect(f.facts.territories!.some((t) => t.owner === 'me')).toBe(true);
+    expect(Array.isArray(f.facts.past)).toBe(true);
+    expect(f.facts).not.toHaveProperty('opponents');
+    expect(f).not.toHaveProperty('strategy');
   });
 
   it('warns that the income may be off when a setting the model does not compute is on (#38)', async () => {
