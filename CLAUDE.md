@@ -1151,7 +1151,10 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   completed this turn has hubs too once rule 1c counts the captures. A unit that pays only for its hub share (`hubOnly`:
   without it the CONCEDE_FACTOR test would make it contested) gets #118's floor before the captures like a contested one,
   and is floored and kept, never conceded with nothing deployed, when it then cannot be held whole (owner, 2026-11-27:
-  on the replay one such turn was conceded where main floored it). #122's garrison of a completed bonus is unchanged.
+  on the replay one such turn was conceded where main floored it). #602 (owner, 2026-11-27): rule 1h.3's starve check no longer counts a
+  `hubOnly` unit already floored (it keeps its floor either way, so a completion cannot starve it): the completions it
+  held back go ahead. Golden: 0 of 6253 plans changed; on #600's game-12 shape swept over bonus values, incomes and
+  deploys, 35 plans changed, each completing more (next income +2 to +9), none conceding more. #122's garrison of a completed bonus is unchanged.
   Golden: 55 of 6253 plans changed, 4 in their orders (the leftover or a held unit's deploys moved to a hub), captures,
   next income and concessions unchanged on all.
 - **Rule 6 behind conceded borders (owner, 2026-11-22).** With no front and no territory not mine reachable without
