@@ -1256,6 +1256,14 @@ What is true of the planner, the estimates, opponent tracking and profiles, pick
     army first, never weighed against spreading); otherwise it stays contested as before. Live, a +4
     bonus's one border was floored and spread on 9 armies while 15 went to an advance into a bonus
     47 armies from done, and fell to the 33 that could reach it whoever moved first.
+    **A floored one too (a lost 1v1 of 2026-11-27, DRAFT for owner approval):** one that cannot be held whole
+    (#118's floor) was spread over its borders only after the captures, so an advance still took the rest
+    first (13 of 18 to far advances while a home bonus fell to one stack). Before the first advance or #439
+    stage that completes nothing (not a focused one; a #417 race still goes first), `settleContested('floored')`
+    spreads what is left over the floored units' borders (a "1v1 in contact: what is left goes to the borders
+    of …" line); the other contested units wait for the call after the captures, as before. Golden: 3 of 6253
+    plans changed, 1 in its orders (an advance 42 armies from done dropped; the break of the opponent's bonus
+    then takes 11 of its ~14 deploy instead of 3).
   - **The 1v1 race for vacated land (#417, owner decision of 2026-11-20).** In a 1v1 in contact, while a static
     seat's (#270) land is still untaken, its capture targets costing at most `VACATED_MAX_COST` (neutral, or
     hidden at the 2-defender price; never a negative bonus's member: `raceTargets` in `plan/vacated.ts`) are

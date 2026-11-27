@@ -1301,16 +1301,24 @@ export function floorTier(
    * `'untrusted'` (#275 b): the same, before any capture, for each contested unit a border of which faces
    * an opponent whose estimate a tripwire broke (sized for its untrusted figure), whether or not it pays
    * back: while the estimate is untrusted the gate is held before expansion, never left to what it leaves.
+   * `'floored'` (rule 0p.1, a 1v1 in contact, after the whole holds and before the first advance): the
+   * floored units only, whole where what is left covers them, else the rest spread over their borders —
+   * an advance that completes nothing this turn never takes the armies a floored home bonus could use.
+   * The other contested units, and the warnings, wait for the call after the captures.
    */
-  const settleContested = (mode: boolean | 'untrusted' = false) => {
-    const wholeOnly = mode !== false;
+  const settleContested = (mode: boolean | 'untrusted' | 'floored' = false) => {
+    const wholeOnly = mode === true || mode === 'untrusted';
+    const flooredOnly = mode === 'floored';
     const facesUntrusted = (u: Unit) =>
       u.members.some((m) => {
         const b = borders.get(m.id);
         return !heldBorders.has(m.id) && b !== undefined && pc.untrustedAt(b.player, m.id) > 0;
       });
     const open = units.filter(
-      (u) => u.contested && !u.conceded && (mode === 'untrusted' ? facesUntrusted(u) : !wholeOnly || u.loss !== 'payback'),
+      (u) =>
+        u.contested &&
+        !u.conceded &&
+        (flooredOnly ? u.floored : mode === 'untrusted' ? facesUntrusted(u) : !wholeOnly || u.loss !== 'payback'),
     );
     if (!open.length) {
       if (mode === 'untrusted') fillUntrustedGates([]);
@@ -1377,7 +1385,9 @@ export function floorTier(
           u,
           undefined,
           `Hold bonus ${bonusName(u.bonusId)} (+${u.value}) whole: ${floored ? 'past its floor ' : ''}its ${unitBorders(u)} need${u.members.length === 1 ? 's' : ''} ${more}${floored ? ' more' : ''}${why ? ` (${why})` : ''}, ${
-            mode === 'untrusted'
+            flooredOnly
+              ? 'before any expansion that completes no bonus (1v1 in contact: a home bonus under attack comes before a far advance).'
+              : mode === 'untrusted'
               ? `before any capture: player ${[...new Set(u.members.flatMap((m) => { const b = borders.get(m.id); return b && pc.untrustedAt(b.player, m.id) > 0 ? [b.player] : []; }))].sort((a, b) => a - b).join(', ')}'s estimate is untrusted (#275), so the border is held ahead of expansion.`
               : wholeOnly
                 ? 'before any expansion that completes no bonus (1v1 in contact: an advance ranks below every hold).'
@@ -1400,7 +1410,7 @@ export function floorTier(
     if (mode === 'untrusted') fillUntrustedGates(open.filter((u) => u.contested));
     if (wholeOnly) return;
     const short = units
-      .filter((u) => u.contested && !u.conceded)
+      .filter((u) => u.contested && !u.conceded && (!flooredOnly || u.floored))
       .flatMap((u) => u.members.filter((m) => !heldBorders.has(m.id)).map((m) => ({ m, u })));
     const value = (m: Threatened) => Math.max(...short.filter((x) => x.m === m).map((x) => x.u.value));
     const members = [...new Set(short.map((x) => x.m))];
@@ -1425,6 +1435,14 @@ export function floorTier(
           : `Deploy ${n} more to ${label(m.id)} against the one shared deploy: ${m.have} armies, so player ${borders.get(m.id)?.player}'s deploy needs ${breakCost(m)} of its ~${deployShare(m)} there to take it.`,
       );
     for (const m of members) if (m.holdCost <= 0) heldBorders.add(m.id);
+    if (flooredOnly && given.size)
+      rationale.push(
+        `1v1 in contact: what is left goes to the borders of ${[...new Set(short.map((x) => x.u))].map((u) => `${bonusName(u.bonusId)} (+${u.value})`).join(', ')} before any advance that completes nothing this turn — a home bonus the opponent's one stack can break is worth more than a far step toward another.`,
+      );
+    if (flooredOnly) {
+      for (const u of open) if (u.members.every((m) => heldBorders.has(m.id))) u.contested = false;
+      return;
+    }
     const stillShort: Unit[] = [];
     for (const u of units) {
       if (!u.contested || u.conceded) continue;
