@@ -81,6 +81,56 @@ function plan(opts: { hub?: boolean; foe?: number; income?: number; enemyDeploy?
     options: { goal: 'balanced', enemyDeploy: opts.enemyDeploy ?? 8 },
   });
 }
+/** Game 12 turn 12's shape (below): B903 (+hv) with its hub T1, and three +cv bonuses each one 2-army neutral short. */
+function game12(hv: number, cv: number, income: number, enemyDeploy: number): TurnPlan {
+return planTurn({
+    graph: buildGraph(
+      makeMap(
+        [1, 2, 3, 4, 8, 9, 20, 21, 22, 23, 24, 25],
+        [
+          [1, 8],
+          [2, 9],
+          [1, 2],
+          [1, 3],
+          [1, 4],
+          [2, 3],
+          [3, 4],
+          [4, 20],
+          [20, 21],
+          [4, 22],
+          [22, 23],
+          [3, 24],
+          [24, 25],
+        ],
+        [
+          [903, hv, [1, 2, 3, 4]],
+          [910, cv, [20, 21]],
+          [911, cv, [22, 23]],
+          [912, cv, [24, 25]],
+        ],
+      ),
+    ),
+    board: board([
+      mine(1, 3),
+      mine(2, 3),
+      mine(3, 1),
+      mine(4, 1),
+      enemy(8, 9),
+      enemy(9, 9),
+      mine(20, 1),
+      neutral(21, 2),
+      mine(22, 1),
+      neutral(23, 2),
+      mine(24, 1),
+      neutral(25, 2),
+    ]),
+    me: ME,
+    income,
+    settings: STD,
+    game: { players: [{ id: ME }, { id: FOE }], turn: 6 },
+    options: { goal: 'balanced', enemyDeploy },
+  });
+}
 const deployedOn = (p: TurnPlan, t: number) => p.deploys.filter((d) => d.territoryId === t).reduce((n, d) => n + d.armies, 0);
 const text = (p: TurnPlan) => [...p.rationale, ...p.warnings].join('\n');
 
@@ -133,53 +183,7 @@ describe('#593: a held bonus hub is valued for the members its fall takes', () =
     // T1 and T2 face player 20's 9-army stacks on T8 and T9. Three +4 bonuses (T20/T21, T22/T23, T24/T25) each complete
     // with a 2-army neutral. Without the hub share B903 is contested and floored before the captures (#118); with it,
     // it pays — and must not then be conceded with nothing deployed when the completions take the income.
-    const p = planTurn({
-      graph: buildGraph(
-        makeMap(
-          [1, 2, 3, 4, 8, 9, 20, 21, 22, 23, 24, 25],
-          [
-            [1, 8],
-            [2, 9],
-            [1, 2],
-            [1, 3],
-            [1, 4],
-            [2, 3],
-            [3, 4],
-            [4, 20],
-            [20, 21],
-            [4, 22],
-            [22, 23],
-            [3, 24],
-            [24, 25],
-          ],
-          [
-            [903, 3, [1, 2, 3, 4]],
-            [910, 4, [20, 21]],
-            [911, 4, [22, 23]],
-            [912, 4, [24, 25]],
-          ],
-        ),
-      ),
-      board: board([
-        mine(1, 3),
-        mine(2, 3),
-        mine(3, 1),
-        mine(4, 1),
-        enemy(8, 9),
-        enemy(9, 9),
-        mine(20, 1),
-        neutral(21, 2),
-        mine(22, 1),
-        neutral(23, 2),
-        mine(24, 1),
-        neutral(25, 2),
-      ]),
-      me: ME,
-      income: 14,
-      settings: STD,
-      game: { players: [{ id: ME }, { id: FOE }], turn: 6 },
-      options: { goal: 'balanced', enemyDeploy: 6 },
-    });
+    const p = game12(3, 4, 14, 6);
     expect(p.conceded).not.toContain(1);
     expect(p.conceded).not.toContain(2);
     expect(deployedOn(p, 1)).toBeGreaterThanOrEqual(3);
@@ -187,5 +191,21 @@ describe('#593: a held bonus hub is valued for the members its fall takes', () =
     expect(text(p)).toMatch(/Floor for bonus B903 \(#903\) \(\+3\): deploy 3 to T1 \(#1\)/);
     expect(text(p)).not.toMatch(/concedes bonus B903/);
   });
-});
 
+  it('#602: a floored hub-only unit does not hold back completions it cannot be starved by', () => {
+    // B903 (+3) is floored (it pays only with its hub share); two +2 completions used to wait behind it ("only after
+    // holding B903") and were lost when it was floored anyway. Now they go ahead and B903 keeps its floor.
+    const p = game12(3, 2, 12, 6);
+    expect(p.expected.bonusesCompleted).toEqual([910, 911]);
+    expect(p.expected.nextIncome).toBe(16);
+    expect(p.conceded).toEqual([]);
+    expect(text(p)).not.toMatch(/only after holding B903/);
+    expect(text(p)).toMatch(/Floor for bonus B903 \(#903\) \(\+3\): deploy/);
+  });
+
+  it('#602: a unit that pays without its hub share still holds back a completion that would starve it', () => {
+    // B903 pays without its hub share here (no hub-only floor), so rule 1h.3 still postpones a completion that would starve it.
+    const p = game12(3, 4, 24, 4);
+    expect(text(p)).toMatch(/only after holding B903/);
+  });
+});

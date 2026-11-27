@@ -2904,7 +2904,9 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       const left = expansionLeft;
       c.run();
       const after = new Set(fundable(pending, ps.budget));
-      const starved = before.filter((u) => !after.has(u));
+      // #602: a unit that pays only for its hub share and is already floored stays floored either way (it is never
+      // conceded); it cannot be starved, so it never holds a completion back (owner, 2026-11-27).
+      const starved = before.filter((u) => !after.has(u) && !(u.hubOnly && u.floored));
       const lost = starved.reduce((n, u) => n + u.value, 0);
       // #122: a starved unit that cannot even be kept short (near miss, floor) is conceded. Waiting
       // costs the completion one turn of its value; conceding a held bonus loses its value every
