@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.22.0](https://github.com/chrischall/warapp-mcp/compare/v0.21.0...v0.22.0) (2026-11-27)
+
+
+### Features
+
+* **check-plan:** warn of bait, an attack the target's neighbouring stacks can reinforce first ([#593](https://github.com/chrischall/warapp-mcp/issues/593)) ([#614](https://github.com/chrischall/warapp-mcp/issues/614)) ([513c1da](https://github.com/chrischall/warapp-mcp/commit/513c1daf64e08ca97619a95f60d5dc789e1530a1))
+* **planner:** a break may attack out of a conceded border, funded by the deploy ([#593](https://github.com/chrischall/warapp-mcp/issues/593)) ([#611](https://github.com/chrischall/warapp-mcp/issues/611)) ([a97bee7](https://github.com/chrischall/warapp-mcp/commit/a97bee7345b94f4615f3f44b2e2d0f8b7c34bac7))
+
+
+### Bug Fixes
+
+* **planner:** a floored hub-only hold no longer holds back completions ([#602](https://github.com/chrischall/warapp-mcp/issues/602)) ([#610](https://github.com/chrischall/warapp-mcp/issues/610)) ([f70af98](https://github.com/chrischall/warapp-mcp/commit/f70af988c4988b4c7ff20259d44a57342cc7e7e9))
+
+
+### Documentation
+
+* split CLAUDE.md into folder-scoped files ([#612](https://github.com/chrischall/warapp-mcp/issues/612)) ([d893b9d](https://github.com/chrischall/warapp-mcp/commit/d893b9dd1f79f11c20c3f371ec631d4655db217a))
+
 ## [0.21.0](https://github.com/chrischall/warapp-mcp/compare/v0.20.0...v0.21.0) (2026-11-27)
 
 
