@@ -3647,6 +3647,23 @@ describe('the submit preview sizes each attack (#130)', () => {
     expect(preview.preview.warnings?.join('\n')).toMatch(/cannot capture/);
   });
 
+  it('#593 5c: warns of bait, an attack its stack beside the target can reinforce first', async () => {
+    // Bob's 1 on 158 beside his 24 on 135 (both visible): my 4 take the 1, not the 24 that can move in.
+    const bait = BOARD.map((t) => (t.id === 158 ? { ...t, armies: 1 } : t.id === 135 ? { ...t, fogLevel: 1, owner: BOB.inGame, armies: 24, fogged: false } : t));
+    h = await liveHarness({ feed: [game('Playing', { settings: modelledSettings() })], pages: ME_PAGE, warapp: routes({ [Method.GetLatestGameInfo]: board(bait) }) });
+    const preview = payload<{ preview: { warnings?: string[] } }>(
+      await h.call('warapp_submit_turn', {
+        game_id: GAME,
+        orders: [
+          { kind: 'deploy', territory: 161, armies: 5 },
+          { kind: 'move', from: 159, to: 158, armies: 4 },
+        ],
+      }),
+    );
+    const warning = preview.preview.warnings?.find((w) => w.startsWith('Possible bait'));
+    expect(warning).toMatch(/\(135\) 23\), 24 defenders before any deploy, which needs 40/);
+  });
+
   it('does not call a combined capture whose softener fails by design impossible (#250)', async () => {
     // 2 then 7 into 3 at 25%: round(0.5) + round(1.75) = 1 + 2 = 3 in turn; together round(2.25) = 2.
     const settings = { ...modelledSettings(), OffensiveKillRate: 25, DefensiveKillRate: 80, LuckModifier: 0, RoundingMode: 'StraightRound' };

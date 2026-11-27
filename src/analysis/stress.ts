@@ -10,6 +10,11 @@
 //   attack      deploy on one stack next to a territory I hold (or will hold after my own
 //               orders) and attack it with everything that stack can move, its commander too;
 //   reinforce   deploy on a territory my plan attacks and sit still;
+//   gather      (#593 5c) deploy on a territory my plan attacks and move every stack of its own
+//               beside it in first (all each can move, its commander left behind): the bait a
+//               lightly held territory beside a big stack is. Tried when one of those stacks can
+//               move, with it moving first only and never when I am known to move first, as a dodge
+//               is (moving second, its stacks strike what I took: the attack reply covers that);
 //   all-attack  every stack with a target attacks at once, the deploy on the largest: once
 //               spread (each stack takes the most valuable target no other has taken) and once
 //               concentrated (each takes its most valuable target). Tried when two or more
@@ -160,7 +165,7 @@ const DEFAULT_MAX_REPLIES = 8;
 /** The chain search's caps (#180), shared with the planner (chains.ts, #199). */
 export { CHAIN_MAX_NODES, CHAIN_MAX_STEPS } from './chains.js';
 
-type StressReplyKind = 'attack' | 'reinforce' | 'all-attack' | 'dodge' | 'joint' | 'chain';
+type StressReplyKind = 'attack' | 'reinforce' | 'gather' | 'all-attack' | 'dodge' | 'joint' | 'chain';
 
 export interface StressReply {
   opponent: number;
@@ -177,6 +182,8 @@ export interface StressReply {
   armies?: number;
   /** `all-attack`, `joint`: every order tried. */
   attacks?: { from: number; to: number }[];
+  /** `gather`: each stack that moved into the target, and the armies that actually arrived. */
+  movedIn?: { from: number; armies: number }[];
   /** `joint`: the second opponent, its deploy and where it went. */
   partner?: number;
   partnerDeployTo?: number;
@@ -508,6 +515,15 @@ export function stressPlan(input: StressInput): StressReport {
     for (const s of stacks) {
       const dep = deployOn(opp, s);
       if (myTargets.has(s) && dep > 0) candidates.push({ player: opp.id, kind: 'reinforce', deployTo: s, deploy: dep, orders: [] });
+      // #593 5c: its stacks beside the target move in first, largest first.
+      if (myTargets.has(s) && input.firstMover !== 'me') {
+        const beside = neighborsOf(graph, s)
+          .filter((n) => start.get(n)?.owner === opp.id && (start.get(n)?.armies ?? 0) > guard)
+          .sort((a, b) => (start.get(b)?.armies ?? 0) - (start.get(a)?.armies ?? 0) || a - b);
+        if (beside.length) {
+          candidates.push({ player: opp.id, kind: 'gather', deployTo: s, deploy: dep, orders: beside.map((n) => ({ from: n, to: s, armies: allOf(n, 0) })) });
+        }
+      }
     }
     if (reach.size >= 2) {
       const bySize = [...reach.keys()].sort((a, b) => (start.get(b)?.armies ?? 0) - (start.get(a)?.armies ?? 0) || a - b);
@@ -668,6 +684,11 @@ export function stressPlan(input: StressInput): StressReport {
       deployTo: c.deployTo,
       deploy: c.deploy,
       ...(single ? { from: c.orders[0]!.from, to: c.orders[0]!.to, armies: sent ?? 0 } : {}),
+      ...(c.kind === 'gather'
+        ? {
+            movedIn: c.orders.map((o, i) => ({ from: o.from, armies: r.log.find((e) => e.player === c.player && e.index === i)?.sent ?? 0 })),
+          }
+        : {}),
       ...(c.kind === 'all-attack' || c.kind === 'joint' ? { attacks: sides.flatMap((x) => x.orders.map((o) => ({ from: o.from, to: o.to }))) } : {}),
       ...(c.partner ? { partner: c.partner.player, partnerDeployTo: c.partner.deployTo, partnerDeploy: c.partner.deploy } : {}),
       ...(run.firstOpponent !== undefined ? { firstOpponent: run.firstOpponent } : {}),
@@ -690,7 +711,7 @@ export function stressPlan(input: StressInput): StressReport {
   const signature = (x: StressReply): string => JSON.stringify({ ...x, firstMover: undefined, firstOpponent: undefined });
 
   const runsFor = (c: Candidate): Run[] => {
-    const firsts: ('me' | 'opponent')[] = c.kind === 'dodge' ? ['opponent'] : input.firstMover !== undefined ? [input.firstMover] : ['me', 'opponent'];
+    const firsts: ('me' | 'opponent')[] = c.kind === 'dodge' || c.kind === 'gather' ? ['opponent'] : input.firstMover !== undefined ? [input.firstMover] : ['me', 'opponent'];
     if (!c.partner) return firsts.map((f) => ({ firstMover: f, moveOrder: f === 'me' ? [me, c.player] : [c.player, me] }));
     const pair = [c.player, c.partner.player];
     return firsts.flatMap((f) =>

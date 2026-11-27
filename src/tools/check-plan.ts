@@ -112,7 +112,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
           'order; each order an attack or a transfer by who holds its target when it runs; kill rates, the guard ' +
           'army, each army moving once, commanders), against the replies each opponent could make with ONE deploy: ' +
           'its whole estimated deploy on one stack and an attack on a territory you hold or are about to take, its ' +
-          'whole deploy on a territory you attack, or every stack attacking at once; a stack you attack moving out ' +
+          'whole deploy on a territory you attack, or that plus its stacks beside it moving in first (`gather`, the bait: ' +
+          '`movedIn` names each), or every stack attacking at once; a stack you attack moving out ' +
           'first (a dodge: into its own territory, or a neutral or one of yours it can take — `dodges` lists each ' +
           'with the armies that got away and what your strike then hit); two opponents striking one of your ' +
           'territories together (teammates always; any two in a free-for-all when you lead — `jointFalls` gives the ' +
@@ -543,6 +544,10 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         const act =
           r.kind === 'reinforce'
             ? `deploys ${r.deploy} on territory ${r.deployTo} and holds`
+            : r.kind === 'gather'
+              ? `${r.deploy > 0 ? `deploys ${r.deploy} on territory ${r.deployTo} and ` : ''}moves ${(r.movedIn ?? [])
+                  .map((m) => `${m.armies} in from territory ${m.from}`)
+                  .join(' and ')} onto territory ${r.deployTo}`
             : r.kind === 'attack'
               ? `deploys ${r.deploy} on territory ${r.deployTo} and attacks territory ${r.to} with ${r.armies}`
               : r.kind === 'dodge'
@@ -576,6 +581,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         deploy: r.deploy,
         deployTo: name(r.deployTo),
         ...(r.kind === 'attack' || r.kind === 'dodge' || r.kind === 'chain' ? { attack: { from: name(r.from!), to: name(r.to!), armies: r.armies } } : {}),
+        // #593 5c: the stacks a gather moved into the target, and what arrived from each.
+        ...(r.movedIn ? { movedIn: r.movedIn.map((m) => ({ from: name(m.from), armies: m.armies })) } : {}),
         // #180: a chain's every territory, and a joint strike's second opponent.
         ...(r.path ? { path: r.path.map(name) } : {}),
         ...(r.partner !== undefined

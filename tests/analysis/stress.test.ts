@@ -106,6 +106,37 @@ describe('stressPlan', () => {
     expect(r.dodges).toEqual([expect.objectContaining({ stack: 3, exit: 4, exitOwner: 'own', harmful: false })]);
   });
 
+  describe('gather (#593 5c): its stacks beside a territory I attack move in first', () => {
+    // 1 (mine) ─ 2 (its 1) ─ 3 (its 24): the Tibet case, a 1-army territory beside its big stack.
+    const BAIT = makeMap(3, [[1, 2], [2, 3]]);
+    const entries = [mine(1, 4), foe(2, 1), foe(3, 24)];
+    const moves = [{ from: 1, to: 2, armies: 3 }];
+
+    it('reports my attack failing when its stack beside the target moves in first, with no deploy at all', () => {
+      const r = stress(BAIT, entries, { moves, opponents: [{ id: FOE, deploy: 0 }] });
+      expect(r.baseline.captured).toEqual([2]);
+      const g = r.replies.find((x) => x.kind === 'gather')!;
+      expect(g).toMatchObject({ opponent: FOE, deployTo: 2, deploy: 0, movedIn: [{ from: 3, armies: 23 }], firstMover: 'opponent' });
+      expect(g.capturesFailed).toEqual([2]);
+      expect(g.myArmies).toBeLessThan(0);
+    });
+
+    it('puts its deploy on the target too', () => {
+      const r = stress(BAIT, entries, { moves, opponents: [{ id: FOE, deploy: 12 }] });
+      expect(r.replies.find((x) => x.kind === 'gather')).toMatchObject({ deployTo: 2, deploy: 12, movedIn: [{ from: 3, armies: 23 }] });
+    });
+
+    it('is not tried when I am known to move first and the attack is my first order', () => {
+      const r = stress(BAIT, entries, { moves, opponents: [{ id: FOE, deploy: 0 }], firstMover: 'me' });
+      expect(r.replies.some((x) => x.kind === 'gather')).toBe(false);
+    });
+
+    it('is not tried when no stack of its beside the target can move', () => {
+      const r = stress(BAIT, [mine(1, 4), foe(2, 1), foe(3, 1)], { moves, opponents: [{ id: FOE, deploy: 0 }] });
+      expect(r.replies.some((x) => x.kind === 'gather')).toBe(false);
+    });
+  });
+
   it('tells a capture that is taken straight back from one that never happens', () => {
     // I take the neutral 3 with 3 (2 survive) beside the enemy's 4, which can reach it with 8.
     const r = stress(LINE4, [mine(1, 1), mine(2, 4), neutral(3, 2), foe(4, 4)], { moves: [{ from: 2, to: 3, armies: 3 }] });

@@ -14,7 +14,9 @@ What is true of the planner, the estimates, opponent tracking and profiles, pick
   weighted rounding battles are resolved at their expectation (`exact: false`). A territory whose
   armies are hidden is unknown to it whoever holds it. `src/analysis/stress.ts` runs a list of
   orders against each opponent's single-deploy replies (attack from one stack with its commander,
-  sit on a territory I attack, every stack at once, spread and concentrated; #180: a struck stack
+  sit on a territory I attack, every stack at once, spread and concentrated; #593 5c: `gather`, the deploy on a
+  territory I attack and every stack of its owner beside it moving in first — the bait — tried with it moving first
+  only, never when I am known to move first, `movedIn` naming each stack and what arrived; #180: a struck stack
   dodging first, two opponents on one territory — teammates, or any two when I lead a free-for-all
   — and under Multi-Attack each stack's best chain; Local Deployment bounds each deploy as the planner does, #293), under both move
   orders unless `first_mover` is given, with the same per-opponent deploy estimates as the
@@ -400,6 +402,12 @@ What is true of the planner, the estimates, opponent tracking and profiles, pick
   take. Not done (owner): "the leftover rides the widest capture". Follow-up: rule 6 has no step when the only enemy
   front lies past a conceded border and the last neutral is taken (golden s246: its interior transfers vanish).
   Golden: 16 of 6253 plans changed — 6 in their orders, 2 in a move's reason only, 8 by the warning only.
+- **The bait note (#593 item 5c, `baitNote` in `src/analysis/plan/report.ts`).** A "Not attacking" reason that says a
+  neighbour of mine could spare enough for an enemy territory (the cheap-looking ones) adds what that territory's owner's
+  stacks beside it can move in before an attack lands (each less its guard, in view only) and what taking it costs
+  then: "; its stacks beside it can move K in before an attack lands (…): N to take it then (#593)". Rationale only:
+  golden 99 of 6253 plans changed, none in deploys, moves or warnings. The same bait is `warapp_check_plan`'s `gather`
+  reply and the submit preview's "Possible bait" warning (`src/tools/bait.ts`).
 - **No advance into a bonus the plan concedes (#593 item 4, `src/analysis/plan/dead-advance.ts`).** An expansion capture
   (`tryExpand` in `plan/captures.ts`: pass 2's advances, the `balanced` greedy's advance slots, pass 3, #439's stage,
   rule 5b) is refused (`deadAdvanceOf`) when every positive bonus its territory is in has another member I hold that
