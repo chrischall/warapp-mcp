@@ -144,19 +144,15 @@ describe('#214 item 1: a lead step the sure cost cannot fund is retried at its b
     expect(valid(p, i)).toEqual([]);
   });
 
-  it('60/70: the same shape at the default kill rates (sure 26 and 38, bare 1 and 11)', () => {
-    // T3 (7 armies) is taken at its bare 11 from T4 (the sure 38 is out of reach). T2's bare step
-    // would then complete B901, whose frontier would fall next turn: R3 refuses it, and its skip
-    // line says so rather than a funding shortfall.
+  it('60/70: the same shape at the default kill rates (sure 26 and 38, bare 1 and 11): #593 takes neither step', () => {
+    // Before #593, T3 (7 armies) was taken at its bare 11 from T4 (the sure 38 out of reach) and T2's bare step
+    // refused by R3, so B901 stayed incomplete while the plan conceded its member T1. Now neither step of a bonus
+    // the plan concedes a member of is taken, and the deploy goes to B902.
     const i = input(MID, 7);
     const p = planTurn(i);
-    expect(attacks(p).filter((m) => m.to === 2 || m.to === 3).map((m) => [m.from, m.to, m.armies])).toEqual([[4, 3, 11]]);
-    expect(attacks(p).find((m) => m.to === 3)!.reason).toMatch(
-      /advances bonus B901 \(#901\).*sized for the 7 defenders there now: 38 would be sure even if player 20 deploys its ~16 there first, more than this turn can fund \(#214\)/,
-    );
-    expect(p.warnings.join('\n')).toMatch(/Attack on enemy T3 \(#3\) assumes its owner does not reinforce it first: if player 20 deploys its ~16 there, 11 attack 23 \(win chance 0%\); 38 would be sure\./);
-    expect(skipLine(p)).toMatch(/T2 \(#2\) \(player 20, 0 armies\): taking it needs 1 \(26 if player 20 deploys its ~16 there first\).*its bonus's step was refused: what survives the attack would not hold it next turn \(R3\)/);
-    expect(skipLine(p)).not.toMatch(/T3 \(#3\)/);
+    expect(attacks(p).filter((m) => m.to === 2 || m.to === 3)).toEqual([]);
+    expect(attacks(p).map((m) => m.to)).toContain(6);
+    expect(p.rationale.join('\n')).toMatch(/Do not take T3 \(#3\) toward bonus B901 \(#901\): this plan concedes its member T1 \(#1\).*\(#593\)\./);
     expect(valid(p, i)).toEqual([]);
   });
 
@@ -194,16 +190,16 @@ describe('#214 item 1: a lead step the sure cost cannot fund is retried at its b
     expect(valid(p, i)).toEqual([]);
   });
 
-  it('funds a lone bare step on a conceded source when the bonus cannot complete this turn', () => {
-    // B901 worth +20 and T3 at 12 (40 bare, out of reach): T2's bare step advances B901 alone, from
-    // the conceded T1, the deploy sized for the attack (#214's conceded allowance).
+  it('#593: no lone bare step on a conceded source when the bonus cannot complete this turn', () => {
+    // B901 worth +20 and T3 at 12 (40 bare, out of reach). Before #593 T2's bare step advanced B901 alone from
+    // the conceded T1, with a deploy there; now an advance of a bonus whose member T1 the plan concedes is
+    // refused, and the deploy goes to B902.
     const m = { ...g.map, bonuses: g.map.bonuses.map((x) => (x.id === 901 ? { ...x, value: 20 } : x)) };
     const i: PlanInput = { ...input(LOW, 12), graph: buildGraph(m) };
     const p = planTurn(i);
-    const t2 = attacks(p).find((x) => x.to === 2)!;
-    expect(t2).toMatchObject({ from: 1, armies: 1 });
-    expect(t2.reason).toMatch(/advances bonus B901 \(#901\).*sized for the 0 defenders there now: 52 would be sure/);
-    expect(p.rationale.join('\n')).toMatch(/T1 \(#1\) is conceded, but the deploy there leaves with the attack on T2 \(#2\)/);
+    expect(attacks(p).filter((x) => x.to === 2)).toEqual([]);
+    expect(p.deploys.find((d) => d.territoryId === 1)).toBeUndefined();
+    expect(p.rationale.join('\n')).toMatch(/Do not take T2 \(#2\) toward bonus B901 \(#901\): this plan concedes its member T1 \(#1\).*\(#593\)\./);
     expect(valid(p, i)).toEqual([]);
   });
 

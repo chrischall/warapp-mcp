@@ -7,6 +7,7 @@ import { armiesToTake, straightKills } from '../combat.js';
 import { neighborsOf } from '../graph.js';
 import { poolShortfall } from '../local-deploy.js';
 import { noLossNeutral } from './after-leftover.js';
+import { deadAdvanceLine, deadAdvanceOf } from './dead-advance.js';
 import { visibleState } from './observe.js';
 import { captureCost, type BonusPlan, type TwoStepPass } from './shared.js';
 import type { DeployBook } from './orders.js';
@@ -1242,16 +1243,39 @@ export function bonusPasses(
     if (!stopped.some((x) => x.t === t)) stopped.push({ t, holdCost: f.holdCost, income: next });
     return why;
   };
+  /** #593: the bonuses this turn's captures could complete (rule 4f's plans): their steps are no dead advance. */
+  const completableIds = new Set(tgt.plans.filter((p) => p.completable).map((p) => p.bonusId));
+  const completableNow = (id: number) => completableIds.has(id);
+  /** #593: every attack on `t` leaves a conceded border with no deploy: it spends only armies given up anyway. */
+  const givenUp = (t: number) =>
+    moves.every((m) => m.kind !== 'attack' || m.to !== t || (hd.conceded.has(m.from) && !(deployed.get(m.from) ?? 0)));
   /**
-   * Capture `t` for expansion, unless rule 4d's frontier budget stops it (then everything is undone).
+   * Capture `t` for expansion, unless rule 4d's frontier budget stops it (then everything is undone), or (#593) it
+   * advances only bonuses whose other member this plan concedes ({@link deadAdvanceOf}).
    * `bare` (#214): a lead step toward the closest bonus, which may be retried at its bare cost.
    * `force` (rule 5b, #218): the source, and the armies on it that stay out of the attack.
    */
   const tryExpand = (t: number, reason: string, bare = false, force?: { from: number; keep: number }): boolean => {
     const restore = snapshot();
     if (!tryCapture(t, reason, force, undefined, bare)) return false;
+    // #593: never advance a bonus whose other member this plan concedes (its armies go to the next candidate). A
+    // capture every attack of which leaves a conceded border with no deploy spends armies given up anyway; a
+    // no-loss one (#426) risks only what lands.
+    const dead = noLossNeutral(pc, tgt, t) ? null : deadAdvanceOf(pc, t, heldNow(), hd.conceded, tgt.deadBonuses, completableNow);
+    if (dead && !givenUp(t)) {
+      restore();
+      // Said once per territory and bonus (an outer undo may take the line back with the rest).
+      for (const d of dead) {
+        const line = deadAdvanceLine(pc, t, d);
+        if (!rationale.includes(line)) rationale.push(line);
+      }
+      return false;
+    }
     const why = outgrows(t);
-    if (why === null) return true;
+    if (why === null) {
+      ps.expanded.add(t);
+      return true;
+    }
     restore();
     if (leadSteps.has(t)) leadTry.set(t, { kind: 'frontier' });
     if (!rationale.includes(why)) rationale.push(why);
@@ -1353,5 +1377,5 @@ export function bonusPasses(
     // cost, once every step has had its sure try (a bare step never takes a sure one's deploy).
     if (closest) run(todo.filter((t) => leadSteps.has(t) && !captured.has(t)), true);
   };
-  return { snapshot, complete, unstaged, stage, stopped, stoppedLine, denied, outgrows, gateStop, tryExpand, advance };
+  return { snapshot, complete, unstaged, stage, stopped, stoppedLine, denied, outgrows, gateStop, givenUp, completableNow, tryExpand, advance };
 }

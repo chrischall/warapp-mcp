@@ -93,7 +93,9 @@ export function targetsPhase(
     threats.reinforcementAt,
     (t) => c4.targets.has(t) || c4.repulsed.has(t) || pc.truce.noTarget(t),
   );
-  return { ...c4, denials, emptyEnemies };
+  // #593: the bonuses an earlier plan of this turn advanced while conceding another member of them.
+  const deadBonuses: ReadonlyMap<number, readonly number[]> = input.deadAdvance ?? new Map();
+  return { ...c4, denials, emptyEnemies, deadBonuses };
 }
 
 /**

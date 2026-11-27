@@ -282,6 +282,8 @@ export interface PlanState {
   captureUndo: Map<number, () => void>;
   /** #431: conceded borders a doomed stack merged or attacked out of: no deploy goes there after. */
   doomedOut: Set<number>;
+  /** #593: the territories an expansion capture (`tryExpand`) took, for the dead-advance check on the finished plan. */
+  expanded: Set<number>;
   /** Captures that stage a positive bonus under rule 4c(c), with the bonus they stage. */
   staged: Map<number, number>;
   /** The expansion stack: the source of the first bonus pass's finishing attack (the leftover deploy's home). */
@@ -377,6 +379,7 @@ export function newPlanState(): PlanState {
     captureOrder: [],
     captureUndo: new Map(),
     doomedOut: new Set(),
+    expanded: new Set(),
     staged: new Map(),
     anchor: undefined,
     assumeGone: () => false,
