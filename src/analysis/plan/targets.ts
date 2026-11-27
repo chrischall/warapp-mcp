@@ -456,20 +456,25 @@ export function frontierCosts(
    * held; facing an enemy when a visible enemy is next to it, and then `need` is the deploys it
    * needs next turn to hold (the R3 arithmetic: threat = movable + max(deploy, growth) per player).
    */
+  const deployOnce = pc.opts.experiments?.includes('deploy-once') === true;
   const borderOf = (x: number, held: ReadonlySet<number>, have: number) => {
-    if (neighborsOf(g, x).every((n) => held.has(n))) return { border: false, enemy: false, need: 0 };
+    if (neighborsOf(g, x).every((n) => held.has(n))) return { border: false, enemy: false, need: 0, needStack: 0, player: -1 };
     // G2: next turn's threat — a player a Diplomacy card shields me from only this turn counts.
     const th = nextTurnAt(x, (n) => held.has(n));
-    if (!th) return { border: true, enemy: false, need: 0 };
+    if (!th) return { border: true, enemy: false, need: 0, needStack: 0, player: -1 };
     const units = mineSet.has(x) ? unitsAt(x) : 0;
-    return { border: true, enemy: true, need: Math.max(0, holdArmies(th.threat) - have - units) };
+    const need = Math.max(0, holdArmies(th.threat) - have - units);
+    if (!deployOnce) return { border: true, enemy: true, need, needStack: need, player: th.player };
+    const st = nextTurnAt(x, (n) => held.has(n), 0);
+    const needStack = st ? Math.min(need, Math.max(0, holdArmies(st.threat) - have - units)) : 0;
+    return { border: true, enemy: true, need, needStack, player: th.player };
   };
   /**
    * A border's cost in armies: {@link NEUTRAL_BORDER_COST}, plus its hold need when it faces an
    * enemy under a guarded goal (`expand` and `complete-bonus` ignore defence, as in R3).
    */
   const borderCost = (b: ReturnType<typeof borderOf>, withNeed = true) =>
-    b.border ? NEUTRAL_BORDER_COST + (guarded && withNeed ? b.need : 0) : 0;
+    b.border ? NEUTRAL_BORDER_COST + (guarded && withNeed ? b.needStack : 0) : 0;
   /**
    * The marginal frontier of adding `adds` to `base` (#71), in armies: the cost of every border
    * the capture touches after it (the captures and their held neighbours) minus their cost
@@ -537,12 +542,18 @@ export function frontierCosts(
     let borders = 0;
     let enemyBorders = 0;
     let holdCost = 0;
+    /** deploy-once: per opponent, the most its one floating deploy adds to any one border's need. */
+    const floating = new Map<number, number>();
     for (const x of [...held].sort(byNum)) {
       const b = borderOf(x, held, haveOf(x));
       borders += Number(b.border);
       enemyBorders += Number(b.enemy);
-      if (!conceded.has(x) || stood.has(x)) holdCost += b.need;
+      if (!conceded.has(x) || stood.has(x)) {
+        holdCost += b.needStack;
+        if (b.need > b.needStack) floating.set(b.player, Math.max(floating.get(b.player) ?? 0, b.need - b.needStack));
+      }
     }
+    for (const v of floating.values()) holdCost += v;
     return { borders, enemyBorders, holdCost };
   };
   /**

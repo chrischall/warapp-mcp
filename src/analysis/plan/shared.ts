@@ -322,6 +322,8 @@ export interface PlanOptions {
    * plain holds take at most half my income, 70% when behind. Tests of earlier hold rules use it.
    */
   holdCap?: boolean;
+  /** Research only (the arena, scripts/arena.mjs): named experimental rule changes, off by default. */
+  experiments?: readonly string[];
   /**
    * #421: `false` holds no strike share out of captures (`planShare` replans so when holding it would
    * lower next income). Default: in contact on a flat income, 25% of income goes to the strike stack.

@@ -27,15 +27,28 @@ export interface ShortGates {
  */
 export function shortGatesHorizon(pc: PlanCtx, threats: Pick<Threats, 'nextTurnAt' | 'holdArmies'>): ShortGates | undefined {
   if (!pc.auto || pc.profile.format !== '1v1' || pc.capturePaybackTurns <= SHORT_GATES_PAYBACK_TURNS) return undefined;
+  const ex = pc.opts.experiments ?? [];
+  if (ex.includes('no-short-gates')) return undefined;
+  const once = ex.includes('deploy-once');
   const ours = (n: number) => pc.mineSet.has(n);
   let deficit = 0;
+  let floating = 0;
   let player: number | undefined;
   for (const x of pc.mine) {
     const th = threats.nextTurnAt(x, ours);
     if (!th) continue;
     player ??= th.player;
-    deficit += Math.max(0, threats.holdArmies(th.threat) - pc.armiesOf(x) - pc.unitsAt(x));
+    const need = Math.max(0, threats.holdArmies(th.threat) - pc.armiesOf(x) - pc.unitsAt(x));
+    if (!once) {
+      deficit += need;
+      continue;
+    }
+    const st = threats.nextTurnAt(x, ours, 0);
+    const stack = st ? Math.min(need, Math.max(0, threats.holdArmies(st.threat) - pc.armiesOf(x) - pc.unitsAt(x))) : 0;
+    deficit += stack;
+    floating = Math.max(floating, need - stack);
   }
+  deficit += floating;
   if (player === undefined || deficit <= pc.income) return undefined;
   return { player, deficit, turns: SHORT_GATES_PAYBACK_TURNS };
 }

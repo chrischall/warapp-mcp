@@ -594,7 +594,8 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, val
    * #420 (owner decision of 2026-11-20, "One opponent's deploy"): an opponent deploys its income in one
    * place, so its full deploy sizes only its single most valuable border of mine (by protected value —
    * `valueOf` —, then its movable armies beside it, then id); each other border of mine its stacks face is
-   * sized at those stacks plus its largest top-up seen (`topUpOf`), never above the full deploy. `capAt`:
+   * sized at those stacks alone (#603: the self-play arena; before it, those stacks plus its largest top-up seen,
+   * which kept every border sized for nearly the whole deploy once the opponent had once dumped it on one). `capAt`:
    * by my territory, the players capped there and the figure; `primary`: each such player's full border.
    * Not on my commander's territory (rule 1k's worst case), nor for an untrusted estimate (#275) at that
    * border, a player with no top-up seen, or one facing a single border of mine. A quiet neighbour
@@ -621,7 +622,10 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, val
       for (const { t } of quiet ? ranked : ranked.slice(1)) {
         if (pc.myCommanders.has(t) || untrustedAt(player, t) > 0) continue;
         const m = oneBorderMemo.capAt.get(t) ?? new Map<number, number>();
-        m.set(player, src.topUpOf.get(player)!);
+        // #603: the deploy floats once — a border other than the most valuable one holds against the stacks beside
+        // it alone (a quiet neighbour, #420's P1 amendment, keeps its largest top-up seen on every border).
+        const legacy = pc.opts.experiments?.includes('legacy-topup') === true;
+        m.set(player, quiet || legacy ? src.topUpOf.get(player)! : 0);
         oneBorderMemo.capAt.set(t, m);
       }
     }
@@ -642,7 +646,7 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, val
   const forceAt = (
     t: number,
     gone: (n: number) => boolean,
-    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean; solo?: boolean; nextTurn?: boolean; behind?: boolean },
+    o: { trend: boolean; allPlayers: boolean; pileOn?: boolean; full?: boolean; solo?: boolean; nextTurn?: boolean; behind?: boolean; deployCap?: number },
   ): Force | null => {
     const byPlayer = stacksAt(t, gone, o.trend, o.nextTurn === true, o.behind === true);
     // B2 (T2, plan/relations.ts): on a truce hold the partner attacks with its stacks alone — no
@@ -661,9 +665,10 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, val
           truced === player
             ? 0
             : deployReaching(player, [...p.stacks.map((x) => x.id), ...(p.behind ?? [])], Math.max(pc.deployOf(player), untrustedAt(player, t)));
-        // #420: off its most valuable border, the stack plus its largest top-up seen.
+        // #420/#603: off its most valuable border, the stack alone (a quiet neighbour: plus its largest top-up seen).
         const cap = oneBorder().capAt.get(t)?.get(player);
-        const deploy = cap !== undefined ? Math.min(full, cap) : full;
+        const capped = cap !== undefined ? Math.min(full, cap) : full;
+        const deploy = o.deployCap !== undefined ? Math.min(capped, o.deployCap) : capped;
         const growth = truced === player ? 0 : p.growth;
         const movable = p.stacks.reduce((n, x) => n + x.movable, 0);
         const add = Math.max(deploy, growth);
@@ -735,9 +740,16 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, val
    * {@link threatAt} for next turn (G2): the same force, with the players a Diplomacy card shields me
    * from only this turn counted again ({@link foeNext}). The same as threatAt when there is none.
    */
-  const nextTurnAt = (t: number, gone: (n: number) => boolean): { player: number; threat: number } | null => {
-    if (!returning.size && !behindNext) return threatAt(t, gone);
-    const f = forceAt(t, gone, { trend: true, allPlayers: true, solo: ps.soloHeld.has(t), nextTurn: true, behind: behindNext });
+  const nextTurnAt = (t: number, gone: (n: number) => boolean, deployCap?: number): { player: number; threat: number } | null => {
+    if (!returning.size && !behindNext && deployCap === undefined) return threatAt(t, gone);
+    const f = forceAt(t, gone, {
+      trend: true,
+      allPlayers: true,
+      solo: ps.soloHeld.has(t),
+      nextTurn: true,
+      behind: behindNext,
+      ...(deployCap !== undefined ? { deployCap } : {}),
+    });
     return f ? { player: f.player, threat: f.threat } : null;
   };
   /**
@@ -968,7 +980,7 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
       if (!rest.length) continue;
       const one = rest.length === 1;
       rationale.push(
-        `Player ${player} deploys its ~${full} in one place (#420): its full deploy is sized only on its most valuable border, ${label(top)}; ${rest.map(label).join(', ')} ${one ? 'is' : 'are'} sized at its stack beside ${one ? 'it' : 'them'} plus its largest top-up seen, +${capAt.get(rest[0]!)!.get(player)} (the most one of its stacks beside my land grew in a turn).`,
+        `Player ${player} deploys its ~${full} in one place (#420): its full deploy is sized only on its most valuable border, ${label(top)}; ${rest.map(label).join(', ')} ${one ? 'is' : 'are'} sized at its ${capAt.get(rest[0]!)!.get(player) ? `stack beside ${one ? 'it' : 'them'} plus its largest top-up seen, +${capAt.get(rest[0]!)!.get(player)} (the most one of its stacks beside my land grew in a turn)` : `stacks beside ${one ? 'it' : 'them'} alone: one deploy cannot land on two borders (#603)`}.`,
       );
     }
   }

@@ -80,14 +80,14 @@ const input = (over: Partial<PlanInput> = {}): PlanInput => ({
 });
 
 describe('#420: one opponent is sized at its full deploy on one border only', () => {
-  it('the most valuable border (T1, my +5) keeps the full deploy; T3 is sized at its stack plus the top-up', () => {
+  it('the most valuable border (T1, my +5) keeps the full deploy; T3 is sized at its stack alone (#603)', () => {
     const p = planTurn(input());
     const line = p.rationale.find((r) => r.includes('(#420)') && r.includes('most valuable border'));
     expect(line).toBeDefined();
     expect(line).toContain('T1 (#1)');
     expect(line).toContain('T3 (#3)');
-    expect(line).toContain('+2');
-    // T3: 4 movable + 2 = 6; 6 armies hold. T1: 5 movable + 9 = 14 needs a hold.
+    expect(line).toContain('stacks beside it alone');
+    // T3: 4 movable alone (#603); 6 armies hold. T1: 5 movable + 9 = 14 needs a hold.
     expect(p.warnings.some((w) => w.startsWith('T3 (#3)') && w.includes('could be taken'))).toBe(false);
     expect(p.warnings.some((w) => w.startsWith('T1 (#1)') && w.includes('could be taken'))).toBe(true);
   });
@@ -132,7 +132,7 @@ describe('#420: the full-deploy border is held before the leftover goes to a bor
   it('reads a top-up of 0, so T2 is sized at the bare stack', () => {
     expect(tracks3[0]!.topUp).toBe(0);
     const line = plan3().rationale.find((r) => r.includes('(#420)') && r.includes('most valuable border'));
-    expect(line).toContain('T1 (#1); T2 (#2) is sized at its stack beside it plus its largest top-up seen, +0');
+    expect(line).toContain('T1 (#1); T2 (#2) is sized at its stacks beside it alone');
   });
 
   it('T1 is held after all from the leftover, never conceded; the rest goes to T2', () => {

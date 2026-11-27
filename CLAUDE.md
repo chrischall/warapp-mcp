@@ -1368,7 +1368,13 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   track: every border keeps the whole deploy), under `enemyDeploy`, on my commander's territory, for an
   untrusted estimate (#275) there, or for an opponent beside a single border of mine. Golden: 49 of 6253
   plans changed, 16 in their orders (captures +3/−7, next income unchanged on all, concessions 6 fewer
-  and 3 more). **The full-deploy border is revived first** (review fix, `fullConceded` in `plan/leftover.ts`,
+  and 3 more). **#603 (DRAFT, owner approval pending; the self-play arena):** the top-up is a maximum, so once an
+  opponent had dumped its whole income on one stack every other border stayed sized for nearly its whole deploy
+  and the holds took every army; now each border other than the most valuable one is sized at the stacks beside it
+  alone (a quiet neighbour keeps its top-up on every border; `PlanOptions.experiments: ['legacy-topup']` restores
+  the old sizing for research). Arena (fog): today's planner 10 of 20 against the spreader bot, this 19 of 20; this
+  against today's planner 22 to 8 (30 games), 10 to 10 without fog. Golden: 147 of 6253 plans changed, 49 in
+  their orders, attack targets +7/−3, concessions fewer in 18 plans and more in 2. **The full-deploy border is revived first** (review fix, `fullConceded` in `plan/leftover.ts`,
   read through `Threats.oneBorder`): a top-up of 0 sizes a guard-only stack's other borders at no threat, so
   no border was short of its margin, the leftover's revival ("Hold … after all") did not run and the leftover
   went to a border nothing threatens while the most valuable one stayed conceded. When an opponent's
@@ -2903,6 +2909,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   at most `MAX_SEEN_ORDERS`), kept by `captureSeenTurn` (src/tools/decision-capture.ts → `recordSeenTurn`) on the
   resolved turn's entry from warapp_plan_turn (what-ifs too: a fact) and from the tool's `read_last_turn`, only when
   the GameTurn is the turn just before the one played. Attack results are not decoded. No planner reads it.
+- **The self-play arena (#603, `src/analysis/arena.ts`, `scripts/arena.mjs`, LOCAL research, never in CI).** Two bots play
+  a whole 1v1 on a synthetic world-like map (`arenaMap`: a grid with some diagonals and cut links, bonuses of 2–6
+  territories worth size − 1, neutrals of 2, a few wastelands of 10; three starts of 4; no luck, straight rounding,
+  60/70, guard on, base 5, no cards), each turn resolved by `simulateTurn`, the first mover alternating; with `fog`
+  each bot sees its own territories and their neighbours (`viewOf`). `plannerBot` calls `planTurn` as
+  warapp_plan_turn does (adapting, its tracks and income history; an `onPlan` hook sees every plan), `spreaderBot`
+  is a plain greedy expander. A game ends by elimination or at `maxTurns` on points (income, armies, territories).
+  Pure and deterministic. `PlanOptions.experiments` names research-only rule switches (off by default, every plan
+  byte-identical without them): `legacy-topup`, `deploy-once` (the frontier, gate budget and short-gates horizon
+  count the floating deploy once), `no-short-gates`, `no-gate-stop`, `no-frontier-veto`. Results and the proposed
+  smaller rule set: `docs/PLAN-STREAMLINE.md`.
 - **Calibration harness (#318, `scripts/calibrate.mjs`, LOCAL dev script, never in CI; its body is
   `src/tools/calibration-harness.ts` since #569, which `warapp_calibration`'s `harness: true` also runs).** Runs on
   the built `dist/**` over the data dir and prints aggregates only (no id, no name). Pure parts in

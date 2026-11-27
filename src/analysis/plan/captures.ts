@@ -1148,6 +1148,7 @@ export function bonusPasses(
    */
   const gateStop = (t: number): string | null => {
     if (pc.profile.format !== '1v1' || !guarded || inFocus(t)) return null;
+    if (pc.opts.experiments?.includes('no-gate-stop')) return null;
     const held = heldNow();
     if (completedBy(held).some((id) => g.bonusById.get(id)!.value > 0 && bonusTs.get(id)!.includes(t))) return null;
     const stays = (x: number) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0));
@@ -1193,6 +1194,7 @@ export function bonusPasses(
    */
   const outgrows = (t: number): string | null => {
     if (!guarded || inFocus(t)) return null;
+    if (pc.opts.experiments?.includes('no-frontier-veto')) return null;
     const held = heldNow();
     if (completedBy(held).some((id) => g.bonusById.get(id)!.value > 0 && bonusTs.get(id)!.includes(t))) return null;
     const stays = (x: number) => (mineSet.has(x) ? stayAt(x) : (survivorsAt.get(x) ?? 0));
