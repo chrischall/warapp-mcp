@@ -140,7 +140,7 @@ import { confidentHabits, counterOf, neighboursOf, readOpponents, type OpponentR
 import { mapOf } from './map.js';
 import { PACE_TURNS } from '../analysis/game-lessons.js';
 import { profileFormatOf } from '../analysis/opponent-profile.js';
-import { fogPaceFor, mapMatchOf, mapRecordFor, outlookCalibrationFor, paceView } from './past-games.js';
+import { fogPaceFor, mapMatchOf, mapRecordFor, outlookCalibrationFor, paceView, trackCalibrationFor } from './past-games.js';
 import { defineGatedWrite, requireMySeat, sendAndVerify } from './write-kit.js';
 import { resolveBonus, resolveTerritory } from './resolve.js';
 import {
@@ -2031,6 +2031,7 @@ export async function livePlanSetup(
   // #436: past games' estimate ÷ truth per coverage band calibrates the outlook's income estimates (its income
   // lean and the surrender line only; the planner acts on winning and losing, which never read it).
   const calibration = await outlookCalibrationFor(ctx.dataDir, a.env, profileFormatOf(game.players));
+  const trackCalibration = await trackCalibrationFor(ctx.dataDir, a.env, profileFormatOf(game.players));
   const outlookInput = {
     graph,
     me: me.id,
@@ -2088,8 +2089,9 @@ export async function livePlanSetup(
     // #166: the opponent's opening simulated from the starts the award proved, as the prior.
     ...(opening ? { opening } : {}),
     ...(mapPace ? { mapPace } : {}),
-    // #568: the same calibration raises each tracked figure by its coverage band's damped factor.
-    ...(calibration ? { trackCalibration: calibration } : {}),
+    // #568: this format's own calibration raises each tracked figure by its coverage band's damped factor
+    // (none in a 1v1, where the fog prior already lifts the tracker: trackCalibrationFor).
+    ...(trackCalibration ? { trackCalibration } : {}),
     // #164: an opponent's Reinforcement card, from the turn the card clock says one can be in hand.
     ...(opponentReinforcement(game.settings, hand) ? { reinforcement: opponentReinforcement(game.settings, hand)! } : {}),
     // #427: the Reinforcement plays seen in the turns' orders (card plays not fogged): a play restarts the clock.
@@ -2624,7 +2626,7 @@ async function commanderCheck(
   // #419: the past winners' pace, as the plan reads it.
   const mapPace = await fogPaceFor(ctx.dataDir, undefined, a.game.settings?.mapId ?? a.map.id, mapMatchOf(profileFormatOf(a.game.players), a.game.settings), a.turn === null ? null : a.turn - 1);
   // #568: past games' calibration of the tracked figures, as the plan reads it.
-  const trackCalibration = await outlookCalibrationFor(ctx.dataDir, undefined, profileFormatOf(a.game.players));
+  const trackCalibration = await trackCalibrationFor(ctx.dataDir, undefined, profileFormatOf(a.game.players));
   // stressOpponents reads a static seat's territories as neutrals (#270), on its own `board` too.
   const so = stressOpponents({
     graph,
