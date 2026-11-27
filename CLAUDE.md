@@ -2871,6 +2871,17 @@ threat-aware planner), `docs/PLAN-PLANNER-2.md` (phase 6, a smarter planner, fro
   tracked, prior, stated, blend, thin, known, card — figures only), the report scores each (`byStage`) and `trackedWhatIf` says what
   dividing the tracked figure by its coverage band's geomean (other games only, at least `WHAT_IF_MIN_SAMPLES`) would have read at
   each damping in `WHAT_IF_DAMPINGS`, overall and by band. #586: each logged estimate also keeps the tracker's own figures (`LoggedEstimate.track`, `loggedTrack`: its income, each income-window turn's observed/raw/low/high/cap/coverage with any capture floor, `accounted` or fog-capture income, and the carry lowered, rise cap, #567 low, tripwire step, #250 jump verdict and top-up — numbers only, no warning or note text), so a finished game shows which step held an estimate down after a jump; it outlives compaction, which drops the replay input that also holds the track. The report's `heldBy` (`heldByOf`) names, per estimate under ⅔ of the truth, the step that held it (`HELD_BY`: after-tracker, rise-cap, tripwire, window, ceiling, ambiguous, readings, no-track; `unlogged` before #586), and each sample row carries it. Reported only (P1).
+- **Options for the calling model (#606, `src/analysis/options.ts`, pure; DRAFT).** `warapp_plan_turn`'s `strategy: true`
+  adds `strategy`: `options.captures` (`turnOptions`: each territory in view beside mine and not mine or a teammate's, its
+  defenders, `needs` = `armiesToTake`, `needsIfReinforced` with its owner's whole deploy estimate landed, `from` — my
+  territories beside it and their armies less the guard —, the bonuses it completes or advances, `incomeGain`, the new
+  player-facing borders it opens; ranked by income per army, then the nearest advance, then cost; at most `MAX_OPTIONS`
+  (15)), `options.holds` (each border facing a player: what to add against its stacks alone and against those plus one whole
+  deploy, and what it protects), `alternatives` (`alternativePlans`: the default plan, then `planTurn` under
+  `ALTERNATIVE_GOALS` (expand, defend), identical orders listed once, each with `stress` — `stressPlan` at the plan's own
+  deploy estimates, no look-ahead, one reply per opponent: `safe`, `harmful`, `considered`, `worst`) and `STRATEGY_NOTE`.
+  The plan, its `orders` and every other field are unchanged (asserted); off by default. An override is logged with its
+  reason (#412), so the model's choices can be measured against the default.
 - **The turn history (#570, `warapp_turn_history`, read-only).** Reads the game's decision log: per turn the board seen
   (`boardSummary`, or whole with `board: true`), `ownerChanges` against the turn before (in view both times), every
   player's visible orders (`seen`), plan, sent and `differsFromPlan` (`ordersDiffer`), outcome, cards, events, truth and

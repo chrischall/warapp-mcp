@@ -206,6 +206,23 @@ describe('warapp_plan_turn', () => {
     expect(payload<Record<string, unknown>>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }))).not.toHaveProperty('pace');
   });
 
+  it('#606: strategy adds ranked options and stress-tested alternative plans, never changing the plan', async () => {
+    h = await liveHarness({ feed: [game('Playing', { numberOfTurns: '4' })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
+    const plain = payload<PlanPayload & { strategy?: unknown }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann' }));
+    expect(plain).not.toHaveProperty('strategy');
+    type Strat = {
+      options: { captures: { target: number; needs: number | null }[]; holds: unknown[] };
+      alternatives: { name: string; deploys: unknown[]; stress?: { safe: boolean | null } }[];
+      note: string;
+    };
+    const p = payload<PlanPayload & { strategy: Strat }>(await h.call('warapp_plan_turn', { game_id: GAME, player: 'Ann', strategy: true }));
+    expect(p.orders).toEqual(plain.orders);
+    expect(p.strategy.alternatives[0]!.name).toBe('default');
+    expect(p.strategy.alternatives.length).toBeGreaterThanOrEqual(1);
+    expect(p.strategy.options.captures.length).toBeGreaterThan(0);
+    expect(p.strategy.note).toMatch(/Mechanics, not advice/);
+  });
+
   it('warns that the income may be off when a setting the model does not compute is on (#38)', async () => {
     const settings = { ...(lobbyFixture().settings as Record<string, unknown>), ArmyCap: 3 };
     h = await liveHarness({ feed: [game('Playing', { settings })], warapp: routes({ [Method.GetLatestGameInfo]: board(BOARD) }) });
