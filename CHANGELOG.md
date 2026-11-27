@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.19.0](https://github.com/chrischall/warapp-mcp/compare/v0.18.0...v0.19.0) (2026-11-27)
+
+
+### Features
+
+* **estimates:** calibrate the tracked income by past games' coverage band ([#568](https://github.com/chrischall/warapp-mcp/issues/568)) ([#581](https://github.com/chrischall/warapp-mcp/issues/581)) ([c0d6bd3](https://github.com/chrischall/warapp-mcp/commit/c0d6bd3aca355366486d0a98ed6cbe43fb891566))
+* **planner:** break an opponent's partly fogged bonus in a 1v1, sized for a partial deploy ([#593](https://github.com/chrischall/warapp-mcp/issues/593)) ([#597](https://github.com/chrischall/warapp-mcp/issues/597)) ([88f0570](https://github.com/chrischall/warapp-mcp/commit/88f05704cf7f33f2e88dbb11f78c3794db0880eb))
+
+
+### Bug Fixes
+
+* **deps:** bump undici from 8.12.4 to 8.13.1 in the production-dependencies group ([#595](https://github.com/chrischall/warapp-mcp/issues/595)) ([4aed6f7](https://github.com/chrischall/warapp-mcp/commit/4aed6f75b276db1fc9563c3b8d3bb7a0c7ad7a4e))
+* **planner:** never advance a bonus the same plan concedes a member of ([#593](https://github.com/chrischall/warapp-mcp/issues/593)) ([#598](https://github.com/chrischall/warapp-mcp/issues/598)) ([9fafdf5](https://github.com/chrischall/warapp-mcp/commit/9fafdf5492f0d1ea67731de203a34ce797541207))
+* **planner:** value a held bonus's hub member for the members its fall takes ([#593](https://github.com/chrischall/warapp-mcp/issues/593)) ([#600](https://github.com/chrischall/warapp-mcp/issues/600)) ([22690ac](https://github.com/chrischall/warapp-mcp/commit/22690acd5da98e73dd08290728021f6d65ec8749))
+
 ## [0.18.0](https://github.com/chrischall/warapp-mcp/compare/v0.17.0...v0.18.0) (2026-11-25)
 
 
