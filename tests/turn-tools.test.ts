@@ -221,6 +221,11 @@ describe('warapp_plan_turn', () => {
     expect(p.strategy.alternatives.length).toBeGreaterThanOrEqual(1);
     expect(p.strategy.options.captures.length).toBeGreaterThan(0);
     expect(p.strategy.note).toMatch(/Mechanics, not advice/);
+    const sit = (p.strategy as unknown as { situation: { me: { territories: number }; territories: { owner: unknown }[]; opponents: unknown[]; past: unknown[] } }).situation;
+    expect(sit.me.territories).toBeGreaterThan(0);
+    expect(sit.territories.some((t) => t.owner === 'me')).toBe(true);
+    expect(Array.isArray(sit.opponents) && Array.isArray(sit.past)).toBe(true);
+    expect((p.strategy as unknown as { steps: string[] }).steps.join(' ')).toMatch(/warapp_check_plan/);
   });
 
   it('warns that the income may be off when a setting the model does not compute is on (#38)', async () => {

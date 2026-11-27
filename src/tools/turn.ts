@@ -101,6 +101,7 @@ import { planBomb } from '../analysis/bomb-plan.js';
 import { planBlockade, planWall } from '../analysis/blockade-plan.js';
 import type { KnownIncome, TurnPlan } from '../analysis/plan/shared.js';
 import { alternativePlans, STRATEGY_NOTE, stressSummary, turnOptions } from '../analysis/options.js';
+import { OWN_PLAN_STEPS, situation } from '../analysis/situation.js';
 import { stressPlan } from '../analysis/stress.js';
 import { breaksInOrders } from '../mod-alliances.js';
 import { allyAttackLine, attacksOnAllies, MOD_ALLIANCES_NOTE, modAllianceWarnings, readModAlliances, type ModAlliancesRead } from './mod-alliances.js';
@@ -2240,6 +2241,8 @@ export async function livePlanSetup(
     effect, sanction, incomeCap, capUnknown: incomeOnBoard.capUnknown === true, estimates, trip, teams, commerce, statedShifts: shifts,
     // #427: the last turn's Reinforcement plays, for warapp_plan_turn to keep (only when plays show).
     seenPlays: playsShown ? lastPlays : undefined,
+    // #606: the earlier boards (and my orders on them) for the strategy view's summary of past turns.
+    pastBoards: history.boards,
   };
 }
 
@@ -3125,8 +3128,15 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
               'borders facing a player it opens; `options.holds` — each border facing a player: the armies to add to hold against ' +
               'the stacks beside it alone and against them plus one whole deploy, and the held bonuses it protects; and ' +
               '`alternatives` — this plan and the planner under the goals expand and defend, each with its orders, what it expects ' +
-              "and its stress test against the opponents' replies (safe, harmful replies, the worst one). Choose or combine, then " +
-              'check with warapp_check_plan; warapp_submit_turn keeps an override reason in the decision log. Default false.',
+              "and its stress test against the opponents' replies (safe, harmful replies, the worst one). For planning on your own it " +
+              'also gives `situation`: my income (and its history), land and bonuses; every territory in view and every hidden one ' +
+              'beside me, nearest first, with name, owner, armies, special units, bonuses and neighbours; each bonus that matters ' +
+              '(who holds how much of it, what finishing it costs, the members in reach); each opponent\'s income estimate with its ' +
+              'source, visible and tracked figures, range, frontier coverage and per-turn observed deploys, its bonuses and its ' +
+              'stacks beside me; what changed since last turn; and each earlier turn kept (every side in view, its bonuses, my ' +
+              'orders). `steps` names the tools to test and dig deeper (warapp_check_plan, warapp_turn_history, ' +
+              'warapp_track_opponents, warapp_profile_opponents, …). Choose, combine or build your own, then check with ' +
+              'warapp_check_plan; warapp_submit_turn keeps an override reason in the decision log. Default false.',
           ),
         view: viewArg(
           VIEWS,
@@ -3564,6 +3574,32 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
                 ...(setup.teams ? { friends: new Set([...setup.teams].filter(([id, t]) => id !== me.id && t === setup.teams!.get(me.id)).map(([id]) => id)) } : {}),
               }),
               alternatives: alternativePlans(setup.input, plan, stress),
+              situation: situation({
+                graph,
+                board,
+                ...(setup.input.previousBoard ? { previousBoard: setup.input.previousBoard } : {}),
+                me: me.id,
+                ...(setup.teams ? { friends: new Set([...setup.teams].filter(([id, t]) => id !== me.id && t === setup.teams!.get(me.id)).map(([id]) => id)) } : {}),
+                rates: { offensiveKillRate: settings.offensiveKillRate, defensiveKillRate: settings.defensiveKillRate },
+                guard: settings.oneArmyStandsGuard !== false,
+                myIncome: income,
+                ...(setup.input.incomeHistory ? { incomeHistory: setup.input.incomeHistory } : {}),
+                pastBoards: setup.pastBoards,
+                opponents: estimates.map((e) => {
+                  const t = tracks?.find((x) => x.playerId === e.playerId);
+                  return {
+                    playerId: e.playerId,
+                    estimate: e.estimate,
+                    source: e.source,
+                    visibleIncome: e.base + e.bonusIncome,
+                    tracked: t?.income ?? null,
+                    range: e.thinEvidence ? { low: e.thinEvidence.lower, high: e.thinEvidence.upper } : null,
+                    coverage: t?.coverage?.share ?? null,
+                    ...(t ? { history: t.turns.map((x) => ({ turn: x.to, observed: x.observed })) } : {}),
+                  };
+                }),
+              }),
+              steps: OWN_PLAN_STEPS,
               note: STRATEGY_NOTE,
             };
           })()
