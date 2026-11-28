@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.22.1](https://github.com/chrischall/warapp-mcp/compare/v0.22.0...v0.22.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **check-plan:** the headroom table and the empty-border warning count my Airlifts ([#618](https://github.com/chrischall/warapp-mcp/issues/618)) ([#621](https://github.com/chrischall/warapp-mcp/issues/621)) ([4b71411](https://github.com/chrischall/warapp-mcp/commit/4b714113da40526e4b40c0f3dc8a2aaa8d8a4390))
+* **estimates:** no track calibration in a 1v1, and only a format's own bands elsewhere ([#616](https://github.com/chrischall/warapp-mcp/issues/616)) ([9cf91e9](https://github.com/chrischall/warapp-mcp/commit/9cf91e9bf94cd3c41c577d1b9ebcd4199ba29b71))
+* **planner:** in a 1v1 in contact a floored home bonus takes the leftover before far advances ([#615](https://github.com/chrischall/warapp-mcp/issues/615)) ([084d446](https://github.com/chrischall/warapp-mcp/commit/084d4464704dd304370f6d840094f44872ce0421))
+* **submit:** the bait warning skips neutral targets ([#617](https://github.com/chrischall/warapp-mcp/issues/617)) ([#620](https://github.com/chrischall/warapp-mcp/issues/620)) ([92ec3d7](https://github.com/chrischall/warapp-mcp/commit/92ec3d705b8539e7f09d79ebc0556748ef550bc9))
+
 ## [0.22.0](https://github.com/chrischall/warapp-mcp/compare/v0.21.0...v0.22.0) (2026-11-27)
 
 
