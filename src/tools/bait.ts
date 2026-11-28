@@ -8,7 +8,7 @@
 import { armiesToTake, COMMANDER_STRENGTH, specialUnitStrength } from '../analysis/combat.js';
 import { neighborsOf, type MapGraph } from '../analysis/graph.js';
 import type { PlannerSettings } from '../analysis/plan/shared.js';
-import type { LiveTerritory } from '../live.js';
+import { OWNER_NEUTRAL, type LiveTerritory } from '../live.js';
 import type { MoveMode } from './order-options.js';
 
 type Place = { id: number; name: string };
@@ -37,11 +37,14 @@ export function baitAttackWarning(input: BaitInput): string | undefined {
     ...(settings.offensiveKillRate !== undefined ? { offensiveKillRate: settings.offensiveKillRate } : {}),
     ...(settings.defensiveKillRate !== undefined ? { defensiveKillRate: settings.defensiveKillRate } : {}),
   };
-  /** My attacks by target, in the order first listed: a player's visible territory, not a teammate's unless asked. */
+  /**
+   * My attacks by target, in the order first listed: a player's visible territory, not a teammate's unless asked.
+   * Never a neutral's (#617: the live board's owner 0, whose stacks never move) or a hidden or pickable one (below 0).
+   */
   const byTarget = new Map<number, { from: Place; to: Place; armies: number }>();
   for (const m of input.moves) {
     const t = standing.get(m.to.id);
-    if (m.mode === 'transfer-only' || !t || t.fogged || t.owner === me || t.owner < 0) continue;
+    if (m.mode === 'transfer-only' || !t || t.fogged || t.owner === me || t.owner <= OWNER_NEUTRAL) continue;
     if (teammates.has(t.owner) && m.attackTeammates !== true) continue;
     const power = m.armies + (m.commander ? COMMANDER_STRENGTH : 0);
     const g = byTarget.get(m.to.id);
