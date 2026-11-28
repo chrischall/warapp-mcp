@@ -3,13 +3,14 @@
 // sized for that opponent's whole fog-prior deploy (~44). An opponent whose last 3 observed turns, in a row and
 // ending at its newest board, each grew a stack beside my land by at most 1 is read like #420's quiet
 // neighbour: every border facing it is sized at its stacks there plus its largest top-up seen, so what stands
-// above that goes to captures. The board below is the corner of that game in miniature (ids from the real
+// above that goes to captures; its most valuable border still holds against half the deploy (the next turn, the
+// opponent put ~12 of a ~17 deploy beside that stack). The board below is the corner of that game in miniature (ids from the real
 // map, the rest made up): T232 the stack, T214 the opponent's stack of 2, T215 and T216 neutrals of 1.
 import { describe, expect, it } from 'vitest';
 import type { TerritoryState } from '../../src/board.js';
 import { buildGraph } from '../../src/analysis/graph.js';
 import { trackOpponents, type TurnBoard } from '../../src/analysis/opponents.js';
-import { QUIET_DEPLOY_MAX, QUIET_DEPLOY_TURNS, quietBorder } from '../../src/analysis/plan/threats.js';
+import { QUIET_DEPLOY_MAX, QUIET_DEPLOY_SHARE, QUIET_DEPLOY_TURNS, quietBorder, quietFloor } from '../../src/analysis/plan/threats.js';
 import { planTurn, type PlanInput, type PlannerSettings, type TurnPlan } from '../../src/analysis/planner.js';
 import type { GameMap } from '../../src/normalize.js';
 import { board, mine, neutral } from './helpers.js';
@@ -24,6 +25,8 @@ describe('quietBorder: the last 3 observed turns, in a row and fresh, each at mo
   it('reads a quiet run', () => {
     expect(QUIET_DEPLOY_TURNS).toBe(3);
     expect(QUIET_DEPLOY_MAX).toBe(1);
+    expect(QUIET_DEPLOY_SHARE).toBe(0.5);
+    expect([quietFloor(39), quietFloor(44), quietFloor(-3)]).toEqual([20, 22, 0]);
     expect(quietBorder({ lastTurn: 7, turns: [t(3, 5), t(4, 1), t(5, 0), t(6, 0)] })).toEqual({ deployTurns: 3, most: 1 });
   });
   it('refuses a short, loud, broken, stale or unread run', () => {
@@ -103,10 +106,12 @@ describe('the Italy corner: a stack beside a quiet border spreads its surplus', 
   it('sends what stands above the quiet threat into the neighbours, and deploys nothing there', () => {
     const p = plan(quiet);
     expect(p.moves.filter((m) => m.from === 232 && m.kind === 'attack').map((m) => m.to).sort()).toEqual([214, 215, 216]);
-    expect(sentFrom(p, 232)).toBeGreaterThanOrEqual(20);
+    // Main sends 3 and keeps 38. The floor keeps what holds against its stack plus half the ~39 (2 + 20 attackers).
+    expect(sentFrom(p, 232)).toBe(10);
     expect(deployedTo(p, 232)).toBe(0);
+    expect(24 - sentFrom(p, 232)).toBe(14);
     expect(p.rationale.join('\n')).toContain(
-      'Player 20 has put at most 1 army beside my land in each of its last 3 turns (a quiet border, owner request 2026-11-28): T232 (#232), T233 (#233) are sized at its stack beside them plus its largest top-up seen, +1, not its ~39 deploy',
+      'Player 20 has put at most 1 army beside my land in each of its last 3 turns (a quiet border, owner request 2026-11-28): T232 (#232), T233 (#233) are sized at its stack beside them plus its largest top-up seen, +1, not its ~39 deploy (T232 (#232), its most valuable, against half of it, 20)',
     );
   });
 

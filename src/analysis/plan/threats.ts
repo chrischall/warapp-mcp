@@ -452,6 +452,13 @@ export function threatSources(pc: PlanCtx, ps: PlanState, input: PlanInput) {
 export const QUIET_DEPLOY_TURNS = 3;
 /** The most one stack of its beside my land may grow in a turn of a quiet run: one army is no build-up. */
 export const QUIET_DEPLOY_MAX = 1;
+/**
+ * The share of its deploy a quiet border's most valuable border of mine still holds against (owner decision
+ * 2026-11-28, after the Italy case's next turn: the opponent put ~12 of a ~17 deploy beside that stack).
+ */
+export const QUIET_DEPLOY_SHARE = 0.5;
+/** What a quiet border's most valuable border holds against beyond the stacks there: {@link QUIET_DEPLOY_SHARE} of `deploy`. */
+export const quietFloor = (deploy: number) => Math.ceil(Math.max(0, deploy) * QUIET_DEPLOY_SHARE);
 
 /**
  * A quiet border (owner request 2026-11-28, the Italy case: a 24-army stack sat a whole turn guarding a
@@ -660,7 +667,11 @@ export function threatForces(pc: PlanCtx, ps: PlanState, src: ThreatSources, val
         // #603: the deploy floats once — a border other than the most valuable one holds against the stacks beside
         // it alone (a quiet neighbour, #420's P1 amendment, keeps its largest top-up seen on every border).
         const legacy = pc.opts.experiments?.includes('legacy-topup') === true;
-        m.set(player, quiet || legacy ? src.topUpOf.get(player)! : 0);
+        const top = src.topUpOf.get(player)!;
+        // A quiet border (owner, 2026-11-28): its most valuable border still holds against a share of the deploy.
+        const q = src.quietOf.get(player);
+        const floor = q && 'deployTurns' in q && t === ranked[0]!.t ? quietFloor(pc.deployOf(player)) : 0;
+        m.set(player, quiet || legacy ? Math.max(top, floor) : 0);
         oneBorderMemo.capAt.set(t, m);
       }
     }
@@ -1001,9 +1012,13 @@ export function borderThreats(pc: PlanCtx, ps: PlanState, input: PlanInput, src:
       const sized = [...capAt].filter(([t, m]) => borders.has(t) && m.has(player)).map(([t]) => t).sort(byNum);
       if (!sized.length) continue;
       const these = `${sized.map(label).join(', ')} ${sized.length === 1 ? 'is' : 'are'} sized at its stack beside ${sized.length === 1 ? 'it' : 'them'} plus its largest top-up seen, +${src.topUpOf.get(player)}, not its ~${pc.deployOf(player)} deploy`;
+      const most = sized
+        .map((t) => ({ t, at: capAt.get(t)!.get(player)! }))
+        .filter((x) => x.at > src.topUpOf.get(player)!)
+        .map((x) => `${label(x.t)}, its most valuable, against half of it, ${x.at}`);
       rationale.push(
         'deployTurns' in q
-          ? `Player ${player} has put at most ${q.most} ${q.most === 1 ? 'army' : 'armies'} beside my land in each of its last ${q.deployTurns} turns (a quiet border, owner request 2026-11-28): ${these}, so what stands above that is free for captures, until it builds up beside me.`
+          ? `Player ${player} has put at most ${q.most} ${q.most === 1 ? 'army' : 'armies'} beside my land in each of its last ${q.deployTurns} turns (a quiet border, owner request 2026-11-28): ${these}${most.length ? ` (${most.join('; ')})` : ''}, so what stands above that is free for captures, until it builds up beside me.`
           : `Player ${player} ${q.attacks ? `has attacked me on ${q.attacks} of ${q.contactTurns} contact turns, and not since it was read quiet` : `has not attacked me in ${q.contactTurns} contact turns`} (#420, P1 amended: a quiet neighbour): ${these}, until its first attack on me.`,
       );
     }

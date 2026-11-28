@@ -919,13 +919,15 @@ What is true of the planner, the estimates, opponent tracking and profiles, pick
   three turns)** reaches the same sizing from deploys, not the profile: `quietBorder` (`plan/threats.ts`, pure) reads
   the opponent's last `QUIET_DEPLOY_TURNS` (3) observed turns, in a row and ending at its newest board, each with a
   top-up beside my land (`ObservedTurn.topUp`) of at most `QUIET_DEPLOY_MAX` (1); then every border facing it is sized
-  at its stacks there plus its largest top-up seen, and what stands above that goes to captures (a "a quiet border,
-  owner request 2026-11-28" line). Not under `enemyDeploy`; a turn with no top-up read breaks the run. Its estimate
-  is unchanged (past FFAs read low, never high: 79 samples, median 0.49 × the truth), so the risk is taken knowingly.
-  Golden: 30 of 6253 plans changed, 13 in their orders (19 by this rule, 11 by the lead step's note below), attack
-  targets +3/−0, 5 fewer concessions, next income lower on none where both plans state it. The lead step's "could spare" note (#203/#212) now says
-  when the spare is what a held border keeps once the step's target is taken, and the size the step needed when
-  short, so it no longer reads against "can spare 0".
+  at its stacks there plus its largest top-up seen, except its most valuable border, which still holds against
+  `QUIET_DEPLOY_SHARE` (0.5) of its deploy (`quietFloor`; owner decision the same day: the Italy opponent's next turn
+  put ~12 of a ~17 deploy beside that stack), and what stands above that goes to captures (a "a quiet border, owner
+  request 2026-11-28" line). Not under `enemyDeploy`; a turn with no top-up read breaks the run. Its estimate is
+  unchanged (past FFAs read low, never high: 79 samples, median 0.49 × the truth). Golden: 30 of 6253 plans changed,
+  8 in their orders (19 by this rule, 11 by the note below), attack targets +2/−2, 1 fewer concession, next income
+  lower on none where both plans state it. The lead step's "could spare" note (#203/#212) now says when the spare is
+  what a held border keeps once the step's target is taken, and the size the step needed when short, so it no longer
+  reads against "can spare 0".
   **Where the read is reported (part D, `src/tools/profile-reads.ts`, read-only, never throws):** one computation
   (`readOpponents`) serves `warapp_profile_opponents` and three reports, none of which any plan, price or verdict
   reads (the golden corpus is unchanged): `warapp_plan_turn`'s `reads` (each opponent in contact on the live board
