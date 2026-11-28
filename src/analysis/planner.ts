@@ -2945,6 +2945,8 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
     };
     /** #215, rule 0p.1: the contested units were held whole (where they fit) before the first advance. */
     let contestedDue = false;
+    /** Lost 1v1 (2026-11-27): the floored units took what was left before the first advance. */
+    let flooredDue = false;
     /** #275 (b): the contested units facing an untrusted opponent were held whole (where they fit) before the first capture. */
     let untrustedDue = false;
     candidates.forEach((c, i) => {
@@ -2961,6 +2963,14 @@ function planPass(input: PlanInput, pass: TwoStepPass): TurnPlan {
       if (oneVsOne && (c.kind === 'advance' || c.kind === 'stage' || c.kind === 'race') && !c.focus && !contestedDue) {
         contestedDue = true;
         settleContested(true);
+      }
+      // Lost 1v1 (2026-11-27): a home bonus that cannot be held whole was floored and the rest went to a
+      // bonus 21 armies from done; the opponent broke it with one stack. In a 1v1 in contact the floored
+      // units' borders take what is left before any advance that completes nothing (a #417 race still
+      // goes first: it ranks ahead of the holds by the owner's decision).
+      if (oneVsOne && (c.kind === 'advance' || c.kind === 'stage') && !c.focus && !flooredDue) {
+        flooredDue = true;
+        settleContested('floored');
       }
       if (completesNothing(c) && !c.focus && !unitsDue) {
         unitsDue = true;
