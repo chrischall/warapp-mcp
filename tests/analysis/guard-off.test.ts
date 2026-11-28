@@ -35,6 +35,17 @@ describe('guardOffExposure (#165)', () => {
     expect(r.emptied).toEqual([3]);
   });
 
+  it('counts an Airlift onto a border, before the moves (#618)', () => {
+    // 3 holds 0 beside the enemy on 4; 2 armies airlifted from 1 land on it before any move.
+    const b = board([mine(1, 3, ME), mine(2, 1, ME), mine(3, 0, ME), mine(4, 2, FOE), mine(5, 0, FOE), neutral(6, 2)]);
+    expect(guardOffExposure({ graph: G, board: b, me: ME, deploys: [], moves: [] }).emptied).toEqual([3]);
+    const lifted = guardOffExposure({ graph: G, board: b, me: ME, deploys: [], moves: [], airlifts: [{ from: 1, to: 3, armies: 2 }] });
+    expect(lifted.emptied).toEqual([]);
+    // An Airlift out of a border empties it: 3's 2 lifted away leave 0 beside the enemy.
+    const out = board([mine(1, 0, ME), mine(2, 1, ME), mine(3, 2, ME), mine(4, 2, FOE), mine(5, 0, FOE), neutral(6, 2)]);
+    expect(guardOffExposure({ graph: G, board: out, me: ME, deploys: [], moves: [], airlifts: [{ from: 3, to: 1, armies: 2 }] }).emptied).toEqual([3]);
+  });
+
   it('counts deploys and transfers in, and a commander that stays is not empty', () => {
     const b = board([mine(1, 0, ME), mine(2, 3, ME), mine(3, 2, ME), mine(4, 2, FOE), mine(5, 0, FOE), neutral(6, 2)]);
     const deployed = guardOffExposure({ graph: G, board: b, me: ME, deploys: [{ territoryId: 3, armies: 1 }], moves: [{ from: 3, to: 2, armies: 2 }] });

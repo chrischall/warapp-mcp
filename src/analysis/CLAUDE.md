@@ -629,7 +629,8 @@ What is true of the planner, the estimates, opponent tracking and profiles, pick
   neighbouring enemy stack that takes it (turn simulator, both move orders unless known; the attack is tried
   at every place in the zigzag the opponent can reach by holding it back behind filler orders — before my
   first order, between two, after my last — so a border my later orders drain is judged as drained; a commander walk of the plan's goes with its move, as
-  in warapp_check_plan's table on the same orders), the
+  in warapp_check_plan's table on the same orders; #618: in warapp_check_plan and the submit preview my Airlifts land
+  before the moves, as the stress test carries them out, and the guard-off empty-border warning counts them too), the
   bonuses it breaks and the bonus income one step behind; `warapp_plan_turn` and `warapp_check_plan` return it as
   `headroom` (`headroomView`, `src/tools/survival.ts`; #306: each row flags `belowMyIncome` and, against that opponent's
   own deploy estimate, `belowOpponentEstimate` with `opponentEstimate` — for a leader my income flags every row; the

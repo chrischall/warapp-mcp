@@ -754,9 +754,11 @@ export function guardOffWarnings(
   settings: GameSettings | undefined,
   deploys: readonly { territoryId: number; armies: number }[],
   moves: readonly { from: number; to: number; armies: number }[],
+  /** #618: my Airlift plays, after the deploys and before the moves. */
+  airlifts: readonly { from: number; to: number; armies: number }[] = [],
 ): string[] {
   if (settings?.oneArmyStandsGuard !== false) return [];
-  const r = guardOffExposure({ graph, board, me, friends, deploys, moves });
+  const r = guardOffExposure({ graph, board, me, friends, deploys, moves, airlifts });
   const name = namer(map);
   const out: string[] = [];
   if (r.emptied.length) {
@@ -4496,6 +4498,12 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
         const { claimed } = teamHandLeft(hand, teamCardClaims(board.teammateOrders, new Set(teammatesOf(game.players, me).map((p) => p.id))));
         const pickFrom = unclaimedFirst(hand, claimed);
         const plays = resolveCardPlays(map, pickFrom, rules, cardInputs);
+        /** #618: my Airlift plays, as the headroom table and the empty-border warning carry them out (before the moves). */
+        const submitAirlifts = plays.flatMap((p) =>
+          p.kind === 'Airlift' && p.targets?.from && p.targets.to
+            ? [{ from: p.targets.from.id, to: p.targets.to.id, armies: p.targets.armies ?? 0, ...(p.targets.commander ? { commander: true } : {}) }]
+            : [],
+        );
         // #186: an Order Delay's `before` names a move of this list (1-based); one past the last is the default.
         for (const p of plays) {
           if (p.before !== undefined && p.before > moves.length + 1) {
@@ -4803,6 +4811,7 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
             game.settings,
             deploys.map((d) => ({ territoryId: d.territory.id, armies: d.armies })),
             moves.map((m, i) => ({ from: m.from.id, to: m.to.id, armies: m.percent ? (options.estimates.get(i) ?? 0) : m.armies })),
+            submitAirlifts,
           ),
         );
         if (handUnknown) warnings.push(UNREADABLE_HAND);
@@ -4934,6 +4943,8 @@ export function registerTurnTools(server: McpServer, ctx: LiveContext, opts: { e
           settings: plannerSettings(game.settings),
           ...(subTeams ? { teams: subTeams } : {}),
           ...(plays.some((p) => p.kind === 'OrderPriority') ? { orderPriority: true } : {}),
+          // #618: the Airlifts land before the moves, as the stress test carries them out.
+          ...(submitAirlifts.length ? { airlifts: submitAirlifts } : {}),
         });
         warnings.push(...headroomWarnings(headroomRows, modelled, !teamsKnown));
         // #275 pattern 3: a border these orders leave below what the default plan leaves there (one plan, a warning).

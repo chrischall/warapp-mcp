@@ -45,6 +45,16 @@ describe('headroomTable (#275 a)', () => {
     ]);
   });
 
+  it('lands my Airlifts on the border before the moves (#618)', () => {
+    // 1 interior with 6, 2 the border with 1: airlifting 5 from 1 makes it 6 before the attack.
+    const entries = [mine(1, 6), mine(2, 1), foe(3, 3)];
+    const [bare] = table(LINE3, entries);
+    const [lifted] = table(LINE3, entries, { airlifts: [{ from: 1, to: 2, armies: 5 }] });
+    expect(bare).toMatchObject({ territory: 2, armies: 1 });
+    // 6 defenders need 10 attackers: 2 + 8.
+    expect(lifted).toMatchObject({ territory: 2, armies: 6, deploy: 8 });
+  });
+
   it('counts my deploys on the border', () => {
     // 15 defenders need 25 attackers: 2 + 23.
     const [row] = table(LINE3, [mine(1, 1), mine(2, 10), foe(3, 3)], { deploys: [{ territoryId: 2, armies: 5 }] });
