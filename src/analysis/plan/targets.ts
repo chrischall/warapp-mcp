@@ -62,6 +62,10 @@ export type LeadTry =
       reach: number;
       /** #212: a held border's hold still lacked this much once the step left (its spare is 0). */
       hold?: number;
+      /** What the step needed sent (its sure size while one was tried), when the source was short of it. */
+      need?: number;
+      /** The spare is what a held border keeps above its hold once the step's target is taken (#212). */
+      afterTake?: boolean;
       /** #212: with no source, why each neighbour of mine could not attack (by id). */
       blocked?: { from: number; why: LeadBlock }[];
     }

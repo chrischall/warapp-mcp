@@ -599,11 +599,13 @@ export function reportOffence(
                     }`
                   : tried.hold !== undefined
                     ? `; when its bonus's step was tried, ${label(tried.from)} holds its border, and with the step gone its hold needed ${tried.hold} more than it had; this turn's deploy could add at most ${tried.reach} there${local ? ' (Local Deployment)' : ''}: ${Math.max(0, tried.reach - tried.hold)} left for the attack`
-                    : `; when its bonus's step was tried, ${label(tried.from)} could spare ${tried.spare} for it and ${
+                    : `; when its bonus's step was tried, ${label(tried.from)} could spare ${tried.spare} for it${
+                        tried.afterTake ? ` (what it keeps above its own hold once ${label(n)} is taken)` : ''
+                      } and ${
                         tried.reach === 0
                           ? 'none of this turn\'s deploy could still reach it'
                           : `this turn's deploy could add at most ${tried.reach} there${local ? ' (Local Deployment)' : ''}: ${tried.spare + tried.reach} in all`
-                      }`;
+                      }${tried.need !== undefined && tried.need > tried.spare + tried.reach ? `, short of the ${tried.need} the step needed` : ''}`;
       const best = neighborsOf(g, n)
         .filter((x) => mineSet.has(x))
         .map((x) => ({ x, spare: spareNow(x, n) }))
