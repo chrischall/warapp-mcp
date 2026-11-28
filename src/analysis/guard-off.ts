@@ -34,6 +34,8 @@ export function guardOffExposure(args: {
   friends?: ReadonlySet<number>;
   deploys: readonly { territoryId: number; armies: number }[];
   moves: readonly { from: number; to: number; armies: number }[];
+  /** #618: my Airlift plays, after the deploys and before the moves (phase 43). */
+  airlifts?: readonly { from: number; to: number; armies: number }[];
 }): GuardOffExposure {
   const { graph, board, me } = args;
   const friends = args.friends ?? new Set<number>();
@@ -55,6 +57,12 @@ export function guardOffExposure(args: {
   const left = new Map<number, number>();
   for (const t of board.territories) if (isMine(t.territoryId)) left.set(t.territoryId, t.armies ?? 0);
   for (const d of args.deploys) if (left.has(d.territoryId)) left.set(d.territoryId, left.get(d.territoryId)! + d.armies);
+  for (const a of args.airlifts ?? []) {
+    if (!left.has(a.from) || !left.has(a.to)) continue;
+    const sent = Math.min(a.armies, left.get(a.from)!);
+    left.set(a.from, left.get(a.from)! - sent);
+    left.set(a.to, left.get(a.to)! + sent);
+  }
   for (const m of args.moves) {
     if (left.has(m.from)) left.set(m.from, Math.max(0, left.get(m.from)! - m.armies));
     if (left.has(m.to)) left.set(m.to, left.get(m.to)! + m.armies);

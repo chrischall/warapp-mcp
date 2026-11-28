@@ -752,6 +752,8 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
         ...(teams.size ? { teams } : {}),
         ...(first_mover !== undefined ? { firstMover: first_mover } : {}),
         orderPriority,
+        // #618: the Airlifts land before the moves, as the stress test above carries them out.
+        ...(airlifts.length ? { airlifts } : {}),
       });
       // #275 pattern 3: each border these orders leave below what the default plan leaves there (one plan per call).
       const belowPlan = await bordersBelowPlan(ctx, { game, map, me, turn, territories, info, history, teamsKnown, given: { deploys, moves } });
@@ -825,6 +827,7 @@ export function registerCheckPlanTool(server: McpServer, ctx: LiveContext): void
             to: m.to,
             armies: m.byPercent ? (report.baseline.log.find((e) => e.index === i)?.sent ?? 0) : m.armies,
           })),
+          airlifts,
         ),
         ...(refused.size
           ? [`These orders use ${[...refused].join(', ')}: war.app would refuse them in this game, and warapp_submit_turn does; the test ran them anyway.`]

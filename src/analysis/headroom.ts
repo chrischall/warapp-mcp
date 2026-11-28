@@ -52,6 +52,11 @@ export interface HeadroomInput {
   /** I play an Order Priority card this turn. */
   orderPriority?: boolean;
   /**
+   * #618: my Airlift plays, in order: after every deploy and before every move (phase 43), as the stress test
+   * carries them out, so a border an Airlift lands on is met with those armies.
+   */
+  airlifts?: readonly { from: number; to: number; armies: number; commander?: boolean }[];
+  /**
    * #270: static seats (src/analysis/static-seats.ts `staticSeats`): their territories are read as
    * neutrals, so they get no row, as the planner reads them.
    */
@@ -144,6 +149,7 @@ export function headroomTable(input: HeadroomInput): HeadroomRow[] {
       ...(input.settings ? { settings: input.settings } : {}),
       ...(teams ? { teams } : {}),
       ...(input.orderPriority ? { orderPriority: [me] } : {}),
+      ...(input.airlifts?.length ? { airlifts: input.airlifts.map((a) => ({ player: me, ...a })) } : {}),
     });
 
   /**
