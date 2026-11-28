@@ -549,6 +549,8 @@ export function captureHelper(
               spare: Math.max(0, spare(src)),
               reach: Math.max(0, spareAt(src)),
               ...(holdSource(src, t) && spare(src) < 0 ? { hold: -spare(src) } : {}),
+              ...(holdSource(src, t) && spare(src) >= 0 ? { afterTake: true } : {}),
+              need: tg.cost,
             };
       if (force) return false;
       if (tryCombined(t, reason)) return true;

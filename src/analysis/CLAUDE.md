@@ -914,7 +914,18 @@ What is true of the planner, the estimates, opponent tracking and profiles, pick
   track's `topUp`, #420 below; none seen: full sizing), with a "has not attacked me in N contact turns (#420, P1
   amended …)" line. Every other habit stays inform-only. Golden unchanged (no input carries it); counterfactual with
   every tracked opponent quiet: 399 plans, 78 orders, captures +19/−11, next income up on 7 and down on 3, 37 fewer
-  concessions and none more.
+  concessions and none more. **A quiet border (owner request 2026-11-28, DRAFT; the Italy case: a 24-army stack sat a
+  whole turn guarding a bonus against a fog-prior ~44 from an opponent that had put 0 or 1 armies beside my land for
+  three turns)** reaches the same sizing from deploys, not the profile: `quietBorder` (`plan/threats.ts`, pure) reads
+  the opponent's last `QUIET_DEPLOY_TURNS` (3) observed turns, in a row and ending at its newest board, each with a
+  top-up beside my land (`ObservedTurn.topUp`) of at most `QUIET_DEPLOY_MAX` (1); then every border facing it is sized
+  at its stacks there plus its largest top-up seen, and what stands above that goes to captures (a "a quiet border,
+  owner request 2026-11-28" line). Not under `enemyDeploy`; a turn with no top-up read breaks the run. Its estimate
+  is unchanged (past FFAs read low, never high: 79 samples, median 0.49 × the truth), so the risk is taken knowingly.
+  Golden: 30 of 6253 plans changed, 13 in their orders (19 by this rule, 11 by the lead step's note below), attack
+  targets +3/−0, 5 fewer concessions, next income lower on none where both plans state it. The lead step's "could spare" note (#203/#212) now says
+  when the spare is what a held border keeps once the step's target is taken, and the size the step needed when
+  short, so it no longer reads against "can spare 0".
   **Where the read is reported (part D, `src/tools/profile-reads.ts`, read-only, never throws):** one computation
   (`readOpponents`) serves `warapp_profile_opponents` and three reports, none of which any plan, price or verdict
   reads (the golden corpus is unchanged): `warapp_plan_turn`'s `reads` (each opponent in contact on the live board
