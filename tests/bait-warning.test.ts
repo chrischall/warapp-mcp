@@ -50,6 +50,18 @@ describe('baitAttackWarning (#593 5c)', () => {
     expect(w).toMatch(/29 defenders/);
   });
 
+  it('says nothing for a neutral target, whatever stands beside it: neutrals never move (#617)', () => {
+    // The live board's owner 0 is neutral: a 2-army neutral beside 2-army neutrals read as player 0's bait.
+    expect(warn([t(1, ME, 4), t(2, 0, 2), t(3, 0, 2), t(4, 0, 2)], 3)).toBeUndefined();
+    expect(warn([t(1, ME, 4), t(2, 0, 2), t(3, 0, 24), t(4, 0, 6)], 3)).toBeUndefined();
+  });
+
+  it('still warns for a player beside a neutral target it does not own, never naming the neutral (#617)', () => {
+    const w = warn([t(1, ME, 4), t(2, FOE, 1), t(3, FOE, 24), t(4, 0, 6)], 3);
+    expect(w).toMatch(/player 2's stacks/);
+    expect(w).not.toMatch(/player 0|Nepal/);
+  });
+
   it('says nothing when the attack beats what can move in', () => {
     expect(warn([t(1, ME, 41), t(2, FOE, 1), t(3, FOE, 24), t(4, FOE, 1)], 40)).toBeUndefined();
   });
