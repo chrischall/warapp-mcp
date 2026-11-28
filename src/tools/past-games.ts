@@ -197,3 +197,24 @@ export async function outlookCalibrationFor(dataDir: string | undefined, env: En
     return undefined;
   }
 }
+
+/**
+ * #568's track calibration, narrowed after a lost 1v1 (2026-11-27): this format's own bands only (a band with
+ * fewer than `MIN_CALIBRATION_SAMPLES` of this format is left out, never filled from every format's), and none
+ * in a 1v1. In a 1v1 the fog prior already lifts a thin tracker toward my income, so the plan's estimates ran
+ * above the truth there (1.13× over 52 logged samples) while free-for-alls and team games ran at about half; the
+ * factor stacked on the prior read one opponent at 26 against a true 17. The outlook keeps
+ * {@link outlookCalibrationFor}. `undefined` when off, in a 1v1, without a data dir, unreadable or with no band.
+ * Never throws.
+ */
+export async function trackCalibrationFor(dataDir: string | undefined, env: EnvSource | undefined, format: ProfileFormat): Promise<OutlookCalibration | undefined> {
+  if (format === '1v1' || !dataDir || !profileEnabled(env ?? process.env)) return undefined;
+  try {
+    const file = await readLessons(dataDir);
+    if (file === 'unreadable') return undefined;
+    const c = outlookCalibration(file, format, MIN_CALIBRATION_SAMPLES, { ownOnly: true });
+    return Object.keys(c).length ? c : undefined;
+  } catch {
+    return undefined;
+  }
+}
